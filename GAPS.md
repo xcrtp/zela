@@ -730,8 +730,9 @@
 | PC-05 | **`shadow_maps` 只扩不缩 + `Player` 缓存键不含 shadows 状态** | 渲染 / 资源生命周期 | **记账（PC Step 1；当前无触发路径）** | `shadow_maps` 只有"容量不足就按 `layers` 扩容"分支；`players: HashMap<(w, h, samples), Player>` 不含 shadows 状态。当前不触发（开关是加载期参数），但 `set_shadows` 是 `pub` —— **若将来运行期切换，缓存键必须带上该状态**，否则就是 B18「只比有没有、不比是哪一个」的同型 |
 | PC-06 | **wgsl 注释滞后**：`occlusion` 的 `.z/.w` 已承载 bloom 参数，注释仍只说 AO | 文档 / 着色器 | **已关闭（PC-A）** | `blend.wgsl` 与 `vector.wgsl` 的 `Frame` 结构体注释改为「x/y: AO；z/w: bloom threshold / radius」，并指向 `api.rs` 的 `view_3d` 打包说明（不在注释里重述数值） |
 | PC-07 | **V-01 成本描述第二次修正** | 文档 / 阴影 | **已关闭（PC-A）** | 每盏投射光 ≈16.7 MiB，`MOST = 4` 上限 67 MiB，按 `layers` 扩容且随 `Player` 常驻（一次性、非每帧）；多数作品 1–2 盏。PB 实测 1 盏：51.5 − 33.5 = 18 MB。见 V-01 条目 |
+| PC-08 | **浏览器实测阴影**（PB 唯一未完成项） | 验证 / 浏览器 | **已关闭（PC Step 3）** | 独立 Edge 156 + CDP（无头起不来，改有头；X6-03 禁内嵌浏览器）。`pbr_lights.zsb`：`?shadows=1` 与 `=0` 都 **510/510 帧**走矢量；截图差 **3148 px**（阈值 16/255），bbox 落在物体上 ⇒ 阴影可见；资源 `?shadows=1` 恒为 **39 tex / 30 buf / 52.0 MB**，`=0` 为 **38 / 30 / 35.3 MB** ⇒ 差值正好 1 张 2048² 阴影贴图（16.7 MB），同一配置多次运行数字不变（无 churn）。判据与 native（5390 px 差）同向 |
 
-**Y 段小计（PC）**：已关闭 5（PC-01、PC-03、PC-04、PC-06、PC-07）· 记账 2（PC-02、PC-05）。
+**Y 段小计（PC）**：已关闭 6（PC-01、PC-03、PC-04、PC-06、PC-07、PC-08）· 记账 2（PC-02、PC-05）。
 
 ---
 
