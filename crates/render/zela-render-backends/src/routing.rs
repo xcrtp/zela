@@ -205,7 +205,8 @@ fn reject_reason(
             // 2) 内容能力（与 frame_loop 里原先"硬报错"的判据同一组事实）。
             if content.has_content_texture {
                 return Some(
-                    "本帧含内容纹理 / Surface 图层（矢量后端还没有映射，GAPS V2-12/V2-13）"
+                    "本帧含内容纹理 / Surface 图层（矢量后端还没有映射；粒度问题见 GAPS PB-01——\
+                     正确粒度是图层级，内容层可继续用 wgpu 渲、视口层走矢量）"
                         .to_string(),
                 );
             }

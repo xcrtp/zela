@@ -56,7 +56,10 @@ fn columns(rows: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
 /// The maps of a view's `lights` (16 floats each, as `feed.lighting` packs them) that cast shadows, the first
 /// `MOST`: each sees the sphere around `casters` (the meshes' box in the world: low, high corners), and as deep as
 /// `receivers` (the box of what shadows can fall on: the meshes and the paths with a material) reach behind it.
-pub(crate) fn fit(lights: &[f32], count: usize, casters: [V; 2], receivers: [V; 2]) -> Vec<Shadow> {
+///
+/// Returns the maps and **how many lights asked to cast** (`requested`): more than `MOST` of them are dropped
+/// silently by the renderer, so the caller records the worst frame (PB Step 1 / V-01: no silent drops).
+pub(crate) fn fit(lights: &[f32], count: usize, casters: [V; 2], receivers: [V; 2]) -> (Vec<Shadow>, usize) {
     let c: V = std::array::from_fn(|k| 0.5 * (casters[0][k] + casters[1][k]));
     let half: V = std::array::from_fn(|k| 0.5 * (casters[1][k] - casters[0][k]));
     let r = dot(half, half).sqrt().max(1e-3) * 1.02;
@@ -65,13 +68,22 @@ pub(crate) fn fit(lights: &[f32], count: usize, casters: [V; 2], receivers: [V; 
         (0..8).map(|k| dot(f, std::array::from_fn(|i| receivers[k >> i & 1][i] - from[i]))).fold(f32::MIN, f32::max)
     };
     let mut out = Vec::new();
+    let mut requested = 0usize;
     for light in 0..count.min(lights.len() / 16) {
         let slot = &lights[16 * light..16 * light + 16];
-        if slot[13] < 0.5 || out.len() == MOST {
+        if slot[13] < 0.5 {
+            continue;
+        }
+        let kind = slot[3].round() as u32;
+        if kind != 1 && kind != 3 {
+            continue;
+        }
+        requested += 1;
+        if out.len() == MOST {
             continue;
         }
         let place: V = [slot[0], slot[1], slot[2]];
-        match slot[3].round() as u32 {
+        match kind {
             // a sun: an orthographic map along its light, the sphere in its box, from the sphere's near side to
             // its far side or the receivers', whichever is farther. Held still while the casters move (a still
             // shadow keeps its texels: no shimmer): the sphere's radius rounded up to a step of 2^(1/4), its centre
@@ -119,7 +131,7 @@ pub(crate) fn fit(lights: &[f32], count: usize, casters: [V; 2], receivers: [V; 
             _ => {}
         }
     }
-    out
+    (out, requested)
 }
 
 #[cfg(test)]
@@ -140,7 +152,8 @@ mod tests {
     /// nearer the sun the smaller.
     #[test]
     fn a_sun_sees_the_whole_box() {
-        let shadows = fit(&light(1.0, [1.0, 2.0, 3.0], [0.0; 3], 0.0), 1, [[-2.0, -1.0, -0.5], [2.0, 1.0, 0.5]], [[-2.0, -1.0, -0.5], [2.0, 1.0, 0.5]]);
+        let (shadows, requested) = fit(&light(1.0, [1.0, 2.0, 3.0], [0.0; 3], 0.0), 1, [[-2.0, -1.0, -0.5], [2.0, 1.0, 0.5]], [[-2.0, -1.0, -0.5], [2.0, 1.0, 0.5]]);
+        assert_eq!(requested, 1);
         let m = &shadows[0].matrix;
         for corner in 0..8 {
             let p = [if corner & 1 == 0 { -2.0 } else { 2.0 }, if corner & 2 == 0 { -1.0 } else { 1.0 }, if corner & 4 == 0 { -0.5 } else { 0.5 }];
@@ -154,7 +167,7 @@ mod tests {
     /// A spot's map sees along its axis: the point it shines at is at the map's center, at a depth in [0, 1].
     #[test]
     fn a_spot_looks_along_its_axis() {
-        let shadows = fit(&light(3.0, [0.0, 0.0, 4.0], [0.0, 0.0, -1.0], 0.5), 1, [[-1.0, -1.0, -0.1], [1.0, 1.0, 0.1]], [[-1.0, -1.0, -0.1], [1.0, 1.0, 0.1]]);
+        let (shadows, _) = fit(&light(3.0, [0.0, 0.0, 4.0], [0.0, 0.0, -1.0], 0.5), 1, [[-1.0, -1.0, -0.1], [1.0, 1.0, 0.1]], [[-1.0, -1.0, -0.1], [1.0, 1.0, 0.1]]);
         let q = apply(&shadows[0].matrix, [0.0, 0.0, 0.0]);
         let ndc = [q[0] / q[3], q[1] / q[3], q[2] / q[3]];
         assert!(ndc[0].abs() < 1e-5 && ndc[1].abs() < 1e-5 && (0.0..=1.0).contains(&ndc[2]), "{ndc:?}");
@@ -165,11 +178,24 @@ mod tests {
     fn a_map_reaches_the_receivers() {
         let floor = [[-6.0, -6.0, -3.0], [6.0, 6.0, -3.0]];
         let caster = [[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]];
-        let sun = fit(&light(1.0, [1.0, 0.0, 1.0], [0.0; 3], 0.0), 1, caster, floor);
-        let spot = fit(&light(3.0, [0.0, 0.0, 4.0], [0.0, 0.0, -1.0], 0.5), 1, caster, floor);
+        let (sun, _) = fit(&light(1.0, [1.0, 0.0, 1.0], [0.0; 3], 0.0), 1, caster, floor);
+        let (spot, _) = fit(&light(3.0, [0.0, 0.0, 4.0], [0.0, 0.0, -1.0], 0.5), 1, caster, floor);
         for (s, p) in [(&sun[0], [3.0, 0.0, -3.0]), (&spot[0], [0.0, 0.0, -3.0])] {
             let q = apply(&s.matrix, p);
             assert!((0.0..=1.0).contains(&(q[2] / q[3])), "{q:?}");
         }
+    }
+
+    /// **PB Step 1（V-01）**：请求投影的光源超过 `MOST` 时，`requested` 记**全部**，
+    /// 返回的贴图只留 `MOST` —— 差值由调用方落成数（不静默丢弃）。
+    #[test]
+    fn more_lights_than_most_are_counted() {
+        let lights: Vec<f32> = (0..6)
+            .flat_map(|i| light(1.0, [1.0 + i as f32, 2.0, 3.0], [0.0; 3], 0.0))
+            .collect();
+        let box3 = [[-2.0, -1.0, -0.5], [2.0, 1.0, 0.5]];
+        let (shadows, requested) = fit(&lights, 6, box3, box3);
+        assert_eq!(requested, 6, "六盏都要求投影");
+        assert_eq!(shadows.len(), MOST, "只画 MOST 张");
     }
 }

@@ -400,6 +400,10 @@ pub struct View3 {
     pub exposure: f32,
     pub tone: Option<ze_render_ir::ToneCurve>,
     pub bloom: f32,
+    /// **PB Step 2（V-02）**：泛光的亮度门槛（低于它不参与扩散）。0 = 不设门槛（旧行为）。
+    pub bloom_threshold: f32,
+    /// **PB Step 2（V-02）**：泛光半径（屏幕像素），决定金字塔最粗一级；0 = 用满 `LEVELS`。
+    pub bloom_radius: f32,
     /// ⚠️ **AO 依赖环境光**（`B6 §2.4`）：上游 `occlusion_of()` 要求 `lights` 里存在
     /// 环境光（类型 0）或环境图（类型 4）；只有方向光 / 点光 / 聚光时 **静默不生效**。
     pub ao: Option<(f32, f32)>,
@@ -480,6 +484,10 @@ fn view_3d(v: &View3) -> Vec<f32> {
         out[VIEW_OCCLUSION] = intensity.max(0.0);
         out[VIEW_OCCLUSION + 1] = radius.max(0.0);
     }
+    // PB Step 2（V-02）：`occlusion.z/.w` 是视图里仅剩的两个空槽（着色器只读 `.x/.y`）。
+    // 不要再往 `VIEW_LIGHTING` 里挤 —— 那 8 个槽（eye / 灯数 / 曝光 / tone / bloom）已满。
+    out[VIEW_OCCLUSION + 2] = v.bloom_threshold.max(0.0);
+    out[VIEW_OCCLUSION + 3] = v.bloom_radius.max(0.0);
     out
 }
 
@@ -1119,6 +1127,8 @@ mod tests {
             exposure: 2.0,
             tone: Some(ze_render_ir::ToneCurve::AgX),
             bloom: 0.5,
+            bloom_threshold: 1.0,
+            bloom_radius: 4.0,
             ao: Some((0.7, 0.3)),
             lights: vec![
                 Light::Sun {
@@ -1289,6 +1299,8 @@ mod tests {
             exposure: 2.0,
             tone,
             bloom,
+            bloom_threshold: 0.0,
+            bloom_radius: 4.0,
             ao,
             lights,
         }
@@ -1343,6 +1355,34 @@ mod tests {
         );
     }
 
+    /// **PB Step 2（V-02）验收**：`threshold` 真的切掉了低亮度扩散。
+    ///
+    /// 同一帧、同一个 bloom 强度：门槛 0（旧行为）在方块外 3 px 有光晕；门槛 10（远高于
+    /// 场景亮度）什么都不扩散 ⇒ 与"关掉 bloom"同亮。这是契约第二个字段的消费者。
+    #[test]
+    fn bloom_threshold_stops_low_light_from_spreading() {
+        let spread = |threshold: f32| {
+            let mut view = lit_view(Some(ze_render_ir::ToneCurve::AgX), 1.0, None, true);
+            view.bloom_threshold = threshold;
+            let records = [PathRecord::from(lit_square())];
+            render_3d(&view, &records).expect("3D 渲染失败")
+        };
+        let luma = |p: [u8; 4]| p[0] as i32 + p[1] as i32 + p[2] as i32;
+        let open = spread(0.0);
+        let cut = spread(10.0);
+        let off = lit_frame(Some(ze_render_ir::ToneCurve::AgX), 0.0, None, true);
+        let (a, b, c) = (
+            luma(pixel(&open, 64, 32, 13)),
+            luma(pixel(&cut, 64, 32, 13)),
+            luma(pixel(&off, 64, 32, 13)),
+        );
+        assert!(b < a, "门槛必须切掉扩散：open = {a}，cut = {b}");
+        assert!(
+            (b - c).abs() <= 3,
+            "门槛 10 ⇒ 与关掉 bloom 同亮（bloom off = {c}，cut = {b}）"
+        );
+    }
+
     /// **B10 Step 2 验收（网格）**：三角形网格在 3D 视图里真的画出来，且
     /// `material = Some(_)` 让它走"逐片元受光"，于是 tone 映射（bloom 合成 pass 里的
     /// AgX）真的改像素 —— 这正是 §0.2 那条链（`Kind::Mesh` → material → plan.lit →
@@ -1379,6 +1419,8 @@ mod tests {
             exposure: 4.0,
             tone: Some(tone),
             bloom: 1.0,
+            bloom_threshold: 0.0,
+            bloom_radius: 0.0,
             ao: None,
             lights: vec![
                 // 光来自 +Z（相机在 +Z 侧，看到的是被照亮的一面）。

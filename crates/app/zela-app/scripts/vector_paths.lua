@@ -1,7 +1,7 @@
 -- vector_paths.lua — 矢量后端作品（B6 Step 3，V2-07）。
 --
 -- 目的：给**矢量路径**一条独立的作品基线（`[vector]` 段）。只含 2D 图元：
--- 当前 `--backend vector` 对 3D / 内容纹理图层显式报错（GAPS V2-12/V2-13），
+-- 当前 `--backend vector` 对 3D / 内容纹理图层显式报错（GAPS PB-01：粒度问题），
 -- 所以这里刻意不出现 Camera3D / Surface。
 --
 -- 覆盖：填充 + 描边两条记录路径；曲线（圆）与折线（尖角 ⇒ miter）都出现。

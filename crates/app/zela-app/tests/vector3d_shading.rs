@@ -111,11 +111,20 @@ fn shading_stack_changes_pixels_on_a_mesh_work() {
     );
 
     // 2) bloom：关掉后整体变暗（亮区外溢消失）。
+    //
+    // PB Step 2 起 `Bloom::default().threshold = 1.0`（只有真正高光发光）——这里测的是
+    // **glow 机制本身**，故显式把门槛压到 0（= 旧行为），否则"亮区外溢"被门槛切掉，
+    // 只剩 tone 的变暗，断言会反过来。
+    let mut glow_params = params_with(4.0, ze_render_ir::ToneCurve::AgX, true, true);
+    if let Some(bloom) = glow_params.bloom.as_mut() {
+        bloom.threshold = 0.0;
+    }
+    let glow = render(&ctx, Some(glow_params));
     let no_bloom = render(&ctx, Some(params_with(4.0, ze_render_ir::ToneCurve::AgX, false, true)));
     assert!(
-        luma_sum(&no_bloom) < luma_sum(&agx),
-        "有 bloom 的画面应更亮：with = {}，without = {}",
-        luma_sum(&agx),
+        luma_sum(&no_bloom) < luma_sum(&glow),
+        "有 bloom（门槛 0）的画面应更亮：with = {}，without = {}",
+        luma_sum(&glow),
         luma_sum(&no_bloom)
     );
 

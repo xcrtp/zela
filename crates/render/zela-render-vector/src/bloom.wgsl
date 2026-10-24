@@ -11,12 +11,12 @@
 // out to the coarsest level's reach, as a lens's glare does. Each pixel is then shown with the glow over it (`show`).
 
 // The view's glow: the share of its light spread, the share each level spreads (strength / levels), its tone mapping
-// (`tone.wgsl`'s `toned`).
+// (`tone.wgsl`'s `toned`), and the brightness threshold (PB Step 2: light below it does not spread).
 struct Glow {
     strength: f32,
     share: f32,
     tone: u32,
-    unused: u32,
+    threshold: f32,
 };
 
 @group(0) @binding(0) var<uniform> params: Glow;
@@ -49,12 +49,21 @@ fn halved(id: vec2<u32>) -> vec3<f32> {
 }
 
 // The first level: the share of the view's light each level spreads, at half its size.
+//
+// PB Step 2（V-02）：先按亮度门槛切掉不该参与扩散的光。门槛按最大通道算，比例施加到整色
+// （保色相）：`k = max(l - threshold, 0) / l`。threshold = 0 时 k = 1 ⇒ 与旧行为逐位一致。
+fn above_threshold(c: vec3<f32>) -> vec3<f32> {
+    let l = max(c.r, max(c.g, c.b));
+    let k = max(l - params.threshold, 0.0) / max(l, 1e-5);
+    return c * k;
+}
+
 @compute @workgroup_size(8, 8)
 fn spread(@builtin(global_invocation_id) id: vec3<u32>) {
     if (any(id.xy >= textureDimensions(level))) {
         return;
     }
-    textureStore(level, id.xy, vec4<f32>(halved(id.xy) * params.share, 1.0));
+    textureStore(level, id.xy, vec4<f32>(above_threshold(halved(id.xy)) * params.share, 1.0));
 }
 
 // Each level after it: the level before, at half its size.

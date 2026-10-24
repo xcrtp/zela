@@ -19,7 +19,7 @@
 //!   0.04，理由见下方 `DEFAULT_REFLECTANCE` 的注释），该取舍记在 GAPS X1-03。
 
 use ze_notion::{Color32, Mat4};
-use ze_render_ir::{AmbientOcclusion, MeshForm, RenderParams, ToneMapping};
+use ze_render_ir::{AmbientOcclusion, Bloom, MeshForm, RenderParams, ToneMapping};
 use ze_scene_core::components::{Material3D, MeshGeometry, PrimitiveTopology};
 use ze_scene_core::object::{Camera3D, Projection};
 use zela_render::draw::DrawQueue;
@@ -42,6 +42,48 @@ const LIGHT_GAIN: f32 = (1.0 - DEFAULT_AMBIENT) / std::f32::consts::PI;
 /// B14 Step 2：wgpu 的 PBR 用 `f0 = mix(0.04, albedo, metallic)`（电介质 F0 = 0.04），
 /// 旧值 0.5（"电介质常用值"）让矢量侧高光强了一个量级 ⇒ 与 wgpu 对拍永远偏亮。
 const DEFAULT_REFLECTANCE: f32 = 0.04;
+
+// ─── PB Step 1（V-01）：阴影开关 ──────────────────────────────────────────────
+
+const SHADOWS_UNSET: u8 = 0;
+const SHADOWS_ON: u8 = 1;
+const SHADOWS_OFF: u8 = 2;
+
+/// 是否让灯投影（0 = 还没问过）。
+static SHADOWS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(SHADOWS_UNSET);
+
+/// **PB Step 1（V-01）**：显式开关阴影（宿主用：`ZELA_SHADOWS=1` / 浏览器 `?shadows=1`）。
+///
+/// 为什么不直接改 `shadows: false` 字面量：开阴影会让 `Buffers` 新增一块
+/// 2048²×4 的深度阵列（B17 之后随 `Player` 常驻 ⇒ **一次性** ≈67 MiB，不是每帧），
+/// 且会改 `[vector]` 基线。先给显式开关，实测通过后再谈默认。
+pub fn set_shadows(on: bool) {
+    SHADOWS.store(
+        if on { SHADOWS_ON } else { SHADOWS_OFF },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// 当前是否投影：默认 **关**；native 首次读取时看 `ZELA_SHADOWS`，浏览器由 [`set_shadows`] 决定。
+pub fn shadows() -> bool {
+    match SHADOWS.load(std::sync::atomic::Ordering::Relaxed) {
+        SHADOWS_ON => true,
+        SHADOWS_OFF => false,
+        _ => {
+            #[cfg(not(target_arch = "wasm32"))]
+            let on = std::env::var("ZELA_SHADOWS")
+                .map(|value| matches!(value.trim(), "1" | "on" | "true"))
+                .unwrap_or(false);
+            #[cfg(target_arch = "wasm32")]
+            let on = false;
+            SHADOWS.store(
+                if on { SHADOWS_ON } else { SHADOWS_OFF },
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            on
+        }
+    }
+}
 
 /// 把 `Camera3D` 分解成矢量后端的 `View3`（透视）。
 ///
@@ -85,7 +127,16 @@ pub fn view3(
         Some(ToneMapping { exposure, curve }) => (exposure, Some(curve)),
         None => (1.0, None),
     };
-    let bloom = params.bloom.map(|b| b.intensity).unwrap_or(0.0);
+    // PB Step 2（V-02）：三个字段**全部**接上 —— intensity 是扩散比例，threshold 是
+    // 参与扩散的亮度门槛，radius 决定金字塔最粗一级（扩散半径，屏幕像素）。
+    let (bloom, bloom_threshold, bloom_radius) = match params.bloom {
+        Some(Bloom {
+            threshold,
+            intensity,
+            radius,
+        }) => (intensity, threshold, radius),
+        None => (0.0, 0.0, 0.0),
+    };
     let ao = params
         .ao
         .map(|AmbientOcclusion { radius, intensity }| (intensity, radius));
@@ -107,6 +158,8 @@ pub fn view3(
         exposure,
         tone,
         bloom,
+        bloom_threshold,
+        bloom_radius,
         ao,
         lights: Vec::new(),
     })
@@ -121,7 +174,7 @@ pub fn lights(queue: Option<&LightQueue>) -> Vec<Light> {
             direction: [light.direction.x, light.direction.y, light.direction.z],
             color: [light.color[0], light.color[1], light.color[2]],
             intensity: light.intensity * LIGHT_GAIN,
-            shadows: false,
+            shadows: shadows(),
         }));
         out.extend(queue.points.iter().map(|light| Light::Point {
             at: [light.position.x, light.position.y, light.position.z],
@@ -136,7 +189,7 @@ pub fn lights(queue: Option<&LightQueue>) -> Vec<Light> {
             direction: [0.0, 0.0, 1.0],
             color: [1.0, 1.0, 1.0],
             intensity: LIGHT_GAIN,
-            shadows: false,
+            shadows: shadows(),
         });
     }
     // 环境项在 wgpu 侧**恒**为 `DEFAULT_AMBIENT`（空队列也一样）⇒ 这里保持一致；

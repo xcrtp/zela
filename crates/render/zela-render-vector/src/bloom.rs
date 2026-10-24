@@ -58,9 +58,18 @@ impl Bloom {
     }
 
     /// Where a view of `size` drawn in `target` makes its glow (`smooth`: a bilinear sampler, clamped to the edges).
-    pub(crate) fn bloomed(&self, device: &wgpu::Device, smooth: &wgpu::Sampler, target: &wgpu::TextureView, [width, height]: [u32; 2]) -> Bloomed {
+    ///
+    /// **PB Step 2（V-02）**：`radius`（屏幕像素）决定金字塔的级数 —— 最粗一级的纹素约 `radius`
+    /// 像素；`0` = 用满 `LEVELS`（旧行为）。级数仍受 `NARROWEST` 限制（再粗就没有细节可加）。
+    pub(crate) fn bloomed(&self, device: &wgpu::Device, smooth: &wgpu::Sampler, target: &wgpu::TextureView, [width, height]: [u32; 2], radius: f32) -> Bloomed {
         let mut sizes = vec![[width.div_ceil(2), height.div_ceil(2)]];
-        while sizes.len() < LEVELS {
+        let wanted = if radius > 0.0 {
+            let narrow = width.min(height).max(1) as f32;
+            ((narrow / radius).log2().round().max(1.0) as usize).min(LEVELS)
+        } else {
+            LEVELS
+        };
+        while sizes.len() < wanted {
             let [w, h] = sizes[sizes.len() - 1].map(|v| v.div_ceil(2));
             if w.min(h) < NARROWEST {
                 break;
@@ -96,11 +105,11 @@ impl Bloom {
         Bloomed { paint, light, params, groups, sizes }
     }
 
-    /// A view's glow, once its composite has left its paint and light in `b`: `strength` the share of its light spread
-    /// (0 to 1), `tone` its tone mapping (1: AgX).
-    pub(crate) fn encode(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, b: &Bloomed, strength: f32, tone: u32) {
+    /// A view's glow, once its composite has left its paint and light in `b`: its `Glow` (the share of
+    /// its light spread, the brightness threshold, 0 to 1), `tone` its tone mapping (1: AgX).
+    pub(crate) fn encode(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, b: &Bloomed, glow: super::Glow, tone: u32) {
         let levels = b.sizes.len() - 1;
-        let params: [u32; 4] = [strength.to_bits(), (strength / levels as f32).to_bits(), tone, 0];
+        let params: [u32; 4] = [glow.strength.to_bits(), (glow.strength / levels as f32).to_bits(), tone, glow.threshold.to_bits()];
         queue.write_buffer(&b.params, 0, bytemuck::cast_slice(&params));
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("bloom"), timestamp_writes: None });
         let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], tile: u32| {

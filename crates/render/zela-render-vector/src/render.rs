@@ -171,6 +171,57 @@ fn record_overflow(appended: u64, capacity: u64, most: u64) {
     OVERFLOW_MOST.fetch_max(most, Ordering::Relaxed);
 }
 
+// ─── PB Step 1（V-01）：投影光源超限的出口 ──────────────────────────────────
+//
+// `shadow::fit` 只取前 `MOST` 个投射光源；第 5 个开始**静默丢弃**——这正是我们一直在杀的
+// 模式（"有实现偷偷决定行为"）。这里把"最坏一帧请求了几个、实际投了几个"落成数。
+
+static SHADOW_EVENTS: AtomicUsize = AtomicUsize::new(0);
+static SHADOW_REQUESTED: AtomicU64 = AtomicU64::new(0);
+static SHADOW_CAST: AtomicU64 = AtomicU64::new(0);
+
+/// 一帧请求投影的光源超过 `shadow::MOST` 时，最坏一次"请求 / 实际投射"。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShadowTotals {
+    pub events: usize,
+    pub requested: u64,
+    pub cast: u64,
+}
+
+impl ShadowTotals {
+    /// 两次采样合并（逐帧累加成一遍；数量取最坏）。
+    pub fn plus(self, other: Self) -> Self {
+        Self {
+            events: self.events + other.events,
+            requested: self.requested.max(other.requested),
+            cast: self.cast.max(other.cast),
+        }
+    }
+
+    /// 一行 JSON（字段名与 `ZELA_FRAME_REPORT` 其余部分一致）。
+    pub fn json(&self) -> String {
+        format!(
+            "{{\"events\":{},\"requested\":{},\"cast\":{}}}",
+            self.events, self.requested, self.cast
+        )
+    }
+}
+
+/// 取走累计的投影超限记录（取走即清零）。
+pub fn take_shadow_totals() -> ShadowTotals {
+    ShadowTotals {
+        events: SHADOW_EVENTS.swap(0, Ordering::Relaxed),
+        requested: SHADOW_REQUESTED.swap(0, Ordering::Relaxed),
+        cast: SHADOW_CAST.swap(0, Ordering::Relaxed),
+    }
+}
+
+fn record_shadow_drop(requested: u64, cast: u64) {
+    SHADOW_EVENTS.fetch_add(1, Ordering::Relaxed);
+    SHADOW_REQUESTED.fetch_max(requested, Ordering::Relaxed);
+    SHADOW_CAST.fetch_max(cast, Ordering::Relaxed);
+}
+
 /// **B18 Step 0（判别实验）**：把所有帧的采样数上限压到该值（0 = 不覆盖）。
 ///
 /// 只用于"条纹是否与 MSAA 有关"的一次性判别：`?msaa=1` ⇒ 强制 1x，`=4` ⇒ 恢复。
@@ -2083,10 +2134,28 @@ fn occlusion_of(view: &[f32]) -> Option<(f32, f32)> {
     (amount > 0.0 && radius > 0.0 && from_all_around).then_some((amount, radius))
 }
 
+/// **PB Step 2（V-02）**：一个 3D 视图的泛光参数 —— 扩散比例、亮度门槛、半径（屏幕像素）。
+///
+/// 契约 `Bloom { threshold, intensity, radius }` 的三个字段现在**全部**有消费者：
+/// - `strength` → `bloom.wgsl` 的 `Glow.strength`（扩散比例，原有）；
+/// - `threshold` → `Glow.threshold`，`spread` 里先把低于门槛的光切掉（新）；
+/// - `radius` → 金字塔的级数（最粗一级的纹素约 `radius` 像素；`bloom.rs`）。
+#[derive(Clone, Copy)]
+pub(super) struct Glow {
+    pub(super) strength: f32,
+    pub(super) threshold: f32,
+    pub(super) radius: f32,
+}
+
 /// A 3D view's bloom, where it has some: the share of its light its lens spreads (at most all of it).
-fn bloom_of(view: &[f32]) -> Option<f32> {
+fn bloom_of(view: &[f32]) -> Option<Glow> {
     let strength = view[VIEW_LIGHTING + 7];
-    (strength > 0.0).then_some(strength.min(1.0))
+    (strength > 0.0).then_some(Glow {
+        strength: strength.min(1.0),
+        // PB Step 2：`occlusion.z/.w` 是视图里仅剩的两个空槽（着色器只读 `.x/.y`）。
+        threshold: view[VIEW_OCCLUSION + 2].max(0.0),
+        radius: view[VIEW_OCCLUSION + 3].max(0.0),
+    })
 }
 
 /// The box around two boxes, the first maybe none.
@@ -2150,7 +2219,7 @@ enum Drawing {
         lists: bool,         // whether its listed layers are appended to the lists
         slabs: bool,         // whether its sprites are blended between its other see-through layers, in slabs
         light: bool,         // whether it has lit meshes, their light kept apart in its base (`blend.wgsl`'s `Base`)
-        glow: Option<f32>,   // its bloom, where it has lit content to spread (`bloom`)
+        glow: Option<Glow>,   // its bloom, where it has lit content to spread (`bloom`)
         // its composite's plan: its paths, exact, laid in depth order with its raster base and listed fragments
         // (none: the raster base is the view)
         plan: Option<vector::Plan>,
@@ -2771,10 +2840,14 @@ impl Player {
                 // its lights' shadow maps, where something casts a shadow and something has a material: each sees the
                 // casters and reaches the receivers; its paths planned as each light sees them
                 let lights = &f.view[VIEW_LIGHTING + 8..VIEW_OCCLUSION];
-                let shadows = match (casters, receivers) {
+                let (shadows, requested) = match (casters, receivers) {
                     (Some(casters), Some(receivers)) => shadow::fit(lights, f.view[VIEW_LIGHTING + 4] as usize, casters, receivers),
-                    _ => Vec::new(),
+                    _ => (Vec::new(), 0),
                 };
+                // PB Step 1（V-01）：超限不得静默 —— 请求数超过 `MOST` 时把最坏一次落成数。
+                if requested > shadow::MOST {
+                    record_shadow_drop(requested as u64, shadows.len() as u64);
+                }
                 let cast = if casting.is_empty() { Vec::new() } else { shadows.iter().map(|s| gpu.vector.plan(&self.store, &Camera::seen_from(s), &f.records, &casting, [0.0; 4])).collect::<Result<_, _>>()? };
                 // in whole pixels, on the view: (x, y, width, height)
                 let pixels = |area: Option<[f32; 4]>| {
@@ -2865,7 +2938,9 @@ impl Player {
                     // and where its glow is made, if it has some
                     if skipping() & SKIP_BLOOM == 0 && glow.is_some() && canvas.bloomed.is_none() {
                         let bloom = gpu.bloom.get_or_insert_with(|| bloom::Bloom::new(&gpu.device));
-                        canvas.bloomed = Some(bloom.bloomed(&gpu.device, &gpu.linear, &canvas.color, [canvas.width, canvas.height]));
+                        // PB Step 2：半径决定金字塔级数（最粗一级的纹素 ≈ radius 像素）。
+                        let radius = glow.as_ref().map_or(0.0, |g| g.radius);
+                        canvas.bloomed = Some(bloom.bloomed(&gpu.device, &gpu.linear, &canvas.color, [canvas.width, canvas.height], radius));
                     }
                 }
                 Drawing::Vector(plan, _) if rasters(d) => need = [need[0].max(plan.raster_size[0]), need[1].max(plan.raster_size[1])],
@@ -3048,9 +3123,9 @@ impl Player {
                             let out = vector::Out::Color { rasters: None, target, base: base.as_ref(), light: base_light.as_ref(), listed, slabs, lighting, light_out };
                             vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out);
                         }
-                        if let Some((b, strength)) = bloomed {
+                        if let Some((b, glow)) = bloomed {
                             let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
-                            gpu.bloom.as_ref().expect("the bloom's passes").encode(&gpu.queue, encoder, b, strength, tone);
+                            gpu.bloom.as_ref().expect("the bloom's passes").encode(&gpu.queue, encoder, b, glow, tone);
                         }
                     };
                     if !(*listing || *slabs) {
@@ -3549,6 +3624,16 @@ mod buffer_contract {
         let sum = a.plus(b);
         assert_eq!(sum.events, 3);
         assert_eq!((sum.appended, sum.capacity, sum.most), (14, 12, 16));
+    }
+
+    #[test]
+    fn shadow_totals_keep_the_worst_drop() {
+        let a = ShadowTotals { events: 1, requested: 6, cast: 4 };
+        let b = ShadowTotals { events: 1, requested: 5, cast: 4 };
+        assert_eq!(
+            a.plus(b),
+            ShadowTotals { events: 2, requested: 6, cast: 4 }
+        );
     }
 
     #[test]

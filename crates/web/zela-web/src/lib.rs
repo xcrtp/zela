@@ -425,6 +425,12 @@ async fn run() -> Result<(), JsValue> {
         PRESENT_COPY.store(true, Ordering::Relaxed);
         web_sys::console::log_1(&JsValue::from_str("[copy] 呈现改用 copy_texture_to_texture"));
     }
+    // PB Step 1（V-01）：?shadows=1 / 0 显式开关阴影（默认关，见 GAPS V-01）。
+    if let Some(value) = params.get("shadows") {
+        let on = matches!(value.as_str(), "1" | "on" | "true");
+        zela_playback::vector3d::set_shadows(on);
+        web_sys::console::log_1(&JsValue::from_str(&format!("[shadows] on={on}")));
+    }
 
     let loading = format!("加载 {zsb_url} …");
     set_status(&document, &loading);
@@ -542,6 +548,9 @@ async fn run_with(
     // B18 Step 2：链表溢出累计（0 = 没有片元被丢弃；播放结束在控制台落一行）。
     let _ = zela_render_vector::take_overflow_totals();
     let mut vector_overflow = zela_render_vector::OverflowTotals::default();
+    // PB Step 1：投影光源超限累计（0 = 没有光源被静默丢弃）。
+    let _ = zela_render_vector::take_shadow_totals();
+    let mut vector_shadows = zela_render_vector::ShadowTotals::default();
     // 状态栏常驻的后端决策行（B11 §7.4：选了谁、为什么、谁被拒）。
     let mut backend_line = String::new();
     // 矢量后端的默认渲染参数（`PostCaps::all()` ⇒ 着色栈默认开，与 native 同口径）。
@@ -698,6 +707,7 @@ async fn run_with(
 
         end_frame(&runtime);
         vector_overflow = vector_overflow.plus(zela_render_vector::take_overflow_totals());
+        vector_shadows = vector_shadows.plus(zela_render_vector::take_shadow_totals());
         index += 1;
 
         if index >= next_status {
@@ -743,6 +753,13 @@ async fn run_with(
         web_sys::console::warn_1(&JsValue::from_str(&format!(
             "[vector-overflow] {}",
             vector_overflow.json()
+        )));
+    }
+    if vector_shadows.events > 0 {
+        // PB Step 1：投影光源超过上限被丢弃时，同样落一行（不静默）。
+        web_sys::console::warn_1(&JsValue::from_str(&format!(
+            "[vector-shadows] {}",
+            vector_shadows.json()
         )));
     }
     Ok(())

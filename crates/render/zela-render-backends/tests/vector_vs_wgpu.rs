@@ -402,3 +402,61 @@ fn vector_backend_matches_wgpu_on_a_diagonal_edge() {
     let (relative, mae) = assert_within_tolerance(&wgpu, &vector);
     assert!(relative > 0.0 || mae > 0.0, "斜边应体现抗锯齿差异（而非逐位相同）");
 }
+
+/// **PB Step 3（V2-11）**：miter limit 差异的**测量**，不是门禁。
+///
+/// lyon 默认 `4.0`、矢量上游硬编码 `10`。测两个角度：
+/// - 1°（比 = 1/sin(0.5°) ≈ 115）：两边都远超各自 limit ⇒ 都退成 bevel；
+/// - 20°（比 ≈ 5.76）：正好落在 4 与 10 之间 ⇒ 理论上唯一能看出差别的区间。
+///
+/// 结论（2026-10-24，本机 RTX 4060）见 GAPS PB-02：两个角度都只有个位数像素的覆盖率差，
+/// 没有结构性差异 ⇒ 按 PA 的分层判据落档为参数性差异，**不改**。
+///
+/// 只在本机手工跑（不同 GPU 的 AA 数字不可比）：
+/// `cargo test -p zela-render-backends --test vector_vs_wgpu miter -- --ignored --nocapture`
+#[test]
+#[ignore = "V2-11 评估：只测量，不进 CI"]
+fn miter_limit_difference_on_a_needle_angle() {
+    let joint = Vec2::new(64.0, 64.0);
+    let farthest = |frame: &[u8]| -> [f64; 4] {
+        // 四个象限（屏幕坐标：+x 右、+y 下）各取"最远亮像素"。
+        let mut most = [0.0f64; 4];
+        for y in 0..SIZE {
+            for x in 0..SIZE {
+                let i = ((y * SIZE + x) * 4) as usize;
+                if frame[i] > 24 || frame[i + 1] > 24 || frame[i + 2] > 24 {
+                    let dx = x as f64 - joint.x as f64;
+                    let dy = y as f64 - joint.y as f64;
+                    let quadrant = match (dx >= 0.0, dy >= 0.0) {
+                        (true, false) => 0,  // 右上
+                        (false, false) => 1, // 左上
+                        (true, true) => 2,   // 右下
+                        (false, true) => 3,  // 左下
+                    };
+                    most[quadrant] = most[quadrant].max((dx * dx + dy * dy).sqrt());
+                }
+            }
+        }
+        most
+    };
+    // 两段都朝左上；尖角的 miter 指向右下（矢量侧 y 向上 ⇒ 会落在右上，象限表会显示）。
+    for (label, points) in [
+        ("1°", [Vec2::new(20.0, 20.0), joint, Vec2::new(22.0, 24.0)]),
+        ("20°", [Vec2::new(29.6, 14.8), joint, Vec2::new(14.8, 29.6)]),
+    ] {
+        let mut queue = DrawQueue::new();
+        queue.path_stroke(
+            ZIndex::new(0),
+            Path::new(Path2D::from_polyline(&points, false)),
+            ze_render_ir::StrokeSolid::new(4.0, Color32::WHITE),
+        );
+        let (wgpu, vector) = render_queue_both(&queue);
+        println!(
+            "[V2-11] {label} coverage wgpu={} vector={} · 象限最远亮像素（右上/左上/右下/左下）wgpu={:?} vector={:?}",
+            coverage(&wgpu),
+            coverage(&vector),
+            farthest(&wgpu),
+            farthest(&vector)
+        );
+    }
+}
