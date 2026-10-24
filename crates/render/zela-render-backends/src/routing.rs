@@ -58,6 +58,11 @@ pub struct FrameContent {
     pub has_line_meshes: bool,
     /// 是否含内容纹理 / Surface 图层。
     pub has_content_texture: bool,
+    /// 内容纹理是否被 **3D 材质采样**（`composite = false`）。
+    ///
+    /// PC（路线 A）：`composite = true` 的层可由矢量"图层级"叠加（内容层自己渲、再合成），
+    /// 不再拒绝整帧；只有要被材质采样的层才需要矢量侧纹理采样（路线 B）。
+    pub has_material_content: bool,
     /// 是否含形变（Morph）项（B14）：矢量后端尚未映射 ⇒ 显式拒绝，不静默丢。
     pub has_morphs: bool,
 }
@@ -203,10 +208,12 @@ fn reject_reason(
                 }
             }
             // 2) 内容能力（与 frame_loop 里原先"硬报错"的判据同一组事实）。
-            if content.has_content_texture {
+            // PC（路线 A）：`composite = true` 的内容层可以图层级叠加（内容层自己渲），
+            // 不再因"整帧含内容纹理"拒绝；只有被 3D 材质采样的层仍需要路线 B。
+            if content.has_material_content {
                 return Some(
-                    "本帧含内容纹理 / Surface 图层（矢量后端还没有映射；粒度问题见 GAPS PB-01——\
-                     正确粒度是图层级，内容层可继续用 wgpu 渲、视口层走矢量）"
+                    "本帧的内容纹理被 3D 材质采样（composite = false）⇒ 需要矢量侧纹理采样，\
+                     属路线 B（GAPS PC-01 / PB-04）"
                         .to_string(),
                 );
             }
@@ -255,6 +262,12 @@ pub fn route_with_order(
                 } else {
                     let (who, _) = &rejected[0];
                     format!("首选 {who:?} 被拒 ⇒ 回退到 {kind:?}")
+                };
+                // PC（S1-5）：后端组合方式必须可观测 —— 含内容层时不是"纯矢量"。
+                let reason = if *kind == BackendKind::Vector && content.has_content_texture {
+                    format!("{reason}（图层级：内容层由矢量渲染后叠加）")
+                } else {
+                    reason
                 };
                 return Ok(RoutingDecision {
                     backend: *kind,
@@ -316,11 +329,12 @@ mod tests {
         assert!(decision.reason.contains("自动"));
     }
 
-    /// §6.3 的核心增量：`--backend vector` + 内容纹理 ⇒ 回退 wgpu，**理由非空**。
+    /// §6.3 的核心增量：`--backend vector` + **被材质采样的**内容纹理 ⇒ 回退 wgpu，**理由非空**。
     #[test]
     fn vector_falls_back_to_wgpu_with_a_reason() {
         let content = FrameContent {
             has_content_texture: true,
+            has_material_content: true,
             ..plain_2d()
         };
         let decision = route(LoopBackend::Vector, content, capable()).unwrap();
@@ -329,6 +343,19 @@ mod tests {
         assert_eq!(decision.rejected[0].0, BackendKind::Vector);
         assert!(!decision.rejected[0].1.is_empty(), "拒绝必须带理由");
         assert!(decision.reason.contains("回退"));
+    }
+
+    /// **PC 路线 A**：只有 `composite = true` 的内容层 ⇒ 矢量接受（图层级叠加）。
+    #[test]
+    fn composited_content_is_no_longer_rejected() {
+        let content = FrameContent {
+            has_content_texture: true,
+            has_material_content: false,
+            ..plain_2d()
+        };
+        let decision = route(LoopBackend::Vector, content, capable()).unwrap();
+        assert_eq!(decision.backend, BackendKind::Vector);
+        assert!(decision.rejected.is_empty(), "图层级内容不应被拒");
     }
 
     /// 显式矢量 + 能力齐备 + 单纯 2D ⇒ 真的用矢量（不回退）。
@@ -427,6 +454,7 @@ mod tests {
             plain_2d(),
             FrameContent {
                 has_content_texture: true,
+                has_material_content: true,
                 ..plain_2d()
             },
             FrameContent {
@@ -489,6 +517,7 @@ mod tests {
     fn decision_json_escapes_and_carries_the_rejection() {
         let content = FrameContent {
             has_content_texture: true,
+            has_material_content: true,
             ..plain_2d()
         };
         let decision = route(LoopBackend::Vector, content, capable()).unwrap();

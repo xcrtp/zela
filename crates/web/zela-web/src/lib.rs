@@ -655,6 +655,15 @@ async fn run_with(
                 present_vector_frame(&display_ctx, &mut scratch, &output, &rgba)?;
                 display_ctx.queue.present(output);
                 hasher.push_frame(&rgba);
+            } else if snapshot.content().has_content_texture {
+                // PC（路线 A）：内容纹理层在 CPU 上叠加（`VectorFrame::render_async`），
+                // 零拷贝路径明确不支持它（会报错）。这里退回回读 + 上传 —— 只为这些作品付。
+                let rgba = snapshot
+                    .render_async(&runtime, WIDTH, HEIGHT, &vector_params, background)
+                    .await
+                    .map_err(js_err)?;
+                present_vector_frame(&display_ctx, &mut scratch, &output, &rgba)?;
+                display_ctx.queue.present(output);
             } else {
                 // B15（乙）：显示路径——合成进 Rgba8Unorm 目标，GPU 内 blit 到 surface。
                 // **零 CPU 往返**（不再有 1.2 MB 回读 + 1.2 MB 上传），但仍有一步

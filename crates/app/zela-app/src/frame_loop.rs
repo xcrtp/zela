@@ -571,7 +571,9 @@ pub fn run_frames(
 
         let convert: Duration;
         let (raw, rgba): (Vec<u8>, Vec<u8>) = if wanted == BackendKind::Vector {
-            // 不支持的内容（纹理图层 / 混排 / 线框）已在路由层被拒 ⇒ 这里不再重复判断。
+            // 不支持的内容（材质采样的纹理层 / 混排 / 线框）已在路由层被拒 ⇒ 这里不再重复判断。
+            // `composite = true` 的内容层是**支持的**：`VectorFrame::render` 会自己渲内容层
+            // 再按图层叠到视口上（PC 路线 A）。
             let snap = snapshot.take().expect("矢量路径已有快照");
             timing.build = snapshot_time;
             let mark = Instant::now();

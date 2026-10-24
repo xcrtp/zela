@@ -45,7 +45,7 @@ struct Frame {
     lighting: vec4<f32>,
     lights: array<Light, 8>,
     harmonics: array<vec4<f32>, 9>, // its environment's diffuse light (`environment.rs`)
-    occlusion: vec4<f32>,           // its ambient occlusion: how much (0: none), how far (`occlusion.rs`)
+    occlusion: vec4<f32>,           // x/y: its ambient occlusion (how much, 0: none; how far) `occlusion.rs`; z/w: its bloom's threshold / radius (`api.rs`'s `view_3d` packing)
 };
 
 struct Object {

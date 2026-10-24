@@ -668,10 +668,11 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
     // K 段（B4+B5+B6）、L 段（B8+B9）、M 段（B7）、N 段（B10）、O 段（B11）、
     // P 段（B12）、Q 段（B13）、R 段（B14）、S 段（B15）、T 段（B17）、U 段（B18）、
-    // V 段（B19 跨批补记）、W 段（PA 记账收尾）与 X 段（PB 参数开启）都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
+    // V 段（B19 跨批补记）、W 段（PA 记账收尾）、X 段（PB 参数开启）与 Y 段（PC 内容纹理层）
+    // 都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
-        "## U.", "## V.", "## W.", "## X.",
+        "## U.", "## V.", "## W.", "## X.", "## Y.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -692,6 +693,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                 && (id.starts_with('V')
                     || id.starts_with("PA-")
                     || id.starts_with("PB-")
+                    || id.starts_with("PC-")
                     || id.starts_with("S4-")
                     || id.starts_with("W1-")
                     || id.starts_with("X1-")
@@ -1468,6 +1470,10 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     ("pendulum", Some("vector")),
     ("orbit", Some("vector")),
     ("spring", Some("vector")),
+    // PC Step 2：内容纹理层（composite = true）走矢量图层级叠加后的基线。
+    // ⚠️ 这两条是**混合后端**（内容层矢量渲染 + CPU 叠加），不是纯矢量；见 GAPS PC-04。
+    ("surface_matrix", Some("vector")),
+    ("surface_matrix.js", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。

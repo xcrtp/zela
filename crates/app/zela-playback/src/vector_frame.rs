@@ -16,9 +16,22 @@ use ze_scene_core::domain::LayerDescriptor;
 use ze_scene_core::LayerKind;
 use zela_render::draw::DrawQueue;
 use zela_render_backends::routing::FrameContent;
-use zela_render_backends::Recorded2D;
+use zela_render_backends::{Recorded2D, snapshot_queue};
 
 use crate::Runtime;
+
+/// 一帧的内容纹理层（PC 路线 A：**图层级**，不是整帧）。
+///
+/// 内容层的 draw 在 `ContentTextureQueue` 里（按 `LayerId` 索引），与视口 `DrawQueue`
+/// 互不相交。`composite = true` 的层在视口之后按 contain 居中叠加；`composite = false`
+/// 的层要被 3D 材质采样，那是矢量后端还没有的能力（路由会显式拒绝，见 PB-04）。
+struct ContentSnapshot {
+    size: [u32; 2],
+    composite: bool,
+    blend: ze_render_ir::LayerBlend,
+    opacity: f32,
+    draws: Vec<Recorded2D>,
+}
 
 /// 书写动画项（B14）：`path` 已由录制层换算到**屏幕空间**，`style` 的宽度也已是像素。
 ///
@@ -36,6 +49,7 @@ pub struct VectorFrame {
     layers: Vec<LayerDescriptor>,
     draws: Vec<Recorded2D>,
     reveals: Vec<RevealSnapshot>,
+    content: Vec<ContentSnapshot>,
     morph_count: usize,
     mesh_count: usize,
     has_line_meshes: bool,
@@ -58,6 +72,31 @@ impl VectorFrame {
                 let draws = queue
                     .map(zela_render_backends::snapshot_queue)
                     .unwrap_or_default();
+                // PC：内容纹理层的 draw 在**独立队列**里（按 LayerId）。尺寸 / 合成开关 /
+                // 混合来自图层声明；拿不到队列 ⇒ 空（该层什么都没画，不是静默丢内容）。
+                let content_queues = scheduler
+                    .resources()
+                    .get::<zela_render::ContentTextureQueue>();
+                let content: Vec<ContentSnapshot> = layers
+                    .iter()
+                    .filter_map(|layer| match &layer.kind {
+                        LayerKind::ContentTexture {
+                            size_px,
+                            composite,
+                            ..
+                        } => Some(ContentSnapshot {
+                            size: *size_px,
+                            composite: *composite,
+                            blend: layer.blend,
+                            opacity: layer.opacity,
+                            draws: content_queues
+                                .and_then(|queues| queues.0.get(&layer.id))
+                                .map(snapshot_queue)
+                                .unwrap_or_default(),
+                        }),
+                        _ => None,
+                    })
+                    .collect();
                 // B14：reveal 与 morph 是**独立队列**（不在 `DrawQueue` 里）。
                 // 只取 DrawQueue ⇒ 网格线 / 摆杆 / 轨迹弧整片消失（X4-01 的真实宽度）。
                 let reveals: Vec<RevealSnapshot> = scheduler
@@ -103,6 +142,7 @@ impl VectorFrame {
                     layers,
                     draws,
                     reveals,
+                    content,
                     morph_count,
                     mesh_count,
                     has_line_meshes,
@@ -116,12 +156,10 @@ impl VectorFrame {
             .layers
             .iter()
             .any(|layer| matches!(layer.kind, LayerKind::Viewport3D { .. }));
-        let has_content_texture = self.layers.iter().any(|layer| {
-            !matches!(
-                layer.kind,
-                LayerKind::Viewport2D { .. } | LayerKind::Viewport3D { .. }
-            )
-        });
+        let has_content_texture = !self.content.is_empty();
+        // PC（路线 A）：只有 `composite = true` 的内容层能在图层级叠加；`composite = false`
+        // 的层要被 3D 材质采样 ⇒ 仍是路线 B（矢量侧纹理采样），路由必须拒绝它。
+        let has_material_content = self.content.iter().any(|layer| !layer.composite);
         FrameContent {
             has_3d_camera,
             // B14：reveal 也是 2D 图元（独立队列，但同样占画面）。
@@ -129,6 +167,7 @@ impl VectorFrame {
             has_meshes: self.mesh_count,
             has_line_meshes: self.has_line_meshes,
             has_content_texture,
+            has_material_content,
             has_morphs: self.morph_count > 0,
         }
     }
@@ -233,15 +272,17 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<Vec<u8>, String> {
-        match self.prepare(runtime, width, height, params, background)? {
+        let mut rgba = match self.prepare(runtime, width, height, params, background)? {
             Prepared::ThreeD { view, records } => {
-                zela_render_vector::render_3d_with(width, height, 4, &view, &records)
+                zela_render_vector::render_3d_with(width, height, 4, &view, &records)?
             }
             Prepared::TwoD {
                 background,
                 records,
-            } => zela_render_vector::render_2d(width, height, 4, background, &records),
-        }
+            } => zela_render_vector::render_2d(width, height, 4, background, &records)?,
+        };
+        self.composite_content(width, height, &mut rgba)?;
+        Ok(rgba)
     }
 
     /// **B15（甲）**：浏览器上的同一帧（异步回读）。
@@ -254,17 +295,19 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<Vec<u8>, String> {
-        match self.prepare(runtime, width, height, params, background)? {
+        let mut rgba = match self.prepare(runtime, width, height, params, background)? {
             Prepared::ThreeD { view, records } => {
-                zela_render_vector::render_3d_with_async(width, height, 4, &view, &records).await
+                zela_render_vector::render_3d_with_async(width, height, 4, &view, &records).await?
             }
             Prepared::TwoD {
                 background,
                 records,
             } => {
-                zela_render_vector::render_2d_async(width, height, 4, background, &records).await
+                zela_render_vector::render_2d_async(width, height, 4, background, &records).await?
             }
-        }
+        };
+        self.composite_content_async(width, height, &mut rgba).await?;
+        Ok(rgba)
     }
 
     /// **B15（乙）**：把当前帧直接合成进 `target`（native 同步版），像素不经过 CPU。
@@ -278,6 +321,7 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<(), String> {
+        self.refuse_zero_copy_with_content()?;
         match self.prepare(runtime, width, height, params, background)? {
             Prepared::ThreeD { view, records } => zela_render_vector::render_3d_to_texture(
                 target, width, height, 4, &view, &records,
@@ -302,6 +346,7 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<(), String> {
+        self.refuse_zero_copy_with_content()?;
         match self.prepare(runtime, width, height, params, background)? {
             Prepared::ThreeD { view, records } => {
                 zela_render_vector::render_3d_to_texture_async(
@@ -320,6 +365,176 @@ impl VectorFrame {
             }
         }
     }
+
+    /// 零拷贝路径（渲进调用方纹理）**不能**叠加内容层：叠加是在 CPU 像素上做的。
+    ///
+    /// 显式报错而不是"只画视口层"——静默少画一整层正是 PC §6.2 禁止的失败模式。
+    fn refuse_zero_copy_with_content(&self) -> Result<(), String> {
+        if self.content.iter().any(|layer| layer.composite) {
+            return Err(
+                "本帧含内容纹理图层：叠加走 CPU 路径（render / render_async），\
+                 零拷贝的 render_to_texture 不支持（GAPS PC-01）"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// 把 `composite = true` 的内容层按声明顺序叠到视口像素上（native）。
+    #[cfg(not(target_arch = "wasm32"))]
+    fn composite_content(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &mut [u8],
+    ) -> Result<(), String> {
+        for (index, layer) in self.content.iter().enumerate().filter(|(_, l)| l.composite) {
+            let records = content_records(layer)?;
+            let pixels = zela_render_vector::render_2d(
+                layer.size[0],
+                layer.size[1],
+                1,
+                [0.0; 4],
+                &records,
+            )
+            .map_err(|error| format!("内容层 #{index} 渲染失败：{error}"))?;
+            composite_layer(rgba, width, height, &pixels, layer)
+                .map_err(|error| format!("内容层 #{index}：{error}"))?;
+        }
+        Ok(())
+    }
+
+    /// 同上（浏览器：内容层也用异步回读）。
+    #[cfg(target_arch = "wasm32")]
+    async fn composite_content_async(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &mut [u8],
+    ) -> Result<(), String> {
+        for (index, layer) in self.content.iter().enumerate().filter(|(_, l)| l.composite) {
+            let records = content_records(layer)?;
+            let pixels = zela_render_vector::render_2d_async(
+                layer.size[0],
+                layer.size[1],
+                1,
+                [0.0; 4],
+                &records,
+            )
+            .await
+            .map_err(|error| format!("内容层 #{index} 渲染失败：{error}"))?;
+            composite_layer(rgba, width, height, &pixels, layer)
+                .map_err(|error| format!("内容层 #{index}：{error}"))?;
+        }
+        Ok(())
+    }
+}
+
+/// 内容层的一份 draw 列表 → 矢量记录（尺寸 = 该层自己的纹理尺寸，与 wgpu 侧
+/// `begin_frame_at` 的 geometry 同口径：视口 == 纹理、ppp = 1）。
+fn content_records(layer: &ContentSnapshot) -> Result<Vec<zela_render_vector::PathRecord>, String> {
+    let items: Vec<zela_render_vector::SceneItem<'_>> = layer
+        .draws
+        .iter()
+        .map(|recorded| zela_render_vector::SceneItem {
+            shape: &recorded.shape,
+            transform: recorded.transform,
+            style: recorded.style,
+        })
+        .collect();
+    zela_render_vector::scene_records(&items, (layer.size[0], layer.size[1]))
+        .map_err(|error| error.to_string())
+}
+
+/// 把一张内容纹理按 **contain + 居中**（与 `compositor::fit_rect` 同口径）叠到 `dst`。
+///
+/// 混合口径抄 `compositor::blend_state`：`Alpha` 是**预乘**（`One / OneMinusSrcAlpha`），
+/// `Opaque` 是 REPLACE，`Additive` 是 `One / One`；`opacity` 乘在源上。
+fn composite_layer(
+    dst: &mut [u8],
+    width: u32,
+    height: u32,
+    src: &[u8],
+    layer: &ContentSnapshot,
+) -> Result<(), String> {
+    let [sw, sh] = layer.size;
+    let needed = sw as usize * sh as usize * 4;
+    if sw == 0 || sh == 0 || src.len() < needed {
+        return Err(format!(
+            "内容纹理尺寸非法：{sw}×{sh}（像素 {} 字节，至少需要 {needed}）",
+            src.len()
+        ));
+    }
+    let scale = (width as f32 / sw as f32).min(height as f32 / sh as f32);
+    if !(scale > 0.0) || !scale.is_finite() {
+        return Err(format!("内容纹理无法适配到 {width}×{height}"));
+    }
+    let (dw, dh) = (sw as f32 * scale, sh as f32 * scale);
+    let (left, top) = ((width as f32 - dw) * 0.5, (height as f32 - dh) * 0.5);
+    let opacity = layer.opacity.clamp(0.0, 1.0);
+
+    for y in 0..height {
+        let fy = (y as f32 + 0.5 - top) / dh;
+        if !(0.0..1.0).contains(&fy) {
+            continue;
+        }
+        for x in 0..width {
+            let fx = (x as f32 + 0.5 - left) / dw;
+            if !(0.0..1.0).contains(&fx) {
+                continue;
+            }
+            let [r, g, b, a] = bilinear(src, sw, sh, fx * sw as f32 - 0.5, fy * sh as f32 - 0.5);
+            let index = ((y * width + x) * 4) as usize;
+            let byte = |value: f32| (value * 255.0).round().clamp(0.0, 255.0) as u8;
+            match layer.blend {
+                ze_render_ir::LayerBlend::Alpha => {
+                    let alpha = a * opacity;
+                    let keep = 1.0 - alpha;
+                    dst[index] = byte(r * opacity + dst[index] as f32 / 255.0 * keep);
+                    dst[index + 1] = byte(g * opacity + dst[index + 1] as f32 / 255.0 * keep);
+                    dst[index + 2] = byte(b * opacity + dst[index + 2] as f32 / 255.0 * keep);
+                    dst[index + 3] = byte(alpha + dst[index + 3] as f32 / 255.0 * keep);
+                }
+                ze_render_ir::LayerBlend::Opaque => {
+                    dst[index] = byte(r * opacity);
+                    dst[index + 1] = byte(g * opacity);
+                    dst[index + 2] = byte(b * opacity);
+                    dst[index + 3] = byte(opacity);
+                }
+                ze_render_ir::LayerBlend::Additive => {
+                    dst[index] = byte(r * opacity + dst[index] as f32 / 255.0);
+                    dst[index + 1] = byte(g * opacity + dst[index + 1] as f32 / 255.0);
+                    dst[index + 2] = byte(b * opacity + dst[index + 2] as f32 / 255.0);
+                    dst[index + 3] = byte(a * opacity + dst[index + 3] as f32 / 255.0);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 双线性采样（premultiplied RGBA，坐标钳在边缘）。
+fn bilinear(src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [f32; 4] {
+    let (w, h) = (width as i32, height as i32);
+    let (x0, y0) = (x.floor() as i32, y.floor() as i32);
+    let (tx, ty) = (x - x0 as f32, y - y0 as f32);
+    let at = |px: i32, py: i32| -> [f32; 4] {
+        let px = px.clamp(0, w - 1);
+        let py = py.clamp(0, h - 1);
+        let i = ((py * w + px) * 4) as usize;
+        [
+            src[i] as f32 / 255.0,
+            src[i + 1] as f32 / 255.0,
+            src[i + 2] as f32 / 255.0,
+            src[i + 3] as f32 / 255.0,
+        ]
+    };
+    let mix = |a: [f32; 4], b: [f32; 4], t: f32| -> [f32; 4] {
+        std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t)
+    };
+    let top = mix(at(x0, y0), at(x0 + 1, y0), tx);
+    let bottom = mix(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx);
+    mix(top, bottom, ty)
 }
 
 /// 把 reveal 的 `[start, end]`（归一化弧长）裁成一条**开放折线**（B14 / X4-01）。

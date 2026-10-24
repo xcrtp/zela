@@ -658,7 +658,7 @@
 
 | 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| V-01 | **阴影整块被关**（能力消失，不是参数丢失）：桥给 `Light::Sun` / `Light::Spot` 一律写 `shadows: false`，而后端侧阴影是完整实现 | 渲染 / 3D 光照 | **部分关闭（PB Step 1：开关与超限出口就位，默认仍关）** | `fn zela_playback::vector3d::lights` 不再写字面量，改读 `shadows()`；显式开启 = native `ZELA_SHADOWS=1`、浏览器 `?shadows=1`，**默认关**（PB §1.3：不要一步到位改默认）。能力侧 `const zela_render_vector::shadow::SIZE = 2048`、`MOST = 4`，3×3 PCF、法线偏移 1.5 texel、半径按 2^(1/4) 取整 + 中心对齐整纹素。⚠️ 原文"67 MiB/**帧**"已不成立（PA W 段已记）：`ShadowMaps` 在 `Buffers` 内，B17 之后随 `Player` 常驻 ⇒ **一次性 ≈67 MiB**。超限不再静默：`shadow::fit` 返回 `requested`，`ShadowTotals`（events / requested / cast）经 `ZELA_FRAME_REPORT.vector_shadows` 与浏览器 `[vector-shadows]` 输出。默认是否切换留待"实测通过 + 重录"评估 |
+| V-01 | **阴影整块被关**（能力消失，不是参数丢失）：桥给 `Light::Sun` / `Light::Spot` 一律写 `shadows: false`，而后端侧阴影是完整实现 | 渲染 / 3D 光照 | **部分关闭（PB Step 1：开关与超限出口就位，默认仍关）** | `fn zela_playback::vector3d::lights` 不再写字面量，改读 `shadows()`；显式开启 = native `ZELA_SHADOWS=1`、浏览器 `?shadows=1`，**默认关**（PB §1.3：不要一步到位改默认）。能力侧 `const zela_render_vector::shadow::SIZE = 2048`、`MOST = 4`，3×3 PCF、法线偏移 1.5 texel、半径按 2^(1/4) 取整 + 中心对齐整纹素。⚠️ 成本描述（**PC 第二次修正**）：原文"67 MiB/**帧**"不成立（PA 已记），"一次性 ≈67 MiB"也不准确。实际是**按投射光数量**：每盏 **≈16.7 MiB**（2048² × 4 B，`shadow::SIZE`），`MOST = 4` 时上限才是 67 MiB；`shadow_maps` 只在 `layers > 0` 且容量不足时按 `layers` 扩容，且随 `Player` 常驻 ⇒ **一次性、非每帧、多数作品 1–2 盏（增量 17–34 MiB）**。PB 实测开 1 盏：51.5 − 33.5 = 18 MB。超限不再静默：`shadow::fit` 返回 `requested`，`ShadowTotals`（events / requested / cast）经 `ZELA_FRAME_REPORT.vector_shadows` 与浏览器 `[vector-shadows]` 输出。默认是否切换留待"实测通过 + 重录"评估 |
 | V-02 | **bloom 三参只接一个**：`Bloom { threshold, intensity, radius }` 里只有 `intensity` 被透传，threshold / radius 静默丢弃 | 渲染 / 后处理 | **已关闭（PB Step 2：三参全部接通）** | `View3` 新增 `bloom_threshold` / `bloom_radius`，编码进视图的 `occlusion.z/.w`（着色器只读 `.x/.y`，这是仅剩的空槽）；`bloom.wgsl` 的 `spread` 先按最大通道切门槛（施加到整色、保色相），`bloom.rs` 用半径决定金字塔级数（最粗一级纹素 ≈ radius 像素；默认 4.0 在 640×480 上仍是 6 级 ⇒ 半径不改变现状）。GPU 用例 `bloom_threshold_stops_low_light_from_spreading`：门槛 10 与关掉 bloom 同亮。默认 `Bloom::default().threshold = 1.0` ⇒ 只有真正高光发光，3D `[vector]` 基线因此重录 |
 | V-03 | **其余失效契约字段**：`RenderParams` 共 8 个字段，矢量侧仍失效 4 个 | 渲染 / 契约 | **记账（B19 Step 0，与 X1-04 合流；PB Step 2 划掉 bloom 两项）** | 失效：`env`、`msaa`、`supersample`、`filter`（`bloom.threshold` / `bloom.radius` 已由 PB Step 2 接通，见 V-02）。其中 `env`（IBL）最重——**没有它金属材质是死黑的**；它与 X1-04（环境图无脚本入口）合流指向同一件事。定义见 `ze_render_ir::params::RenderParams`；`msaa` / `supersample` / `filter` 在矢量侧由 `Gpu` 自身能力与固定采样决定，宿主传值不参与 |
 | V-04 | **wgpu 冻结定位**（B19 落账，PA 界定范围）：**冻结 = 渲染能力扩张；兼容必需改动允许** | 架构 / 后端关系 | **记账（B19 Step 0；PA Step 2 界定）** | 三层：① **冻结**：后处理栈 / IBL / AO / 阴影等**渲染能力扩张**一律不补——wgpu 的角色是"抽象的第二消费者"，义务是证明同一套抽象能容纳异构后端，而不是追功能；由此 X5-02/03/04/05 的参照物被固定，不再驱动矢量收敛（Step 1 落档）。② **允许**：正确性修复、Rust / wgpu 版本与契约变更的被动跟随，以及**兼容必需的接线改动**（surface 格式、深度格式、MSAA 能力查询、Cargo feature 如 `webgl`）；**冻结 ≠ 放任编译不过**。③ **仍然禁止**：任何让"抽象被迫向 wgpu 看齐"的语义让步。B16 ①（让 wgpu 走 WebGL2）落在此条**允许**范围内，与 V-06 不冲突：V-06 是"不做**矢量**的 WebGL 降级"（解析 AA 依赖 `atomic` storage buffer，WebGL2 无法表达），而 wgpu 后端不依赖 compute / storage（已核实：0 处 storage texture、0 处 storage buffer，仅 `gpu_timing.rs` 一个空 compute pass 且注释写明"不做任何工作"）。B16 ②（换默认后端）已由 B19 Step 3 吸收完成 ⇒ **B16 ① 状态 = 保留待做（依赖本条界定，本批不实现）** |
@@ -716,11 +716,30 @@
 
 ---
 
+## Y. PC 批次记账（内容纹理层与记账残余，2026-10-24）
+
+> 计划《PC执行计划_内容纹理层与记账残余》。一句话：**内容纹理层走"图层级"而不是"整帧"** ——
+> 内容层自己渲成纹理、再叠到视口上；只有被 3D 材质采样的层仍属路线 B。附带三处记账 / 注释残余。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PC-01 | **路线选择**：A（图层级叠加）vs B（矢量原生多视图 / 纹理采样）；本批选 A | 渲染 / 图层合成 | **已关闭（PC Step 1：A 落地）** | A = 内容层与视口层各自渲染、再按 contain + Alpha 叠加；B = 三处新公开面（多视图 / 带纹理记录 / 屏幕合成），见 PB-04。A 复用了矢量既有的 2D 能力与 B15 的纹理路径，**不需要** `StandardBackends` 参与；B 继续记账。实现：`VectorFrame::composite_content`（含 `bilinear` / `composite_layer`）；零拷贝的 `render_to_texture` 对含内容层的帧**显式报错**，而不是只画视口层 |
+| PC-02 | **矢量路径不经过合成器**：`run_frames` 的矢量分支直接拿 RGBA8（`snap.render`），`Compositor` 只服务 egui / wgpu 路径 | 渲染 / 架构 | **记账（PC Step 0 核实）** | 所以路线 A 的叠加要么走 GPU 合成器（需把视口纹理也搬到 GPU），要么在 CPU 像素上做。本批选 CPU：确定性好、无需跨后端句柄；代价是这两件作品在浏览器上要付一次回读（web 显示路径对含内容层的帧改走 `render_async` + 上传，其余帧仍零拷贝） |
+| PC-03 | **三个未验证点的实测结论**（V-1 / V-2 / V-3） | 渲染 / 路由 | **已关闭（PC Step 0）** | V-1 **成立**：`ContentTextureSpecs` + `ContentTextureQueue` 在 `assemble_runtime` 里**与后端无关**地注入，矢量快照能取到；V-2 **不需要**：内容层用矢量自己的 2D 路径渲染，`StandardBackends` 不进矢量分支；V-3 **成立**：`LayerKind::ContentTexture { size_px, composite }` 给尺寸与合成开关，`ContentTextureQueue[LayerId]` 给该层 draw。⚠️ 新发现：`atlas` 的内容层是 `composite = false`（被 `Material3D.texture` 采样）⇒ 路线 A **做不到**，它继续按"材质采样"被拒并回退 wgpu；所以新增基线是 **2 条**，不是计划写的 3 条 |
+| PC-04 | **[vector] 标签含义变化**：新增的两条是**混合后端** | 基线 / 文档 | **已关闭（PC Step 2）** | `baselines.txt` 的 `[vector]` 段头已写明两种含义（纯矢量 11 条 / 混合 2 条：`surface_matrix`、`surface_matrix.js`），并注明 `atlas` 没有 `[vector]` 条目的原因。决策日志带「（图层级：内容层由矢量渲染后叠加）」，不用猜 |
+| PC-05 | **`shadow_maps` 只扩不缩 + `Player` 缓存键不含 shadows 状态** | 渲染 / 资源生命周期 | **记账（PC Step 1；当前无触发路径）** | `shadow_maps` 只有"容量不足就按 `layers` 扩容"分支；`players: HashMap<(w, h, samples), Player>` 不含 shadows 状态。当前不触发（开关是加载期参数），但 `set_shadows` 是 `pub` —— **若将来运行期切换，缓存键必须带上该状态**，否则就是 B18「只比有没有、不比是哪一个」的同型 |
+| PC-06 | **wgsl 注释滞后**：`occlusion` 的 `.z/.w` 已承载 bloom 参数，注释仍只说 AO | 文档 / 着色器 | **已关闭（PC-A）** | `blend.wgsl` 与 `vector.wgsl` 的 `Frame` 结构体注释改为「x/y: AO；z/w: bloom threshold / radius」，并指向 `api.rs` 的 `view_3d` 打包说明（不在注释里重述数值） |
+| PC-07 | **V-01 成本描述第二次修正** | 文档 / 阴影 | **已关闭（PC-A）** | 每盏投射光 ≈16.7 MiB，`MOST = 4` 上限 67 MiB，按 `layers` 扩容且随 `Player` 常驻（一次性、非每帧）；多数作品 1–2 盏。PB 实测 1 盏：51.5 − 33.5 = 18 MB。见 V-01 条目 |
+
+**Y 段小计（PC）**：已关闭 5（PC-01、PC-03、PC-04、PC-06、PC-07）· 记账 2（PC-02、PC-05）。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–X**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–X 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–Y**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–Y 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|
