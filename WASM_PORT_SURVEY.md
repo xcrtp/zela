@@ -1,6 +1,9 @@
 # WASM 移植适配面探测报告
 
 > 只读探测：未修改任何生产代码，未提交 commit。
+>
+> **本报告为历史快照，文中路径可能已漂移，请以当前代码为准。**
+> （因此仓库根的文档锚点检查显式排除本文件——排除是响亮的，不是静默的。）
 > 探测环境：Windows / rustc 1.96.0 / target `wasm32-unknown-unknown`（已安装）/
 > wgpu 30.0.1 / 本机 adapter = NVIDIA RTX 4060 Laptop（Vulkan）。
 >

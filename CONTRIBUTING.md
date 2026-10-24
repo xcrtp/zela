@@ -44,6 +44,24 @@ cargo clippy --workspace --all-targets
 - 分层声明 → `architecture.json`（workspace 根）
 - 强制 CI → `.github/workflows/architecture.yml`
 
+## 批次收尾检查表（人工纪律）
+
+> 这四项**没有自动化**（见 GAPS PA-04 的诚实边界）：机器能查"路径存在 / 条目结构"，
+> 查不了"本轮讨论过的名词都进账了吗"。每批收尾前逐项过一遍。
+
+1. **专有名词追溯**：把本轮对话 / 计划里出现过的专有名词逐个 `grep GAPS.md`；
+   命中 0 的必须补条目，或显式写下"不需要记账"及理由。
+2. **状态追溯**：本轮改过代码后，`grep` 相关 GAPS 条目，确认描述没有变成过时的
+   （V-01 的"67 MiB/帧"就是这么烂掉的），并确认没有"同一事实两个值"的自相矛盾。
+3. **新增段必须双登记**：`check_gaps_subtotals` 的 `prefix` 列表 + `is_item` 白名单，
+   缺一不可——只加段 ⇒ 条目不参与小计重算，门禁全绿地漏账（PA-05）。
+4. **常量改值的文字同步**：改常量时 `grep` 该值的**文字出现**（含 `//!` / `///`
+   与其他 `.md`），确认没有第二处还写着旧值——这类不引用行号，只是"改了常量没改文字"
+   （`vector3d.rs` 的 reflectance 0.5 → 0.04 就是这么漏的）。
+
+> 已知四次漏账（三条静默默认值、B18 批次二、锚点作用域、Render Attachment）
+> 都至少能被其中一项抓住一次。见 GAPS PA-04。
+
 ## 提交规范
 
 Conventional Commits：`<type>(<scope>): <subject>`。type 用 `feat` / `fix` / `refactor` / `docs` / `test` / `chore`。

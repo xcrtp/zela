@@ -667,25 +667,30 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
     // K 段（B4+B5+B6）、L 段（B8+B9）、M 段（B7）、N 段（B10）、O 段（B11）、
-    // P 段（B12）、Q 段（B13）、R 段（B14）、S 段（B15）、T 段（B17）、U 段（B18）
-    // 与 V 段（B19 跨批补记）都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
+    // P 段（B12）、Q 段（B13）、R 段（B14）、S 段（B15）、T 段（B17）、U 段（B18）、
+    // V 段（B19 跨批补记）与 W 段（PA 记账收尾）都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
-        "## U.", "## V.",
+        "## U.", "## V.", "## W.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
         };
+        let base_line = text
+            .find(prefix)
+            .map(|at| text[..at].lines().count())
+            .unwrap_or(0);
         // 0 = 已关闭，1 = 部分关闭，2 = 记账，3 = 未执行，4 = 落档（参数性差异，终态）
         let mut counts = [0usize; 5];
-        for line in body.lines() {
+        for (index, line) in body.lines().enumerate() {
             let cells = table_cells(line);
-            if cells.len() < 4 {
+            let Some(first) = cells.first() else {
                 continue;
-            }
-            let id = cells[0].trim_matches('*').trim();
+            };
+            let id = first.trim_matches('*').trim();
             let is_item = id.contains('-')
                 && (id.starts_with('V')
+                    || id.starts_with("PA-")
                     || id.starts_with("S4-")
                     || id.starts_with("W1-")
                     || id.starts_with("X1-")
@@ -698,6 +703,16 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("X8-"));
             if !is_item {
                 continue;
+            }
+            // PA A2：条目必须满 5 列且证据列非空。此前 `cells.len() < 4 { continue }`
+            // 会把"缺证据列"的行**静默跳过**——又一个"看起来全绿"的缺口。
+            if cells.len() < 5 || cells[4].trim().is_empty() {
+                return Err(format!(
+                    "{} 第 {} 行的条目 `{id}` 缺证据列（必须满 5 列且第 5 列非空）：\n  {}",
+                    prefix,
+                    base_line + index + 1,
+                    line.trim()
+                ));
             }
             let status = cells[3];
             let bucket = if status.contains("部分关闭") {
@@ -756,7 +771,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// GAPS **语义锚点**校验（B12 Step 0.3）：`crate::mod::Item` 形式的引用必须有定义。
+/// **文档锚点**校验（B12 Step 0.3 起）：`crate::mod::Item` 形式的引用必须有定义，
+/// markdown 链接里的 `crates/...` 路径必须存在（B19 Step 2 加路径，PA Step 4 扩域）。
 ///
 /// - 只查**存在性**，不查语义（"常量还在但缺口已关闭"是 `verified` 字段的事，不归这里）；
 /// - 只校验首段是**本仓 crate**（`crates/**/Cargo.toml` 的 name，`-`/`_` 等价）的锚点；
@@ -769,6 +785,12 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
 /// **B19 Step 2**：除符号锚点外，还要校验 markdown 链接里的 `crates/...` **路径**形态
 /// （`crates/.../file.rs#L259-L275`）。此前只认 `::`，A/C 段的路径引用**全部被静默过滤**，
 /// 于是 7 条死链在门禁全绿的情况下存在了三批。`#L` 只是提示，**不参与定位**。
+///
+/// **PA Step 4（PA-02）**：路径校验的作用域从 `GAPS.md` 扩到**仓库根所有 `.md`** ——
+/// 符号锚点（`crate::mod::Item`）仍只在 GAPS 里查，它是 GAPS 的记账约定；路径是通用的。
+/// `WASM_PORT_SURVEY.md` **显式排除**（历史探测快照，路径漂移是它本来就该保留的信息；
+/// 文件头有可见声明 ⇒ 排除是响亮的，不是静默的）。含 `...` 的路径按构造不可解析，
+/// 不参与定位，但会**打印出来**让人决定是改成真实路径还是改写表述。
 fn check_gaps_anchors(root: &Path) -> Result<(), String> {
     let mut crates: Vec<(String, PathBuf)> = Vec::new();
     collect_crates(&root.join("crates"), &mut crates)?;
@@ -805,25 +827,111 @@ fn check_gaps_anchors(root: &Path) -> Result<(), String> {
 
     let mut linked = 0usize;
     let mut missing: Vec<String> = Vec::new();
-    for token in linked_crate_paths(&text) {
-        if !root.join(&token).exists() {
-            missing.push(token);
-            continue;
+    let mut abbreviated: Vec<String> = Vec::new();
+    for document in root_markdown_docs(root)? {
+        let name = document
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("?");
+        let body = fs::read_to_string(&document)
+            .map_err(|error| format!("读取 {} 失败：{error}", document.display()))?;
+        for token in linked_crate_paths(&body) {
+            if token.contains("...") {
+                // 按构造不可解析；由下面的全文扫描统一报告（链接只是其中一种形态）。
+                continue;
+            }
+            if root.join(&token).exists() {
+                linked += 1;
+            } else {
+                missing.push(format!("{name}: {token}"));
+            }
         }
-        linked += 1;
+        // 省略号路径可能出现在链接里，也可能只出现在行内代码 / shell 示例里
+        // （`ARCHITECTURE.md` 的 `grep ... crates/app/.../lib.rs`）。
+        for token in abbreviated_crate_paths(&body) {
+            let entry = format!("{name}: {token}");
+            if !abbreviated.contains(&entry) {
+                abbreviated.push(entry);
+            }
+        }
     }
     if !missing.is_empty() {
         // 一次列全（只报第一条会让人以为改完就绿了）。
         return Err(format!(
-            "GAPS 链接有 {} 条指向不存在的路径：\n  {}\n  \
+            "文档链接有 {} 条指向不存在的路径：\n  {}\n  \
              修法：改指向新位置；能力确实没了就改指向**可执行证据**（单测名 / 对拍用例），\
              不要删掉引用。",
             missing.len(),
             missing.join("\n  ")
         ));
     }
-    println!("[xtask] GAPS 链接：{linked} 条 `crates/` 路径全部存在");
+    if !abbreviated.is_empty() {
+        println!(
+            "[xtask] 文档链接：{} 条含省略号（按构造不可解析，未定位；请人工确认是真实路径还是改写表述）：",
+            abbreviated.len()
+        );
+        for item in &abbreviated {
+            println!("  {item}");
+        }
+    }
+    println!("[xtask] 文档链接：{linked} 条 `crates/` 路径全部存在");
     Ok(())
+}
+
+/// 文档里**含省略号**的 `crates/...` 片段：按构造不可解析 ⇒ 只提示、不参与定位。
+///
+/// 这类片段可能出现在 markdown 链接里，也可能只出现在行内代码 / shell 示例里
+/// （`ARCHITECTURE.md` 的 `grep ... crates/app/.../lib.rs`）⇒ 不能只扫链接。
+fn abbreviated_crate_paths(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("crates/") {
+        let tail = &rest[at..];
+        let end = tail
+            .find(|c: char| {
+                c.is_whitespace() || matches!(c, '`' | '"' | '\'' | ')' | '>' | '|' | '，' | '。')
+            })
+            .unwrap_or(tail.len())
+            .max(1);
+        let token = tail[..end].trim_end_matches([',', ';']);
+        // 只报"省略号后面还有真实片段"的（`crates/app/.../lib.rs`）；
+        // 纯泛指 `crates/...` 不算路径，报出来只会训练人忽略输出。
+        let tail_after = token.rsplit("...").next().unwrap_or_default().trim_start_matches('/');
+        if token.contains("...") && !tail_after.is_empty() {
+            out.push(token.to_string());
+        }
+        rest = &tail[end..];
+    }
+    out
+}
+
+/// 仓库根目录的 `.md` 文档（按文件名排序）。
+///
+/// `WASM_PORT_SURVEY.md` **显式排除**：它是历史探测快照，路径漂移是它本来就该保留的信息。
+/// 该文件头部有一行可见声明（"本报告为历史快照，文中路径可能已漂移…"），所以这个排除
+/// 是**响亮**的；静默排除等于又造一个"看起来全绿"的门禁（PA-02）。
+fn root_markdown_docs(root: &Path) -> Result<Vec<PathBuf>, String> {
+    const EXCLUDED: &[&str] = &["WASM_PORT_SURVEY.md"];
+    let mut out = Vec::new();
+    let entries =
+        fs::read_dir(root).map_err(|error| format!("读取 {} 失败：{error}", root.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("遍历 {} 失败：{error}", root.display()))?;
+        let path = entry.path();
+        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if EXCLUDED.contains(&name) {
+            continue;
+        }
+        out.push(path);
+    }
+    out.sort();
+    Ok(out)
 }
 
 /// 递归收集 `crates/**/Cargo.toml` 的 `name` → crate 目录。
