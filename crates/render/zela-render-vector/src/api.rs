@@ -32,6 +32,62 @@ pub struct FilledPath {
     /// （`material = (m, r, f, 1)`）。`Some(_)` ⇒ 该平面路径按 PBR / 环境光受光；
     /// `None` ⇒ 上游的 `NO_MATERIAL`（`material[3] = 0`）。
     pub material: Option<[f32; 3]>,
+    /// **PD**：可选的后端已实现参数（默认 = 当前行为）。
+    pub options: PathOptions,
+}
+
+/// 渐变（上游 `paint.wgsl` 的 `stops`）：色标**均匀分布**，轴是两个 **场景空间**端点。
+///
+/// 轴端点不经过 [`FilledPath::model`]（上游 `paint()` 直接把它们投影到屏幕，
+/// 与几何各自带模型矩阵的口径不同）—— 所以这里要传**模型变换之后**的位置。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gradient {
+    /// 至少两个色标（straight RGBA，0..1），沿轴均匀分布。
+    pub stops: Vec<[f32; 4]>,
+    pub from: [f32; 3],
+    pub to: [f32; 3],
+}
+
+/// 第二套 paint（tween 的另一端）：`mix` = 0 全用第一套，1 全用第二套（上游 `dash[3]`）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SecondPaint {
+    pub fill: [f32; 4],
+    pub stroke: [f32; 4],
+    pub background: [f32; 4],
+    pub mix: f32,
+}
+
+/// 虚线。上游单位是**曲线参数 u**（1 = 一整条曲线），不是屏幕像素。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Dash {
+    /// 周期（u）；0 = 不虚（上游 `dashed()` 的第一个条件）。
+    pub period: f32,
+    /// 每个周期里显示的比例（0..1；1 = 实线）。
+    pub duty: f32,
+    /// 相位（u）。
+    pub phase: f32,
+}
+
+/// 路径的可选绘制选项：**全部默认 ⇒ 当前行为逐位不变**。
+///
+/// 每个字段都能指到 `Record` 里一个已实现的槽位（PD §4.1）：
+/// `background`/`background_width` → `background` + `params[3]`；
+/// `second` → `*2` 三色 + `dash[3]`；`dash` → `dash[0..3]`；
+/// `curve_window` → `params[0..2]`；`gradient` → `fill_rows`/`stroke_rows` + `gradient_a/b`。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PathOptions {
+    /// 背景描边（第三色）；`None` ⇒ 不画。
+    pub background: Option<[f32; 4]>,
+    /// 背景描边的宽度（场景单位；`background = None` 时忽略）。
+    pub background_width: f32,
+    /// 第二套 paint 与混合进度。
+    pub second: Option<SecondPaint>,
+    /// 虚线。
+    pub dash: Option<Dash>,
+    /// 只显示曲线的 `[lo, hi]` 参数窗口（曲线索引 + t；`None` = 整条）。
+    pub curve_window: Option<[f32; 2]>,
+    /// 填充（或描边）的渐变。
+    pub gradient: Option<Gradient>,
 }
 
 impl FilledPath {
@@ -56,6 +112,7 @@ impl FilledPath {
             ],
             shade_in_3d: false,
             material: None,
+            options: PathOptions::default(),
         }
     }
 }
@@ -182,6 +239,11 @@ pub struct MeshRecord {
     /// 材质 `[metallic, roughness, reflectance]`；`Some(_)` ⇒ 该网格按材质逐片元受光
     /// （上游 `material[3] = 1`）。`None` ⇒ 不受光（只按 `fill` 平涂）。
     pub material: Option<[f32; 3]>,
+    /// **PD**：逐顶点色（长度须等于 `positions`；`None` ⇒ 用 `fill`）。
+    /// 上游编码是 brush rows（`vertex_color` 按顶点索引取行）。
+    pub colors: Option<Vec<[f32; 4]>>,
+    /// **PD**：第二套表面色与混合进度（tween；只用到其中的 `fill` 与 `mix`）。
+    pub second: Option<SecondPaint>,
 }
 
 impl MeshRecord {
@@ -224,6 +286,15 @@ impl MeshRecord {
                 ));
             }
         }
+        if let Some(colors) = &self.colors {
+            if colors.len() != self.positions.len() {
+                return Err(format!(
+                    "mesh: 逐顶点色 {} ≠ 顶点数 {}",
+                    colors.len(),
+                    self.positions.len()
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -250,6 +321,8 @@ pub struct StrokedPath {
     /// 形态位：`cap | joint << 2`（0 = butt + miter）。
     pub shape_bits: u32,
     pub model: [[f32; 4]; 3],
+    /// **PD**：可选的后端已实现参数（默认 = 当前行为）。
+    pub options: PathOptions,
 }
 
 /// 一盏灯（B6 Step 1.2）：编码移植自上游 `rendering/feed.py::lighting`，
@@ -497,6 +570,64 @@ struct Prepared {
     records: Vec<u8>,
 }
 
+/// brush rows 的键空间（与路径 / 网格的键 `1..=n` 分开；`Store` 的 `brushes` 是独立映射）。
+const ROW_KEY_BASE: u64 = 1 << 40;
+
+/// 把 [`PathOptions`] 写进一条记录：**每个字段都对应 `Record` 里一个已实现的槽位**。
+///
+/// `fill` = 这条记录是填充（渐变写 `fill_rows`）还是描边（写 `stroke_rows`）。
+fn apply_options(
+    record: &mut Record,
+    options: &PathOptions,
+    player: &mut crate::render::Player,
+    key: u64,
+    fill: bool,
+) -> Result<(), String> {
+    if let Some(background) = options.background {
+        record.background = background;
+        record.params[3] = options.background_width.max(0.0);
+    }
+    if let Some(second) = options.second {
+        record.fill2 = second.fill;
+        record.stroke2 = second.stroke;
+        record.background2 = second.background;
+        record.dash[3] = second.mix.clamp(0.0, 1.0);
+    }
+    if let Some(dash) = options.dash {
+        if !(dash.period > 0.0) {
+            return Err("dash.period 必须 > 0（不画虚线就不要给 dash）".to_string());
+        }
+        record.dash[0] = dash.period;
+        record.dash[1] = dash.duty.clamp(0.0, 1.0);
+        record.dash[2] = dash.phase;
+    }
+    if let Some([lo, hi]) = options.curve_window {
+        if !(hi > lo) {
+            return Err(format!("curve_window 必须 hi > lo（收到 [{lo}, {hi}]）"));
+        }
+        record.params[0] = lo;
+        record.params[1] = hi;
+    }
+    if let Some(gradient) = &options.gradient {
+        if gradient.stops.len() < 2 {
+            return Err(format!(
+                "gradient 至少两个色标（收到 {}）",
+                gradient.stops.len()
+            ));
+        }
+        let row_key = ROW_KEY_BASE | key;
+        player.add_rows(row_key, bytemuck::cast_slice(&gradient.stops))?;
+        if fill {
+            record.fill_rows = row_key;
+        } else {
+            record.stroke_rows = row_key;
+        }
+        record.gradient_a = [gradient.from[0], gradient.from[1], gradient.from[2], 0.0];
+        record.gradient_b = [gradient.to[0], gradient.to[1], gradient.to[2], 0.0];
+    }
+    Ok(())
+}
+
 /// 把一帧的路径 / 网格上传进**常驻 player** 并打包记录：同步 / 异步两条渲染路径共用这一份，
 /// 避免两套实现在几何映射上漂移（B15）；player 由 [`crate::render::Gpu::take_player`] 复用（B17）。
 fn prepare_view(
@@ -517,25 +648,29 @@ fn prepare_view(
         match record {
             PathRecord::Fill(path) => {
                 let curves = upload_path(player, key, i, &path.points, &path.ranges)?;
-                built.push(Record::filled(
+                let mut record = Record::filled(
                     key,
                     curves,
                     path.model,
                     path.fill,
                     path.shade_in_3d,
                     path.material,
-                ));
+                );
+                apply_options(&mut record, &path.options, player, key, true)?;
+                built.push(record);
             }
             PathRecord::Stroke(path) => {
                 let curves = upload_path(player, key, i, &path.points, &path.ranges)?;
-                built.push(Record::stroked(
+                let mut record = Record::stroked(
                     key,
                     curves,
                     path.model,
                     path.stroke,
                     path.width,
                     path.shape_bits,
-                ));
+                );
+                apply_options(&mut record, &path.options, player, key, false)?;
+                built.push(record);
             }
             PathRecord::Mesh(mesh) => {
                 mesh.validate()
@@ -565,13 +700,23 @@ fn prepare_view(
                     0,
                     0,
                 )?)?;
-                built.push(Record::mesh(
+                let mut record = Record::mesh(
                     key,
                     (mesh.triangles.len() / 3) as u32,
                     mesh.model,
                     mesh.fill,
                     mesh.material,
-                ));
+                );
+                if let Some(colors) = &mesh.colors {
+                    let row_key = ROW_KEY_BASE | key;
+                    player.add_rows(row_key, bytemuck::cast_slice(colors))?;
+                    record.fill_rows = row_key;
+                }
+                if let Some(second) = mesh.second {
+                    record.fill2 = second.fill;
+                    record.dash[3] = second.mix.clamp(0.0, 1.0);
+                }
+                built.push(record);
             }
         }
     }
@@ -993,6 +1138,7 @@ mod tests {
                 [0.0, 1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 0.0],
             ],
+            options: Default::default(),
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[line.clone().into()]) {
             Ok(frame) => frame,
@@ -1046,6 +1192,7 @@ mod tests {
             ],
             shade_in_3d: false,
             material: None,
+            options: Default::default(),
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[fill.into()]) {
             Ok(frame) => frame,
@@ -1069,6 +1216,7 @@ mod tests {
                 [0.0, 1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 0.0],
             ],
+            options: Default::default(),
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[stroke.into()]) {
             Ok(frame) => frame,
@@ -1406,6 +1554,8 @@ mod tests {
                 [0.0, 0.0, 1.0, 0.0],
             ],
             material,
+            colors: None,
+            second: None,
         };
         let view = |tone: ze_render_ir::ToneCurve| View3 {
             frame: (4.0, 4.0),
@@ -1481,6 +1631,8 @@ mod tests {
                 [0.0, 0.0, 1.0, 0.0],
             ],
             material: None,
+            colors: None,
+            second: None,
         };
         base.validate().expect("合法三角面");
 
@@ -1527,6 +1679,7 @@ mod tests {
                 ],
                 shade_in_3d: false,
                 material: None,
+                options: Default::default(),
             }
         };
         // 外圈 CCW、内圈 CW（世界 y 向上）。
@@ -1626,5 +1779,290 @@ mod tests {
             sun_only, sun_only_occluded,
             "只有方向光时 AO 不生效（上游 `occlusion_of` 依赖环境光）；若这里开始不同，请更新 V2-15"
         );
+    }
+
+    // ─── PD：逐参验证（每个新参数都要证明"它真的改变输出"） ─────────────────
+
+    fn square8(fill: [f32; 4]) -> FilledPath {
+        FilledPath::polygon(
+            &[
+                [-8.0, -8.0, 0.0],
+                [8.0, -8.0, 0.0],
+                [8.0, 8.0, 0.0],
+                [-8.0, 8.0, 0.0],
+            ],
+            fill,
+        )
+    }
+
+    fn render_2d_or_panic(records: &[PathRecord], clear: [f32; 4]) -> Vec<u8> {
+        match render_2d(64, 64, 1, clear, records) {
+            Ok(frame) => frame,
+            Err(error) => panic!("矢量后端起不来：{error}"),
+        }
+    }
+
+    fn count(frame: &[u8], test: impl Fn(&[u8]) -> bool) -> usize {
+        frame.chunks_exact(4).filter(|p| test(p)).count()
+    }
+
+    /// **PD（background / params[3]）**：第三色 + 背景描边宽度真的画出外框。
+    #[test]
+    fn background_stroke_changes_pixels_outside_the_fill() {
+        let red = |p: &[u8]| p[0] > 160 && p[1] < 80 && p[2] < 80;
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let plain = render_2d_or_panic(&[square8([1.0, 1.0, 1.0, 1.0]).into()], clear);
+        let mut framed = square8([1.0, 1.0, 1.0, 1.0]);
+        framed.options.background = Some([1.0, 0.0, 0.0, 1.0]);
+        framed.options.background_width = 4.0;
+        let framed = render_2d_or_panic(&[framed.into()], clear);
+        assert_eq!(count(&plain, red), 0, "不给 background 时不该出现红色");
+        assert!(
+            count(&framed, red) > 50,
+            "背景描边应画出红色外框（实际 {} px）",
+            count(&framed, red)
+        );
+    }
+
+    /// **PD（second paint / dash[3]）**：第二套 paint 在 `mix = 1` 时完全取代第一套。
+    #[test]
+    fn second_paint_replaces_the_fill_at_mix_one() {
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let mut first = square8([1.0, 0.0, 0.0, 1.0]);
+        first.options.second = Some(SecondPaint {
+            fill: [0.0, 0.0, 1.0, 1.0],
+            stroke: [0.0, 0.0, 0.0, 0.0],
+            background: [0.0; 4],
+            mix: 0.0,
+        });
+        let mut second = first.clone();
+        second.options.second.as_mut().expect("second").mix = 1.0;
+        let a = pixel(&render_2d_or_panic(&[first.into()], clear), 64, 32, 32);
+        let b = pixel(&render_2d_or_panic(&[second.into()], clear), 64, 32, 32);
+        assert!(a[0] > 200 && a[2] < 32, "mix 0 应仍是红色：{a:?}");
+        assert!(b[2] > 200 && b[0] < 32, "mix 1 应变成蓝色：{b:?}");
+    }
+
+    /// **PD（dash）**：虚线让描边覆盖率下降（period/duty 真的参与）。
+    #[test]
+    fn dash_breaks_a_stroke() {
+        let line = |dash: Option<Dash>| StrokedPath {
+            points: vec![
+                [-16.0, 0.0, 0.0],
+                [-10.0, 0.0, 0.0],
+                [-6.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [6.0, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [16.0, 0.0, 0.0],
+            ],
+            ranges: vec![[0, 2, 0, 0]],
+            stroke: [1.0, 1.0, 1.0, 1.0],
+            width: 6.0,
+            shape_bits: 0,
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            options: PathOptions {
+                dash,
+                ..Default::default()
+            },
+        };
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let white = |p: &[u8]| p[0] > 160 && p[1] > 160 && p[2] > 160;
+        let solid = render_2d_or_panic(&[line(None).into()], clear);
+        let dashed = render_2d_or_panic(
+            &[line(Some(Dash {
+                period: 0.25,
+                duty: 0.5,
+                phase: 0.0,
+            }))
+            .into()],
+            clear,
+        );
+        assert!(
+            count(&dashed, white) < count(&solid, white),
+            "虚线应比实线少：solid = {}，dashed = {}",
+            count(&solid, white),
+            count(&dashed, white)
+        );
+        assert!(count(&dashed, white) > 0, "虚线不该整条消失");
+    }
+
+    /// **PD（curve_window / params[0..2]）**：窗口只显示前半段。
+    #[test]
+    fn curve_window_shows_only_the_first_curve() {
+        let line = |window: Option<[f32; 2]>| StrokedPath {
+            points: vec![
+                [-16.0, 0.0, 0.0],
+                [-10.0, 0.0, 0.0],
+                [-6.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [6.0, 0.0, 0.0],
+                [10.0, 0.0, 0.0],
+                [16.0, 0.0, 0.0],
+            ],
+            ranges: vec![[0, 2, 0, 0]],
+            stroke: [1.0, 1.0, 1.0, 1.0],
+            width: 6.0,
+            shape_bits: 0,
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            options: PathOptions {
+                curve_window: window,
+                ..Default::default()
+            },
+        };
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let white = |p: &[u8]| p[0] > 160 && p[1] > 160 && p[2] > 160;
+        let full = render_2d_or_panic(&[line(None).into()], clear);
+        let first = render_2d_or_panic(&[line(Some([0.0, 1.0])).into()], clear);
+        // 右半段（世界 x = +12 ⇒ 屏幕 x = 44）。
+        assert!(white(&pixel(&full, 64, 44, 32)), "整条应画到右端");
+        assert!(
+            !white(&pixel(&first, 64, 44, 32)),
+            "窗口 [0,1] 不该画到第二段"
+        );
+        assert!(count(&first, white) < count(&full, white));
+    }
+
+    /// **PD（gradient）**：多 stop 沿轴变化，且 stop 数真的参与（2 vs 3 的中点不同）。
+    #[test]
+    fn gradient_stops_vary_along_the_axis() {
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let square = |stops: Vec<[f32; 4]>| {
+            let mut path = square8([1.0, 0.0, 0.0, 1.0]);
+            path.options.gradient = Some(Gradient {
+                stops,
+                from: [-8.0, 0.0, 0.0],
+                to: [8.0, 0.0, 0.0],
+            });
+            path
+        };
+        let two = render_2d_or_panic(
+            &[square(vec![
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+            ])
+            .into()],
+            clear,
+        );
+        let (left, right) = (pixel(&two, 64, 26, 32), pixel(&two, 64, 38, 32));
+        assert!(
+            left[0] > right[0] + 40 && right[2] > left[2] + 40,
+            "红→蓝渐变应沿轴变化：left = {left:?}，right = {right:?}"
+        );
+        // 3 stop 的中点（绿）必须与 2 stop 的中点（红蓝之间）不同。
+        let three = render_2d_or_panic(
+            &[square(vec![
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+            ])
+            .into()],
+            clear,
+        );
+        let (mid_two, mid_three) = (pixel(&two, 64, 32, 32), pixel(&three, 64, 32, 32));
+        assert!(
+            mid_three[1] > mid_two[1] + 40,
+            "多 stop 应改变中点颜色：2 stop = {mid_two:?}，3 stop = {mid_three:?}"
+        );
+    }
+
+    /// **PD（逐顶点色）**：网格的 brush rows 按顶点取色，取代单一 `fill`。
+    #[test]
+    fn per_vertex_colors_replace_the_mesh_fill() {
+        let mesh = MeshRecord {
+            positions: vec![
+                [-8.0, -8.0, 0.0],
+                [0.0, -8.0, 0.0],
+                [0.0, 8.0, 0.0],
+                [-8.0, 8.0, 0.0],
+                [0.0, -8.0, 0.0],
+                [8.0, -8.0, 0.0],
+                [8.0, 8.0, 0.0],
+                [0.0, 8.0, 0.0],
+            ],
+            uvs: None,
+            normals: None,
+            triangles: vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+            fill: [1.0, 1.0, 1.0, 1.0],
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            material: None,
+            colors: Some(vec![
+                [1.0, 0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+            ]),
+            second: None,
+        };
+        let frame = render_2d_or_panic(&[PathRecord::Mesh(mesh)], [0.0, 0.0, 0.0, 1.0]);
+        let (left, right) = (pixel(&frame, 64, 26, 32), pixel(&frame, 64, 38, 32));
+        assert!(left[0] > 160 && left[2] < 80, "左半应是顶点色红：{left:?}");
+        assert!(right[2] > 160 && right[0] < 80, "右半应是顶点色蓝：{right:?}");
+    }
+
+    /// **PD**：新参数的错误必须显式（不静默修正）。
+    #[test]
+    fn option_errors_are_explicit() {
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let mut one_stop = square8([1.0; 4]);
+        one_stop.options.gradient = Some(Gradient {
+            stops: vec![[1.0; 4]],
+            from: [-8.0, 0.0, 0.0],
+            to: [8.0, 0.0, 0.0],
+        });
+        let error = render_2d(64, 64, 1, clear, &[one_stop.into()]).unwrap_err();
+        assert!(error.contains("至少两个色标"), "{error}");
+
+        let mut zero_period = square8([1.0; 4]);
+        zero_period.options.dash = Some(Dash {
+            period: 0.0,
+            duty: 0.5,
+            phase: 0.0,
+        });
+        let error = render_2d(64, 64, 1, clear, &[zero_period.into()]).unwrap_err();
+        assert!(error.contains("dash.period"), "{error}");
+
+        let mut backwards = square8([1.0; 4]);
+        backwards.options.curve_window = Some([1.0, 1.0]);
+        let error = render_2d(64, 64, 1, clear, &[backwards.into()]).unwrap_err();
+        assert!(error.contains("curve_window"), "{error}");
+
+        let mut colors = MeshRecord {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            uvs: None,
+            normals: None,
+            triangles: vec![0, 1, 2],
+            fill: [1.0; 4],
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            material: None,
+            colors: Some(vec![[1.0; 4]]),
+            second: None,
+        };
+        let error = render_2d(64, 64, 1, clear, &[PathRecord::Mesh(colors.clone())]).unwrap_err();
+        assert!(error.contains("逐顶点色"), "{error}");
+        colors.colors = None;
+        assert!(render_2d(64, 64, 1, clear, &[PathRecord::Mesh(colors)]).is_ok());
     }
 }

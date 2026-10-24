@@ -237,6 +237,7 @@ fn open_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         model: IDENTITY,
         shade_in_3d: false,
         material: None,
+        options: Default::default(),
     }
 }
 
@@ -255,6 +256,7 @@ fn polygon_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         // 场景路径走 2D 视图：不参与 3D 光照（B6 Step 1.2 的字段只在 `render_3d` 下有意义）。
         shade_in_3d: false,
         material: None,
+        options: Default::default(),
     }
 }
 
@@ -311,6 +313,7 @@ fn ellipse_path(at: Vec2, rx: f32, ry: f32, m: &Transform2D, center: Vec2) -> Fi
         model: IDENTITY,
         shade_in_3d: false,
         material: None,
+        options: Default::default(),
     }
 }
 
@@ -368,6 +371,7 @@ fn push_shape(
                     model: IDENTITY,
                     shade_in_3d: false,
                     material: None,
+                    options: Default::default(),
                 });
             }
         }
@@ -480,6 +484,7 @@ pub fn scene_records(
                         width: item.style.stroke_width,
                         shape_bits: shape_bits(item.style.stroke_shape),
                         model: IDENTITY,
+                        options: Default::default(),
                     }));
                 }
             }

@@ -662,7 +662,7 @@
 | V-02 | **bloom 三参只接一个**：`Bloom { threshold, intensity, radius }` 里只有 `intensity` 被透传，threshold / radius 静默丢弃 | 渲染 / 后处理 | **已关闭（PB Step 2：三参全部接通）** | `View3` 新增 `bloom_threshold` / `bloom_radius`，编码进视图的 `occlusion.z/.w`（着色器只读 `.x/.y`，这是仅剩的空槽）；`bloom.wgsl` 的 `spread` 先按最大通道切门槛（施加到整色、保色相），`bloom.rs` 用半径决定金字塔级数（最粗一级纹素 ≈ radius 像素；默认 4.0 在 640×480 上仍是 6 级 ⇒ 半径不改变现状）。GPU 用例 `bloom_threshold_stops_low_light_from_spreading`：门槛 10 与关掉 bloom 同亮。默认 `Bloom::default().threshold = 1.0` ⇒ 只有真正高光发光，3D `[vector]` 基线因此重录 |
 | V-03 | **其余失效契约字段**：`RenderParams` 共 8 个字段，矢量侧仍失效 4 个 | 渲染 / 契约 | **记账（B19 Step 0，与 X1-04 合流；PB Step 2 划掉 bloom 两项）** | 失效：`env`、`msaa`、`supersample`、`filter`（`bloom.threshold` / `bloom.radius` 已由 PB Step 2 接通，见 V-02）。其中 `env`（IBL）最重——**没有它金属材质是死黑的**；它与 X1-04（环境图无脚本入口）合流指向同一件事。定义见 `ze_render_ir::params::RenderParams`；`msaa` / `supersample` / `filter` 在矢量侧由 `Gpu` 自身能力与固定采样决定，宿主传值不参与 |
 | V-04 | **wgpu 冻结定位**（B19 落账，PA 界定范围）：**冻结 = 渲染能力扩张；兼容必需改动允许** | 架构 / 后端关系 | **记账（B19 Step 0；PA Step 2 界定）** | 三层：① **冻结**：后处理栈 / IBL / AO / 阴影等**渲染能力扩张**一律不补——wgpu 的角色是"抽象的第二消费者"，义务是证明同一套抽象能容纳异构后端，而不是追功能；由此 X5-02/03/04/05 的参照物被固定，不再驱动矢量收敛（Step 1 落档）。② **允许**：正确性修复、Rust / wgpu 版本与契约变更的被动跟随，以及**兼容必需的接线改动**（surface 格式、深度格式、MSAA 能力查询、Cargo feature 如 `webgl`）；**冻结 ≠ 放任编译不过**。③ **仍然禁止**：任何让"抽象被迫向 wgpu 看齐"的语义让步。B16 ①（让 wgpu 走 WebGL2）落在此条**允许**范围内，与 V-06 不冲突：V-06 是"不做**矢量**的 WebGL 降级"（解析 AA 依赖 `atomic` storage buffer，WebGL2 无法表达），而 wgpu 后端不依赖 compute / storage（已核实：0 处 storage texture、0 处 storage buffer，仅 `gpu_timing.rs` 一个空 compute pass 且注释写明"不做任何工作"）。B16 ②（换默认后端）已由 B19 Step 3 吸收完成 ⇒ **B16 ① 状态 = 保留待做（依赖本条界定，本批不实现）** |
-| V-05 | **E1/E2 结论**（辩了三轮，结论从未落账）：矢量为主 + wgpu 冻结兼容 ⇒ 融合/分立之争消解 | 架构 / 路由 | **记账（B19 Step 0）** | 5 件作品（demo3d Lines / surface_matrix 与其 `_js` / atlas ContentTexture / capability_gaps 的 2D3D 混排）矢量被拒 ⇒ 走冻结的 wgpu，画面差一档；**接受并记账**。基线锁的是"冻结的弱后端"，这是有意的口径，不是待修项 |
+| V-05 | **E1/E2 结论**（辩了三轮，结论从未落账）：矢量为主 + wgpu 冻结兼容 ⇒ 融合/分立之争消解 | 架构 / 路由 | **记账（B19 Step 0）** | 原 5 件作品矢量被拒；PC 的**图层级**叠加接住 `surface_matrix` 与其 `_js`（内容层矢量渲染 + CPU 合成）⇒ 现为 **3 件**（demo3d Lines / atlas ContentTexture / capability_gaps 的 2D3D 混排）走冻结的 wgpu，画面差一档；**接受并记账**。基线锁的是"冻结的弱后端"，这是有意的口径，不是待修项 |
 | V-06 | **不做兼容渲染器**（WebGL2） | 架构 / 路线 | **记账（B19 Step 0）** | 解析 AA 依赖**每像素链表**（`atomic` storage buffer），WebGL2 无法表达 ⇒ "矢量画质 + 全兼容"这个组合**不存在**；compute 是 WebGPU 核心功能，去掉它也换不来兼容性。故 B16 的 WebGL 接线不以"兼容"为目标（见 §7 本批不做） |
 | V-07 | **产品化三问**冻结为"成人礼"，非路线图项 | 路线 | **记账（B19 Step 0）** | 24/7 功耗、陌生人脚本安全、画面值不值钱——三者都要真实用户与真实负载才能回答，当前数据不足，不作为待办 |
 | V-08 | **分层判据**（结构性 vs 参数性）只停在上一轮讨论，未落成文字与工具行为 | 验收 / 对拍 | **已关闭（B19 Step 1）** | 判据：**结构性**（内容缺失 / 系统性错误）必修；**参数性**（实现选择不同、两边都对）落档不修。落地为 X5-02/03/04/05 的"落档·参数性"终态 + `zela-parity` 输出的 `kind` 列（见 R 段与 §3.3） |
@@ -692,10 +692,9 @@
 
 **W 段小计（PA）**：已关闭 3（PA-02、PA-03、PA-05）· 部分关闭 1（PA-04）· 记账 1（PA-01）。
 
-> **顺带确认（V-01 的描述已过时，本批不改写）**：V-01 写"新增 2048²×4 ≈ **67 MiB/帧**"。
-> 实测 `shadow_maps` 在 `Buffers` 内，`Buffers` 按需创建，而 B17 之后 `Buffers` 随 `Player`
-> **常驻复用** ⇒ 实际是 **≈67 MiB 一次性**，不是每帧。留给开阴影那一批一并改写 + 评估；
-> 先在这里记一句，免得下一个人看到"每帧"不敢动。
+> **V-01 的"67 MiB/帧"已由 PC-07 第二次修正**（不再是"每帧"，也不是笼统的"一次性"）：
+> 每盏投射光 ≈16.7 MiB、`MOST = 4` 时上限 67 MiB，按 `layers` 扩容且随 `Player` 常驻。
+> 这段旧注记保留只为解释当时的判断依据，**成本口径以 PC-07 为准**。
 
 ---
 
@@ -736,11 +735,30 @@
 
 ---
 
+## Z. PD 批次记账（引擎能力普查与 API 暴露，2026-10-25）
+
+> 计划《PD执行计划_引擎能力普查与API暴露》。一句话：**先普查，再暴露；暴露即验证。**
+> 自底向上锚定 `Record` / `Upload` / wgsl —— 两处上轮的判断（"IR 没有图元"、
+> "多 stop 会绑架内核"）都被源码推翻，这恰好证明普查必须先于设计。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PD-01 | **覆盖范围从未被声明**：27 条基线与 `zela-parity` 只覆盖公开出来的子集 | 文档 / 验证 | **已关闭（PD Step 1）** | 普查对照表落进 `ARCHITECTURE.md` 的 PD 节：后端能力 / 真实语义 / 公开面 / 场景层四列，未覆盖项逐条列明。已核实的反例：`Shape2D` 10 个变体**全有且全在用**（缺的是场景对象）；`paint.wgsl` 的 `stops(first, second, count, m, t)` **原生支持多 stop** |
+| PD-02 | **已实现但未暴露的参数**（标量 / 双 paint / dash / gradient / 逐顶点色） | 渲染 / 公开面 | **已关闭（PD Step 2 + 3）** | 新增 `PathOptions { background, background_width, second, dash, curve_window, gradient }` 与 `MeshRecord::{colors, second}`；每个字段都指向 `Record` 的既有槽位（`apply_options`）。逐参 GPU 用例：`background_stroke_changes_pixels_outside_the_fill`、`second_paint_replaces_the_fill_at_mix_one`、`dash_breaks_a_stroke`、`curve_window_shows_only_the_first_curve`、`gradient_stops_vary_along_the_axis`（含 2 vs 3 stop 中点差异）、`per_vertex_colors_replace_the_mesh_fill`；错误路径 `option_errors_are_explicit`（色标 < 2 / period = 0 / 窗口反向 / 顶点色数不符） |
+| PD-03 | **剥离到 PE 的能力**：纹理 / morph / IBL / 场景图元 / 点云逐点色 | 渲染 / 公开面 | **记账（PD §8 退路）** | 各自的具体阻塞：**纹理** = 需要先设计"纹理源"（图像 or 内容层 key）+ `TEXTURED` 标志，与 PB-04 的路线 B 是同一件事；**morph** = `clip = C1·S1 + C2·S2`，第二项是**差值形状**且权重烤进 `m2`（`dash[3]` 只管 paint2），"传目标几何 + mix"的 API 形状与后端语义不符，需要先定形状再暴露；**IBL** = `Upload::Environment` 要 rgbe 解码 + cube 绑定 + `Light::Environment` 桥接，且用例需要真实 radiance 资产（= V-03 / X1-04）；**场景图元** = `Ellipse`/`Polygon`/`Polyline` 是场景对象，改的是组件注册表与 `zela.scene` 指纹，不是 Record 暴露；**点云逐点色** = 公开面还没有 Points 记录类型，逐点色无处可挂。**每项都必须先写出"改变输出"的用例才许进公开面（P3）** |
+| PD-04 | **单位与坐标口径的陷阱**：`dash` 的 period 是**曲线参数 u**（1 = 一条曲线），不是像素；渐变的轴端点在**场景空间**、不吃 `model` | 公开面 / 语义 | **已关闭（PD Step 2：写进类型文档 + 用例钉住）** | `Dash` 文档写明 u 单位；`Gradient` 文档写明轴端点要传"模型变换之后"的位置（上游 `paint()` 直接投影 `gradient_a/b`，不乘记录矩阵）；`curve_window` 的 `[lo, hi]` 也是曲线索引 + t（`vector.wgsl` 的 `piece()` 先减曲线号再 clamp）。三条都各有用例或显式报错，不靠口头约定 |
+| PD-05 | **指纹一次付清**：`Style2D` / `Shape2D` / 场景组件本批是否需要动 | 契约 / 版本 | **已关闭（PD Step 2）** | 都没有动：新参数挂在矢量 crate 的公开结构（`PathOptions` / `MeshRecord`）上，`Record` 结构体尺寸与布局不变（336 字节断言仍在）。⇒ `zela.scene` 指纹**不变**，27 条基线 DIFF 0。`Record` 只把 10 个字段的可见性放宽到 `pub(crate)`（同 crate 内），不产生行为差异 |
+| PD-06 | **记账残余**：`MeshRecord` 文档仍写"本批不带纹理"、V-03 仍列 6 个失效字段 | 文档 | **已关闭（PD Step 4）** | `MeshRecord` 的"不带纹理"仍然成立（PD-03）；V-03 已在 PB 划掉 bloom 两项、现剩 4 项（`env` / `msaa` / `supersample` / `filter`），本轮复核无变化 |
+
+**Z 段小计（PD）**：已关闭 5（PD-01、PD-02、PD-04、PD-05、PD-06）· 记账 1（PD-03）。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–Y**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–Y 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–Z**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–Z 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|

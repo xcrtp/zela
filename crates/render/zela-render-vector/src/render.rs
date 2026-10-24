@@ -386,8 +386,9 @@ struct Paint {
 pub(crate) struct Record {
     key1: u64,
     key2: u64,
-    fill_rows: u64,
-    stroke_rows: u64,
+    // PD：`api.rs` 的 `apply_options` 把可选参数写进这些槽位（其余字段仍只在构造器里写）。
+    pub(crate) fill_rows: u64,
+    pub(crate) stroke_rows: u64,
     fill_rows2: u64,
     stroke_rows2: u64,
     texture: u64,
@@ -396,14 +397,14 @@ pub(crate) struct Record {
     m2: Mat34,
     fill: [f32; 4],
     stroke: [f32; 4],
-    background: [f32; 4],
-    fill2: [f32; 4],
-    stroke2: [f32; 4],
-    background2: [f32; 4],
-    params: [f32; 4],
-    gradient_a: [f32; 4],
-    gradient_b: [f32; 4],
-    dash: [f32; 4], // period, duty, phase (u; no dashes when the period is 0); how far paint 2 is in
+    pub(crate) background: [f32; 4],
+    pub(crate) fill2: [f32; 4],
+    pub(crate) stroke2: [f32; 4],
+    pub(crate) background2: [f32; 4],
+    pub(crate) params: [f32; 4],
+    pub(crate) gradient_a: [f32; 4],
+    pub(crate) gradient_b: [f32; 4],
+    pub(crate) dash: [f32; 4], // period, duty, phase (u; no dashes when the period is 0); how far paint 2 is in
     material: [f32; 4], // metallic, roughness, reflectance; 1 where it has one (see `blend.wgsl`'s light)
 }
 // Modified by Zela: 去掉 `take` 模块后，编译期尺寸断言内联（上游 `take::RECORD == 336`）。

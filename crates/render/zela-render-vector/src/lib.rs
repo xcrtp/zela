@@ -36,7 +36,10 @@ mod mesh;
 mod render;
 
 pub mod api;
-pub use api::{FilledPath, Light, MeshRecord, PathRecord, StrokedPath, View3, ViewOptions};
+pub use api::{
+    Dash, FilledPath, Gradient, Light, MeshRecord, PathOptions, PathRecord, SecondPaint,
+    StrokedPath, View3, ViewOptions,
+};
 // B15：同步读回只在 native 存在；浏览器只有异步面（没有阻塞读回）。
 #[cfg(not(target_arch = "wasm32"))]
 pub use api::{

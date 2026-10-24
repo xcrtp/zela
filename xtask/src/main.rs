@@ -668,11 +668,11 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
     // K 段（B4+B5+B6）、L 段（B8+B9）、M 段（B7）、N 段（B10）、O 段（B11）、
     // P 段（B12）、Q 段（B13）、R 段（B14）、S 段（B15）、T 段（B17）、U 段（B18）、
-    // V 段（B19 跨批补记）、W 段（PA 记账收尾）、X 段（PB 参数开启）与 Y 段（PC 内容纹理层）
-    // 都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
+    // V 段（B19 跨批补记）、W 段（PA 记账收尾）、X 段（PB 参数开启）、Y 段（PC 内容纹理层）
+    // 与 Z 段（PD 能力普查）都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
-        "## U.", "## V.", "## W.", "## X.", "## Y.",
+        "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -694,6 +694,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("PA-")
                     || id.starts_with("PB-")
                     || id.starts_with("PC-")
+                    || id.starts_with("PD-")
                     || id.starts_with("S4-")
                     || id.starts_with("W1-")
                     || id.starts_with("X1-")

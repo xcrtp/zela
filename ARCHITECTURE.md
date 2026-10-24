@@ -1526,12 +1526,13 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > 参照物 wgpu 冻结为"第二消费者"，四条参数性残差落档不再收敛。结束是有判据的，不是感觉。
 
 - **默认后端**：`routing::order_of` 的 `Auto` 从 `[Wgpu, Vector]` 换成 `[Vector, Wgpu]`；
-  `zela-render` 默认 `--backend auto`。矢量被拒（内容纹理 / 2D3D 混排 / 线框 / morph /
-  能力不足）才回退 wgpu，**回退必带理由**。25 条基线不受影响：`cargo verify --step hashes`
-  用显式的 (作品, 后端) 对表，不经过 Auto 路由。页面 `localStorage` 的后端残留值校验回落。
+  `zela-render` 默认 `--backend auto`。矢量被拒（材质采样的内容纹理 / 2D3D 混排 / 线框 /
+  morph / 能力不足）才回退 wgpu，**回退必带理由**。27 条基线不受影响：
+  `cargo verify --step hashes` 用显式的 (作品, 后端) 对表，不经过 Auto 路由。
+  页面 `localStorage` 的后端残留值校验回落。
 - **smoke 是第二个吃默认值的入口**（计划 §5.4 漏了）：它调 `zela-render` 不传 `--backend`。
   B19 把 smoke 显式钉在 `--backend wgpu`（录制时的口径）⇒ `[smoke]` 的 `2847735c…`
-  逐位不变；新默认路径由 `hashes` 的 11 条 `[vector]` 与 routing 单测守护，
+  逐位不变；新默认路径由 `hashes` 的 13 条 `[vector]` 与 routing 单测守护，
   不靠 smoke 这条 15 帧的短跑。
 - **参照物冻结（GAPS V-04）**：wgpu 只修正确性、不补能力；它作为第二消费者的义务是
   证明抽象能容纳异构后端。X5-02/03/04/05 因此**落档为参数性差异**（两边都对），
@@ -1543,15 +1544,68 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 - 矢量：2D 完整（开放折线、reveal）、3D 几何对齐、着色栈生效、资源常驻；桌面 + 移动端
   均无已知错误画面。
-- 路由：拒绝必带理由，无静默默认值；对拍 25 条 + 差异分类；资源计数 + GPU 三态计时。
+- 路由：拒绝必带理由，无静默默认值；对拍 27 条 + 差异分类；资源计数 + GPU 三态计时。
 
 **明确不可用（已记账，不掩盖）**
 
-- 5 件作品矢量被拒（demo3d Lines / surface_matrix 与其 `_js` / atlas ContentTexture /
-  capability_gaps 的 2D3D 混排）⇒ 走冻结的 wgpu，画面差一档（V-05）。
-- 阴影整块关闭（V-01）、IBL / `env` 无脚本入口（V-03）、bloom 无阈值（V-02）。
+- 3 件作品矢量被拒（demo3d Lines / atlas ContentTexture / capability_gaps 的 2D3D 混排）
+  ⇒ 走冻结的 wgpu，画面差一档（V-05）。`surface_matrix` 与其 `_js` 已由 PC 的**图层级**
+  叠加接住（内容层由矢量渲染 + CPU 合成，见 PC 节）。
+- 阴影默认关（V-01，显式开关已就位）、IBL / `env` 无脚本入口（V-03）、bloom 三参已全部接通（V-02 关闭）。
 - 四条参数性残差落档（X5-02/03/04/05）；wgpu 无后处理栈 / IBL（冻结，不补）。
-- miter limit 两边不一致（V2-11）：默认切矢量后**触发条件已命中**，待评估。
+- miter limit 两边不一致（V2-11）：已实测评估（1°/20° 尖角差 1.4% / 2.7% 覆盖率），
+  落档为参数性差异（PB-02）。
 
 **转向后的第一批**：内容表达力 + Render Attachment 三层（L1 画面语义进产物 / L2 宿主能力 /
 L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产出不同 payload）。
+
+### PC 内容纹理层（图层级叠加）
+
+> 一句话：**拒绝的粒度错了。** 原先"整帧含内容纹理 ⇒ 整帧拒绝矢量"，而正确粒度是**图层**：
+> 内容层自己渲成纹理，再叠到视口上。改完后 `surface_matrix` 与 `_js` 第一次走上矢量路径。
+
+- **路线 A（本批）**：内容层由矢量自己的 2D 路径渲染成 RGBA8（尺寸 = `LayerKind::ContentTexture`
+  的 `size_px`），再在 CPU 上按 **contain + 居中**、**预乘 Alpha**（与 `compositor::blend_state`
+  同口径）叠到视口像素上；顺序 = 图层声明顺序。实现见 `VectorFrame::composite_content`。
+- **路线 B（未做）**：内容纹理被 3D 材质采样（`composite = false`）需要矢量侧的纹理采样，
+  缺三处公开面（多视图入口 / 带纹理记录 / 屏幕合成）⇒ `atlas` 仍回退 wgpu（PB-04）。
+- **⚠️ F3：粒度只改了一半。** 现在的判定是"**帧内任一层 `composite = false` ⇒ 整帧拒绝**"——
+  同帧里既有可叠加层又有材质采样层时，仍会整帧回退。真正的图层级要等路线 B。
+- **两条新基线**：`surface_matrix` / `surface_matrix.js` 是 `[vector]` 段里的**混合后端**
+  （内容层矢量渲染 + CPU 合成），不是纯矢量；`baselines.txt` 段头已写明两种含义。
+- **零拷贝的边界**：`render_to_texture` 对含内容层的帧**显式报错**（叠加发生在 CPU 像素上）；
+  浏览器显示对这些作品改走回读 + 上传，其余帧仍零拷贝。
+- **决策日志**：`显式指定矢量（图层级：内容层由矢量渲染后叠加）` —— 组合方式可观测，不用猜。
+
+### PD 引擎能力普查与 API 暴露
+
+> 一句话：**先普查，再暴露；暴露即验证。** 公开面只覆盖了后端能力的一小部分，而"已对拍 27 条"
+> 这句话的覆盖面必须被声明。
+
+**普查对照表**（锚定 `Record` / `Upload` / wgsl，不从上层的 `Style2D` 往外补）
+
+| 后端能力（字段 / 槽位） | 真实语义 | 矢量 crate 公开面 | 场景层入口 |
+|---|---|---|---|
+| `fill` / `stroke` | 主色 | ✅ `FilledPath::fill` / `StrokedPath::stroke` | ✅ `Style2D` |
+| `background` + `params[3]` | 第三色 + 背景描边宽度 | ✅ `PathOptions::background(_width)` | ❌ |
+| `fill2/stroke2/background2` + `dash[3]` | 第二套 paint 与混合进度 | ✅ `PathOptions::second` / `MeshRecord::second` | ❌ |
+| `dash[0..3]` | 虚线 period / duty / phase（单位是曲线参数 u） | ✅ `PathOptions::dash` | ❌ |
+| `params[0..2]` | 部分路径窗口（曲线索引 + t） | ✅ `PathOptions::curve_window` | ❌ |
+| `fill_rows` / `stroke_rows` + `gradient_a/b` | 渐变（多 stop 均匀分布 + 轴端点） | ✅ `PathOptions::gradient` | ❌ |
+| brush rows（逐顶点） | 每个顶点一色 | ✅ `MeshRecord::colors` | ❌ |
+| `texture` + `Upload::Texture` | 纹理 key | ❌（PD-03 剥离） | ❌ |
+| `m2` / `key2` | morph 第二组几何（第二项是**差值形状**，权重烤进 `m2`） | ❌（PD-03 剥离） | ❌ |
+| `Upload::Environment` | IBL 环境图（rgbe） | ❌（V-03 / X1-04） | ❌ |
+| `Light::Environment`（kind 4） | 环境图灯 | enum 有，桥接无入口 | ❌ |
+| `Upload::Rows` 的 per-point 色 | 点云逐点色 | ❌（只做了网格逐顶点） | ❌ |
+| 形状变体 | `Shape2D` 10 变体全有且全用 | — | 场景对象缺 Ellipse / Polygon / Polyline |
+
+**逐参验证（每条都是 GPU 用例，断言"参数改变输出"）**
+
+`background_stroke_changes_pixels_outside_the_fill` · `second_paint_replaces_the_fill_at_mix_one` ·
+`dash_breaks_a_stroke` · `curve_window_shows_only_the_first_curve` ·
+`gradient_stops_vary_along_the_axis`（含 2 vs 3 stop 的中点差异）·
+`per_vertex_colors_replace_the_mesh_fill` · `option_errors_are_explicit`。
+
+**边界**：默认值全部保持当前行为 ⇒ 27 条基线 DIFF 0；脚本层入口留到 PE；
+纹理 / morph / IBL / 场景图元按 PD-03 剥离（原因逐条写在 GAPS）。

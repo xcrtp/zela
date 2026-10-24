@@ -261,6 +261,8 @@ fn mesh_record(
             material.roughness,
             DEFAULT_REFLECTANCE,
         ]),
+        colors: None,
+        second: None,
     }))
 }
 
