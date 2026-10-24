@@ -11,9 +11,10 @@
 
 use ze_scene_core::animation::TargetKind;
 use crate::types::{
-    Arrow, Axes2D, Camera2D, Camera3D, Circle, Cube, Curve, Fill, Formula, Group, Light, Material3D,
-    Morph, Name, Opacity, Parent, PathList, PathShape, PhaseAnim, Polyline, Reveal, RevealPath,
-    Stroke, Surface, Text, Transform, Transform3D, TransformChannel,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, Curve, CurveWindow, Dash,
+    Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathList,
+    PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, Stroke, Surface, Text,
+    Transform, Transform3D, TransformChannel,
 };
 use ze_pod_core::Handle;
 use ze_pod_macro::capability;
@@ -28,9 +29,13 @@ use ze_pod_macro::capability;
 /// **脚本层不可达**的能力入口 —— `group`（`Group` 标签）、`phase_anim`（`Target.Phase`
 /// 的写入对象）、`morph`（`Target.MorphT` 的写入对象）。它们此前不是"没人用"，
 /// 而是**没有入口**（见 GAPS W1-05）。
+/// `@9 → @10`（PE Step 2）：把 PD 已暴露的 5 项绘制参数接上场景层入口 ——
+/// `gradient` / `dash` / `second_paint` / `background_stroke` / `curve_window`。
+/// 它们此前**后端有、脚本无入口**（不是"没人用"）；组件挂上即开启，缺席 = 当前行为
+/// ⇒ 既有作品像素逐位不变。
 #[capability(
     namespace = "zela.scene",
-    version = "9",
+    version = "10",
     description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
     bindings
 )]
@@ -127,6 +132,21 @@ pub struct SceneApi<'a> {
 
     /// 构造可变形形状组件（B7 Step 4）：`Target.MorphT` 每帧写 `t`。
     pub morph: fn(&'a dyn Pod, morph: Morph) -> Handle,
+
+    /// 构造渐变组件（PE）：色标沿两个端点的轴均匀分布（多 stop 原生支持）。
+    pub gradient: fn(&'a dyn Pod, gradient: Gradient) -> Handle,
+
+    /// 构造虚线组件（PE）：单位是**曲线参数 u**，不是像素。
+    pub dash: fn(&'a dyn Pod, dash: Dash) -> Handle,
+
+    /// 构造第二套 paint 组件（PE）：`mix` 是混合进度。
+    pub second_paint: fn(&'a dyn Pod, second: SecondPaint) -> Handle,
+
+    /// 构造背景描边组件（PE）：填充之下的第三色。
+    pub background_stroke: fn(&'a dyn Pod, background: BackgroundStroke) -> Handle,
+
+    /// 构造曲线窗口组件（PE）：单位是曲线索引 + t。
+    pub curve_window: fn(&'a dyn Pod, window: CurveWindow) -> Handle,
 }
 
 /// 宿主暴露给脚本的内容编译接口。
@@ -154,9 +174,9 @@ pub struct ContentApi<'a> {
 // 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
 
 /// `zela.scene` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
-pub const SCENE_API_VERSION: &str = "9";
+pub const SCENE_API_VERSION: &str = "10";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 10_059_647_094_731_395_853;
+pub const SCENE_API_FINGERPRINT: u64 = 83_729_276_200_230_347;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

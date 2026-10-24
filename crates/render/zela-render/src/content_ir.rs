@@ -74,6 +74,8 @@ fn styled_path_to_cmd(p: &StyledPath, transform: Transform2D, scale: f32) -> Con
         space: MeasureSpace::World,
         // 内容 IR 目前不携带 cap / join（`Stroke2D` 只有宽度与颜色）⇒ 用默认形态。
         stroke_shape: ze_render_ir::StrokeShape::DEFAULT,
+        // 内容 IR 也没有渐变 / 虚线等参数（PE：这些入口挂在场景组件上）。
+        paint: Default::default(),
     };
     ContentDrawCmd {
         shape,

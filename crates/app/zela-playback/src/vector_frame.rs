@@ -110,7 +110,7 @@ impl VectorFrame {
                                 path: item.path.clone(),
                                 start: item.start,
                                 end: item.end,
-                                style: item.style,
+                                style: item.style.clone(),
                             })
                             .collect()
                     })
@@ -160,6 +160,18 @@ impl VectorFrame {
         // PC（路线 A）：只有 `composite = true` 的内容层能在图层级叠加；`composite = false`
         // 的层要被 3D 材质采样 ⇒ 仍是路线 B（矢量侧纹理采样），路由必须拒绝它。
         let has_material_content = self.content.iter().any(|layer| !layer.composite);
+        // PE Step 3：本帧用到多少**仅矢量支持**的绘制参数（wgpu 会忽略这些字段，
+        // 路由必须把"忽略"写进决策理由，不得静默）。
+        let vector_only_styles = self
+            .draws
+            .iter()
+            .map(|recorded| recorded.style.paint.feature_bits())
+            .chain(
+                self.reveals
+                    .iter()
+                    .map(|reveal| reveal.style.paint.feature_bits()),
+            )
+            .fold(0u8, |bits, next| bits | next);
         FrameContent {
             has_3d_camera,
             // B14：reveal 也是 2D 图元（独立队列，但同样占画面）。
@@ -169,6 +181,7 @@ impl VectorFrame {
             has_content_texture,
             has_material_content,
             has_morphs: self.morph_count > 0,
+            vector_only_styles,
         }
     }
 }
@@ -228,7 +241,7 @@ impl VectorFrame {
                     .map(|recorded| zela_render_vector::SceneItem {
                         shape: &recorded.shape,
                         transform: recorded.transform,
-                        style: recorded.style,
+                        style: recorded.style.clone(),
                     })
                     .collect();
                 // B14：wgpu 把 reveal 排在 DrawQueue 全部几何**之后**（同一 z 的稳定序）
@@ -238,14 +251,14 @@ impl VectorFrame {
                         .iter()
                         .filter_map(|reveal| {
                             clip_reveal(&reveal.path, reveal.start, reveal.end)
-                                .map(|shape| (shape, reveal.style))
+                                .map(|shape| (shape, reveal.style.clone()))
                         })
                         .collect();
                 items.extend(reveal_items.iter().map(|(shape, style)| {
                     zela_render_vector::SceneItem {
                         shape,
                         transform: ze_notion::Transform2D::identity(),
-                        style: *style,
+                        style: style.clone(),
                     }
                 }));
                 // 与 `render_scene_2d` 同一条映射（只是把记录留下来给三条路径复用）。
@@ -439,7 +452,7 @@ fn content_records(layer: &ContentSnapshot) -> Result<Vec<zela_render_vector::Pa
         .map(|recorded| zela_render_vector::SceneItem {
             shape: &recorded.shape,
             transform: recorded.transform,
-            style: recorded.style,
+            style: recorded.style.clone(),
         })
         .collect();
     zela_render_vector::scene_records(&items, (layer.size[0], layer.size[1]))

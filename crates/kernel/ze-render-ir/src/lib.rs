@@ -28,6 +28,7 @@ pub mod degrade;
 pub mod draw;
 pub mod layer;
 pub mod mesh;
+pub mod paint;
 pub mod params;
 pub mod pipeline;
 pub mod shape;
@@ -43,6 +44,7 @@ pub use caps::{
 pub use draw::{DrawCommand, ZIndex, ZOrder};
 pub use layer::{LayerBlend, LayerId};
 pub use mesh::{PrimitiveTopology, ShaderVariant, TextureHandle, UvProjection};
+pub use paint::{BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint};
 pub use params::{
     AmbientOcclusion, Bloom, MAX_SUPERSAMPLE, Msaa, RenderParamError, RenderParams, TextureFilter,
     ToneCurve, ToneMapping,

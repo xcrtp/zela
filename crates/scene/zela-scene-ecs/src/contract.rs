@@ -26,7 +26,8 @@
 //   组织与可见性（N 阶段）：`Name` / `Group` / `Visibility` / `Opacity`
 //   相机：      `Camera2D` / `Camera3D` / `Projection` / `Framing2D`（2D 取景参数，P1-2）/
 //               `CameraMode`（相机交互模式，K0）/ `FpsView`（FPS 朝向状态，K1）
-//   样式：      `StrokeSolid` / `FillSolid`
+//   样式：      `StrokeSolid` / `FillSolid` / `Gradient` / `Dash` / `SecondPaint` /
+//               `BackgroundStroke` / `CurveWindow`（PE 起）
 //   装配对象：  `Axes2D` / `AxesLine` / `FunctionGraph`（M4：网格与函数图像归对象层）
 //   动画与标记：`PhaseAnim` / `MorphShape` / `ContentTextureItem` / `Reveal`
 //   关系：      `Parent`
@@ -44,7 +45,9 @@ use ze_scene_core::{
     Path, Projection, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef, Transform,
     ZOrder,
 };
-use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
+};
 
 /// 契约层的**只读 / 读写**能力在此处对外转发：
 /// 消费方（UI 层 / 装配层 / App）只需 `zela_scene_ecs::contract::*` 一个入口，

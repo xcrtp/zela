@@ -1609,3 +1609,44 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 **边界**：默认值全部保持当前行为 ⇒ 27 条基线 DIFF 0；脚本层入口留到 PE；
 纹理 / morph / IBL / 场景图元按 PD-03 剥离（原因逐条写在 GAPS）。
+
+### PE 能力入口与展示作品
+
+> 一句话：**接一个、证明一个。** PD 暴露的 6 个参数在场景层**一个入口都没有** ——
+> "能力在后端，出口没修通"。本批把类型下沉到 IR（依赖方向允许），给每个能力配
+> 一件作品，并让 wgpu 侧**不再静默忽略**。
+
+**Step 1 类型下沉（依赖方向）**：`Gradient` / `Dash` / `SecondPaint` / `PathOptions` 从
+`zela-render-vector::api` 移到 `ze-render-ir::paint`。原因不是"好看"：场景层
+（`ze-scene-*`）**不依赖** `zela-render-vector`，类型住在后端 crate 里 ⇒ 永远接不上入口。
+矢量 crate → IR 是单向依赖，下沉不违反分层；矢量 crate 改为 `pub use`（公开面名字不变）。
+
+**Step 2 逐能力闭环**（挂上即开启，缺席 = 当前行为）：
+
+| 能力 | 场景层组件（脚本可见） | 落点 | 展示作品 |
+|---|---|---|---|
+| 渐变（多 stop） | `Gradient { stops, from, to }` | `Record.fill_rows` + `gradient_a/b` | `cap_gradient` |
+| 虚线 | `Dash { period, duty, phase }` | `dash[0..3]`（单位 = 曲线参数 u） | `cap_dash` |
+| 双 paint | `SecondPaint { fill, stroke, background, mix }` | `*2` 三色 + `dash[3]` | `cap_second` |
+| 背景描边 | `BackgroundStroke { color, width }` | `Record.background` + `params[3]` | `cap_background` |
+| 曲线窗口 | `CurveWindow { lo, hi }`（曲线索引 + t） | `params[0..2]` | `cap_window` |
+| 顶点色 | ——（脚本层没有网格构造入口） | `MeshRecord.colors` | **不入作品**：由 PD 的 `per_vertex_colors_replace_the_mesh_fill` 与 `option_errors_are_explicit` 钉住 |
+
+- **组件 → `Style2D`**：`record_scene` 的 `paint_of` 把 5 个独立组件汇成 `PathOptions`；
+  渐变端点与背景宽度用**同一份相机仿射 / scale** 换算（`record_scene` 仍是唯一换算点）。
+- **`Style2D` 因此不再 `Copy`**（渐变 stops 是 `Vec`）—— 这是"能力进样式"的必然后果，
+  已写进类型文档；所有克隆点都是显式的。
+- **5 件作品只进 `[vector]`**：给它们录 `[native]` 基线等于把"wgpu 静默丢弃"固化成基线。
+- **能力面付一次账**：`zela.scene@9 → @10`，指纹
+  `10_059_647_094_731_395_853 → 83_729_276_200_230_347`；能力覆盖 `49/49 → 54/54`。
+
+**Step 3 wgpu 显式化**：`FrameContent.vector_only_styles`（位掩码）由帧快照统计；
+选到 wgpu（显式或回退）时决策理由追加「wgpu 忽略本帧仅矢量支持的样式：渐变 / 虚线 …」。
+判据由 `routing.rs` 的两条用例钉住（正向点名 + 反向不误报）。
+
+**Step 4 指纹扩列**：`zela-app` 的 `object_fingerprint` 加入 5 个新组件（含渐变 stops 的
+逐色标量化）—— 否则"脚本改了渐变 ⇒ 指纹不变 ⇒ 对拍抓不到差异"（X1-11 同型）。
+
+**Step 5 基线**：批末**一次**重录；`[native]` 14 条不变，`[vector]` 13 → 18 条，
+段头注明「能力展示作品仅矢量」。
+

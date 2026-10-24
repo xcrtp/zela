@@ -665,6 +665,7 @@ mod tests {
             stroke: None,
             stroke_width: 0.0,
             space: MeasureSpace::Screen,
+            paint: Default::default(),
         }
     }
 
@@ -675,6 +676,7 @@ mod tests {
             stroke: Some(Color32::BLACK),
             stroke_width: width,
             space: MeasureSpace::Screen,
+            paint: Default::default(),
         }
     }
 
@@ -999,7 +1001,7 @@ mod tests {
             StrokeOptions::default().with_line_width(4.0)
         );
 
-        let mut shaped = base;
+        let mut shaped = base.clone();
         shaped.stroke_shape = ze_render_ir::StrokeShape {
             cap: StrokeCap::Round,
             join: StrokeJoin::Bevel,
@@ -1249,6 +1251,7 @@ mod tests {
             stroke: Some(Color32::BLACK),
             stroke_width: 2.0,
             space: MeasureSpace::Screen,
+            paint: Default::default(),
         };
         let out = tessellate(&shape, &identity(), &style, 0.05);
         assert_eq!(out.len(), 2);

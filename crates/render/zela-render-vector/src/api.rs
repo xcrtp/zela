@@ -36,59 +36,10 @@ pub struct FilledPath {
     pub options: PathOptions,
 }
 
-/// 渐变（上游 `paint.wgsl` 的 `stops`）：色标**均匀分布**，轴是两个 **场景空间**端点。
+/// **PE Step 1**：绘制参数类型的唯一真源在 `ze-render-ir`（场景层与后端共用一份）。
 ///
-/// 轴端点不经过 [`FilledPath::model`]（上游 `paint()` 直接把它们投影到屏幕，
-/// 与几何各自带模型矩阵的口径不同）—— 所以这里要传**模型变换之后**的位置。
-#[derive(Debug, Clone, PartialEq)]
-pub struct Gradient {
-    /// 至少两个色标（straight RGBA，0..1），沿轴均匀分布。
-    pub stops: Vec<[f32; 4]>,
-    pub from: [f32; 3],
-    pub to: [f32; 3],
-}
-
-/// 第二套 paint（tween 的另一端）：`mix` = 0 全用第一套，1 全用第二套（上游 `dash[3]`）。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SecondPaint {
-    pub fill: [f32; 4],
-    pub stroke: [f32; 4],
-    pub background: [f32; 4],
-    pub mix: f32,
-}
-
-/// 虚线。上游单位是**曲线参数 u**（1 = 一整条曲线），不是屏幕像素。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Dash {
-    /// 周期（u）；0 = 不虚（上游 `dashed()` 的第一个条件）。
-    pub period: f32,
-    /// 每个周期里显示的比例（0..1；1 = 实线）。
-    pub duty: f32,
-    /// 相位（u）。
-    pub phase: f32,
-}
-
-/// 路径的可选绘制选项：**全部默认 ⇒ 当前行为逐位不变**。
-///
-/// 每个字段都能指到 `Record` 里一个已实现的槽位（PD §4.1）：
-/// `background`/`background_width` → `background` + `params[3]`；
-/// `second` → `*2` 三色 + `dash[3]`；`dash` → `dash[0..3]`；
-/// `curve_window` → `params[0..2]`；`gradient` → `fill_rows`/`stroke_rows` + `gradient_a/b`。
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct PathOptions {
-    /// 背景描边（第三色）；`None` ⇒ 不画。
-    pub background: Option<[f32; 4]>,
-    /// 背景描边的宽度（场景单位；`background = None` 时忽略）。
-    pub background_width: f32,
-    /// 第二套 paint 与混合进度。
-    pub second: Option<SecondPaint>,
-    /// 虚线。
-    pub dash: Option<Dash>,
-    /// 只显示曲线的 `[lo, hi]` 参数窗口（曲线索引 + t；`None` = 整条）。
-    pub curve_window: Option<[f32; 2]>,
-    /// 填充（或描边）的渐变。
-    pub gradient: Option<Gradient>,
-}
+/// 它们原先定义在本 crate 里 ⇒ 场景层（不依赖本 crate）**无法引用**，能力没有入口。
+pub use ze_render_ir::{Dash, Gradient, PathOptions, SecondPaint};
 
 impl FilledPath {
     /// 由折线构造闭合填充路径（每段转成一条直线三次曲线）。
@@ -221,7 +172,8 @@ fn centroid_area(points: &[[f64; 3]]) -> [f32; 6] {
 /// `Mesh::new` 要求"每个点一个 (u, v)" ⇒ [`uvs`](Self::uvs) 为 `None` 时本入口补零；
 /// `normals` 为 `None` 时由上游按面积加权自动求法线（`smooth_normals`）。
 ///
-/// 本批**不带纹理**（GAPS V2-13：纹理 / 渐变的宿主入口仍缺）。
+/// 本批**不带纹理**（GAPS V2-13：纹理 / 渐变的宿主入口仍缺 —— 渐变已在 PE 接通，
+/// 纹理仍属 PD-03 顺延 PF 的那一项）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeshRecord {
     /// 顶点位置（模型空间）。

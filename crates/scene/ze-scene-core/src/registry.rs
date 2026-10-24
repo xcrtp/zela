@@ -14,7 +14,9 @@
 use std::sync::Arc;
 
 use ze_scene_contract::{Component, Group, LifetimeTracked, Name, Parent, Visibility};
-use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
+};
 
 use crate::components::{ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PhaseAnim, Reveal};
 use crate::composer::Composer;
@@ -37,6 +39,8 @@ macro_rules! known_component_table {
                    Name, Group, Visibility, Opacity,
                    Camera2D, Camera3D, Projection, Framing2D, CameraMode, FpsView,
                    StrokeSolid, FillSolid,
+                   // PE：绘制参数（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）。
+                   Gradient, Dash, SecondPaint, BackgroundStroke, CurveWindow,
                    Axes2D, AxesLine, FunctionGraph,
                    PhaseAnim, MorphShape, ContentTextureItem, Reveal, Parent,
                    // B3 Step 3：2D/3D 融合边界（Surface 是数据组件，不含 position）。

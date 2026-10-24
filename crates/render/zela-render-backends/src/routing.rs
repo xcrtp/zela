@@ -65,6 +65,24 @@ pub struct FrameContent {
     pub has_material_content: bool,
     /// 是否含形变（Morph）项（B14）：矢量后端尚未映射 ⇒ 显式拒绝，不静默丢。
     pub has_morphs: bool,
+    /// 本帧用到的**仅矢量支持**的绘制参数（位掩码，见 `ze_render_ir::PathOptions`）。
+    ///
+    /// PE Step 3：wgpu 后端不消费这些字段（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）。
+    /// 选到 wgpu 时**必须**在决策理由里写明"已忽略"，不得静默丢效果（B12 同口径）。
+    pub vector_only_styles: u8,
+}
+
+impl FrameContent {
+    /// 选择了 wgpu 时的显式说明（没有用到仅矢量特性 ⇒ `None`）。
+    fn ignored_style_note(&self) -> Option<String> {
+        if self.vector_only_styles == 0 {
+            return None;
+        }
+        Some(format!(
+            "wgpu 忽略本帧仅矢量支持的样式：{}",
+            ze_render_ir::PathOptions::feature_names(self.vector_only_styles)
+        ))
+    }
 }
 
 /// 路由决定（可观测面；下一批"可观测性专题"接成结构化输出）。
@@ -269,6 +287,12 @@ pub fn route_with_order(
                 } else {
                     reason
                 };
+                // PE Step 3：wgpu 不消费的绘制参数必须**显式**说明被忽略，
+                // 否则就是"填了没效果也不说"（V-01 / V-02 的同型）。
+                let reason = match (*kind, content.ignored_style_note()) {
+                    (BackendKind::Wgpu, Some(note)) => format!("{reason}（{note}）"),
+                    _ => reason,
+                };
                 return Ok(RoutingDecision {
                     backend: *kind,
                     reason,
@@ -406,6 +430,46 @@ mod tests {
         let decision = route(LoopBackend::Wgpu, plain_2d(), capable()).unwrap();
         assert_eq!(decision.backend, BackendKind::Wgpu);
         assert!(decision.rejected.is_empty());
+    }
+
+    /// **PE Step 3（可证伪）**：用了仅矢量支持的样式又选到 wgpu ⇒ 决策理由必须
+    /// **点名**被忽略的特性；否则就是"填了没效果也不说"。
+    #[test]
+    fn wgpu_must_say_which_vector_only_styles_it_ignores() {
+        use ze_render_ir::PathOptions;
+        let content = FrameContent {
+            vector_only_styles: PathOptions::FEATURE_GRADIENT | PathOptions::FEATURE_DASH,
+            ..plain_2d()
+        };
+        let decision = route(LoopBackend::Wgpu, content, capable()).unwrap();
+        assert_eq!(decision.backend, BackendKind::Wgpu);
+        assert!(
+            decision.reason.contains("忽略") && decision.reason.contains("渐变")
+                && decision.reason.contains("虚线"),
+            "理由必须点名被忽略的特性：{}",
+            decision.reason
+        );
+        // 反向判据：没有这些特性时不得凭空加"忽略"（避免误报）。
+        let clean = route(LoopBackend::Wgpu, plain_2d(), capable()).unwrap();
+        assert!(!clean.reason.contains("忽略"), "{}", clean.reason);
+        // 选到矢量时同样不该出现"忽略"（矢量全支持）。
+        let vector = route(LoopBackend::Vector, content, capable()).unwrap();
+        assert_eq!(vector.backend, BackendKind::Vector);
+        assert!(!vector.reason.contains("忽略"), "{}", vector.reason);
+    }
+
+    /// 回退路径同样要写明：矢量因 adapter 被拒 ⇒ 回退 wgpu 且说明忽略了什么。
+    #[test]
+    fn fallback_to_wgpu_also_reports_ignored_styles() {
+        use ze_render_ir::PathOptions;
+        let content = FrameContent {
+            vector_only_styles: PathOptions::FEATURE_SECOND,
+            ..plain_2d()
+        };
+        let decision = route(LoopBackend::Vector, content, None).unwrap();
+        assert_eq!(decision.backend, BackendKind::Wgpu);
+        assert!(decision.reason.contains("回退"));
+        assert!(decision.reason.contains("双 paint"), "{}", decision.reason);
     }
 
     /// 全部后端都拒绝 ⇒ 显式错误，且**每条**拒绝理由都非空（A4）。

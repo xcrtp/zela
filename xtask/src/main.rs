@@ -672,7 +672,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     // 与 Z 段（PD 能力普查）都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
-        "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.",
+        "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -695,6 +695,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("PB-")
                     || id.starts_with("PC-")
                     || id.starts_with("PD-")
+                    || id.starts_with("PE-")
                     || id.starts_with("S4-")
                     || id.starts_with("W1-")
                     || id.starts_with("X1-")
@@ -1475,6 +1476,14 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     // ⚠️ 这两条是**混合后端**（内容层矢量渲染 + CPU 叠加），不是纯矢量；见 GAPS PC-04。
     ("surface_matrix", Some("vector")),
     ("surface_matrix.js", Some("vector")),
+    // PE Step 2：能力展示作品**只进 `[vector]`**。给它们录 `[native]` 基线等于把
+    // "wgpu 静默丢弃渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口"固化成基线 ——
+    // 正是 PE 要杀的模式（见 ARCHITECTURE 的 PE 节 / GAPS PE-02）。
+    ("cap_gradient", Some("vector")),
+    ("cap_dash", Some("vector")),
+    ("cap_second", Some("vector")),
+    ("cap_background", Some("vector")),
+    ("cap_window", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。

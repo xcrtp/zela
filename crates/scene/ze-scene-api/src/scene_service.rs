@@ -28,10 +28,11 @@ use ze_scene_contract::{Components, Group as NativeGroup, GroupId as NativeGroup
 
 use crate::content_service::PathStore;
 use crate::types::{
-    Arrow, Axes2D, Camera2D, Camera3D, Circle, Cube, Curve, Fill, Group, Light, LightKind, LineStyle,
-    Material3D, Morph, Name, Opacity, Parent, Path, PathShape, PhaseAnim, Polyline, Reveal,
-    RevealPath, ShaderVariant, Stroke, Surface, SurfaceMapping, SurfaceRenderer, Texture,
-    TextureFilter, Transform, Transform3D, TransformChannel,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, Curve, CurveWindow, Dash,
+    Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
+    Path, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, ShaderVariant, Stroke,
+    Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D,
+    TransformChannel,
 };
 use ze_scene_core::components::{
     Light as NativeLight, Material3D as NativeMaterial3D, MorphShape as NativeMorphShape,
@@ -269,6 +270,37 @@ impl SceneServicePod {
             "zela.Fill",
             "ze_pod_core.Handle",
             scene_fill,
+        );
+        // PE：绘制参数（后端已实现能力的场景层入口）。挂上即开启，缺席 = 当前行为。
+        registry.register_fn1_named::<Gradient, Handle>(
+            "zela.scene::gradient",
+            "zela.Gradient",
+            "ze_pod_core.Handle",
+            scene_gradient,
+        );
+        registry.register_fn1_named::<Dash, Handle>(
+            "zela.scene::dash",
+            "zela.Dash",
+            "ze_pod_core.Handle",
+            scene_dash,
+        );
+        registry.register_fn1_named::<SecondPaint, Handle>(
+            "zela.scene::second_paint",
+            "zela.SecondPaint",
+            "ze_pod_core.Handle",
+            scene_second_paint,
+        );
+        registry.register_fn1_named::<BackgroundStroke, Handle>(
+            "zela.scene::background_stroke",
+            "zela.BackgroundStroke",
+            "ze_pod_core.Handle",
+            scene_background_stroke,
+        );
+        registry.register_fn1_named::<CurveWindow, Handle>(
+            "zela.scene::curve_window",
+            "zela.CurveWindow",
+            "ze_pod_core.Handle",
+            scene_curve_window,
         );
         registry.register_fn1_named::<Transform, Handle>(
             "zela.scene::transform",
@@ -738,6 +770,86 @@ fn scene_fill(pod: &dyn Pod, fill: Fill) -> Handle {
         .borrow_mut()
         .components
         .insert(vec![Box::new(FillSolid::new(color32(fill.color)))])
+}
+
+/// `Color`（直色 u8）→ 后端的 straight RGBA（0..1）。
+fn straight(color: crate::types::Color) -> [f32; 4] {
+    [
+        color.r as f32 / 255.0,
+        color.g as f32 / 255.0,
+        color.b as f32 / 255.0,
+        color.a as f32 / 255.0,
+    ]
+}
+
+/// PE：渐变组件 → `ze_render_ir::Gradient`（**屏幕空间**端点，映射时再换算）。
+///
+/// 色标少于 2 ⇒ `assert!` 显式失败：静默画成纯色正是 PE 要杀的"填了没效果也不说"。
+fn scene_gradient(pod: &dyn Pod, gradient: Gradient) -> Handle {
+    assert!(
+        gradient.stops.len() >= 2,
+        "Gradient.stops 至少两个色标（收到 {}）",
+        gradient.stops.len()
+    );
+    let native = ze_render_ir::Gradient {
+        stops: gradient.stops.iter().map(|c| straight(*c)).collect(),
+        from: [gradient.from.x, gradient.from.y, gradient.from.z],
+        to: [gradient.to.x, gradient.to.y, gradient.to.z],
+    };
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(native)])
+}
+
+fn scene_dash(pod: &dyn Pod, dash: Dash) -> Handle {
+    assert!(
+        dash.period > 0.0,
+        "Dash.period 必须 > 0（不画虚线就不要挂 Dash）"
+    );
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::Dash {
+            period: dash.period,
+            duty: dash.duty,
+            phase: dash.phase,
+        }),
+    ])
+}
+
+fn scene_second_paint(pod: &dyn Pod, second: SecondPaint) -> Handle {
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::SecondPaint {
+            fill: straight(second.fill),
+            stroke: straight(second.stroke),
+            background: straight(second.background),
+            mix: second.mix,
+        }),
+    ])
+}
+
+fn scene_background_stroke(pod: &dyn Pod, background: BackgroundStroke) -> Handle {
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::BackgroundStroke {
+            color: straight(background.color),
+            width: background.width,
+        }),
+    ])
+}
+
+fn scene_curve_window(pod: &dyn Pod, window: CurveWindow) -> Handle {
+    assert!(
+        window.hi > window.lo,
+        "CurveWindow 必须 hi > lo（收到 [{}, {}]）",
+        window.lo,
+        window.hi
+    );
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::CurveWindow {
+            lo: window.lo,
+            hi: window.hi,
+        }),
+    ])
 }
 
 fn scene_transform(pod: &dyn Pod, transform: Transform) -> Handle {

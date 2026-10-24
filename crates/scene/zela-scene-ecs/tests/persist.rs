@@ -1,4 +1,4 @@
-//! S3/S6/S7 验收：27 个组件逐条 serde、`Components` 往返、`SceneScript`
+//! S3/S6/S7 验收：32 个组件逐条 serde、`Components` 往返、`SceneScript`
 //! 持久化往返与"克隆后重新 commit"。
 
 use ze_notion::{FunctionX2Y, Path2D, Rect2D, Sampler1D, Vec2, Vec3};
@@ -6,7 +6,9 @@ use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
     Path, Projection, Rect, Transform, ZOrder,
 };
-use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
+};
 use zela_scene_ecs::animation::Timeline;
 use zela_scene_ecs::contract::{
     Components, Group, GroupId, Name, ObjectId, Parent, SceneRead, Visibility,
@@ -19,7 +21,7 @@ use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene::components::{ContentTextureItem, MorphShape, PhaseAnim, Reveal};
 use zela_scene_ecs::{AnimValue, Curve, Interp, SceneEncoder, SceneScript};
 
-/// 27 个登记组件的样例（与 `known_component_table!` 一一对应）。
+/// 32 个登记组件的样例（与 `known_component_table!` 一一对应）。
 fn samples() -> zela_scene_ecs::contract::Components {
     vec![
         Box::new(Circle::new((0.0, 0.0), 1.0)),
@@ -50,6 +52,27 @@ fn samples() -> zela_scene_ecs::contract::Components {
         Box::new(FpsView::new(0.0, 0.0)),
         Box::new(StrokeSolid::new(1.0, (0, 0, 0, 255))),
         Box::new(FillSolid::new((0, 0, 0, 255))),
+        Box::new(Gradient {
+            stops: vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
+            from: [0.0; 3],
+            to: [1.0, 0.0, 0.0],
+        }),
+        Box::new(Dash {
+            period: 0.1,
+            duty: 0.5,
+            phase: 0.0,
+        }),
+        Box::new(SecondPaint {
+            fill: [1.0; 4],
+            stroke: [1.0; 4],
+            background: [1.0; 4],
+            mix: 0.5,
+        }),
+        Box::new(BackgroundStroke {
+            color: [1.0; 4],
+            width: 2.0,
+        }),
+        Box::new(CurveWindow { lo: 0.0, hi: 1.0 }),
         Box::new(Axes2D::new((-1.0, 1.0), (-1.0, 1.0))),
         Box::new(AxesLine {
             owner: ObjectId::DANGLING,
@@ -66,12 +89,12 @@ fn samples() -> zela_scene_ecs::contract::Components {
     ]
 }
 
-/// 验收 1/2（S3）：27 个组件**逐个**可序列化 + 解码后重编码一致。
+/// 验收 1/2（S3）：32 个组件**逐个**可序列化 + 解码后重编码一致。
 #[test]
 fn every_registered_component_round_trips() {
     let original = samples();
-    let tagged = serialize_components(&original).expect("27 个组件都应可序列化");
-    assert_eq!(tagged.len(), 27);
+    let tagged = serialize_components(&original).expect("32 个组件都应可序列化");
+    assert_eq!(tagged.len(), 32);
 
     let mut names: Vec<&str> = tagged.iter().map(|t| t.type_name.as_str()).collect();
     names.sort_unstable();
@@ -95,6 +118,11 @@ fn every_registered_component_round_trips() {
         "FpsView",
         "StrokeSolid",
         "FillSolid",
+        "Gradient",
+        "Dash",
+        "SecondPaint",
+        "BackgroundStroke",
+        "CurveWindow",
         "Axes2D",
         "AxesLine",
         "FunctionGraph",
@@ -105,10 +133,10 @@ fn every_registered_component_round_trips() {
         "Parent",
     ];
     expected.sort_unstable();
-    assert_eq!(names, expected, "登记表 27 条必须逐条出现");
+    assert_eq!(names, expected, "登记表 32 条必须逐条出现");
 
     let decoded = deserialize_components(tagged.clone()).expect("全部可解码");
-    assert_eq!(decoded.len(), 27);
+    assert_eq!(decoded.len(), 32);
 
     // 再编码一次 ⇒ 与第一次逐项相等（往返一致；函数组件比较名字）。
     let again = serialize_components(&decoded).expect("解码后的组件仍可序列化");

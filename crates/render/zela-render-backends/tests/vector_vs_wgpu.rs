@@ -204,7 +204,7 @@ fn render_queue_both(queue: &DrawQueue) -> (Vec<u8>, Vec<u8>) {
         .map(|recorded| zela_render_vector::SceneItem {
             shape: &recorded.shape,
             transform: recorded.transform,
-            style: recorded.style,
+            style: recorded.style.clone(),
         })
         .collect();
 

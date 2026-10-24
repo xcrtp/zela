@@ -218,6 +218,7 @@ impl ResolveStyle for StrokeSolid {
             stroke_width: resolve_width(self.width, self.space, scale),
             // 已解析为屏幕像素，不再是世界度量。
             space: MeasureSpace::Screen,
+            paint: Default::default(),
         }
     }
 }
@@ -230,6 +231,7 @@ impl ResolveStyle for FillSolid {
             stroke: None,
             stroke_width: 0.0,
             space: MeasureSpace::Screen,
+            paint: Default::default(),
         }
     }
 }
@@ -243,6 +245,7 @@ pub fn fill_style(fill: &FillSolid) -> Style2D {
         stroke: None,
         stroke_width: 0.0,
         space: MeasureSpace::Screen,
+        paint: Default::default(),
     }
 }
 
@@ -254,6 +257,7 @@ pub fn stroke_style_raw(stroke: &StrokeSolid) -> Style2D {
         stroke: Some(stroke.color),
         stroke_width: stroke.width,
         space: stroke.space,
+        paint: Default::default(),
     }
 }
 

@@ -1003,6 +1003,73 @@ mod tests {
         }) {
             parts.push(text);
         }
+        // PE Step 4：**新样式组件必须进来**，否则"脚本改了渐变 ⇒ 指纹不变 ⇒
+        // 对拍抓不到差异"（X1-11 的同型在能力层复现）。
+        if let Some(text) = scene.with::<ze_render_ir::Gradient, _>(id, |g| {
+            let stops: Vec<String> = g
+                .stops
+                .iter()
+                .map(|s| {
+                    let byte = |v: f32| (v * 255.0).round() as i64;
+                    format!(
+                        "{},{},{},{}",
+                        byte(s[0]),
+                        byte(s[1]),
+                        byte(s[2]),
+                        byte(s[3])
+                    )
+                })
+                .collect();
+            format!(
+                "gradient(stops=[{}];{},{},{}→{},{},{})",
+                stops.join("|"),
+                qf(g.from[0]),
+                qf(g.from[1]),
+                qf(g.from[2]),
+                qf(g.to[0]),
+                qf(g.to[1]),
+                qf(g.to[2])
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::Dash, _>(id, |d| {
+            format!(
+                "dash({}:{}:{})",
+                qf(d.period),
+                qf(d.duty),
+                qf(d.phase)
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::SecondPaint, _>(id, |s| {
+            format!(
+                "second({}:{}:{}:{})",
+                qf(s.fill[0]),
+                qf(s.fill[1]),
+                qf(s.fill[2]),
+                qf(s.mix)
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::BackgroundStroke, _>(id, |b| {
+            format!(
+                "background({}:{}:{}:{})",
+                qf(b.color[0]),
+                qf(b.color[1]),
+                qf(b.color[2]),
+                qf(b.width)
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::CurveWindow, _>(id, |w| {
+            format!("window({}:{})", qf(w.lo), qf(w.hi))
+        }) {
+            parts.push(text);
+        }
         if let Some(text) = scene.with::<Transform, _>(id, |t| {
             format!(
                 "transform({},{},{})",
@@ -1014,6 +1081,81 @@ mod tests {
             parts.push(text);
         }
         parts.join("|")
+    }
+
+    /// **PE Step 4（可证伪）**：新样式组件必须进指纹。
+    ///
+    /// 证伪：从 `object_fingerprint` 里删掉对应的 `scene.with::<…>` 分支 ⇒ 本用例失败
+    /// —— 那正是"脚本改了渐变 / 虚线 ⇒ 指纹不变 ⇒ 对拍抓不到差异"（X1-11 同型）。
+    #[test]
+    fn object_fingerprint_sees_every_paint_component() {
+        use ze_render_ir::{BackgroundStroke, CurveWindow, Dash, Gradient, SecondPaint};
+        use zela_scene_ecs::contract::SceneRead;
+
+        /// 挂一个组件（外加一个圆，保证是可绘制对象）后取逐组件指纹。
+        fn fingerprint_of<C: hecs::Component>(component: C) -> String {
+            let mut scene = Scene::new();
+            scene.spawn((ze_scene_core::Circle::new((0.0, 0.0), 1.0), component));
+            let mut id = None;
+            scene.for_each::<ze_scene_core::Circle>(|object, _| id = Some(object));
+            object_fingerprint(&scene, id.expect("刚 spawn 的对象应可索引"))
+        }
+
+        let gradient = |stops: Vec<[f32; 4]>| Gradient {
+            stops,
+            from: [0.0, 0.0, 0.0],
+            to: [10.0, 0.0, 0.0],
+        };
+        let two = fingerprint_of(gradient(vec![
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]));
+        let three = fingerprint_of(gradient(vec![
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]));
+        assert_ne!(two, three, "色标数不同 ⇒ 指纹必须不同：{two} vs {three}");
+
+        let dash = fingerprint_of(Dash {
+            period: 0.1,
+            duty: 0.5,
+            phase: 0.0,
+        });
+        let dash_changed = fingerprint_of(Dash {
+            period: 0.1,
+            duty: 0.2,
+            phase: 0.0,
+        });
+        assert_ne!(dash, dash_changed, "duty 不同 ⇒ 指纹必须不同");
+
+        let second = fingerprint_of(SecondPaint {
+            fill: [1.0, 0.0, 0.0, 1.0],
+            stroke: [0.0; 4],
+            background: [0.0; 4],
+            mix: 0.0,
+        });
+        let second_changed = fingerprint_of(SecondPaint {
+            fill: [1.0, 0.0, 0.0, 1.0],
+            stroke: [0.0; 4],
+            background: [0.0; 4],
+            mix: 1.0,
+        });
+        assert_ne!(second, second_changed, "mix 不同 ⇒ 指纹必须不同");
+
+        let background = fingerprint_of(BackgroundStroke {
+            color: [1.0, 1.0, 0.0, 1.0],
+            width: 2.0,
+        });
+        let background_changed = fingerprint_of(BackgroundStroke {
+            color: [1.0, 1.0, 0.0, 1.0],
+            width: 4.0,
+        });
+        assert_ne!(background, background_changed, "宽度不同 ⇒ 指纹必须不同");
+
+        let window = fingerprint_of(CurveWindow { lo: 0.0, hi: 1.0 });
+        let window_changed = fingerprint_of(CurveWindow { lo: 0.0, hi: 0.5 });
+        assert_ne!(window, window_changed, "窗口不同 ⇒ 指纹必须不同");
     }
 
     /// 故事板对象（创建顺序 = `ObjectId.index` 升序；无 despawn）。

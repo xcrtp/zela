@@ -104,6 +104,7 @@ impl ProbeDraw {
             stroke: self.stroke.map(|[r, g, b, a]| Color32::from_rgba(r, g, b, a)),
             stroke_width: self.stroke_width,
             space: MeasureSpace::Screen,
+            paint: Default::default(),
         };
         let transform = Transform2D::translate(Vec2::new(self.translate[0], self.translate[1]));
         (shape, style, transform)

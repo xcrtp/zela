@@ -44,3 +44,10 @@ atlas           2D纹理进3D           atlas.lua       7ae2a453b3aec2cc349ef223
 vector_paths    矢量后端作品         vector_paths.lua b2f6f4f8eeded354294e64bb8111f49817031c523efa0946579dcc7458605b9c
 capability_gaps 能力缺口补齐        capability_gaps.lua b90c2eb0aa3f5b8f29a151300eda15bb5975ce292b3da89f7cd0faef84e3102b
 shaded_meshes   3D网格着色栈        shaded_meshes.lua 452685591f879e125fbec27a8ae032dd9f4e929de3be9a7524f63837de340a02
+# PE Step 2：能力展示作品（一件能力一件作品；**只进 [vector] 基线**）。
+# 它们用的样式组件在 wgpu 下不生效 —— 这正是路由要显式说明"已忽略"的原因。
+cap_gradient    渐变(2/3stop)       cap_gradient.lua 0d29dc249d815a858fa415c54071788dd05fbaf6a920252b6465edd560b6a659
+cap_dash        虚线                cap_dash.lua    0328d47191ee32c5df4071eba93a33cbe83ed6d1066cf34e99c76bc5e44bb2e6
+cap_second      双paint             cap_second.lua  1e6717c77eb896574d716ad0c8e9460902728533d6d36a54a16effe9257c9a8b
+cap_background  背景描边            cap_background.lua 9266fe12409fa0063a858db1cd5f2b103de9273e5968d4f43d5d2f3400187a8f
+cap_window      曲线窗口            cap_window.lua  90ba47a4a19fa0571ba42aa0c26bfb94a50bce1d5f25385dfc3b63658a10b57e

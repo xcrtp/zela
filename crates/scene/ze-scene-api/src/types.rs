@@ -345,6 +345,59 @@ pub struct Fill {
     pub color: Color,
 }
 
+// ─── PE：绘制参数（后端已实现能力的场景层入口）────────────────────────────
+//
+// 每个组件**挂上即开启**（缺席 = 当前行为），字段语义与 `ze_render_ir::paint`
+// 一一对应；单位与坐标口径写在各字段上，脚本层不得自行换算。
+
+/// 渐变：色标沿 `from → to` **均匀分布**（后端原生支持多 stop）。
+///
+/// `from` / `to` 是**世界坐标**（与 `Circle` / `Path` 等图元同一空间、`z` 恒为 0）：
+/// 录制层用与几何同一份相机仿射换算到屏幕，再由矢量映射换算到后端世界坐标。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.Gradient")]
+pub struct Gradient {
+    /// 至少两个色标。
+    pub stops: Vec<Color>,
+    pub from: Vec3,
+    pub to: Vec3,
+}
+
+/// 虚线：三项都是**曲线参数 u**（1 = 一整条曲线），不是屏幕像素。
+#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.Dash")]
+pub struct Dash {
+    pub period: f32,
+    pub duty: f32,
+    pub phase: f32,
+}
+
+/// 第二套 paint（tween 的另一端）：`mix` = 0 全用第一套、1 全用第二套。
+#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.SecondPaint")]
+pub struct SecondPaint {
+    pub fill: Color,
+    pub stroke: Color,
+    pub background: Color,
+    pub mix: f32,
+}
+
+/// 背景描边（第三色）：画在填充之下；`width` 是场景单位。
+#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.BackgroundStroke")]
+pub struct BackgroundStroke {
+    pub color: Color,
+    pub width: f32,
+}
+
+/// 部分路径窗口 `[lo, hi]`：单位是**曲线索引 + t**，不是像素。
+#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.CurveWindow")]
+pub struct CurveWindow {
+    pub lo: f32,
+    pub hi: f32,
+}
+
 /// 逐对象摆放（当前只暴露位置；旋转 / 缩放沿用默认）。
 #[derive(Clone, Copy, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.Transform")]

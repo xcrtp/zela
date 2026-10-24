@@ -648,10 +648,63 @@ fn record_group<S, A, B>(
         };
         if let Some((shape, mut style)) = (a, b).to_primitive(&world_t, scale) {
             apply_opacity(&mut style, opacity_of(scene, id));
+            // PE：绘制参数来自**独立组件**（挂上即开启，缺席 = 当前行为）。
+            let paint = paint_of(scene, id, &world_t, scale);
+            if paint != ze_render_ir::PathOptions::default() {
+                style.paint = paint;
+            }
             let z = z.map_or(z_default as i32, |z| z.0);
             queue.push(DrawCommand::new(ZIndex::new(z), shape, style));
         }
     });
+}
+
+/// 把对象上的绘制参数组件汇成 [`ze_render_ir::PathOptions`]（缺席 = 不启用）。
+///
+/// 组件各自独立（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）⇒ 可以任意组合；
+/// 单位与坐标口径见 `ze_render_ir::paint`。
+///
+/// **渐变端点在组件里是世界坐标**（与图元同一空间），这里用与几何同一份
+/// `world_t` 换算到屏幕空间 —— `Style2D` 的口径是屏幕（见 `shape.rs`）。
+fn paint_of<S: SceneRead>(
+    scene: &S,
+    id: ObjectId,
+    world_t: &ze_notion::Transform2D,
+    scale: f32,
+) -> ze_render_ir::PathOptions {
+    use ze_render_ir::{
+        BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint,
+    };
+    let mut paint = PathOptions::default();
+    if let Some(gradient) = scene.with::<Gradient, _>(id, |g| {
+        let place = |p: [f32; 3]| {
+            let screen = world_t.matrix.transform_point2(ze_notion::Vec2::new(p[0], p[1]));
+            [screen.x, screen.y, 0.0]
+        };
+        Gradient {
+            stops: g.stops.clone(),
+            from: place(g.from),
+            to: place(g.to),
+        }
+    }) {
+        paint.gradient = Some(gradient);
+    }
+    if let Some(dash) = scene.with::<Dash, _>(id, |d| *d) {
+        paint.dash = Some(dash);
+    }
+    if let Some(second) = scene.with::<SecondPaint, _>(id, |s| *s) {
+        paint.second = Some(second);
+    }
+    if let Some(background) = scene.with::<BackgroundStroke, _>(id, |b| *b) {
+        paint.background = Some(background.color);
+        // 宽度是**场景单位**；`Style2D` 是屏幕空间 ⇒ 与描边宽度同一份 scale 换算
+        // （`record_scene` 是唯一换算点）。
+        paint.background_width = background.width * scale;
+    }
+    if let Some(window) = scene.with::<CurveWindow, _>(id, |w| *w) {
+        paint.curve_window = Some([window.lo, window.hi]);
+    }
+    paint
 }
 
 /// 把场景实体录制进 [`DrawQueue`]（z 恒为 0）。

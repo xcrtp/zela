@@ -179,7 +179,10 @@ impl From<String> for SpecId {
 }
 
 /// 2D 绘制样式（新管线：描边 + 填充）。
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// ⚠️ **不再 `Copy`**（PE Step 1）：`paint` 含 `Vec`（渐变 stops），故整个样式是
+/// `Clone`。这是"能力进样式"的必然后果，不是疏忽。
+#[derive(Debug, Clone, PartialEq)]
 pub struct Style2D {
     /// 填充色（None = 不填充）。
     pub fill: Option<Color32>,
@@ -194,6 +197,11 @@ pub struct Style2D {
     /// 描边形态（cap / join）：**已解析**的载荷，后端唯一消费点（B5 V2-10）。
     /// 默认 = butt + miter（= B5 之前 lyon 的隐式默认 ⇒ 逐位不变）。
     pub stroke_shape: crate::style::StrokeShape,
+    /// 绘制参数（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）：默认空 ⇒ 逐位不变。
+    ///
+    /// 坐标口径：`paint.gradient` 的端点在这里是**屏幕空间**（与 `Shape2D` 的坐标
+    /// 同一空间），矢量映射时再换算到后端的世界坐标（见 `zela-render-vector::scene`）。
+    pub paint: crate::paint::PathOptions,
 }
 
 impl Default for Style2D {
@@ -204,6 +212,7 @@ impl Default for Style2D {
             stroke_width: 1.0,
             space: MeasureSpace::Screen,
             stroke_shape: crate::style::StrokeShape::DEFAULT,
+            paint: crate::paint::PathOptions::default(),
         }
     }
 }

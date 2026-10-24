@@ -173,7 +173,7 @@ pub fn snapshot_queue(queue: &DrawQueue) -> Vec<Recorded2D> {
         .map(|c| Recorded2D {
             shape: c.shape.clone(),
             transform: Transform2D::identity(),
-            style: c.style,
+            style: c.style.clone(),
             z: c.z.0,
         })
         .collect();
@@ -563,7 +563,7 @@ impl WgpuBackend2D {
         self.recorder.push(Recorded2D {
             shape: shape.clone(),
             transform: *transform,
-            style: *style,
+            style: style.clone(),
             z,
         });
     }
@@ -839,7 +839,7 @@ impl WgpuBackend2D {
             );
             let style = Style2D {
                 space: MeasureSpace::Screen,
-                ..draw.style
+                ..draw.style.clone()
             };
             // B3-0c：三角化 + 打包在渲染无关层（`vertex_record`）；后端只接字节。
             // B3-0d（不静默）：失败 ⇒ **显式 panic**，不再 `eprintln + continue`。
@@ -2129,7 +2129,7 @@ mod tests {
                 to: to.clone(),
                 t,
                 samples: 4,
-                style,
+                style: style.clone(),
             });
             assert_eq!(backend.recorded_morph_len(), 1);
 
@@ -2227,7 +2227,7 @@ mod tests {
                 to: to.clone(),
                 t,
                 samples: 32,
-                style,
+                style: style.clone(),
             });
             assert_eq!(backend.recorded_morph_len(), 1);
 

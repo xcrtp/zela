@@ -357,7 +357,7 @@
 | V2-03 | 上游是 `m1/m2` 双变换 + **GPU 插值**；我们是 CPU 每帧烘单矩阵 | 渲染后端 | **记账（移植时已知非等价）** | 移植时令 `m1 = m2` 可跑通，但**丢掉"一次上传、GPU 插值"的性能模型**；确定性分镜不受影响（逐帧渲染） |
 | V2-04 | 三角化资产（`tessellate.rs` / `VertexBufferData` / `shape_to_mesh`）在矢量路线下不是唯一真源 | 文档 / 分层 | **记账（性质变更）** | 不删除、不破坏分层；在 ARCHITECTURE 写明"wgpu 后端专用路径"，避免后人误以为全局唯一 |
 | V2-05 | 旧 ZSB 没有 `render_params` 字段 | 装配产物 | **已按兼容策略关闭（V1-03）** | `#[serde(default)]` ⇒ 缺字段按 `RenderParams::default()`（= 当前行为）；不升容器版本（该字段不进 hash） |
-| V2-06 | 矢量后端**未接进作品管线**：`DrawCommand` / `Path2D` → `Record` 的全量映射（描边 / 渐变 / 图片 / 圆角）未做；`zela.render.shapes` 未实现；`BackendKind::Vector` 仍 `is_available() == false` | 渲染后端 / 装配 | **部分关闭（B6：填充 + 描边已映射，且已进作品基线）** | `zela-render-vector::scene` 把 `Shape2D + Transform2D + Style2D` 映射成填充记录（圆/椭圆 4 段三次曲线、矩形/多边形、路径含 Quad/Cubic/Arc）；B6 Step 2.1 补上**描边记录**（`Record::stroked`）。真实 `DrawQueue` 帧对拍：填充 4568 vs 4580 像素、MAE 0.05/255；描边三角形 934 vs 954、MAE 0.20/255。B6 V2-07 起 `--backend vector` 用同一份快照出作品帧并进 `[vector]` 基线。**仍缺**：渐变笔刷行 / 纹理图片 / dash（V2-13）、`shapes` 签名（V2-12）、可注册（V2-18） |
+| V2-06 | 矢量后端**未接进作品管线**：`DrawCommand` / `Path2D` → `Record` 的全量映射（描边 / 渐变 / 图片 / 圆角）未做；`zela.render.shapes` 未实现；`BackendKind::Vector` 仍 `is_available() == false` | 渲染后端 / 装配 | **部分关闭（B6：填充 + 描边已映射，且已进作品基线）** | `zela-render-vector::scene` 把 `Shape2D + Transform2D + Style2D` 映射成填充记录（圆/椭圆 4 段三次曲线、矩形/多边形、路径含 Quad/Cubic/Arc）；B6 Step 2.1 补上**描边记录**（`Record::stroked`）。真实 `DrawQueue` 帧对拍：填充 4568 vs 4580 像素、MAE 0.05/255；描边三角形 934 vs 954、MAE 0.20/255。B6 V2-07 起 `--backend vector` 用同一份快照出作品帧并进 `[vector]` 基线。此外 **仍缺**：纹理图片（V2-13）与 `shapes` 签名（V2-12）；渐变 / dash **已由 PD 暴露后端接口、PE 接通场景入口**（见 V2-13） |
 | V2-07 | 矢量作品新基线（计划 §6.3）依赖 V2-06 | 验收 / 基线 | **已关闭（B6 Step 3）** | `zela-render --backend vector`：同一份 `DrawQueue` 快照 → `render_scene_2d`（纯 2D 帧；含 3D / 内容图层的帧**显式报错**，不静默跳过）。作品 `vector_paths.lua`（Circle / Arrow × Fill / Stroke、`Reveal` 折线描边、`content.text` → 路径填充，静态 1 帧）实测 14 对象、1 帧、`d19962e7…`。`baselines.txt` 新增 `[vector]` 段；`xtask` 的 `hashes` / `--record` / `--rebind` / `+dirty` 门禁经 `is_managed_section` 覆盖该段，并有 3 条解析器用例 |
 | V2-08 | 基线归因：`--record` 在**脏工作树**上把值标成 `@ <HEAD>`，但该提交并不包含这份状态（6 条值全标 `@ da9ea93`，实际由 `642b9d4` 携带）；slotA → slotB 的差异也无逐条说明 | 验收 / 基线 | **已关闭（B4 验收 P1-4，口径 D）** | `--record` 检测脏树 ⇒ 写 `@ <sha>+dirty`；新 `cargo verify --rebind`（要求干净树）把 `<sha>+dirty` **整段**换成携带录制的提交并自校验；`smoke` / `hashes` 在见到未归因 `+dirty` 时**直接失败**；`# delta:` 逐条留痕（slotA→slotB 前缀 + 原因指针）；存量 `baselines.txt` 已按真实血缘重写（demo3d `dc8b1388→ddd69b3e`、atlas `efe5bf39→93632049`，@ `642b9d4`）。文档：`FRAME_HASH_BASELINES.md` 口径 D；测试：`xtask/tests/parser_tests.rs` 5 条 |
 | V2-09 | 双后端对拍的**口径**问题（B4 验收 P1-1/2/3）：① MAE 12.18 无法区分"AA 方式不同"与"色彩管线不同"；② 矢量自测在起不来 GPU 时静默 `return`（仍然 passed）；③ 对拍注释声称"验证注册机制"，实际绕过 `BackendRegistry` | 测试 / 对拍 | **已关闭（B4 验收）** | ① MAE 拆「内部区 / 边缘带」并输出计数，内部区门禁 ≤ 2/255；**诊断出真 bug**：斜边夹具把屏幕坐标（y 向下）当成世界坐标（y 向上）⇒ 比的是镜像形状。修正后实测全图 MAE 0.09（内部区 0.00、边缘带 3.44），全局阈值由 24 收紧到 8。② `api.rs` 起不来即 `panic!`（与对拍同口径）。③ 注释改为"本对拍不经过 `BackendRegistry`，注册机制由 `registry.rs` 单测覆盖" |
@@ -365,7 +365,7 @@
 | V2-10 | 描边 `cap` / `join` 曾是 **lyon 的隐默默认**（不在任何契约里）：换后端 / 换 lyon 版本都会静默改画面 | 渲染 IR | **已关闭（B5 Step 1）** | `StrokeCap` / `StrokeJoin` / `StrokeShape` 进 `ze-render-ir::style`；`StrokeSolid` 带 `#[serde(default)]`（默认 butt + miter ⇒ 旧 ZSB 逐位不变）；`Style2D.stroke_shape` 是**后端唯一消费点**；`tessellate.rs` 的 `stroke_options()` 显式驱动 lyon（`StrokeOptions::default()` 不再裸用）。实测钉住 `lyon_tessellation 1.0.22` 默认 `Butt / Miter / 4.0`，测试断言"默认选项逐字段相等 + 改 cap/join 真的改变顶点数" |
 | V2-11 | miter limit 两边不一致：lyon 默认 **4.0**，上游矢量**硬编码 10**（`vector.wgsl:497` / `render.rs:330`） | 渲染后端 | **落档·参数性（PB Step 3 评估；不改）** | 实测（`miter_limit_difference_on_a_needle_angle`，128×128，本机 RTX 4060）：1° 尖角覆盖率 wgpu 345 / 矢量 350（+1.4%），四象限"最远亮像素"完全相同；20°（miter 比 5.76，正好落在 4 与 10 之间）561 / 576（+2.7%），最远点同为 9.90px。⇒ **差异只出现在极端尖角，量级为个位数像素、无结构性差异** ⇒ 按 PA 的分层判据（V-08）落档为参数性差异，不回改 wgsl 语义。若将来矢量侧解析 AA 的 join 改动，本条重测 |
 | V2-12 | `zela.render.shapes` 签名只有 `capabilities` / `submit_shapes`：**没有** `create_target` / `upload`；且 `PathList` 表达不了 `Circle` / `Rect` / `Group` | 能力契约 / 装配 | **未执行（B6 复核后仍不改）** | 改签名必须同步 `PINNED_FINGERPRINTS`（`shapes = 1_097_982_529_554_556_752`）。**为什么不改**：`submit_shapes` 在仓库里**没有任何实现也没有任何调用点**（`IMPLEMENTED_NAMESPACES` 不含它、wgpu 协商 shapes 本就显式失败），脚本层也没有 `create_target` / `upload` 的绑定表；此时把入参改成尚不存在的 `ShapeList` 只会得到一个**没有实现可校验的 ABI 字符串**（违反"不得为凑可注册而填未验证的编码"）。触发：真正要接 `shapes` 时，先定 target 生命周期与 `Shape2D` 列表的宿主载体，再一次性改签名 + 指纹 |
-| V2-13 | 渐变笔刷行 / 纹理图片 / dash 未映射（**缺概念**，不是缺映射） | 渲染后端 | **记账（B5 §七）** | 渐变需先定义色标 + 轴向与 `Style2D` 的关系；图片需给 `Shape2D` 加 `Image` 变体（R-04）；dash 需先有 dash 概念（上游是 `dash[3]` 周期/占空/相位）。触发：作品需要时 |
+| V2-13 | 渐变笔刷行 / 纹理图片 / dash 未映射 | 渲染后端 | **部分关闭（PE Step 1–2：渐变 / dash / 双 paint / 背景描边 / 曲线窗口接通；纹理仍缺）** | **事实更正**："缺概念"只对纹理成立。渐变与 dash 在 PD 已由后端公开面暴露（`PathOptions`，6 条 GPU 用例），PE 把类型下沉到 `ze-render-ir::paint` 并接上**场景层组件**（`Gradient` / `Dash` / `SecondPaint` / `BackgroundStroke` / `CurveWindow`），由 `record_scene` 汇成 `Style2D.paint`、`zela-render-vector::scene` 写进记录槽位。**仍缺**：纹理图片（要设计"纹理源" + `TEXTURED` 标志，与 PB-04 路线 B 同一件事，属 PD-03 顺延 PF） |
 | V2-14 | 矢量后端的**描边记录**未接 | 渲染后端 | **已关闭（B6 Step 2.1）** | ⚠️ B5 的阻塞理由**不成立**：`Curves.miter` 由 `render.rs:476 Store::add_path` 自动计算，与 `vector.rs` 无关；真正缺的只是 `Record` 的描边构造。现在 `Record::stroked`（`stroke` + `params.z` = **宽度** + `flags >> STYLE` = `cap \| joint << 2`）已落地，`scene::scene_records` 按"先填充后描边"产出。**事实更正**：`params.w` 是背景描边的宽度，不是 miter；miter limit 硬编码在 wgsl（见 V2-11）。宽度语义由实测钉住（传半宽会画出一半宽）。对拍：描边三角形 934 vs 954 像素、MAE 0.20/255、内部区 0.29 |
 | V2-15 | 着色栈的**结构事实**：`tone` 由 bloom 的合成 pass 应用，而那条 pass 只在**存在 3D layered 计划**时运行（`render.rs:2419`）；`occlusion_of()` 还要求存在环境光（类型 4）或全向光（类型 0），否则 AO 静默不生效 | 渲染后端 | **已关闭（B6 Step 1 验收用例；B10 Step 4 升级为作品级证据）** | 结论不变（B6 §2.5 说 "bloom/tone 独立于光照" **不成立**）。B6 的 3 条 3D 用例（`AgX ≠ clip` / bloom 外溢 / AO 需环境光）已被 **B10 的作品级证据**取代并加强：`shaded_meshes` 走 `--backend vector`，同一份 ZSB 只切换 `vector_params`（`tests/vector3d_shading.rs`）⇒ tone 差 >2000 像素、bloom 开更亮、AO 开更暗；帧序列哈希进 `[vector]` 基线（`58ab1f0e…`）。另记：受光/材质编码来自上游 `feed.py:1134`（`shade_in_3d` → `LIT`）与 `:1150`（`material[3] = 1`），`plan.lit` 按 `material[3] > 0` 判定 |
 | V2-16 | `ToneCurve` 语义错配（B4 建契约时按常见命名猜的）：`Reinhard` / `Aces`，而 `tone.wgsl` 只有 `0 = clip` / `1 = AgX` | 渲染 IR | **已关闭（B6 Step 1.1）** | 改为 `ToneCurve { Clip, #[default] AgX }`；`default_for(caps)` 按后端能力取默认（wgpu 全关 / 矢量全开），显式请求不支持项仍报错 —— 与"静默降级"的区别写进 `RenderParams::default_for` 文档 |
@@ -374,7 +374,7 @@
 | V2-19 | "开着色栈（tone + bloom + AO + env）的作品"无法用脚本表达 | 作品 / 脚本 API | **部分关闭（B10 Step 4）** | **B6 的结论已被 B10 推翻一半**：`--backend vector` 现在支持含 3D 相机的帧（`frame_loop` 的 3D 分支），`shaded_meshes` 就是"开着色栈的作品"，帧哈希进 `[vector]` 基线。**仍缺**：脚本层仍不能自己表达曝光 / tone 曲线 / bloom 强度（现在吃的是"矢量后端默认全开"），`env` 也没有脚本入口（X1-04） |
 | S4-14 | 孤儿 Surface：`Renderer2D + composite=false` 且无 `Material3D.texture` 引用 ⇒ 内容既不在视口画（S4-10 起跳过）、也不参与合成、也没有代理平面 ⇒ **完全不可见且不报错** | 渲染管线 | **已关闭（B5 A-2）** | `content_texture_specs` 在同一趟里 `for_each::<Material3D>` 查引用；无人引用 ⇒ `SurfaceError::UnconsumedSurface`（报错文案给出修法：设 `composite=true` 或让 3D 材质引用）。测试 `unconsumed_content_surface_errors_explicitly`（无人引用报错 / 有引用通过 / composite=true 通过） |
 
-**K 段小计（B4 + B5 + B6）**：已关闭 16（V1-01..05、V2-01/02、V2-07、V2-08/09、V2-10、V2-14、V2-15、V2-16/17、S4-14）· 部分关闭 2（V2-06、V2-19）· 记账 3（V2-03/04、V2-13）· 未执行 2（V2-12、V2-18）· 落档 1（V2-11）。
+**K 段小计（B4 + B5 + B6）**：已关闭 16（V1-01..05、V2-01/02、V2-07、V2-08/09、V2-10、V2-14、V2-15、V2-16/17、S4-14）· 部分关闭 3（V2-06、V2-13、V2-19）· 记账 2（V2-03/04）· 未执行 2（V2-12、V2-18）· 落档 1（V2-11）。
 
 ---
 
@@ -754,11 +754,31 @@
 
 ---
 
+## AA. PE 批次记账（能力入口与展示作品，2026-10-25）
+
+> 计划《PE执行计划_能力入口与展示作品》。一句话：**接一个、证明一个**。
+> PD 的验收不得不写"本批没有改变任何一件作品的画面"—— 那句 caveat 就是
+> "先暴露、再建作品"这个顺序的失败产物；本批按"当轮闭环"纠正。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PE-01 | **类型住在错误的层 ⇒ 入口不存在**：`Gradient` / `Dash` / `SecondPaint` / `PathOptions` 定义在 `zela-render-vector`，而场景层不依赖它 | 分层 / 公开面 | **已关闭（Step 1）** | 下沉到 `ze-render-ir::paint`（矢量 crate → IR 是单向依赖）；矢量 crate 改为 `pub use`，公开面名字不变；`PathOptions` 带 serde（组件持久化需要）。分层判据仍成立：IR 只依赖 `ze-notion` / `ze-vertex` / `ze-pod-core` |
+| PE-02 | **wgpu 静默忽略新样式**（V-01 / V-02 的同型，只是发生在 wgpu 侧） | 路由 / 可观测 | **已关闭（Step 3）** | `FrameContent.vector_only_styles` 位掩码由帧快照统计；选到 wgpu（显式或回退）时决策理由追加「wgpu 忽略本帧仅矢量支持的样式：…」。用例：`wgpu_must_say_which_vector_only_styles_it_ignores`（正向点名 + 无特性不误报 + 选矢量不出现"忽略"）、`fallback_to_wgpu_also_reports_ignored_styles` |
+| PE-03 | **`Style2D` 不再 `Copy`**（渐变 stops 是 `Vec`）：所有 `*style` / `..draw.style` / 循环内复用都会编译失败 | 渲染 IR / 后端 | **已关闭（Step 1–2）** | 逐点改成显式 `clone()`；`wgpu_2d::snapshot_queue` / `push` / `tessellate_pass` / 测试夹具、`zela-playback::vector_frame` 都已修。类型文档写明"这是能力进样式的必然后果，不是疏忽" |
+| PE-04 | **能力面付一次账**：`zela.scene` 新增 5 个构造函数 | 契约 / 版本 | **已关闭（Step 2）** | `@9 → @10`；指纹 `10_059_647_094_731_395_853 → 83_729_276_200_230_347`（`api.rs` 里版本与指纹成对更新，D14 用例红/绿即判据）；`cargo verify --step coverage` 从 `49/49` 变为 `54/54`（5 个新入口都被 manifest 作品用到，豁免 0） |
+| PE-05 | **`cap_colors` 无法作品化**：脚本层没有"带逐顶点色的网格"构造入口（只有 `Cube` / `Circle` / `PathShape` 等） | 验证 / 作品 | **记账（§5 ③ 退路，顺延 PF）** | 顶点色能力本身**已有**证据（PD 的 `per_vertex_colors_replace_the_mesh_fill` + `option_errors_are_explicit`）；缺的只是作品载体 —— 要给脚本加网格构造入口，属"场景图元 / 纹理"那条线（PD-03 / PF），不在本批硬塞 |
+| PE-06 | **新样式组件不进产物指纹**：`object_fingerprint` 是逐条枚举已知组件的硬编码清单（X1-11 同型） | 对拍 / 指纹 | **已关闭（Step 4）** | 5 个组件都加入指纹（渐变按色标逐项量化 + 两个端点）；`script_storyboard_matches_hardcoded` / Python 版继续逐对象比较。⚠️ 诚实的边界：这两条用例的事故面是**分镜**；新作品的"脚本 vs bundle"由 `--record` 的硬门禁（逐作品 script == bundle）覆盖，而组件可持久化由 `zela-scene-ecs::tests::persist`（**32 个登记组件**逐条 serde 往返）钉住 |
+| PE-07 | **计数写在注释里就会过时**：`baselines.txt` 三处 reason 写「native 16 / vector 11」，实测 14 / 13 | 文档 | **已关闭（Step 0 F3）** | 三处 reason 改为「native 14 与既有 vector 11」；同型的还有 ARCHITECTURE 的「25 条 / 被拒 5 件」（PD 已修）与 api.rs 的「纹理 / 渐变入口仍缺」（本轮改写） |
+
+**AA 段小计（PE）**：已关闭 6（PE-01、PE-02、PE-03、PE-04、PE-06、PE-07）· 记账 1（PE-05）。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–Z**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–Z 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–AA**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AA 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|

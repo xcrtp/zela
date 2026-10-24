@@ -8,8 +8,10 @@
 //! 圆 / 椭圆 / 矩形 / 多边形 / 折线 / 路径（含贝塞尔与椭圆弧）。
 //!
 //! 明确**不支持**（返回 [`SceneMapError::Unsupported`]，不静默降级）：
-//! 描边（cap / joint / 宽度语义未与上游 `Paint` 对齐）、渐变（上游笔刷行未接）、
 //! `Custom` 图元（需要宿主的规格注册表）。
+//!
+//! PE 起 `Style2D.paint` 透传渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口；
+//! 渐变的轴端点在此用与几何**同一份**仿射换算到后端世界坐标（见 [`path_options`]）。
 //!
 //! # 坐标系
 //!
@@ -430,6 +432,30 @@ pub fn fill_paths(
     Ok(out)
 }
 
+/// 把 `Style2D.paint`（屏幕空间）换算成后端记录参数（世界空间）。
+///
+/// **渐变轴必须在这里换算**：上游 `paint()` 直接投影 `gradient_a/b`，不乘记录自己的
+/// 模型矩阵；而本模块已把变换烘进控制点（`model = IDENTITY`）⇒ 轴端点也要走同一份
+/// `to_world`（减去画布中心、y 取负），否则渐变会与几何错位。
+fn path_options(
+    paint: &ze_render_ir::PathOptions,
+    transform: &Transform2D,
+    center: Vec2,
+) -> crate::api::PathOptions {
+    let mut options = paint.clone();
+    if let Some(gradient) = &paint.gradient {
+        let from = to_world(Vec2::new(gradient.from[0], gradient.from[1]), transform, center);
+        let to = to_world(Vec2::new(gradient.to[0], gradient.to[1]), transform, center);
+        let float3 = |p: [f64; 3]| [p[0] as f32, p[1] as f32, p[2] as f32];
+        options.gradient = Some(crate::api::Gradient {
+            stops: gradient.stops.clone(),
+            from: float3(from),
+            to: float3(to),
+        });
+    }
+    options
+}
+
 /// 把一批图元的**几何**映射成填充路径（不含颜色；颜色由调用方按样式填）。
 fn item_geometry(item: &SceneItem<'_>, center: Vec2) -> Result<Vec<FilledPath>, SceneMapError> {
     let mut out = Vec::new();
@@ -456,7 +482,8 @@ fn shape_bits(shape: ze_render_ir::StrokeShape) -> u32 {
 /// 把一批图元映射成**有序**绘制记录（填充与描边都支持，B6 Step 2.1）。
 ///
 /// 顺序规则：逐 item；同一 item 内**先填充后描边**（与 wgpu 侧 Tessellation 的产出顺序一致）。
-/// 显式 `Unsupported`：`Custom` 图元、零/负描边宽度之外的不可表达项（渐变 / dash 本批无概念）。
+/// 显式 `Unsupported`：`Custom` 图元。渐变的轴端点在此换算到后端世界坐标
+/// （见 [`path_options`]）；其余可选参数原样透传（单位见 `ze_render_ir::paint`）。
 pub fn scene_records(
     items: &[SceneItem<'_>],
     canvas: (u32, u32),
@@ -468,9 +495,11 @@ pub fn scene_records(
             continue;
         }
         let geometry = item_geometry(item, center)?;
+        let options = path_options(&item.style.paint, &item.transform, center);
         if let Some(fill) = item.style.fill {
             for mut path in geometry.iter().cloned() {
                 path.fill = rgba(fill);
+                path.options = options.clone();
                 out.push(PathRecord::Fill(path));
             }
         }
@@ -484,7 +513,7 @@ pub fn scene_records(
                         width: item.style.stroke_width,
                         shape_bits: shape_bits(item.style.stroke_shape),
                         model: IDENTITY,
-                        options: Default::default(),
+                        options: options.clone(),
                     }));
                 }
             }
@@ -523,6 +552,7 @@ mod tests {
             stroke: None,
             stroke_width: 0.0,
             space: ze_notion::MeasureSpace::Screen,
+            paint: Default::default(),
         }
     }
 
@@ -714,6 +744,7 @@ mod tests {
                 stroke: Some(Color32::WHITE),
                 stroke_width: 4.0,
                 space: ze_notion::MeasureSpace::Screen,
+                paint: Default::default(),
             },
         };
         let frame = render_scene_2d(128, 128, 1, [0.0, 0.0, 0.0, 1.0], &[item])
@@ -760,6 +791,7 @@ mod tests {
                 stroke: Some(Color32::RED),
                 stroke_width: 2.0,
                 space: ze_notion::MeasureSpace::Screen,
+                paint: Default::default(),
             },
         };
         let error = fill_paths(&[item], CANVAS).unwrap_err();
@@ -801,6 +833,7 @@ mod tests {
                 stroke: Some(Color32::WHITE),
                 stroke_width: 3.0,
                 space: ze_notion::MeasureSpace::Screen,
+                paint: Default::default(),
             },
         };
         let records = scene_records(&[item], CANVAS).unwrap();
@@ -827,9 +860,51 @@ mod tests {
                 stroke: Some(Color32::RED),
                 stroke_width: 0.0,
                 space: ze_notion::MeasureSpace::Screen,
+                paint: Default::default(),
             },
         };
         assert!(scene_records(&[item], CANVAS).unwrap().is_empty());
+    }
+
+    /// **PE**：渐变轴端点与几何走**同一份**相机仿射（屏幕 → 后端世界）。
+    ///
+    /// 证伪：若漏掉这一步（直接用屏幕坐标当世界坐标），左右端点会整体平移
+    /// 半个画布 ⇒ 断言失败。
+    #[test]
+    fn gradient_axis_is_converted_like_geometry() {
+        let shape = Shape2D::Rect(ze_notion::Rect2D::new(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(128.0, 128.0),
+        ));
+        let item = SceneItem {
+            shape: &shape,
+            transform: Transform2D::identity(),
+            style: Style2D {
+                stroke_shape: Default::default(),
+                fill: Some(Color32::RED),
+                stroke: None,
+                stroke_width: 0.0,
+                space: ze_notion::MeasureSpace::Screen,
+                paint: ze_render_ir::PathOptions {
+                    gradient: Some(ze_render_ir::Gradient {
+                        stops: vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
+                        from: [0.0, 0.0, 0.0],
+                        to: [128.0, 0.0, 0.0],
+                    }),
+                    ..Default::default()
+                },
+            },
+        };
+        let records = scene_records(&[item], CANVAS).unwrap();
+        let PathRecord::Fill(path) = &records[0] else {
+            panic!("应是填充记录：{records:?}");
+        };
+        let gradient = path.options.gradient.as_ref().expect("渐变应透传");
+        // 屏幕 (0,0) ⇒ 世界 (-64, 0)；屏幕 (128,0) ⇒ 世界 (64, 0)。
+        assert!((gradient.from[0] + 64.0).abs() < 1e-3, "{:?}", gradient.from);
+        assert!((gradient.to[0] - 64.0).abs() < 1e-3, "{:?}", gradient.to);
+        // y 取负：屏幕 y = 0（顶边）⇒ 世界 y = +64。
+        assert!((gradient.from[1] - 64.0).abs() < 1e-3, "{:?}", gradient.from);
     }
 
     #[test]
