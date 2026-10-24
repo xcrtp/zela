@@ -15,8 +15,8 @@
 //!   ⇒ 矢量侧所有正面都收不到方向光）。矢量 `Light::Sun.direction` 同为"指向光源"
 //!   ⇒ **原样透传**。环境项与 wgpu 兜底同值（`DEFAULT_AMBIENT = 0.2`）。
 //! - 空灯队列 ⇒ 与 wgpu 的 `default_light_bytes` 同参：方向 `+Z`（指向光源）+ 环境 0.2。
-//! - 网格：`Material3D` 没有 reflectance 字段 ⇒ 取 `0.5`（电介质常用值），
-//!   该取舍记在 GAPS X1-03。
+//! - 网格：`Material3D` 没有 reflectance 字段 ⇒ 取 `0.04`（电介质 F0；B14 Step 2 改为
+//!   0.04，理由见下方 `DEFAULT_REFLECTANCE` 的注释），该取舍记在 GAPS X1-03。
 
 use ze_notion::{Color32, Mat4};
 use ze_render_ir::{AmbientOcclusion, MeshForm, RenderParams, ToneMapping};

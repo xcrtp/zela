@@ -438,7 +438,7 @@
 |---|---|---|---|---|
 | X1-01 | 渲染能力契约只描述 namespace（标量 / 枚举），**无法表达"这个后端接受哪种 3D 网格"** | 渲染 IR | **已关闭（B10 Step 1）** | `RenderCapabilitySet` 新增 `mesh: MeshForms`（`MeshForm::Tri` / `Line`）+ `require_mesh()`：不支持所请求形态 ⇒ **显式报错**（不静默换一种）。`from_names` **不猜**（留空集），两个后端各自显式自述 `tri`（wgpu：`standard_3d()`；矢量：`Upload::mesh` 的 `triangles`）。单测 3 条：`from_names_does_not_guess_mesh_forms` / `unsupported_mesh_form_fails_explicitly` / 并集 |
 | X1-02 | 上游的 `Upload::{Mesh, Texture, Environment}` 与 `Record` 的 mesh 记录都在，但 `pub(crate)` 挡住 ⇒ 宿主无法提交 3D 网格 | 渲染后端 / 宿主 | **已关闭（B10 Step 2/3）** | 新公开入口：`MeshRecord`（f64 顶点 / 可选 UV·法线 / u32 三角形 / 材质 / 模型矩阵）+ `PathRecord::Mesh` + `render_3d_with(width,height,samples,view,records)`；`Record::mesh` 写 `params=[0, 三角形数]` 与 `material[3]=1`（受光的关键）。⚠️ **计划 §5.1 与代码不符**：计划说"顶点解析按 f32/u32 硬编码、缺 Float2x3，是全批唯一需发明处"；本仓的 `mesh::Mesh::new` 实际吃 **f64 三元组**（`read::<[f64;3]>`）并在内部压成 `[pos,v]/[normal,u]` ⇒ **不需要新增顶点格式分支**，Step 3 退化为"加一个记录变体" |
-| X1-03 | `Material3D` 没有 upstream 的 reflectance 分量（材质四元组是 `[metallic, roughness, reflectance, 1]`） | 场景组件 / 材质映射 | **记账（B10 Step 2）** | 宿主桥取常数 `0.5`（电介质 F0 ≈ 0.04），写在 `zela-app/src/vector3d.rs` 的 `DEFAULT_REFLECTANCE`。触发：作品需要金属/电介质强区分时，把 reflectance 进 `Material3D`（会改场景 API 版本） |
+| X1-03 | `Material3D` 没有 upstream 的 reflectance 分量（材质四元组是 `[metallic, roughness, reflectance, 1]`） | 场景组件 / 材质映射 | **记账（B10 Step 2；PA Step 3 同步文字）** | 宿主桥取常数 **0.04**（电介质 F0；B14 Step 2 从旧值 0.5 改来），写在 `zela_playback::vector3d::DEFAULT_REFLECTANCE`（B11 Step 5 从 `zela-app` 移入）。触发：作品需要金属/电介质强区分时，把 reflectance 进 `Material3D`（会改场景 API 版本） |
 | X1-04 | **环境图（IBL）**：上游 `Upload::Environment` 与 `Light::Environment{id}` 已接出，但场景脚本没有环境图入口，`RenderParams.env` 也没有任何代码桥接到上传 | 渲染后端 / 脚本 | **记账（B10 Step 2）** | `Light::Environment { id }` 按上游编码（`kind=4`，id 放 `slot[7]`）；`upload(Upload::environment(...))` 可用了。触发：脚本层需要"环境光照"时，先定环境图的 ZSB 载体（图片资源）与 `RenderParams.env` 的宿主接线 |
 | X1-05 | 着色栈的**作品级证据**（V2-15 的收尾）：此前只有单元测试，没有一件作品在着色栈下出帧 | 作品 / 基线 | **已关闭（B10 Step 4）** | 新作品 `shaded_meshes.lua`（墙 + 地板 + 中央亮立方体，全部是真网格）+ `--backend vector`：帧哈希 **`58ab1f0e…`** 进 `[vector]` 基线。判据（`tests/vector3d_shading.rs`，同一份 ZSB 只切 `vector_params`）：tone AgX≠clip（差 >2000 像素）、bloom 关掉更暗、AO 关掉更亮。`frame_loop` 的 3D 分支：`Camera3D → View3`、`LightQueue → Light`（方向取反 + 环境 0.2）、`DrawQueue::meshes → MeshRecord` |
 | X1-06 | 2D 图元与 3D 网格**混排帧**仍不支持：有 3D 相机时若队列里还有 2D 图元 ⇒ 显式报错 | 渲染后端 / 装配 | **记账（B10 Step 4）** | 混排需要 overlay 记录（屏幕空间与 3D 同帧合成），上游有 `OVERLAY` 位但宿主没有"2D 图元进 3D 视图"的语义（世界坐标 vs 屏幕坐标）。触发：作品需要 3D 里贴文字/箭头时 |
@@ -564,9 +564,9 @@
 | X7-01 | **每帧新建一整套 `Player`**（`prepare_view` 内 `Player::new`）⇒ 画布 / 附件 / 缓冲 / 列表 / bloom / AO 每帧分配+释放；上游"常驻 Player + eviction/packing"的设计被架空 | 渲染 / 资源生命周期 | **已关闭（B17 Step 1）** | `Gpu` 新增 `players: HashMap<(w,h,samples), Player>`；`take_player` 取出并 `Player::reset`（清 `Store` / 待上传图像，保留画布 / 附件 / 缓冲 / 列表 / 目标），`put_player` 归还（上限 4 份）。`Store::clear` 推进 `generation` ⇒ 数组从 0 逐字节重传，键从 1 重分配（无上一帧残影）。`targets` 记录 `external`，读回/外部目标模式切换时重建。**25 条基线逐位不变**；实测 `pbr_lights`（510 帧，矢量）首帧 38 纹理 / 33.5 MB / 31 buffer，**第 2–510 帧全为 0**；浏览器同一构建 510/510 帧，状态栏 `tex 37 / buf 30（34.0 MB）` 从 421 帧到播完不变。⚠️ 本条只覆盖 `Targets` 的"外部/内部"切换；**同一目标身份不同**（重播换 surface）是另一层，见 V-09 |
 | X7-02 | **矢量后端资源计数静默零**：`textures_created` 只覆盖 wgpu 后端（`wgpu_2d.rs` / `wgpu_3d.rs` 三个点），走矢量时恒为 0，像是"零分配" | 渲染 / 观测 | **已关闭（B17 Step 0）** | 本 crate 的全部创建口收进 `counted_texture` / `counted_buffer`（28 处，含 vector / bloom / occlusion / shadow / environment）；出口 `resource_totals()` / `take_resource_totals()` / `ResourceTotals::{json,since,plus}`。`ZELA_FRAME_REPORT` 每作品每遍加 `vector_resources` + `vector_resource_curve`（frames / first / last / 峰值），并给旧字段加 `"textures_created_scope":"wgpu-only"`（不把两套语义混成一个"全局"数）。页面状态栏在矢量播放时显示 `矢量资源 tex/buf（MB）` |
 | X7-03 | 上游 `evict` / `pack_if_worthwhile` / `generation` 这套淘汰与打包机制**从未被真正执行**（每帧 `Player::new` ⇒ `dead` 永远 0） | 渲染 / 资源生命周期 | **已关闭（B17 Step 1）** | 复用后 `Store.dead` 仍是 0（本批逐帧复位，不启用多帧在飞的 `evict`——它依赖 `settle` 语义）；但 `generation` 第一次真正参与工作（每次复位 +1，驱动 `Buffers.sent` 归零）。**packing 未被首次触发**（`dead = 0`）⇒ 无新行为、无像素变化。`evict` 保留原样，不本批启用 |
-| X7-04 | 移动端可用性判定可能**过宽**：`rgba32float_storage` / `rgba8unorm_storage` / `r32float_blendable` 已探测但未进 `is_available_on_facts`；若移动端不支持某项，会"静默放行 ⇒ 创建存储纹理 ⇒ 卡死" | 路由 / 能力判定 | **记账（B17 Step 3/4，等设备数据）** | 硬约束 ③：移动端实测数据到达前**不得**凭猜测关闭矢量。需要用户提供 `[adapter-facts]` 一行 + "还卡不卡/第几帧/斑马纹是否还在" + 设备信息。三种结果对应：不卡 ⇒ 本批收尾、不补判定；仍卡且 `rgba32float_storage=false` ⇒ 把三项接进判定并带具体理由（状态栏 / `RoutingDecision.reject` / 报告环境指纹）；required 全 true 仍卡 ⇒ 降规格（另一批） |
+| X7-04 | 移动端可用性判定可能**过宽**：`rgba32float_storage` / `rgba8unorm_storage` / `r32float_blendable` 已探测但未进 `is_available_on_facts`；若移动端不支持某项，会"静默放行 ⇒ 创建存储纹理 ⇒ 卡死" | 路由 / 能力判定 | **已关闭（PA Step 1：数据已到，命中第一分支）** | 实到数据（vivo V2270A / Adreno 660）：`[adapter-facts] features=[0, e7f3] can_compute=true indirect_first_instance=true float32_blendable=true depth32float_stencil8=true adapter_specific_formats=false r32float_blendable=true rgba32float_storage=true rgba8unorm_storage=true surface_format=Rgba8Unorm` ⇒ required 三项**全 true**；B17 修完 churn 后**不崩溃**；B18 修完 AO 的 workgroup 读回（X8-07）后**条纹消失**。三条分支命中第一条 ⇒ **不卡 ⇒ 收尾、不补判定**。🌟 反事实：我们一度准备"补判定，让移动端回退 wgpu"——若当时凭猜测补了，移动端就永远拿不到矢量画面，而实际两个问题（churn、驱动 bug）**都不是能力问题**。判定本来就是窄的、是正确的；不是所有移动端问题都该往"我们判定不全"上归因（与 V-13 ①「先有数据再改判据」同一条方法论）。硬约束 ③ 仍成立：本条是在**数据到达之后**关闭，不是绕过；若换设备复现崩溃，**新开条目**，不复活 X7-04 |
 
-**T 段小计（B17）**：已关闭 3（X7-01、X7-02、X7-03）· 记账 1（X7-04）。
+**T 段小计（B17）**：已关闭 4（X7-01、X7-02、X7-03、X7-04）。
 
 ---
 
@@ -661,7 +661,7 @@
 | V-01 | **阴影整块被关**（能力消失，不是参数丢失）：桥给 `Light::Sun` / `Light::Spot` 一律写 `shadows: false`，而后端侧阴影是完整实现 | 渲染 / 3D 光照 | **记账（B19 Step 0）** | 字面量在 `fn zela_playback::vector3d::lights` 的 Sun / Spot 两支与默认 Sun 兜底处；能力侧 `const zela_render_vector::shadow::SIZE = 2048`、`MOST = 4`，3×3 PCF、法线偏移 1.5 texel、半径按 2^(1/4) 取整 + 中心对齐整纹素（防逐帧闪烁）；`crates/render/zela-render-vector/src/api.rs` 的 GPU 用例里存在 `shadows: true`（≈:1128）。⇒ 有实现、有单测、有防闪烁设计的能力在生产路径被一个字面量关掉。本批不修的理由：开启会让 `ShadowMaps`（在 `Buffers` 内）新增 2048²×4 ≈ **67 MiB/帧**，必须先评估，且会重录基线 |
 | V-02 | **bloom 三参只接一个**：`Bloom { threshold, intensity, radius }` 里只有 `intensity` 被透传，threshold / radius 静默丢弃 | 渲染 / 后处理 | **记账（B19 Step 0）** | `fn zela_playback::vector3d::view3` 里 `params.bloom` 经 `map` 只取 `intensity` 一个字段（threshold / radius 连读都没读）；矢量着色器 `bloom_of(view)` 只看 `strength > 0`，**没有阈值概念** ⇒ 实际语义是"把画面受光部分的 60% 扩散出去"，而非"只有高光发光"；`radius` 同样无效（扩散范围由固定 8 级金字塔决定）。处置三选一（本批只记账不定）：(a) 后端补 threshold/radius（改 wgsl ⇒ 可能重录 11 条 `[vector]`）；(b) 承认"我们的 bloom 就是全画面扩散"，删掉契约里那两个字段；(c) 契约保留，不支持就显式报错。倾向 (a)，做不到就 (c) |
 | V-03 | **其余失效契约字段**：`RenderParams` 共 8 个字段，矢量侧真正生效的只有 `tone.exposure`、`tone.curve`、`bloom.intensity`、`ao` | 渲染 / 契约 | **记账（B19 Step 0，与 X1-04 合流）** | 失效六个：`bloom.threshold`、`bloom.radius`（见 V-02）、`env`、`msaa`、`supersample`、`filter`。其中 `env`（IBL）最重——**没有它金属材质是死黑的**；它与 X1-04（环境图无脚本入口）合流指向同一件事。定义见 `ze_render_ir::params::RenderParams`；`msaa` / `supersample` / `filter` 在矢量侧由 `Gpu` 自身能力与固定采样决定，宿主传值不参与 |
-| V-04 | **wgpu 冻结定位**（已拍板，从未落账）：能力扩张一律不补；只修正确性；契约变更时仍被动跟随 | 架构 / 后端关系 | **记账（B19 Step 0）** | wgpu 角色降为"抽象的第二消费者"——它的义务是证明同一套抽象能容纳异构后端，而不是继续追功能。**冻结 ≠ 放任编译不过**：仍须跟 Rust / wgpu 版本与契约变更。由此 X5-02/03/04/05 的参照物被固定，不再驱动矢量收敛（见 Step 1 落档） |
+| V-04 | **wgpu 冻结定位**（B19 落账，PA 界定范围）：**冻结 = 渲染能力扩张；兼容必需改动允许** | 架构 / 后端关系 | **记账（B19 Step 0；PA Step 2 界定）** | 三层：① **冻结**：后处理栈 / IBL / AO / 阴影等**渲染能力扩张**一律不补——wgpu 的角色是"抽象的第二消费者"，义务是证明同一套抽象能容纳异构后端，而不是追功能；由此 X5-02/03/04/05 的参照物被固定，不再驱动矢量收敛（Step 1 落档）。② **允许**：正确性修复、Rust / wgpu 版本与契约变更的被动跟随，以及**兼容必需的接线改动**（surface 格式、深度格式、MSAA 能力查询、Cargo feature 如 `webgl`）；**冻结 ≠ 放任编译不过**。③ **仍然禁止**：任何让"抽象被迫向 wgpu 看齐"的语义让步。B16 ①（让 wgpu 走 WebGL2）落在此条**允许**范围内，与 V-06 不冲突：V-06 是"不做**矢量**的 WebGL 降级"（解析 AA 依赖 `atomic` storage buffer，WebGL2 无法表达），而 wgpu 后端不依赖 compute / storage（已核实：0 处 storage texture、0 处 storage buffer，仅 `gpu_timing.rs` 一个空 compute pass 且注释写明"不做任何工作"）。B16 ②（换默认后端）已由 B19 Step 3 吸收完成 ⇒ **B16 ① 状态 = 保留待做（依赖本条界定，本批不实现）** |
 | V-05 | **E1/E2 结论**（辩了三轮，结论从未落账）：矢量为主 + wgpu 冻结兼容 ⇒ 融合/分立之争消解 | 架构 / 路由 | **记账（B19 Step 0）** | 5 件作品（demo3d Lines / surface_matrix 与其 `_js` / atlas ContentTexture / capability_gaps 的 2D3D 混排）矢量被拒 ⇒ 走冻结的 wgpu，画面差一档；**接受并记账**。基线锁的是"冻结的弱后端"，这是有意的口径，不是待修项 |
 | V-06 | **不做兼容渲染器**（WebGL2） | 架构 / 路线 | **记账（B19 Step 0）** | 解析 AA 依赖**每像素链表**（`atomic` storage buffer），WebGL2 无法表达 ⇒ "矢量画质 + 全兼容"这个组合**不存在**；compute 是 WebGPU 核心功能，去掉它也换不来兼容性。故 B16 的 WebGL 接线不以"兼容"为目标（见 §7 本批不做） |
 | V-07 | **产品化三问**冻结为"成人礼"，非路线图项 | 路线 | **记账（B19 Step 0）** | 24/7 功耗、陌生人脚本安全、画面值不值钱——三者都要真实用户与真实负载才能回答，当前数据不足，不作为待办 |
@@ -676,11 +676,34 @@
 
 ---
 
+## W. PA 批次记账（记账收尾与机制化，2026-10-24）
+
+> 计划《PA执行计划_记账收尾与机制化》。一句话：V 段刚写下"没进这里的东西，下一批会重新被
+> 讨论一遍"，转头就漏了 Render Attachment 三层 —— **所以本段一半在补账，一半在给"记账"
+> 这个动作本身补机制**。编号用 `PA-`（`W-xx` 已被 B 段占用，见 PA-05）。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PA-01 | **Render Attachment 三层**（辩了两轮却零记账）：L1 画面语义进产物；L2 宿主能力不进；L3 执行旋钮**绝不进** | 渲染 / 契约分层 | **记账（PA Step 0；本批不实现）** | 分层与判定问句：L1 = tone / bloom 三参 / ao / env / 阴影 / dash / gradient / 材质（改这个值**画面变不变**）⇒ ✅ 作品的一部分；L2 = 现 `RenderParams` + 能力协商（变不变，但决定**能不能跑**）⇒ ❌；L3 = tile / atlas / bloom 级数 / AO 采样 / msaa / 阴影贴图尺寸（不变，只影响**快慢与内存**）⇒ ❌ **绝不**。**L3 绝不进产物**的硬理由：`tile` / `atlas` 进 payload ⇒ "低端设备降规格"会让同一作品产出不同 payload，直接破坏 W1-01（产物确定性）与 25 条基线的逐位可比性。挂载点 `Camera3D`（3D 视口）/ `Surface`（2D 视口）正好对应两条路径的分界，顺带解决 X1-07（2D 入口把着色栈整个丢了）暴露的 2D/3D 口径分裂。冲突点：`params.rs` 现写明"不进 Pod 边界"，挂组件 ⇒ 进 ECS ⇒ 进 payload ⇒ **建议新增 `RenderAttachment` 类型，而不是改 `RenderParams` 的约定**。实现要等内容表达力的实测数据（先有数据再定结构） |
+| PA-02 | **锚点扫描只读 GAPS.md**：`crates/...` 路径校验的作用域只有一份文件，ARCHITECTURE / README / 历史报告全在盲区 | 文档 / 门禁 | **已关闭（PA Step 4）** | 实测连接路径：GAPS 16（B19 已修，0 死链）、ARCHITECTURE 4（1 条含省略号，按构造不可解析）、README / CONTRIBUTING 0、WASM_PORT_SURVEY 12（1 条已漂移）。处置：扫描范围扩到**仓库根所有 `.md`**；`WASM_PORT_SURVEY.md` **显式排除**（历史探测快照，路径漂移是它本来就该保留的信息）**并在文件头加可见声明**；含 `...` 的路径不参与定位、但**打印提示**。排除必须**响亮**——静默排除 = 又造一个"看起来全绿"的门禁 |
+| PA-03 | **vConsole 已引入但未记账**（提交 `1b447b6`） | 观测 / 移动端 | **已关闭（PA Step 0 补记）** | `crates/web/zela-web/www/vendor/vconsole.min.js` 本地内置：移动端 UA 默认开、`?vconsole=1/0` 覆盖。两条决策理由：① 移动端没有桌面控制台，页面状态栏只够放一行；② **不装 network 插件**——它包装 `window.fetch`，wasm-bindgen 的 `instantiateStreaming` 会拿到不可用的 Response（实测报 `compile ... must be a Response`）⇒ "观测工具反过来破坏被观测对象"的典型 |
+| PA-04 | **记账没有机制保障**（四次漏账）：① 三条静默默认值（阴影 / bloom / env）到 B19 Step 0 才 grep 到；② B18 批次二（重播黑屏 + 重复初始化 WebGPU）由 B19 补记（V-09）；③ 锚点扫描作用域提了三次才修；④ Render Attachment 三层辩了两轮仍零命中 | 流程 / 记账 | **部分关闭（PA Step 4：2 项自动化 + 1 项纪律）** | 能自动化的两项已落地：**A1** 锚点扫描扩到根目录所有 `.md`（WASM 显式排除且文件头声明）；**A2** 条目结构校验（K..W 段条目必须满 5 列且证据列非空，缺则报错带行号）。**不能自动化的那项要诚实写出来**："本轮讨论过的专有名词都进 GAPS 了吗"只能是人工纪律 ⇒ 写进 `CONTRIBUTING.md` 的收尾检查表（4 项）并承认它靠人。同时遵守 V-13 ②：新增段必须**双登记**（`check_gaps_subtotals` 的 prefix + `is_item` 白名单） |
+| PA-05 | **编号命名空间碰撞**：B 段（WASM 移植探测）已占用 `W-01..W-09`，新段若用 `W-xx` 会与它撞 | 文档 / 编号 | **已关闭（PA Step 0）** | 段字母 `## W.` 可用，条目编号改用 **`PA-01..PA-05`**（唯一、可 grep、不撞既有前缀）。`check_gaps_subtotals` 的 `prefix` 列表与 `is_item` 白名单**必须同时登记**——只加段不加白名单 ⇒ 条目不参与小计重算，又是一个静默缺口（与 PA-04 同型） |
+
+**W 段小计（PA）**：已关闭 3（PA-02、PA-03、PA-05）· 部分关闭 1（PA-04）· 记账 1（PA-01）。
+
+> **顺带确认（V-01 的描述已过时，本批不改写）**：V-01 写"新增 2048²×4 ≈ **67 MiB/帧**"。
+> 实测 `shadow_maps` 在 `Buffers` 内，`Buffers` 按需创建，而 B17 之后 `Buffers` 随 `Player`
+> **常驻复用** ⇒ 实际是 **≈67 MiB 一次性**，不是每帧。留给开阴影那一批一并改写 + 评估；
+> 先在这里记一句，免得下一个人看到"每帧"不敢动。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–V**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–V 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–W**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–W 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|
