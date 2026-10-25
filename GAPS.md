@@ -813,8 +813,9 @@
 | PG-09 | **键空间**：相机视图记录、brush rows、内联图像三者共用 `u64` 键 | 后端内部 | **已关闭（Step 2/4）** | 主帧记录 `1..=n`；相机视图记录 `(i+1)<<48`（否则同一 `key` 在两份记录里指向同一条 shape）；rows = `1<<40 + key`；内联图像 = `1<<41 + key`；相机视图键 = 内容层的 `content_texture_handle`（`1<<32 + index`）。冲突会让后上传的渐变 / 图像覆盖前面的 |
 | PG-10 | **`has_material_content` 拒绝分支移除** | 路由 | **已关闭（Step 2）** | 现在只有"材质的纹理**没有生产方**"才拒绝（`FrameContent::has_unserved_material_texture`，理由写明"缺纹理上传入口"）；材质采样的层在决策理由里写"**按纹理采样**"（与 PC 的"叠加"区分）。用例：`material_sampled_content_is_served_by_a_camera_view` / `vector_falls_back_to_wgpu_with_a_reason` |
 | PG-11 | **`RenderParams` 仍失效的 3 个字段** | 契约 / 后端 | **记账（Step 1 结论）** | `msaa` / `supersample` / `filter`：矢量后端没有对应旋钮（采样数由 adapter + `?msaa=` 排查开关决定；无超采样；采样器固定 linear）。要接就先定语义，不在本批硬做 |
+| PG-12 | **demo payload 断言只在 CI 上跑** ⇒ 脚本改动后 push 才红 | 验证 / 门禁 | **已关闭（PG 补丁：新增验证步骤）** | 两次同型事故：PF 的 `demo3d`（删占位相机）、PG 的 `pbr_materials`（同因）。根因：Pages 工作流只跑 `build.ps1`，而 `cargo verify` 的七步里没有任何一步编译 manifest 里的作品 ⇒ 删一个场景对象改了 ZSB，本地全绿、CI 当场红（`payload hash 不符（pbr_materials / linux）：实测 e1688f07… 期望 6eeed7ff…`）。修法：新增 `cargo verify --step demo`（在 `check…coverage` 之后、`smoke` 之前），逐条按 manifest 编译并断言 `payload hash`，字体目录由 `cargo_command` 统一注入；口径与 `build.ps1` 逐字一致（`-` 跳过、`windows:…,linux:…` 只断言本机平台）。连带修正 4 条 manifest 值：`pbr_materials e1688f07…`、`pbr_scene 75bb7816…`、`shaded_meshes 7d7081ba…`、`atlas 1233e169…`（都是删占位相机导致的 ZSB 变化；`pbr_lights` / `surface_matrix` 等未变）。本机实测 22 条断言通过 |
 
-**AC 段小计（PG）**：已关闭 9（PG-01…PG-05、PG-07…PG-10）· 记账 2（PG-06、PG-11）。
+**AC 段小计（PG）**：已关闭 10（PG-01…PG-05、PG-07…PG-10、PG-12）· 记账 2（PG-06、PG-11）。
 
 ### Step 1 普查表（A 方向：场景层已经要给、渲染层丢掉；B 方向：后端已有、公开面没有）
 

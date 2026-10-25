@@ -1,9 +1,9 @@
 //! xtask：本机验证入口（`cargo verify`）。
 //!
 //! ```text
-//! cargo verify               # full：check + test + wasm + structure + coverage + smoke + hashes
+//! cargo verify               # full：check + test + wasm + structure + coverage + demo + smoke + hashes
 //! cargo verify --fast        # 开发循环：check + test + 短对拍（smoke）
-//! cargo verify --step <name> # 单步：check | test | wasm | structure | coverage | smoke | hashes
+//! cargo verify --step <name> # 单步：check | test | wasm | structure | coverage | demo | smoke | hashes
 //! cargo verify --record --reason <text>
 //!                            # 录制设备重录基线（见 lib.rs：两槽窗口 / 强制 reason）
 //! ```
@@ -255,6 +255,7 @@ fn run(options: &Options) -> Result<(), String> {
             Step::Wasm => step_wasm(&root)?,
             Step::Structure => step_structure(&root)?,
             Step::Coverage => step_coverage(&root)?,
+            Step::Demo => step_demo(&root)?,
             Step::Smoke => step_smoke(&root, options.skip_baseline)?,
             Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent)?,
         }
@@ -1314,6 +1315,155 @@ fn jq_filter(metadata: &str, program: &str) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+// ─── step: demo（manifest payload 断言） ────────────────────────────────────
+
+/// **PG 记账 AD-01**：`demo/manifest.txt` 的 payload 断言。
+///
+/// 为什么需要这一步：Pages 工作流只跑 `build.ps1`，而它不在本机门禁链里 —— 脚本改动
+/// （删占位相机、改动画）会静默改掉 ZSB payload，直到 push 之后才在 CI 红掉。
+/// 这类失败已经发生过两次（PF 的 demo3d、PG 的 pbr_materials）。
+///
+/// 口径与 `build.ps1` 逐字一致：同一条 `zela-compile`、同一个 `ZELA_TYPST_FONT_DIR`
+/// （由 [`cargo_command`] 注入）、同一条 `payload hash = …` 行；`-` 跳过、
+/// `windows:…,linux:…` 只断言本机平台。
+fn step_demo(root: &Path) -> Result<(), String> {
+    let manifest = root.join("crates/app/zela-app/scripts/demo/manifest.txt");
+    let text = fs::read_to_string(&manifest)
+        .map_err(|error| format!("读取 {} 失败：{error}", manifest.display()))?;
+    let scripts = root.join("crates/app/zela-app/scripts");
+    let out_dir = root.join("target").join("xtask").join("demo");
+    fs::create_dir_all(&out_dir)
+        .map_err(|error| format!("创建 {} 失败：{error}", out_dir.display()))?;
+    let platform = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+
+    let mut checked = 0usize;
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            return Err(format!(
+                "manifest.txt:{} 期望 ≥3 列（id title… script [payload-hash]）：{line}",
+                index + 1
+            ));
+        }
+        let id = parts[0];
+        let (script, expected) = if parts.len() == 3 {
+            (parts[2], "-")
+        } else {
+            (parts[parts.len() - 2], parts[parts.len() - 1])
+        };
+        if expected == "-" {
+            println!("[xtask] demo {id}: 不校验（manifest 写 `-`）");
+            continue;
+        }
+        let want = if let Some((want, skipped)) = expected_hash_for(expected, platform)? {
+            if let Some(note) = skipped {
+                println!("[xtask] demo {id}: 跳过断言（{note}）");
+                continue;
+            }
+            want
+        } else {
+            continue;
+        };
+        let script_path = scripts.join(script);
+        if !script_path.is_file() {
+            return Err(format!(
+                "manifest.txt:{} 脚本不存在：{}",
+                index + 1,
+                script_path.display()
+            ));
+        }
+        let out = out_dir.join(format!("{id}.zsb"));
+        let args = [
+            run_args("zela-compile", None),
+            strings(&[
+                &script_path.to_string_lossy(),
+                "--out",
+                &out.to_string_lossy(),
+            ]),
+        ]
+        .concat();
+        println!("[xtask] $ cargo {}", args.join(" "));
+        let output = cargo_command(root)?
+            .args(&args)
+            .output()
+            .map_err(|error| format!("启动 cargo 失败：{error}"))?;
+        let log = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if !output.status.success() {
+            eprint!("{log}");
+            return Err(format!("demo {id}：zela-compile 失败（{}）", output.status));
+        }
+        let Some(actual) = log
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("payload hash = "))
+            .map(|hash| hash.split_whitespace().next().unwrap_or_default().to_string())
+        else {
+            return Err(format!("demo {id}：编译输出里没有 `payload hash = …`"));
+        };
+        if actual != want {
+            return Err(format!(
+                "demo {id}：payload hash 不符（{platform}）\n  实测 = {actual}\n  期望 = {want}\n  \
+                 ⇒ 脚本 / 场景装配改了 ZSB 内容：同步更新 `crates/app/zela-app/scripts/demo/manifest.txt`\n     \
+                 （只允许在设置 ZELA_TYPST_FONT_DIR 时取新值；本步骤已自动注入）"
+            ));
+        }
+        println!("[xtask] demo {id}: payload 与 manifest 一致");
+        checked += 1;
+    }
+    println!("[xtask] demo：{checked} 条 payload 断言通过");
+    Ok(())
+}
+
+/// 解析 manifest 的 payload-hash 列：`-` / 64 位 hex / `windows:hex,linux:hex`。
+///
+/// 返回 `(值, 跳过原因)`；`None` 表示 `-`（整条跳过）。
+fn expected_hash_for(
+    spec: &str,
+    platform: &str,
+) -> Result<Option<(String, Option<String>)>, String> {
+    if spec == "-" {
+        return Ok(None);
+    }
+    if spec.len() == 64 && spec.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(Some((spec.to_ascii_lowercase(), None)));
+    }
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    for item in spec.split(',') {
+        let Some((name, hash)) = item.split_once(':') else {
+            return Err(format!(
+                "manifest payload-hash 非法：{spec}（期望 -、64 位 hex，或 windows:hash,linux:hash）"
+            ));
+        };
+        if !matches!(name, "windows" | "macos" | "linux") {
+            return Err(format!("manifest payload-hash 平台非法：{name}"));
+        }
+        if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!("manifest payload-hash 非法（{name}）：{hash}"));
+        }
+        pairs.push((name, hash));
+    }
+    match pairs.iter().find(|(name, _)| *name == platform) {
+        Some((_, hash)) => Ok(Some((hash.to_ascii_lowercase(), None))),
+        None => Ok(Some((
+            String::new(),
+            Some(format!("manifest 未提供 {platform} 的 payload hash")),
+        ))),
+    }
 }
 
 // ─── step: smoke / hashes ──────────────────────────────────────────────────

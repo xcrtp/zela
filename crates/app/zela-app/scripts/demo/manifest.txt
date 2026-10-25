@@ -32,18 +32,18 @@ fourier         傅里叶级数展开      fourier.lua     0def0109e2ad84266407d
 storyboard      分镜演示            storyboard.lua  ab19b3a294d2bf5ca2b622f7cc28a2d3eed061c72cb0b6830626f4f3dd7cf637
 demo3d          3D 场景             demo3d.lua      bb9aad25aed941adf69f80ef147f21f9a8dd97ad341e3b1e1c9e78a14f00d0d8
 fusion          融合演示(双面+透明) fusion.lua      07b97d21752ac9c644da347f036e612f1cdec186bbf98be76f571a2517546952
-pbr_materials   PBR材质画廊        pbr_materials.lua 6eeed7ffd8d63329ede27b3a510eeedc5d0b7f2bdee61750c77184aa00256c20
+pbr_materials   PBR材质画廊        pbr_materials.lua e1688f0774d9f3b5076372c574870a63f4e1006355701586170b508abade21d0
 pbr_lights      PBR光照实验室      pbr_lights.lua   d590430065bf8dfee55c6dbad16aada27efbdc5435e0434c6aad639835a70d32
-pbr_scene       PBR材质秀          pbr_scene.lua    8a2d784f668076405795e1d38afdbb596fb0f599d6b09615aa22dcb2bb5a79c1
+pbr_scene       PBR材质秀          pbr_scene.lua    75bb7816b3d32662b5de88c224a670d864e8803bbea8e5ad4f2ea71157b98d79
 pendulum        钟摆动画            pendulum.lua    ac3c11d23040dfd39441f3a766a7290dfdc6388d26169fc328b34c2e9f59e2d8
 orbit           公转行星            orbit.lua       1c5bb18a28e597d941a16cb333da461ab970bc6e2b0fb0d4228104d472603671
 spring          弹跳小球            spring.lua      5e088e67c090a31c3489ec764ae59801e12dad50a94a675ee24524a3b8eca859
 surface_matrix  Surface能力矩阵      surface_matrix.lua  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
 surface_matrix_js  Surface能力矩阵(JS) surface_matrix.js  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
-atlas           2D纹理进3D           atlas.lua       7ae2a453b3aec2cc349ef2230a2a23f6375cb788810d67a9197abcf1cc5b2527
+atlas           2D纹理进3D           atlas.lua       1233e169d3d1bf2ef7c84bca057c6d0d27f267f74ca97e91279af0ec7943ad7f
 vector_paths    矢量后端作品         vector_paths.lua b2f6f4f8eeded354294e64bb8111f49817031c523efa0946579dcc7458605b9c
 capability_gaps 能力缺口补齐        capability_gaps.lua b90c2eb0aa3f5b8f29a151300eda15bb5975ce292b3da89f7cd0faef84e3102b
-shaded_meshes   3D网格着色栈        shaded_meshes.lua 452685591f879e125fbec27a8ae032dd9f4e929de3be9a7524f63837de340a02
+shaded_meshes   3D网格着色栈        shaded_meshes.lua 7d7081ba5e06f7ff9ec51eba706fd7d7cd7c592a05daed2dd31029f4f65bd40b
 # PE Step 2：能力展示作品（一件能力一件作品；**只进 [vector] 基线**）。
 # 它们用的样式组件在 wgpu 下不生效 —— 这正是路由要显式说明"已忽略"的原因。
 cap_gradient    渐变(2/3stop)       cap_gradient.lua 0d29dc249d815a858fa415c54071788dd05fbaf6a920252b6465edd560b6a659

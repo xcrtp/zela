@@ -1704,6 +1704,9 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   与 `TextureSource::Image`；各一条"改变输出"用例，`Upload::{Points,Texture}` 的死代码警告消失。
 - **路由**：`has_material_content` 的整帧拒绝改为"纹理**没有生产方**"才拒绝
   （`has_unserved_material_texture`）；材质采样的层在决策理由里写「按纹理采样」（与 PC 的「叠加」区分）。
+- **门禁补齐（PG-12）**：`cargo verify` 新增 **`demo`** 步 —— 按 `demo/manifest.txt` 逐条编译并断言
+  `payload hash`（字体由 `cargo_command` 注入，口径与 `build.ps1` 逐字一致）。此前 demo 断言只在
+  CI 上跑，脚本改动会「本地全绿、push 才红」（PF 的 demo3d、PG 的 pbr_materials 两次同型）。
 
 
 
