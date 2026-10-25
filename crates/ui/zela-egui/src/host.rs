@@ -150,7 +150,8 @@ impl EguiSceneHost {
     /// - [`ViewportCamera::ThreeDOrbit`]：拖拽 → `Orbit { delta_yaw, delta_pitch }`、
     ///   滚轮 → `Dolly { delta }`（3D 语义，无需世界换算）；
     /// - [`ViewportCamera::ThreeDFps`]：拖拽 → `Look { .. }`、
-    ///   `WASD`/`QE` → `Move { delta }`（x = 右、y = 上、z = 前）。
+    ///   `WASD`/`QE` → `Move { delta }`（x = 右、y = 上、z = 前；**按秒**，不依赖帧率，
+    ///   也不要求指针停在视口内；文本输入时让位）。
     ///
     /// 悬停 / 点击（拾取类事件）与操作目标无关，两种目标下都上报。
     pub fn collect_events(
@@ -191,8 +192,14 @@ impl EguiSceneHost {
         const ORBIT_RAD_PER_PX: f32 = 0.01;
         /// 滚轮 → Dolly 步长（世界单位/滚轮量）。
         const DOLLY_PER_SCROLL: f32 = 0.02;
-        /// FPS 按键 → 每帧位移（世界单位）。
-        const MOVE_PER_FRAME: f32 = 0.08;
+        /// FPS 按键 → 每秒位移（世界单位/秒）。
+        ///
+        /// **按时间而不是按帧**：旧实现是 `0.08 / 帧`，60 Hz 与 144 Hz 下速度差 2.4 倍
+        /// （且掉帧时变慢）—— 这是"手感飘/忽快忽慢"的直接来源。
+        const MOVE_PER_SECOND: f32 = 4.8;
+
+        // 文本输入（参数面板 / 文件名等）时不抢 WASD/QE：否则一边改名一边相机乱飞。
+        let typing = ui.ctx().egui_wants_keyboard_input();
 
         let mut events = Vec::new();
         ui.input(|i| {
@@ -275,6 +282,10 @@ impl EguiSceneHost {
                         }
                     }
                     // WASD → 前后左右；QE → 上下（沿用 3D 建模软件惯例）。
+                    //
+                    // 键盘**不要求指针悬停在视口内**：按 WASD 时手常常停在面板上
+                    // （旧实现的 `inside` 会让"移动一会儿后突然不动"）。只在文本输入
+                    // 时让位，避免抢用户的按键。
                     let axis = |neg: egui::Key, pos: egui::Key| {
                         (i.key_down(pos) as i32 - i.key_down(neg) as i32) as f32
                     };
@@ -282,8 +293,8 @@ impl EguiSceneHost {
                         axis(egui::Key::A, egui::Key::D),
                         axis(egui::Key::Q, egui::Key::E),
                         axis(egui::Key::S, egui::Key::W),
-                    ) * MOVE_PER_FRAME;
-                    if inside && delta != ze_notion::Vec3::ZERO {
+                    ) * (MOVE_PER_SECOND * i.stable_dt);
+                    if !typing && delta != ze_notion::Vec3::ZERO {
                         events.push(SceneEvent::Camera {
                             layer,
                             command: CameraCommand::Move { delta },

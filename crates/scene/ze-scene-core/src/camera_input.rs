@@ -99,10 +99,18 @@ pub fn apply_orbit(camera: &mut Camera3D, command: CameraCommand) {
 
 /// FPS 控制器（K1，`Fps` 模式）：
 /// - [`CameraCommand::Look`]：改朝向（`yaw` 无限制、`pitch` 钳到
-///   `±`[`FPS_PITCH_LIMIT`]），随后重写 `target = eye + forward`（`eye` 不动）；
+///   `±`[`FPS_PITCH_LIMIT`]），随后重写 `target = eye + forward · d`（`eye` 不动）；
 /// - [`CameraCommand::Move`]：沿自身基（右 / 上 / 前）位移，`target` 随 `eye` 平移；
 /// - 其余命令忽略。
+///
+/// ⚠️ **`d` 保留当前 `|eye − target|`，不是固定 1**：矢量后端的取景尺度是
+/// `focal = |eye − target|`（`vector3d::view3`）—— 若把 target 固定写成一个单位远，
+/// 一操作 FPS 画面就会缩放到原焦距的 1/d（实测：demo3d 从 5 缩成 1 ⇒ 物体突然变小），
+/// 切回 Orbit 时枢轴也缩成 1 单位、镜头绕着眼前一点打转。
 pub fn apply_fps(view: &mut FpsView, camera: &mut Camera3D, command: CameraCommand) {
+    // **命令前**记下取景焦距：`Move` 会移动 `eye`，事后再量 `|target − eye|`
+    // 会把位移量算进去（前进时焦距变短 ⇒ 越走越"远"）。
+    let distance = (camera.target - camera.eye).length().max(1e-3);
     match command {
         CameraCommand::Look {
             delta_yaw,
@@ -121,8 +129,9 @@ pub fn apply_fps(view: &mut FpsView, camera: &mut Camera3D, command: CameraComma
         }
         _ => {}
     }
-    // 朝向的权威来源是 `FpsView`：每次都把 `target` 重算为 `eye + forward`。
-    camera.target = camera.eye + view.forward();
+    // 朝向的权威来源是 `FpsView`：每次都把 `target` 重算为 `eye + forward · d`。
+    // `d` 是命令前的焦距（见上），保证取景尺度在 FPS 内不漂移。
+    camera.target = camera.eye + view.forward() * distance;
 }
 
 /// 按模式把命令分派给 2D 相机（`PanZoom`；其余模式 no-op）。

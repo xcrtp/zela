@@ -19,8 +19,11 @@
 // |---|---|---|
 // | `free_2d_camera = false`（默认） | 分镜绑定**在位** + 模式 `Path` | — |
 // | `free_2d_camera = true` | 分镜绑定**移出** + 模式 `PanZoom` | — |
-// | `viewport_camera = TwoD`（默认） | — | 自动轨道**在位** + 模式 `Path` |
-// | `viewport_camera = ThreeDOrbit/Fps` | — | 自动轨道**移出** + 模式 `Orbit` / `Fps` |
+// | `viewport_camera = TwoD`（默认） | — | 3D 相机的全部动画绑定**在位** + 模式 `Path` |
+// | `viewport_camera = ThreeDOrbit/Fps` | — | 3D 相机的全部动画绑定**移出** + 模式 `Orbit` / `Fps` |
+//
+// 「3D 相机的全部动画绑定」= 自动轨道 + 脚本自己用 `Target.CameraEye` 建的绑定。
+// 后者在装配期还看不到（`Camera3DHandle` 由宿主登记）⇒ 按目标 id **动态**收集。
 //
 // # 为什么这两件事在**同一个 System** 里
 //
@@ -30,7 +33,7 @@
 //
 // A4：本 System 是**场景 system**，从 `zela-app` 归位到此；app 只负责注册。
 
-use ze_scene_core::{Camera2DHandle, Camera3DHandle};
+use ze_scene_core::{Camera2DHandle, Camera3DHandle, FpsView};
 use zela_schedule::context::ExecutorContext;
 use zela_schedule::system::System;
 
@@ -46,8 +49,16 @@ pub struct CameraDriveSystem {
     orbit: Binding,
     /// 分镜的 2D 相机绑定当前是否在位。
     cam2d_driven: bool,
-    /// 自动轨道绑定当前是否在位。
+    /// 3D 相机的动画绑定当前是否在位（`want_orbit`；含自动轨道与脚本的 `CameraEye`）。
     orbit_active: bool,
+    /// 让位时**从表里移出**的 3D 相机绑定（切回 `TwoD` 时原样放回）。
+    ///
+    /// 为什么要动态收集而不是只记 `orbit`：脚本作品（如 `capability_gaps`）自己
+    /// 用 `Target.CameraEye` 驱动相机，而装配期 `Camera3DHandle` 还没登记
+    /// （`install_camera3d` 在宿主侧才做）⇒ 这类绑定不在构造参数里。只让位
+    /// "自动轨道"一条的话，切到轨道/第一人称后相机仍被脚本每帧写回
+    /// ⇒ 用户看到的是"3D 相机控制完全没反应"。
+    suspended3d: Vec<Binding>,
 }
 
 impl CameraDriveSystem {
@@ -59,6 +70,7 @@ impl CameraDriveSystem {
             orbit,
             cam2d_driven: true,
             orbit_active: true,
+            suspended3d: Vec::new(),
         }
     }
 }
@@ -109,9 +121,29 @@ impl System for CameraDriveSystem {
             }
             if orbit_changed {
                 if want_orbit {
-                    table.add(self.orbit.clone());
+                    // 原样放回（自动轨道 + 脚本自己写的 CameraEye 绑定）。
+                    for binding in self.suspended3d.drain(..) {
+                        table.add(binding);
+                    }
                 } else {
-                    table.bindings.retain(|b| b.clock != self.orbit.clock);
+                    // 移出**所有**写这台 3D 相机的绑定 —— 不只是装配期的自动轨道。
+                    let target = cam3d.0;
+                    let mut taken = Vec::new();
+                    table.bindings.retain(|binding| {
+                        if binding.target.target_id() == target {
+                            taken.push(binding.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    // 自动轨道的目标可能是悬垂 id（无 3D 相机，或脚本相机在宿主侧才
+                    // 登记）⇒ 再按 clock 兜底移出一次，保持旧行为。
+                    if !taken.iter().any(|binding| binding.clock == self.orbit.clock) {
+                        table.bindings.retain(|binding| binding.clock != self.orbit.clock);
+                        taken.push(self.orbit.clone());
+                    }
+                    self.suspended3d = taken;
                 }
                 self.orbit_active = want_orbit;
             }
@@ -126,6 +158,11 @@ impl System for CameraDriveSystem {
 ///
 /// 只在**变化时**写组件：本层的相机模式默认是 `PanZoom`（未挂组件时的取值），
 /// 但这里显式落组件，让"谁驱动"这件事在场景数据里可查（而不是靠缺省）。
+///
+/// **模式切换同时作废 `FpsView`**：`FpsView` 是 FPS **会话内的累积朝向**，而另一个
+/// 模式（Orbit / Path）会直接改 `eye` / `target`。留着旧值 ⇒ 下次进 FPS 时第一下
+/// 操作会把相机**拉回上一次的朝向**（实测症状：切回第一人称后按 W 画面瞬间跳转）。
+/// 作废后由 `CameraInputSystem` 用相机当前朝向重新初始化（"接管不跳变"）。
 fn write_mode(ctx: &mut ExecutorContext<'_>, id: ObjectId, mode: CameraMode) {
     let Some(entity) = entity_of(id) else {
         return;
@@ -137,6 +174,7 @@ fn write_mode(ctx: &mut ExecutorContext<'_>, id: ObjectId, mode: CameraMode) {
         .unwrap_or(true);
     if changed {
         let _ = ctx.world.insert_one(entity, mode);
+        let _ = ctx.world.remove_one::<FpsView>(entity);
     }
 }
 
@@ -265,6 +303,14 @@ mod tests {
         fn set_cfg(&mut self, f: impl FnOnce(&mut UiConfig)) {
             f(self.sched.resources_mut().get_mut::<UiConfig>().unwrap());
         }
+
+        /// 表里是否还有这个 clock 的绑定。
+        fn has_binding(&self, clock: ClockId) -> bool {
+            self.sched
+                .resources()
+                .get::<BindingTable>()
+                .is_some_and(|table| table.bindings.iter().any(|binding| binding.clock == clock))
+        }
     }
 
     /// 默认（分镜驱动）：3 条绑定全在位；2D 相机 `Path`（不接受交互）。
@@ -345,6 +391,47 @@ mod tests {
         assert_eq!(f.mode3d(), CameraMode::Fps);
     }
 
+    /// **脚本自己的 `CameraEye` 绑定也必须让位**：脚本作品（如 `capability_gaps`）的
+    /// 相机由 `Target.CameraEye` 驱动，而 `Camera3DHandle` 是宿主侧才登记的 ⇒ 它不在
+    /// 构造参数的 `orbit` 里。只让位自动轨道的话，交互会被脚本每帧抹掉
+    /// （用户看到"3D 相机控制完全没反应"）。
+    #[test]
+    fn script_camera_binding_is_suspended_and_restored() {
+        let mut f = Fixture::new(UiConfig::default());
+        // 模拟脚本绑定：另一条 `CameraEye`，写同一台 3D 相机、用不同的时钟。
+        let script = Binding {
+            clock: ClockId(999),
+            curve: Curve::Orbit {
+                radius: 3.0,
+                axis: ze_notion::Vec3::Y,
+                speed: 0.2,
+                initial_angle: 0.0,
+            },
+            target: Arc::new(CameraEye {
+                id: crate::contract::object_id_of(f.cam3d),
+            }),
+            seek_kind: SeekKind::O1,
+        };
+        f.sched
+            .resources_mut()
+            .get_mut::<BindingTable>()
+            .unwrap()
+            .add(script.clone());
+        assert_eq!(f.binding_count(), 4, "自动轨道 + 2D 两条 + 脚本一条");
+
+        f.set_cfg(|c| c.viewport_camera = ViewportCamera::ThreeDFps);
+        f.run();
+        assert!(
+            !f.has_binding(script.clock),
+            "脚本的 CameraEye 绑定必须让位，否则交互被每帧写回"
+        );
+
+        f.set_cfg(|c| c.viewport_camera = ViewportCamera::TwoD);
+        f.run();
+        assert!(f.has_binding(script.clock), "切回 TwoD 后必须原样放回");
+        assert_eq!(f.binding_count(), 4, "放回不得重复或丢失");
+    }
+
     /// 句柄失效（无相机对象）⇒ 不 panic；绑定让位仍生效。
     #[test]
     fn missing_cameras_are_noop() {
@@ -380,5 +467,41 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    // ── FPS 朝向状态的生命周期（PH 之后修的实测 bug）────────────────────
+
+    /// **切进 FPS 时作废旧朝向**：另一个模式改过 `eye`/`target` 后，旧的 `FpsView`
+    /// 若留着，下一次操作会把相机拉回上一次的朝向（实测：切回第一人称按 W 画面跳转）。
+    #[test]
+    fn entering_fps_discards_the_previous_heading() {
+        let mut f = Fixture::new(UiConfig::default());
+        // 模拟上一次 FPS 会话留下的朝向。
+        f.sched
+            .world_mut()
+            .insert_one(f.cam3d, FpsView::new(1.0, 0.4))
+            .unwrap();
+        f.set_cfg(|c| c.viewport_camera = ViewportCamera::ThreeDFps);
+        f.run();
+        assert_eq!(f.mode3d(), CameraMode::Fps);
+        assert!(
+            f.sched.world().get::<&FpsView>(f.cam3d).is_err(),
+            "切进 FPS 必须作废旧朝向，交给 CameraInputSystem 从相机重新推导"
+        );
+    }
+
+    /// **停留在 FPS 内不清朝向**：模式没变时不得每帧抹掉正在累积的 `FpsView`。
+    #[test]
+    fn staying_in_fps_keeps_the_heading() {
+        let mut f = Fixture::new(UiConfig::default());
+        f.set_cfg(|c| c.viewport_camera = ViewportCamera::ThreeDFps);
+        f.run();
+        f.sched
+            .world_mut()
+            .insert_one(f.cam3d, FpsView::new(1.0, 0.4))
+            .unwrap();
+        f.run();
+        let heading = *f.sched.world().get::<&FpsView>(f.cam3d).unwrap();
+        assert_eq!(heading, FpsView::new(1.0, 0.4), "同模式内不得清掉朝向");
     }
 }

@@ -1224,13 +1224,19 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > - **K1 FPS**：新增命令 `Look{delta_yaw,delta_pitch}` / `Move{delta:Vec3}`（x=右/y=上/z=前）
 >   + 组件 `ze_scene_core::FpsView{yaw,pitch}`（**显式存朝向**：增量旋转会漂移且 pitch 无法 clamp）
 >   + 纯函数 `apply_fps`；pitch 钳 `±FPS_PITCH_LIMIT = π/2 − 0.01`。
+>   **PH 后修（PH-09）**：`target` 保留命令前的 `|eye − target|`（矢量后端取景尺度
+>   `focal` 就是它 —— 固定成一个单位远会让一拖拽画面缩到 1/d）；模式切换作废
+>   `FpsView`（否则切回 FPS 第一下跳回上次朝向）；WASD/QE 改为**按秒**位移且不再要求
+>   指针悬停在视口内（文本输入时让位）。
 > - **K2 轨迹相机**：`Path` 模式**忽略全部交互命令**（与既有语义注释一致）；
 >   轨迹**未新增 Curve 变体** —— `Keyframes`/`Sampled` 已能驱动 `Framing2D.center` /
 >   `CameraEye`（分镜的镜头推进即生产中的 2D 轨迹样例）。
 > - **K3 3D 轨道**：纯函数 `apply_orbit`（Orbit 绕 target 保持半径 + 俯仰钳制；Dolly 改
 >   eye↔target 距离）。**与自动轨道动画的冲突：会打架**（`CameraEye` 绑定每帧无条件写 `eye`）；
 >   处置 = **模式互斥 + 显式让位**：`CameraDriveSystem`（app 层）按「视口操作目标」把
->   3D 相机模式切到 `Orbit`/`Fps` 时，把该轨道绑定**移出 `BindingTable`**（切回 2D 时放回）。
+>   3D 相机模式切到 `Orbit`/`Fps` 时，把**所有写这台相机的绑定**移出 `BindingTable`
+>   （自动轨道 + 脚本自己建的 `Target.CameraEye`；后者按目标 id 动态收集，因为
+>   `Camera3DHandle` 是宿主侧才登记的），切回 2D 时原样放回。
 > - **K3 补（2D 也让位）**：同一条实测结论对 2D 相机同样成立 —— 分镜的 `Camera2DFraming` 绑定
 >   （`center` + `scale`）也每帧无条件写、把用户的 Pan/Zoom **同帧抹掉**（相位序
 >   `Input` → `SceneSync`）。处置 = 新增 `UiConfig::free_2d_camera` 开关：
