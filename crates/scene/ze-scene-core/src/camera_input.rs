@@ -122,8 +122,10 @@ pub fn apply_fps(view: &mut FpsView, camera: &mut Camera3D, command: CameraComma
         }
         CameraCommand::Move { delta } => {
             let forward = view.forward();
-            // 右 = 前 × 世界上方向（与 forward 不平行由 pitch clamp 保证）。
-            let right = forward.cross(Vec3::Y).normalize_or_zero();
+            // **(右, 上, 前) 取相机自己的上方向**（`FpsView.up`），不是常量 Y：
+            // 用 +Z 作上的场景（如 `capability_gaps`）否则会按世界轴走。
+            let up_axis = view.up_axis();
+            let right = forward.cross(up_axis).normalize_or_zero();
             let up = right.cross(forward).normalize_or_zero();
             camera.eye += right * delta.x + up * delta.y + forward * delta.z;
         }

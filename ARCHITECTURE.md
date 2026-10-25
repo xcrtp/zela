@@ -1226,8 +1226,10 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   + 纯函数 `apply_fps`；pitch 钳 `±FPS_PITCH_LIMIT = π/2 − 0.01`。
 >   **PH 后修（PH-09）**：`target` 保留命令前的 `|eye − target|`（矢量后端取景尺度
 >   `focal` 就是它 —— 固定成一个单位远会让一拖拽画面缩到 1/d）；模式切换作废
->   `FpsView`（否则切回 FPS 第一下跳回上次朝向）；WASD/QE 改为**按秒**位移且不再要求
->   指针悬停在视口内（文本输入时让位）。
+>   `FpsView`（否则切回 FPS 第一下跳回上次朝向）；`FpsView` 记录会话的**世界上方向**
+>   （取自 `Camera3D.up`，`up = +Z` 的场景不再按世界 Y 走 WASD）；WASD/QE 改为**按秒**
+>   位移且不再要求指针悬停在视口内（文本输入时让位）；让位时移出**所有**写该 3D 相机的
+>   绑定（含脚本的 `Target.CameraEye`）。
 > - **K2 轨迹相机**：`Path` 模式**忽略全部交互命令**（与既有语义注释一致）；
 >   轨迹**未新增 Curve 变体** —— `Keyframes`/`Sampled` 已能驱动 `Framing2D.center` /
 >   `CameraEye`（分镜的镜头推进即生产中的 2D 轨迹样例）。

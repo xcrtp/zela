@@ -196,48 +196,107 @@ pub fn spawn_camera2d<S: Scene>(scene: &mut S, framing: Framing2D) -> Option<Cam
 
 // ─── FpsView / Camera3DHandle（K1 / K3）────────────────────────────────────
 
-/// FPS 相机的**朝向状态**（K1，组件）：显式存 `yaw` / `pitch`（弧度）。
+/// FPS 相机的**朝向状态**（K1，组件）：显式存 `yaw` / `pitch`（弧度）与世界上方向。
 ///
 /// 为什么不直接增量旋转 `eye - target`：增量应用到方向向量会**累积漂移**，
 /// 且 `pitch` 无法 clamp（会翻转）——只有显式存 yaw / pitch 才能正确限制俯仰范围。
 ///
 /// 与 [`Camera3D`] 的分工：本组件是"朝向的权威来源"，`Camera3D.eye/target` 是它的
-/// 派生产物（控制器每次改完朝向就重写 `target = eye + forward`）。
-#[derive(Debug, Clone, Copy, PartialEq, derive_new::new, serde::Serialize, serde::Deserialize)]
+/// 派生产物（控制器每次改完朝向就重写 `target = eye + forward · d`）。
+///
+/// ⚠️ **为什么存上方向**：场景不一定以 +Y 为上（`capability_gaps` 的相机在 XY 平面
+/// 公转、`up = +Z`）。若 yaw/pitch 恒按世界 Y 解释，WASD 会沿**世界轴**走（按 D 往上、
+/// 按 W 往侧面），与屏幕完全不对应。进入 FPS 时从 `Camera3D.up` 取一次，之后整个会话
+/// 都用它构造 `(右, 上, 前)` 基。
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FpsView {
-    /// 绕世界 Y 轴的偏航角（弧度）。
+    /// 绕 [`up`](Self::up) 轴的偏航角（弧度）。
     pub yaw: f32,
     /// 俯仰角（弧度），限制在 ±[`FPS_PITCH_LIMIT`]。
     pub pitch: f32,
+    /// 会话的世界上方向（单位向量；进入 FPS 时取自 `Camera3D.up`）。
+    pub up: Vec3,
 }
 
 /// FPS 俯仰角上限（弧度）：`π/2 − ε`，避免视线与世界上方向共线（翻转/奇异）。
 pub const FPS_PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 
 impl FpsView {
-    /// 从相机的当前朝向导出 `yaw` / `pitch`（保证接管时画面不跳变）。
-    ///
-    /// 朝向约定（与 [`FpsView::forward`] 同式）：`yaw = atan2(dir.z, dir.x)`、
-    /// `pitch = asin(dir.y)`。
-    pub fn from_camera(camera: &Camera3D) -> Self {
-        let dir = (camera.target - camera.eye).normalize_or_zero();
+    /// 以世界 +Y 为上方向的朝向状态（旧构造口径）。
+    pub fn new(yaw: f32, pitch: f32) -> Self {
         Self {
-            yaw: dir.z.atan2(dir.x),
-            pitch: dir.y.asin().clamp(-FPS_PITCH_LIMIT, FPS_PITCH_LIMIT),
+            yaw,
+            pitch,
+            up: Vec3::Y,
         }
     }
 
-    /// 朝向单位向量：`(cos p · cos y, sin p, cos p · sin y)`。
+    /// 显式上方向（`from_camera` 用；非零 / 有限值会被归一化）。
+    pub fn with_up(yaw: f32, pitch: f32, up: Vec3) -> Self {
+        Self {
+            yaw,
+            pitch,
+            up: normalized_up(up),
+        }
+    }
+
+    /// 从相机的当前朝向导出 `yaw` / `pitch` / `up`（保证接管时画面不跳变）。
+    pub fn from_camera(camera: &Camera3D) -> Self {
+        let up = normalized_up(camera.up);
+        let dir = (camera.target - camera.eye).normalize_or_zero();
+        let (a, b) = basis(up);
+        let horizontal = dir - up * dir.dot(up);
+        let yaw = if horizontal.length_squared() > 1e-12 {
+            horizontal.dot(b).atan2(horizontal.dot(a))
+        } else {
+            0.0 // 正上/正下：yaw 无定义，取 0（pitch 已到极限）
+        };
+        Self {
+            yaw,
+            pitch: dir.dot(up).asin().clamp(-FPS_PITCH_LIMIT, FPS_PITCH_LIMIT),
+            up,
+        }
+    }
+
+    /// 朝向单位向量：`a·cos p·cos y + up·sin p + b·cos p·sin y`（`(a, b, up)` 见 [`basis`]）。
+    ///
+    /// `up = +Y` 时退化为旧的 `(cos p·cos y, sin p, cos p·sin y)`。
     pub fn forward(&self) -> Vec3 {
+        let up = self.up_axis();
+        let (a, b) = basis(up);
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
-        Vec3::new(cp * cy, sp, cp * sy)
+        a * (cp * cy) + up * sp + b * (cp * sy)
+    }
+
+    /// 归一化的会话上方向（坏数据回退 `+Y`）；移动基与朝向都从它构造。
+    pub fn up_axis(&self) -> Vec3 {
+        normalized_up(self.up)
     }
 
     /// 把 `pitch` 钳到 `±`[`FPS_PITCH_LIMIT`]（转头时调用）。
     pub fn clamp_pitch(&mut self) {
         self.pitch = self.pitch.clamp(-FPS_PITCH_LIMIT, FPS_PITCH_LIMIT);
     }
+}
+
+/// 上方向归一化；零 / 非有限 ⇒ 回退 `+Y`（不让一次坏数据冻结相机）。
+fn normalized_up(up: Vec3) -> Vec3 {
+    if up.is_finite() && up.length_squared() > 1e-12 {
+        up.normalize()
+    } else {
+        Vec3::Y
+    }
+}
+
+/// 以 `up` 为第三轴的确定性正交基 `(a, b, up)`：`a × up = b`。
+///
+/// 选 `a` 的规则只影响"yaw = 0 指向哪里"，不影响 WASD 与屏幕的对应关系。
+/// `up = +Y` 时得到 `(X, Z)`，与旧实现逐位一致（x 轴最不平行的世界轴作 seed）。
+fn basis(up: Vec3) -> (Vec3, Vec3) {
+    let seed = if up.x.abs() < 0.9 { Vec3::X } else { Vec3::Z };
+    let a = (seed - up * seed.dot(up)).normalize_or_zero();
+    (a, a.cross(up))
 }
 
 /// 3D 相机句柄（K3，**引用型**）：指向 scene 里的 3D 相机对象（持 [`Camera3D`]）。
