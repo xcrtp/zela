@@ -30,10 +30,10 @@
 # id            title              script          payload-hash
 fourier         傅里叶级数展开      fourier.lua     0def0109e2ad84266407d3d9b77d0288095ac613ee37a551c5e4c9b2689751bb
 storyboard      分镜演示            storyboard.lua  ab19b3a294d2bf5ca2b622f7cc28a2d3eed061c72cb0b6830626f4f3dd7cf637
-demo3d          3D 场景             demo3d.lua      60bfe38fd896ec13ba88433da1d7d33415fee55eeab312e707f018c17c631070
-fusion          融合演示(双面+透明) fusion.lua      089f650e02c516e83e4b548f23706e6ef4d285573c534129c4b58f0dc1842823
+demo3d          3D 场景             demo3d.lua      bb9aad25aed941adf69f80ef147f21f9a8dd97ad341e3b1e1c9e78a14f00d0d8
+fusion          融合演示(双面+透明) fusion.lua      07b97d21752ac9c644da347f036e612f1cdec186bbf98be76f571a2517546952
 pbr_materials   PBR材质画廊        pbr_materials.lua 6eeed7ffd8d63329ede27b3a510eeedc5d0b7f2bdee61750c77184aa00256c20
-pbr_lights      PBR光照实验室      pbr_lights.lua   696392eb4d8a9aa0ed0d987912eb7c04e9e03f1451547e07571debcf22df8b06
+pbr_lights      PBR光照实验室      pbr_lights.lua   d590430065bf8dfee55c6dbad16aada27efbdc5435e0434c6aad639835a70d32
 pbr_scene       PBR材质秀          pbr_scene.lua    8a2d784f668076405795e1d38afdbb596fb0f599d6b09615aa22dcb2bb5a79c1
 pendulum        钟摆动画            pendulum.lua    ac3c11d23040dfd39441f3a766a7290dfdc6388d26169fc328b34c2e9f59e2d8
 orbit           公转行星            orbit.lua       1c5bb18a28e597d941a16cb333da461ab970bc6e2b0fb0d4228104d472603671
