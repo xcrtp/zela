@@ -36,10 +36,7 @@ scene.spawn({
         fov_y = 1.05,
     },
 })
--- 2D 相机（渲染器 2D 通道要求 Framing2D；本场景无 2D 对象，仅占位）。
-scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
-})
+-- PF Step 2：纯 3D 场景不再需要占位 2D 相机（`Framing2D` 可缺席）。
 
 -- ── 光照：方向光主光 + 4 盏彩色点光 ───────────────────────────────────
 scene.spawn({

@@ -535,6 +535,11 @@ fn apply_options(
     key: u64,
     fill: bool,
 ) -> Result<(), String> {
+    // PF Step 2：屏幕空间叠加 —— 与 PC 的「图层级」相同性质：组合方式必须可观测，
+    // 但它不改记录内容，只改投影选择（`vector.wgsl` 读 OVERLAY 位）。
+    if options.overlay {
+        record.flags |= crate::render::OVERLAY;
+    }
     if let Some(background) = options.background {
         record.background = background;
         record.params[3] = options.background_width.max(0.0);
@@ -1734,6 +1739,43 @@ mod tests {
     }
 
     // ─── PD：逐参验证（每个新参数都要证明"它真的改变输出"） ─────────────────
+
+    /// **PF Step 2 / E-3（可证伪）**：`overlay` 记录固定压在**屏幕平面**上。
+    ///
+    /// 同一条路径放在 `z = 3`：不带 overlay ⇒ 透视把它放大（相机 focal = 8，
+    /// 1/(1−3/8) = 1.6 倍），边缘越出屏幕方块的范围；带 overlay ⇒ 与 z = 0 完全同位。
+    /// 证伪：若 `apply_options` 没写 OVERLAY 位，两侧像素相同 ⇒ 用例失败。
+    #[test]
+    fn overlay_path_lands_on_the_screen_plane_in_a_3d_frame() {
+        let view = lit_view(None, 0.0, None, true);
+        let path = |overlay: bool| {
+            let mut path = FilledPath::polygon(
+                &[
+                    [-1.0, -1.0, 3.0],
+                    [1.0, -1.0, 3.0],
+                    [1.0, 1.0, 3.0],
+                    [-1.0, 1.0, 3.0],
+                ],
+                [0.0, 1.0, 0.0, 1.0],
+            );
+            path.options.overlay = overlay;
+            PathRecord::Fill(path)
+        };
+        let overlay = render_3d(&view, &[path(true)]).expect("3D 渲染失败");
+        let plain = render_3d(&view, &[path(false)]).expect("3D 渲染失败");
+        // 64×64、frame = 4 世界单位 ⇒ 世界 ±1 = 像素 16..48（overlay 矩阵 1/hw，hw = 2）。
+        assert_eq!(pixel(&overlay, 64, 32, 32)[1], 255, "overlay 应盖住中心");
+        assert!(
+            pixel(&overlay, 64, 10, 10)[1] < 40,
+            "overlay 的世界 ±1 不得因 z 变大（{:?}）",
+            pixel(&overlay, 64, 10, 10)
+        );
+        assert!(
+            pixel(&plain, 64, 10, 10)[1] > 40,
+            "不带 overlay 时 z = 3 会被透视放大（{:?}）",
+            pixel(&plain, 64, 10, 10)
+        );
+    }
 
     fn square8(fill: [f32; 4]) -> FilledPath {
         FilledPath::polygon(

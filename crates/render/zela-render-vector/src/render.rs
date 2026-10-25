@@ -306,7 +306,7 @@ pub(crate) const RADIANCE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Floa
 // may use fixed-point depth, where those differences vanish.
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32FloatStencil8;
 const NONE: u32 = u32::MAX;
-const OVERLAY: u64 = 1;
+pub(crate) const OVERLAY: u64 = 1;
 pub(crate) const LIT: u64 = 4;
 const TEXTURED: u64 = 8;
 const NEAREST: u64 = 16; // an image's reconstruction from its pixels (neither: linear)
@@ -392,7 +392,7 @@ pub(crate) struct Record {
     fill_rows2: u64,
     stroke_rows2: u64,
     texture: u64,
-    flags: u64,
+    pub(crate) flags: u64,
     m1: Mat34,
     m2: Mat34,
     fill: [f32; 4],

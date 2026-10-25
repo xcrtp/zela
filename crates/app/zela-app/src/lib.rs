@@ -319,7 +319,8 @@ pub fn build_scene_runtime(render_ctx: RenderContext, choice: SceneChoice) -> Re
 /// 2D 相机的**语义判据**：场景里唯一带 `Framing2D` 的对象。
 ///
 /// 唯一实现在 `zela-playback`（脚本路径与回放路径共用同一判据）。
-fn find_camera2d(scene: &Scene) -> Result<Camera2DHandle> {
+/// **PF Step 2**：纯 3D 场景允许没有（`None`）；有 2D 图元却没相机才报错。
+fn find_camera2d(scene: &Scene) -> Result<Option<Camera2DHandle>> {
     zela_playback::find_camera2d(scene).map_err(|e| Error::InitializationError(e.to_string()))
 }
 
@@ -412,7 +413,7 @@ fn build_scene_source(
 ) -> Result<(
     ClockForest,
     BindingTable,
-    Camera2DHandle,
+    Option<Camera2DHandle>,
     GroupVisibility,
     f64,
 )> {
@@ -466,7 +467,7 @@ fn build_scene_source(
             // 默认**不隐藏任何组**（全可见）⇒ 看得见 `cos` 淡出（N4）。
             eprintln!("[zela-app] 场景 = 能力 demo（N 线：Name / Group / Visibility / Opacity）");
             let d = zela_authored::capability_demo::build(scene);
-            Ok((d.forest, d.bindings, d.camera, d.group_visibility, 0.0))
+            Ok((d.forest, d.bindings, Some(d.camera), d.group_visibility, 0.0))
         }
         SceneChoice::PythonStoryboard => {
             #[cfg(not(feature = "python"))]
@@ -1935,7 +1936,9 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
         let mut scene = Scene::new();
         let recipe = script.commit(&mut scene).expect("commit");
 
-        let camera = crate::find_camera2d(&scene).expect("能按 Framing2D 找到相机");
+        let camera = crate::find_camera2d(&scene)
+            .expect("能按 Framing2D 找到相机")
+            .expect("分镜应有 2D 相机");
         assert_ne!(
             camera.0, recipe.handles[0],
             "第 0 个对象是坐标轴容器，不是相机"

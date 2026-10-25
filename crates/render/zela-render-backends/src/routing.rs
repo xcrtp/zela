@@ -235,12 +235,8 @@ fn reject_reason(
                         .to_string(),
                 );
             }
-            if content.has_3d_camera && content.has_2d_primitives > 0 {
-                return Some(format!(
-                    "本帧 2D 图元（{} 条）与 3D 相机混排（GAPS X1-06）",
-                    content.has_2d_primitives
-                ));
-            }
+            // **PF Step 2**：2D 与 3D 混排不再是拒绝理由 —— 2D 记录以 OVERLAY 位
+            // （屏幕平面）叠加进 3D 帧，后端机制早已具备（E-3 实测）。见 GAPS X1-06。
             if content.has_3d_camera && content.has_meshes == 0 {
                 return Some("本帧有 3D 相机但没有任何网格".to_string());
             }
@@ -284,6 +280,18 @@ pub fn route_with_order(
                 // PC（S1-5）：后端组合方式必须可观测 —— 含内容层时不是"纯矢量"。
                 let reason = if *kind == BackendKind::Vector && content.has_content_texture {
                     format!("{reason}（图层级：内容层由矢量渲染后叠加）")
+                } else {
+                    reason
+                };
+                // PF Step 2：2D/3D 混排同样是"图层级组合"，不是纯 3D。
+                let reason = if *kind == BackendKind::Vector
+                    && content.has_3d_camera
+                    && content.has_2d_primitives > 0
+                {
+                    format!(
+                        "{reason}（图层级：{} 条 2D 记录以屏幕平面叠加进 3D 帧）",
+                        content.has_2d_primitives
+                    )
                 } else {
                     reason
                 };
@@ -422,6 +430,37 @@ mod tests {
         assert_eq!(decision.backend, BackendKind::Wgpu);
         assert_eq!(decision.rejected[0].0, BackendKind::Vector);
         assert!(decision.rejected[0].1.contains("Morph"), "{:?}", decision.rejected);
+    }
+
+    /// **PF Step 2**：2D + 3D 混排不再被拒；决策理由写明"屏幕平面叠加"。
+    #[test]
+    fn mixed_2d_and_3d_routes_to_vector_with_a_layering_note() {
+        let content = FrameContent {
+            has_3d_camera: true,
+            has_meshes: 1,
+            has_2d_primitives: 2,
+            ..Default::default()
+        };
+        let decision = route(LoopBackend::Vector, content, capable()).unwrap();
+        assert_eq!(decision.backend, BackendKind::Vector);
+        assert!(decision.rejected.is_empty(), "混排不应再被拒绝");
+        assert!(
+            decision.reason.contains("屏幕平面") && decision.reason.contains('2'),
+            "理由必须写明图层级组合：{}",
+            decision.reason
+        );
+        // 纯 3D 帧不得凭空出现"2D 记录"的说法（避免误报）。
+        let pure_3d = route(
+            LoopBackend::Vector,
+            FrameContent {
+                has_3d_camera: true,
+                has_meshes: 1,
+                ..Default::default()
+            },
+            capable(),
+        )
+        .unwrap();
+        assert!(!pure_3d.reason.contains("2D 记录"), "{}", pure_3d.reason);
     }
 
     /// 显式 wgpu 不做回退：顺序里只有 wgpu。

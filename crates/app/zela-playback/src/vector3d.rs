@@ -19,7 +19,9 @@
 //!   0.04，理由见下方 `DEFAULT_REFLECTANCE` 的注释），该取舍记在 GAPS X1-03。
 
 use ze_notion::{Color32, Mat4};
-use ze_render_ir::{AmbientOcclusion, Bloom, MeshForm, RenderParams, ToneMapping};
+use ze_render_ir::{
+    AmbientOcclusion, Bloom, MeshForm, RenderParams, ShaderVariant, ToneMapping,
+};
 use ze_scene_core::components::{Material3D, MeshGeometry, PrimitiveTopology};
 use ze_scene_core::object::{Camera3D, Projection};
 use zela_render::draw::DrawQueue;
@@ -249,18 +251,47 @@ fn mesh_record(
         Some(indices) => indices.clone(),
         None => (0..positions.len() as u32).collect(),
     };
+    // **PF Step 1**：`ShaderVariant` 必须映射，不能一律按 PBR 受光。
+    //
+    // 实测（PF §2 E-2 的追加判别）：修前 Flat / Lambert / Pbr 三个变体在矢量侧
+    // 输出**逐位相同**（`d2cf72af…` ×3），而 wgpu 是三条不同哈希 ⇒ 变体在桥里被吞掉。
+    // fusion 的两个半透明面板正是 `Flat`（无光照）⇒ 被 PBR 照亮后面部发黑。
+    //
+    // 映射口径（后端只有一个 PBR 材质模型，不新增后端行为）：
+    // - `Flat`   ⇒ **无材质**（`material[3] = 0`，平涂，与 `fs_flat` 同语义）；
+    // - `Lambert`⇒ 纯漫反射近似：金属度 0、粗糙度 1（GGX 的镜面项随粗糙度趋于 0）；
+    // - `Pbr`    ⇒ 原样透传（金属度 / 粗糙度）。
+    let material_params = match material.variant {
+        ShaderVariant::Flat => None,
+        ShaderVariant::Lambert => Some([0.0, 1.0, DEFAULT_REFLECTANCE]),
+        ShaderVariant::Pbr => Some([
+            material.metallic,
+            material.roughness,
+            DEFAULT_REFLECTANCE,
+        ]),
+    };
+    // **PF Step 1**：`transparent` 意图映射。
+    //
+    // 矢量后端没有"透明桶"位 —— 它是每像素链表 + 按深度合成的 OIT，alpha **本来就**
+    // 参与混合（不需要新增后端行为）。需要映射的是**反面**：`transparent = false` 时
+    // wgpu 用 `LayerBlend::Opaque`（REPLACE），颜色 alpha 不参与合成 ⇒ 视觉上是不透明。
+    // 这里把 `fill.a` 抬到 1 以表达同一意图；`transparent = true` 原样保留 alpha。
+    //
+    // ⚠️ `double_sided` 在矢量侧**不可表达**（后端没有 culling 开关）：双面都画。
+    // 不透明网格两面深度遮挡 ⇒ 无差别；**半透明 + double_sided = false** 会多出背面
+    // （已记 PF-04，不静默）。
+    let mut fill = rgba(material.color);
+    if !material.transparent {
+        fill[3] = 1.0;
+    }
     Ok(PathRecord::Mesh(MeshRecord {
         positions,
         uvs,
         normals,
         triangles,
-        fill: rgba(material.color),
+        fill,
         model: mat34(transform),
-        material: Some([
-            material.metallic,
-            material.roughness,
-            DEFAULT_REFLECTANCE,
-        ]),
+        material: material_params,
         colors: None,
         second: None,
     }))
@@ -426,6 +457,7 @@ mod tests {
             PrimitiveTopology::Triangles,
         );
         let mut material = Material3D::color(Color32::RED);
+        material.variant = ShaderVariant::Pbr;
         material.metallic = 0.25;
         material.roughness = 0.75;
         let record = mesh_record(&geometry, Mat4::IDENTITY, &material).expect("可映射");
@@ -438,6 +470,74 @@ mod tests {
         assert_eq!(mesh.fill, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(mesh.material, Some([0.25, 0.75, DEFAULT_REFLECTANCE]));
         mesh.validate().expect("映射结果必须自洽");
+    }
+
+    /// **PF Step 1（可证伪）**：`ShaderVariant` 必须映射 —— 修前三者逐位相同
+    /// （实测 `d2cf72af…` ×3），修后 `Flat` 无材质、`Lambert` 纯漫反射、`Pbr` 透传。
+    #[test]
+    fn shader_variant_maps_to_material_semantics() {
+        let geometry = MeshGeometry::new(
+            vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+            None,
+            PrimitiveTopology::Triangles,
+        );
+        let material_of = |variant: ShaderVariant| {
+            let mut material = Material3D::color(Color32::RED);
+            material.variant = variant;
+            material.metallic = 0.25;
+            material.roughness = 0.75;
+            let PathRecord::Mesh(mesh) =
+                mesh_record(&geometry, Mat4::IDENTITY, &material).expect("可映射")
+            else {
+                panic!("应是网格记录");
+            };
+            mesh.material
+        };
+        assert_eq!(
+            material_of(ShaderVariant::Flat),
+            None,
+            "Flat 必须无材质（平涂，与 fs_flat 同语义）"
+        );
+        assert_eq!(
+            material_of(ShaderVariant::Lambert),
+            Some([0.0, 1.0, DEFAULT_REFLECTANCE]),
+            "Lambert = 纯漫反射近似（忽略作者的 metallic / roughness）"
+        );
+        assert_eq!(
+            material_of(ShaderVariant::Pbr),
+            Some([0.25, 0.75, DEFAULT_REFLECTANCE]),
+            "Pbr 原样透传"
+        );
+    }
+
+    /// **PF Step 1**：`transparent = false` ⇒ 抬到不透明（wgpu 的 REPLACE 语义）；
+    /// `transparent = true` ⇒ 保留 alpha（矢量 OIT 本来就会按深度混合）。
+    #[test]
+    fn transparency_intent_maps_to_alpha() {
+        let geometry = MeshGeometry::new(
+            vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+            None,
+            PrimitiveTopology::Triangles,
+        );
+        let alpha_of = |transparent: bool| {
+            let mut material = Material3D::color(Color32::from_rgba(255, 90, 90, 140));
+            material.variant = ShaderVariant::Flat;
+            material.transparent = transparent;
+            let PathRecord::Mesh(mesh) =
+                mesh_record(&geometry, Mat4::IDENTITY, &material).expect("可映射")
+            else {
+                panic!("应是网格记录");
+            };
+            mesh.fill[3]
+        };
+        assert!(
+            (alpha_of(false) - 1.0).abs() < 1e-6,
+            "不透明意图 ⇒ alpha 抬到 1（wgpu 的 REPLACE 不消费颜色 alpha）"
+        );
+        assert!(
+            (alpha_of(true) - 140.0 / 255.0).abs() < 1e-6,
+            "透明意图 ⇒ 保留作者的 alpha（OIT 按深度混合）"
+        );
     }
 
     /// 非三角形拓扑 ⇒ 显式报错（`MeshForm::Line` 目前没有后端接受）。

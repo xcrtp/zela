@@ -90,7 +90,8 @@ pub struct SceneAssembly {
     pub world: hecs::World,
     pub forest: ClockForest,
     pub bindings: BindingTable,
-    pub camera2d: Camera2DHandle,
+    /// 2D 相机（**可缺席**：纯 3D 场景不需要占位相机 —— PF Step 2）。
+    pub camera2d: Option<Camera2DHandle>,
     pub group_visibility: GroupVisibility,
     /// 脚本时长；`<= 0` 时按最晚绑定结束时间推断。
     pub duration: f64,
@@ -195,12 +196,16 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     } = assembly;
 
     // 2D 相机取景绑定（`center` + `scale`）交给 `CameraDriveSystem` 托管。
-    let cam2d_bindings: Vec<Binding> = bindings
-        .bindings
-        .iter()
-        .filter(|binding| binding.target.target_id() == camera2d.0)
-        .cloned()
-        .collect();
+    // 无 2D 相机（纯 3D 场景）⇒ 没有该目标的绑定。
+    let cam2d_bindings: Vec<Binding> = match camera2d {
+        Some(camera) => bindings
+            .bindings
+            .iter()
+            .filter(|binding| binding.target.target_id() == camera.0)
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
 
     // 3D 轨道相机：eye = radius * rotate_y(speed * t)，radius=5, speed=0.5。
     let orbit_clock = forest.insert(ClockNode::new(None)).unwrap();
@@ -227,7 +232,11 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     };
 
     let mut resources = Resources::new();
-    resources.insert(camera2d);
+    // 2D 相机可缺席：缺席 ⇒ `SceneRecordSystem` 等按"无相机"跳过 2D 录制
+    // （纯 3D 帧本来就没有 2D 记录；图元却无相机的情况在装配期由调用方判定）。
+    if let Some(camera2d) = camera2d {
+        resources.insert(camera2d);
+    }
     if let Some(camera3d) = camera3d {
         resources.insert(camera3d);
     }
@@ -271,14 +280,38 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
 }
 
 /// 2D 相机的语义判据：场景里唯一带 `Framing2D` 的对象。
-pub fn find_camera2d(scene: &Scene) -> Result<Camera2DHandle> {
+///
+/// **PF Step 2**：纯 3D 场景**允许没有 2D 相机**（返回 `Ok(None)`）—— 此前这个约束
+/// 从渲染层泄漏到了脚本层，逼作者补占位 `Camera2D`。
+///
+/// H3（不静默丢）：没有相机但场景里**确实有 2D 图元** ⇒ 显式错误。
+/// 判据复用它自己那条录制路径（`record_scene` 的 8 组组合），不另维护一张清单。
+pub fn find_camera2d(scene: &Scene) -> Result<Option<Camera2DHandle>> {
     let mut cameras = Vec::new();
     scene.for_each::<ze_scene_core::Framing2D>(|id, _| cameras.push(id));
-    cameras
-        .first()
-        .copied()
-        .map(Camera2DHandle)
-        .ok_or_else(|| PlaybackError::Assembly("场景没有 2D 相机对象（缺少 Framing2D）".to_string()))
+    if let Some(id) = cameras.first() {
+        return Ok(Some(Camera2DHandle(*id)));
+    }
+    // 用默认取景录一遍：只要产出一条记录，就说明"有 2D 内容却没相机"。
+    let probe = ze_scene_core::Camera2D {
+        center: ze_notion::Vec2::ZERO,
+        scale: 55.0,
+        rect: ze_notion::Rect2D::new(
+            ze_notion::Vec2::ZERO,
+            ze_notion::Vec2::new(640.0, 480.0),
+        ),
+    };
+    let mut queue = DrawQueue::new();
+    zela_render::draw::record_scene(scene, &probe, &mut queue);
+    if queue.commands().is_empty() {
+        Ok(None)
+    } else {
+        Err(PlaybackError::Assembly(format!(
+            "场景有 {} 条 2D 图元但没有 2D 相机（缺少 Framing2D）：\
+             要么声明 Camera2D，要么移除这些图元（不静默丢弃）",
+            queue.commands().len()
+        )))
+    }
 }
 
 /// 动画时长 = 最晚结束的绑定（`local_offset + span.1`）；无绑定 ⇒ 0。

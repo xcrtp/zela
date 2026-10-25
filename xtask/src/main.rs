@@ -672,7 +672,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     // 与 Z 段（PD 能力普查）都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
-        "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.",
+        "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -696,6 +696,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("PC-")
                     || id.starts_with("PD-")
                     || id.starts_with("PE-")
+                    || id.starts_with("PF-")
                     || id.starts_with("S4-")
                     || id.starts_with("W1-")
                     || id.starts_with("X1-")
@@ -1484,6 +1485,8 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     ("cap_second", Some("vector")),
     ("cap_background", Some("vector")),
     ("cap_window", Some("vector")),
+    // PF Step 2：2D/3D 混排（2D 记录以屏幕平面 overlay 叠进 3D 帧）。
+    ("cap_mix", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。

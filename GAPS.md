@@ -441,14 +441,14 @@
 | X1-03 | `Material3D` 没有 upstream 的 reflectance 分量（材质四元组是 `[metallic, roughness, reflectance, 1]`） | 场景组件 / 材质映射 | **记账（B10 Step 2；PA Step 3 同步文字）** | 宿主桥取常数 **0.04**（电介质 F0；B14 Step 2 从旧值 0.5 改来），写在 `zela_playback::vector3d::DEFAULT_REFLECTANCE`（B11 Step 5 从 `zela-app` 移入）。触发：作品需要金属/电介质强区分时，把 reflectance 进 `Material3D`（会改场景 API 版本） |
 | X1-04 | **环境图（IBL）**：上游 `Upload::Environment` 与 `Light::Environment{id}` 已接出，但场景脚本没有环境图入口，`RenderParams.env` 也没有任何代码桥接到上传 | 渲染后端 / 脚本 | **记账（B10 Step 2）** | `Light::Environment { id }` 按上游编码（`kind=4`，id 放 `slot[7]`）；`upload(Upload::environment(...))` 可用了。触发：脚本层需要"环境光照"时，先定环境图的 ZSB 载体（图片资源）与 `RenderParams.env` 的宿主接线 |
 | X1-05 | 着色栈的**作品级证据**（V2-15 的收尾）：此前只有单元测试，没有一件作品在着色栈下出帧 | 作品 / 基线 | **已关闭（B10 Step 4）** | 新作品 `shaded_meshes.lua`（墙 + 地板 + 中央亮立方体，全部是真网格）+ `--backend vector`：帧哈希 **`58ab1f0e…`** 进 `[vector]` 基线。判据（`tests/vector3d_shading.rs`，同一份 ZSB 只切 `vector_params`）：tone AgX≠clip（差 >2000 像素）、bloom 关掉更暗、AO 关掉更亮。`frame_loop` 的 3D 分支：`Camera3D → View3`、`LightQueue → Light`（方向取反 + 环境 0.2）、`DrawQueue::meshes → MeshRecord` |
-| X1-06 | 2D 图元与 3D 网格**混排帧**仍不支持：有 3D 相机时若队列里还有 2D 图元 ⇒ 显式报错 | 渲染后端 / 装配 | **记账（B10 Step 4）** | 混排需要 overlay 记录（屏幕空间与 3D 同帧合成），上游有 `OVERLAY` 位但宿主没有"2D 图元进 3D 视图"的语义（世界坐标 vs 屏幕坐标）。触发：作品需要 3D 里贴文字/箭头时 |
+| X1-06 | 2D 图元与 3D 网格**混排帧**仍不支持：有 3D 相机时若队列里还有 2D 图元 ⇒ 显式报错 | 渲染后端 / 装配 | **已关闭（PF Step 2）** | 2D 记录以 `PathOptions.overlay`（`Record.flags` 的 OVERLAY 位）叠进 3D 帧：`scene_records` 产出的像素偏移乘 `frame_w/width` 换到 overlay 坐标系；路由不再拒绝混排并在理由里写明「图层级：N 条 2D 记录以屏幕平面叠加进 3D 帧」。能力用例 `overlay_path_lands_on_the_screen_plane_in_a_3d_frame`（E-3：z=3 的 overlay 记录不随透视放大）；作品 `cap_mix`（cube + 2D 圆/箭头，新 `[vector]` 基线）。H3：网格类 2D 记录不进 overlay ⇒ 显式报错 |
 | X1-07 | 矢量后端的 2D 入口**不吃** `RenderParams`（`render_scene_2d` 仍用 `ViewOptions::default()`）⇒ 同一份 `params` 在 2D/3D 两条路径上的含义不一致 | 渲染后端 / 宿主 | **记账（B10 Step 4）** | 实测：`vector_paths` 的帧哈希在 B10 前后**逐位不变**（`98d61c1a…`）—— 2D 分支不读 params，所以"着色栈默认开"只影响 3D 帧。触发：2D 也要 tone/bloom 时，把 `ViewOptions` 从 `RenderParams` 投影过去（会改 2D 基线） |
 | X1-08 | **网页黑屏**：B8 给逐帧计时加了 `std::time::Instant::now()`，而它在 `wasm32-unknown-unknown` 上是 `panic!("time not implemented on this platform")` ⇒ 页面加载完产物、第一次出帧即 abort（`select` 停在 `disabled`，canvas 全黑） | 渲染后端 / wasm | **已关闭（B10 修复）** | `zela-render-backends` 引入 `web-time`，四处计时起点改走 `clock()`（wasm 用 `performance.now()`，native 转发 `std::time::Instant`）。实测（Chrome，`python -m http.server` 起的地产）：fourier `播放完成：216 帧`、`select.disabled = false`、canvas `toDataURL` 28.5 KB（非黑）；切到 `shaded_meshes` 正常播放 1 帧。**教训**：`--step wasm` 只编译不运行，抓不到这类运行期 panic（WASM_PORT_SURVEY 的 P0-2 曾被"telemetry 换 ZeroClock"判为已解，B8 又引入一处） |
 | X1-09 | `zela-compile` 在 **dev profile** 下编译 JS 脚本会栈溢出（`0xC00000FD`）：boa 的解析 / 编译在未优化构建里递归很深，`build.ps1` 因此卡在 `surface_matrix.js` | 装配 / 构建脚本 | **已关闭（B10 修复）** | `zela_app::compile_script` 把"装配 + 执行"整体放到 **64 MiB 栈**的专用线程（`boa::Context` 是 `!Send`，只能整根线程内建；只把纯数据 `CompiledScript` join 回来）。修复后 dev profile 编 `surface_matrix.js` 成功，payload 与优化构建一致；`build.ps1` 全量通过、16 件 payload 全部与 manifest 相符 |
 | X1-10 | **字形孔洞被填**：`ze_content::stroke_outlines` 按**子轮廓**产出多条 `StrokeOutline` ⇒ `content.text` 给每个 counter（`o`/`e` 的内圈）一个独立 `Path`，脚本逐条 `Fill` ⇒ 内圈被当作实心形状填满（wgpu / 矢量后端表现一致，与渲染器无关） | 内容路径 / 矢量后端作品 | **已关闭（字形孔洞修复）** | `stroke_outlines` 改为**每个字形一条** `Path2D`（全部子轮廓 `MoveTo` 分段 + `Close`，闭合时去掉重复尾点），填充按 nonzero 规则挖孔。证据：`vector_paths` 修复前后同帧仅 **424 px** 变化，bbox x 281–369 / y 419–440（正是 `e`、`o` 的 counter），其余笔画逐像素不变；`ze-content` 新增 `counter_contour_stays_in_the_same_path`，矢量后端既有 `concave_ring_keeps_its_hole` 证明多子路径 nonzero 正确。payload 随字形数变化（fourier 63→50 对象），`[vector] vector_paths` 重录为 `07bd4301…` |
 | X1-11 | **4 条 `[native]` 帧基线相对 HEAD 不可复现**（fourier / storyboard / surface_matrix / surface_matrix.js）：实测 `45669d03…` / `e6ed98b6…` / `9a34bf69…`，基线 `b6eaa864…` / `6de42d6b…` / `928cd5f9…` | 基线 / 验证 | **已关闭（B13 Step 0）** | 病因 = **同一作品两套字体口径**：payload 断言在 `build.ps1` 的 `ZELA_TYPST_FONT_DIR` 下做，帧基线却在系统字体下录（`grep ZELA_TYPST_FONT_DIR xtask/` 零命中）。修法：`tools/typst-fonts.txt` 成为唯一真源（版本 + 文件名 + SHA-256），`build.ps1` 与 xtask 共读；xtask 的 `cargo_command`（`xtask/src/main.rs`）对**所有**对拍子进程注入 `ZELA_TYPST_FONT_DIR`，字体缺失**显式报错**（不静默退回系统字体）。关闭判据 = **可复现**：同代码连续两次录制 16 条哈希逐位相同（`target/xtask/b13-font-run1|2.log`）。4 条新值 `0cb8b4a1…` / `be286560…` / `a6e4394c…`（`surface_matrix` 与 `_js` 相同）；另外 atlas `d180e51f…`、vector_paths `c34f7a3d…` 同步变化（两件也含文本）。此前排除项（回退 `stroke.rs` diff = 0、旧代码+确定字体 = payload `a5bdfbe7…` 等）逐条保留，见 git 历史 `25c1d3a` 的提交说明 |
 
-**N 段小计（B10）**：已关闭 7（X1-01、X1-02、X1-05、X1-08、X1-09、X1-10、X1-11）· 记账 4（X1-03、X1-04、X1-06、X1-07）。
+**N 段小计（B10）**：已关闭 8（X1-01、X1-02、X1-05、X1-06、X1-08、X1-09、X1-10、X1-11）· 记账 3（X1-03、X1-04、X1-07）。
 
 ---
 
@@ -526,14 +526,14 @@
 | X5-02 | **3D 取景不一致**：同一相机（eye/target/up/fov）下，矢量侧的物体比 wgpu 大约 8%、并整体偏移（≈35px） | 渲染后端 / 相机映射 | **落档·参数性（B19 Step 1；非缺陷）** | `shaded_meshes` 最差帧：亮立方体 bbox wgpu x 204..337（133 px）vs 矢量 236..380（144 px），中心 270 vs 308；墙面左缘 y=60 行 102 vs 122。亮度已对齐（中位 Δ=0.33、有符号偏差≈0）⇒ 残差来自**几何位置**，不是颜色；两边相机映射不同（`vector3d::view3` 的 frame/center vs `Camera3D::view_projection(aspect)`），均自洽。<br>**类别**：落档（参数性差异，非缺陷）。<br>**参照物**：wgpu —— 已按 V-04 **冻结**，不再改动。<br>**处置**：不再收敛。若将来 wgpu 解冻或矢量成为唯一后端，本条重新评估。<br>**门禁**：`zela-parity` 不进 `cargo verify` 七步，本条**不构成任何门禁失败** |
 | X5-03 | **点光衰减与高光实现不同**：wgpu 点光 `att = clamp(1−d²/r²,0,1)` 再乘 `(1−ambient)`；矢量是 `window²/max(d²,1e-4)`；高光虽同为 GGX 但 `spec` 归一化、能量补偿不同 | 渲染后端 / 3D 光照 | **落档·参数性（B19 Step 1；非缺陷）** | 含点光/低粗糙度的作品残差明显大于只有方向光的作品：pbr_scene 内部区 7.63、pbr_lights 4.59（近门限）vs pbr_materials 24.33、shaded_meshes 23.83（低粗糙亮立方体/金属材质）。方向光部分已收敛（pbr_scene MAE 0.73）。两个衰减模型**都对**，只是选择不同。<br>**类别**：落档（参数性差异，非缺陷）。<br>**参照物**：wgpu —— 已按 V-04 **冻结**，不再改动。<br>**处置**：不再收敛。若将来 wgpu 解冻或矢量成为唯一后端，本条重新评估。<br>**门禁**：`zela-parity` 不进 `cargo verify` 七步，本条**不构成任何门禁失败** |
 | X5-04 | 2D 细笔画 / 字形边缘的内部区残差 | 渲染后端 / 2D AA | **落档·参数性（B19 Step 1；非缺陷）** | fourier 内部区 3.01、storyboard 6.96（门限 2；全图 MAE 0.54 / 0.62 已达标），pendulum 2.00 卡线。覆盖率已全部 ≤0.026。原因：reveal 曲线按弧长裁剪 vs wgpu 预细分 + 着色器丢弃、以及**解析 AA vs MSAA** 在 1–2px 笔画上的差异——两者都对。<br>**类别**：落档（参数性差异，非缺陷）。<br>**参照物**：wgpu —— 已按 V-04 **冻结**，不再改动。<br>**处置**：不再收敛。若将来 wgpu 解冻或矢量成为唯一后端，本条重新评估。<br>**门禁**：`zela-parity` 不进 `cargo verify` 七步，本条**不构成任何门禁失败** |
-| X5-05 | `fusion` 的**透明面板合成**差异（内部区 MAE ≈136，全图 13.8） | 渲染后端 / 2D-3D 合成 | **落档·参数性（B19 Step 1；非缺陷）** | 落档图 `fusion-*`：几何/构图一致，半透明色块的颜色与叠加强度明显不同——与"灯"和"取景"都无关（其它 3D 作品同帧已收敛），属 see-through 合成口径。<br>**类别**：落档（参数性差异，非缺陷）。<br>**参照物**：wgpu —— 已按 V-04 **冻结**，不再改动。<br>**处置**：不再收敛。若将来 wgpu 解冻或矢量成为唯一后端，本条重新评估。<br>**门禁**：`zela-parity` 不进 `cargo verify` 七步，本条**不构成任何门禁失败** |
+| X5-05 | `fusion` 的**透明面板合成**差异（内部区 MAE ≈136，全图 13.8） | 渲染后端 / 2D-3D 合成 | **重定性：结构性（非参数性）；PF Step 1 已修根因一，口径差异记账（PF-02）** | **原判定错在前提**：分层落档要求"两个实现都对、只是选了不同参数"；这里矢量侧当时**缺少变体映射**（Flat/Lambert/Pbr 输出逐位相同，实测 `d2cf72af…` ×3），属结构性缺失 ⇒ 按新判据「能力在某一后端完全不存在 ⇒ 不适用参数性落档」。PF 修正后同一帧：中心均值 77.7 → **128.6**、峰值 137 → **222**（wgpu 213.6 / 20.9）。**剩余差异**：wgpu 的透明 pipeline 用 `PREMULTIPLIED_ALPHA_BLENDING`，而 `cube.wgsl` 三个变体输出的是**直色**（未预乘）⇒ wgpu 侧偏亮；矢量 OIT 的 alpha 合成是对的。该 wgpu 侧修正属 V-04 的"正确性修复"允许范围，本批不动（记 PF-02）。<br>**门禁**：`zela-parity` 不进 `cargo verify` 七步 |
 | X5-06 | `LightQueue.direction` 的**注释口径错误**：文档写"传播方向"，而代码（wgpu `dot(n, dirs)`）按"指向光源"消费；桥据此多做一次取反 | 文档 / 光照 | **已关闭（B14 Step 2）** | 与 B10 的 `params.z` 半宽、B14 的 `scene.rs` 注释是同一型（"注释宣称与另一侧一致"）。改法：`vector3d` 头注与 `lights()` 改为"指向光源、原样透传"，并加单测 `lights_pass_direction_through_and_scale_intensity` 钉住方向与 `(1−ambient)/π` 强度换算 |
 | X5-07 | `scene.rs` 里"线段没有面积：填充语义为空（**与 wgpu 侧三角化一致**）"是错误注释 | 文档 / 2D 映射 | **已关闭（B14 Step 1）** | wgpu 的 `contour_of(pts, false)` 对 `Line`/`Polyline` **有开放轮廓几何**（描边用），只是填充面积为 0。注释改为指向可执行证据（`open_path` + 4 条单测 + 1 条 GPU 用例），不再写"与 X 侧一致" |
 | X5-08 | GAPS「统计与维护约定」的总表只统计 A/B/C 段，未纳入 D–Q | 文档 | **已关闭（B14 §7.2）** | 在总表前明确标注"总表只统计 A/B/C；D 及之后见各段自己的汇总"，不再假装覆盖全文件 |
 | X5-09 | `cargo_command` 的约束写得太宽（"不得在别处直接 `Command::new`"），而 `cargo_capture`（只跑 `cargo metadata`）并不需要字体注入 | 工具 / 文档 | **已关闭（B14 §7.3）** | 收窄为"**涉及对拍 / 渲染的子进程**不得直接 `Command::new`；只读工具不受此限" |
 | X5-10 | 诊断脚本会随 `cargo clean` 消失（B12 Step 0 的治理项） | 工具 | **已关闭（确认）** | 本批复用前确认 `tools/diag/{README.txt,export-vector.ps1,encode-vector.ps1,holes.py,diff.py}` 均已在版本控制中（B12 Step 0 纳管） |
 
-**R 段小计（B14）**：已关闭 6（X5-01、X5-06、X5-07、X5-08、X5-09、X5-10）· 落档 4（X5-02、X5-03、X5-04、X5-05；B19 Step 1 定性为参数性差异，不再收敛）。
+**R 段小计（B14）**：已关闭 6（X5-01、X5-06、X5-07、X5-08、X5-09、X5-10）· 落档 3（X5-02、X5-03、X5-04）· 记账 1（X5-05，PF 重定性为结构性；剩余差异见 PF-02）。
 
 ---
 
@@ -774,11 +774,31 @@
 
 ---
 
+## AB. PF 批次记账（接缝弥合：透明 / 相机统一 / 2D-3D 混排，2026-10-25）
+
+> 计划《PF执行计划_接缝弥合_透明桶与相机统一与混排》。**Step 0 的 E-2 判伪**（把 alpha
+> 140→255 后画面**变暗**而不是变亮）⇒ 原假设"alpha 被当成 coverage、没进混合"不成立；
+> 追加判别找到真根因：**`ShaderVariant` 在 3D 桥里被吞掉**（Flat/Lambert/Pbr 输出逐位相同）。
+> 本轮按"修正后的 Step 1"执行：先映变体，再谈透明。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PF-01 | **`ShaderVariant` 未映射**：`vector3d::mesh_record` 无条件写 `material: Some(...)` ⇒ Flat（无光照）也被 PBR 照亮 | 接缝 / 3D 着色 | **已关闭（Step 1）** | 判别：同一立方体只改变体，矢量侧三条哈希**完全相同**（`d2cf72af…` ×3），wgpu 三条不同（`dfc1f7e3…` / `4cc2fb7f…` / `fa90743d…`）。修后：Flat → 无材质（平涂）、Lambert → `[0,1,0.04]`（纯漫反射近似）、Pbr → 透传；三条矢量哈希变为 `9c51bff1…` / `a4293307…` / `d2cf72af…`。单测 `shader_variant_maps_to_material_semantics`。fusion 中心均值 77.7 → 128.6、峰值 137 → 222 |
+| PF-02 | **透明合成口径**：wgpu 透明 pipeline 用 `PREMULTIPLIED_ALPHA_BLENDING`，而 `cube.wgsl` 三个变体输出**直色** ⇒ wgpu 侧偏亮；矢量 OIT 的 alpha 合成是对的 | 后端关系 / 合成 | **记账（V-04 允许的"正确性修复"，本批不做）** | `wgpu_3d::to_wgpu_blend` 的注释写"cube.wgsl 输出预乘色"，但 `fs_flat` 返回 `albedo`（直色）、`fs_lambert` 返回 `color*lit`（直色）——注释与代码不符。修法在 wgpu 侧（预乘输出或改 blend），属冻结后端的正确性修复；本批 H1 不含 wgpu。X5-05 据此从"参数性落档"改为"结构性 + 剩余口径差异" |
+| PF-03 | **2D 相机占位约束从渲染层泄漏到脚本层**：纯 3D 场景必须手写 `Camera2D`，否则装配期报错 | 装配 / 脚本 API | **已关闭（Step 2）** | `SceneAssembly.camera2d: Option<Camera2DHandle>`；无相机时只跳过 2D 录制。**H3**：无相机但**确有 2D 图元** ⇒ 显式错误（判据复用 `record_scene` 的 8 组组合，不另维护清单）。`demo3d.lua` / `pbr_lights.lua` / `fusion.lua` 三处占位已删除；三件 `[native]` 哈希**逐位不变**（`983c0d88…` / `1d1ea6b4…` / `dc61e7cf…`），纯 3D 无相机脚本的矢量哈希与带相机版本相同（`9c51bff1…`） |
+| PF-04 | **`double_sided` 在矢量侧不可表达**：后端没有 culling 开关，两面都画 | 接缝 / 3D | **记账** | 不透明网格两面深度遮挡 ⇒ 无差别；**半透明 + `double_sided = false`** 会多出背面。矢量桥已注释写明；要支持需给后端加三角形剔除（新增后端行为，违反本批边界） |
+| PF-05 | **overlay 坐标系与 2D 记录不同**：overlay 矩阵是 3D 视图的 frame 单位，而 `scene_records` 给的是屏幕像素偏移 | 接缝 / 2D-3D | **已关闭（Step 2）** | 实测症状：不换算时 2D 内容整体放大到画外（只剩网格）。修法：`overlay_records` 统一乘 `frame_w / width`（几何 / 描边宽度 / 渐变轴端点 / 背景宽度）。E-3 用例 `overlay_path_lands_on_the_screen_plane_in_a_3d_frame`：z=3 的 overlay 记录不随透视放大 |
+| PF-06 | **`capability_gaps` 仍不能进矢量**：混排已放行，但它还含 `Morph`（B14 记账、PD-03 顺延） | 作品 / 验证 | **记账（退路 §7）** | 决策日志实测：`首选 Vector 被拒 ⇒ 回退到 Wgpu`，原因「本帧含形变（Morph）项」。⇒ 混排证据改由新作品 `cap_mix`（cube + 2D 圆/箭头，静态 1 帧）承担，新增 1 条 `[vector]` 基线；`capability_gaps` 的矢量化要等 Morph 映射（PG） |
+
+**AB 段小计（PF）**：已关闭 3（PF-01、PF-03、PF-05）· 记账 3（PF-02、PF-04、PF-06）。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AA**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AA 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–AB**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AB 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|

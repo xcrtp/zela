@@ -51,3 +51,5 @@ cap_dash        虚线                cap_dash.lua    0328d47191ee32c5df4071eba9
 cap_second      双paint             cap_second.lua  1e6717c77eb896574d716ad0c8e9460902728533d6d36a54a16effe9257c9a8b
 cap_background  背景描边            cap_background.lua 9266fe12409fa0063a858db1cd5f2b103de9273e5968d4f43d5d2f3400187a8f
 cap_window      曲线窗口            cap_window.lua  90ba47a4a19fa0571ba42aa0c26bfb94a50bce1d5f25385dfc3b63658a10b57e
+# PF Step 2：2D/3D 混排（2D 记录以屏幕平面 overlay 叠进 3D 帧）。
+cap_mix         2D/3D混排           cap_mix.lua     1443758a2fe47a469411ae35eb39bfa758d310f16cc82b997a757f1dab26959d

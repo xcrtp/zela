@@ -217,7 +217,7 @@ impl VectorFrame {
             Some(camera) => {
                 // B14 / X4-02：网格与灯**都必须在渲染时取**（`take()` 太早，`LightQueue`
                 // 那时还不存在 ⇒ 以前一直静默用默认灯，画面系统性偏暗）。
-                let (records, lights) = runtime
+                let (mut records, lights) = runtime
                     .driver
                     .with_scheduler(|scheduler| -> Result<_, String> {
                         let lights = crate::vector3d::lights(
@@ -229,47 +229,68 @@ impl VectorFrame {
                         };
                         Ok((records, lights))
                     })?;
+                // **PF Step 2（2D/3D 混排）**：同一帧里的 2D 记录不丢弃，而是作为
+                // **屏幕空间 overlay** 追加进 3D 帧（E-3 已实测：OVERLAY 记录固定压在
+                // 屏幕平面，z 不参与透视）。后端机制本来就有，这里只是接线。
+                //
                 let mut view =
                     crate::vector3d::view3(&camera, (width, height), background, params)?;
+                let view_frame_scale = view.frame.0 / width as f32;
+                // H3：放不进 overlay 的记录**带理由拒绝** —— 2D 记录不可能是网格
+                // （`scene_records` 只产 Fill / Stroke）；若将来多出一种，必须在这里显式报错。
+                records.extend(overlay_records(
+                    self.two_d_records(width, height)?,
+                    view_frame_scale,
+                )?);
                 view.lights = lights;
                 Ok(Prepared::ThreeD { view, records })
             }
             None => {
-                let mut items: Vec<zela_render_vector::SceneItem<'_>> = self
-                    .draws
-                    .iter()
-                    .map(|recorded| zela_render_vector::SceneItem {
-                        shape: &recorded.shape,
-                        transform: recorded.transform,
-                        style: recorded.style.clone(),
-                    })
-                    .collect();
-                // B14：wgpu 把 reveal 排在 DrawQueue 全部几何**之后**（同一 z 的稳定序）
-                // ⇒ 这里也追加在末尾。样式宽度已是像素、路径已是屏幕空间（录制层换算过）。
-                let reveal_items: Vec<(ze_render_ir::Shape2D, ze_render_ir::Style2D)> =
-                    self.reveals
-                        .iter()
-                        .filter_map(|reveal| {
-                            clip_reveal(&reveal.path, reveal.start, reveal.end)
-                                .map(|shape| (shape, reveal.style.clone()))
-                        })
-                        .collect();
-                items.extend(reveal_items.iter().map(|(shape, style)| {
-                    zela_render_vector::SceneItem {
-                        shape,
-                        transform: ze_notion::Transform2D::identity(),
-                        style: style.clone(),
-                    }
-                }));
-                // 与 `render_scene_2d` 同一条映射（只是把记录留下来给三条路径复用）。
-                let records = zela_render_vector::scene_records(&items, (width, height))
-                    .map_err(|error| error.to_string())?;
+                let records = self.two_d_records(width, height)?;
                 Ok(Prepared::TwoD {
                     background,
                     records,
                 })
             }
         }
+    }
+
+    /// 本帧的 2D 记录（`DrawQueue` + reveal 队列 → 矢量记录），**屏幕空间**。
+    ///
+    /// 纯 2D 帧直接用；3D 帧由 [`overlay_records`] 打上 OVERLAY 位后叠加。
+    /// B14：wgpu 把 reveal 排在 DrawQueue 全部几何**之后**（同一 z 的稳定序）
+    /// ⇒ 这里也追加在末尾。样式宽度已是像素、路径已是屏幕空间（录制层换算过）。
+    fn two_d_records(
+        &self,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<zela_render_vector::PathRecord>, String> {
+        let mut items: Vec<zela_render_vector::SceneItem<'_>> = self
+            .draws
+            .iter()
+            .map(|recorded| zela_render_vector::SceneItem {
+                shape: &recorded.shape,
+                transform: recorded.transform,
+                style: recorded.style.clone(),
+            })
+            .collect();
+        let reveal_items: Vec<(ze_render_ir::Shape2D, ze_render_ir::Style2D)> = self
+            .reveals
+            .iter()
+            .filter_map(|reveal| {
+                clip_reveal(&reveal.path, reveal.start, reveal.end)
+                    .map(|shape| (shape, reveal.style.clone()))
+            })
+            .collect();
+        items.extend(reveal_items.iter().map(|(shape, style)| {
+            zela_render_vector::SceneItem {
+                shape,
+                transform: ze_notion::Transform2D::identity(),
+                style: style.clone(),
+            }
+        }));
+        zela_render_vector::scene_records(&items, (width, height))
+            .map_err(|error| error.to_string())
     }
 
     /// 用矢量后端渲染当前帧，返回 RGBA8（native 同步读回）。
@@ -548,6 +569,57 @@ fn bilinear(src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [f32; 4] {
     let top = mix(at(x0, y0), at(x0 + 1, y0), tx);
     let bottom = mix(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx);
     mix(top, bottom, ty)
+}
+
+/// 给一批 2D 记录打上 **OVERLAY** 位（屏幕平面），供 3D 帧叠加。
+///
+/// `scale = frame_w / width`：overlay 矩阵的坐标系是**3D 视图的 frame 单位**
+/// （半幅 = frame/2），而 2D 记录是**屏幕像素偏移**（`scene_records` 只减画布中心 + 翻 y）。
+/// 几何、描边宽度、渐变轴端点、背景宽度都是同一空间量 ⇒ 一起乘。
+///
+/// H3：**放不进 overlay 的记录带理由拒绝**。`scene_records` 目前只产 Fill / Stroke；
+/// 若将来新增记录种类（点云 / 纹理），必须在这里决定它如何进 3D 帧 —— 不允许静默丢弃。
+fn overlay_records(
+    records: Vec<zela_render_vector::PathRecord>,
+    scale: f32,
+) -> Result<Vec<zela_render_vector::PathRecord>, String> {
+    let scale_path = |points: &mut Vec<[f64; 3]>| {
+        for point in points.iter_mut() {
+            point[0] *= scale as f64;
+            point[1] *= scale as f64;
+        }
+    };
+    let scale_options = |options: &mut ze_render_ir::PathOptions| {
+        if let Some(gradient) = &mut options.gradient {
+            gradient.from[0] *= scale;
+            gradient.from[1] *= scale;
+            gradient.to[0] *= scale;
+            gradient.to[1] *= scale;
+        }
+        options.background_width *= scale;
+    };
+    records
+        .into_iter()
+        .map(|record| match record {
+            zela_render_vector::PathRecord::Fill(mut path) => {
+                path.options.overlay = true;
+                scale_path(&mut path.points);
+                scale_options(&mut path.options);
+                Ok(zela_render_vector::PathRecord::Fill(path))
+            }
+            zela_render_vector::PathRecord::Stroke(mut path) => {
+                path.options.overlay = true;
+                scale_path(&mut path.points);
+                path.width *= scale;
+                scale_options(&mut path.options);
+                Ok(zela_render_vector::PathRecord::Stroke(path))
+            }
+            zela_render_vector::PathRecord::Mesh(_) => Err(
+                "2D 记录里出现网格：网格不能作为屏幕平面 overlay（H3 拒绝，不静默丢弃）"
+                    .to_string(),
+            ),
+        })
+        .collect()
 }
 
 /// 把 reveal 的 `[start, end]`（归一化弧长）裁成一条**开放折线**（B14 / X4-01）。

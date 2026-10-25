@@ -87,6 +87,13 @@ pub struct PathOptions {
     pub curve_window: Option<[f32; 2]>,
     /// 填充（或描边）的渐变。
     pub gradient: Option<Gradient>,
+    /// **屏幕空间叠加**（PF Step 2）：`true` ⇒ 这条记录在 3D 帧里走视图的 overlay 矩阵，
+    /// 固定压在屏幕平面上（z 不参与透视），用于 2D/3D 混排。
+    ///
+    /// 默认 `false` ⇒ 现有行为逐位不变。它是**渲染位置**参数，不是绘制风格，
+    /// 因此不计入 [`feature_bits`](Self::feature_bits)（矢量 / wgpu 都能表达它）。
+    #[serde(default)]
+    pub overlay: bool,
 }
 
 impl PathOptions {
@@ -192,6 +199,7 @@ mod tests {
             background: Some([0.0, 0.0, 0.0, 1.0]),
             background_width: 2.0,
             curve_window: Some([0.0, 1.0]),
+            overlay: false,
         };
         assert_eq!(all.feature_bits(), 0b1_1111);
         assert_eq!(

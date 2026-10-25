@@ -1650,3 +1650,32 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 **Step 5 基线**：批末**一次**重录；`[native]` 14 条不变，`[vector]` 13 → 18 条，
 段头注明「能力展示作品仅矢量」。
 
+### PF 接缝弥合（透明 / 相机统一 / 2D-3D 混排）
+
+> 一句话：**三件事都在接缝层**（`vector_frame` / `vector3d`），后端机制早已具备。
+> Step 0 的 E-2 判伪推翻了"alpha 被当成 coverage"的原假设，真根因是
+> **`ShaderVariant` 在 3D 桥里被吞掉**。
+
+- **E-1 / E-2 / E-3**：wgpu 中心 213.6 vs 矢量 77.7（确认矢量路径问题）；
+  alpha 140→255 后矢量**变暗**（假设不成立）；追加判别的决定性证据：同一立方体只切变体，
+  矢量三条哈希**逐位相同**（`d2cf72af…`），wgpu 三条不同。E-3（overlay 屏幕平面）通过。
+- **Step 1 变体映射**：`Flat` → 无材质（平涂，`fs_flat` 同语义）、`Lambert` → `[0,1,0.04]`
+  （纯漫反射近似）、`Pbr` → 透传。`transparent=false` ⇒ `fill.a` 抬到 1（wgpu 的 REPLACE
+  不消费颜色 alpha）；`transparent=true` 保留 alpha（矢量 OIT 本来按深度混合）。
+  `double_sided` **不可表达**（后端无 culling）⇒ 记账 PF-04，不静默。
+  fusion 修正后：中心均值 77.7 → 128.6、峰值 137 → 222（wgpu 213.6 / 20.9）。
+- **X5-05 重定性**：原"参数性落档"的前提是"两个实现都对"；当时矢量侧**没有变体映射**，
+  属结构性缺失。剩余亮度差在 **wgpu 侧**（透明 pipeline 用预乘 alpha，而 `cube.wgsl`
+  输出直色，注释与代码不符）⇒ PF-02，属 V-04 允许的正确性修复，本批不做。
+- **Step 2 相机统一**：`SceneAssembly.camera2d: Option<Camera2DHandle>`；纯 3D 场景不再需要
+  占位 `Camera2D`（`demo3d` / `pbr_lights` / `fusion` 三处已删，`[native]` 逐位不变）。
+  无相机但有 2D 图元 ⇒ **显式错误**（判据复用 `record_scene` 的 8 组组合，不另维护清单）。
+- **Step 2 混排**：`PathOptions.overlay`（OVERLAY 位）把 2D 记录压到屏幕平面；
+  `overlay_records` 把像素偏移乘 `frame_w/width` 换到 overlay 坐标系（不换算会整片放到画外）。
+  路由不再拒绝混排，决策理由写明「图层级：N 条 2D 记录以屏幕平面叠加进 3D 帧」。
+  能力用例 `overlay_path_lands_on_the_screen_plane_in_a_3d_frame`（z=3 不随透视放大）；
+  作品 `cap_mix`（cube + 2D 圆/箭头）新增 1 条 `[vector]` 基线。
+- **capability_gaps 仍进不了矢量**：混排放行后它还被 `Morph` 挡住（决策日志实测）
+  ⇒ PF-06，混排证据由 `cap_mix` 承担。
+
+

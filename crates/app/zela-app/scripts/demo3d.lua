@@ -110,7 +110,5 @@ scene.spawn({
     },
 })
 
--- 2D 相机（渲染器的 2D 通道要求 Framing2D；本场景无 2D 可绘制对象，仅占位）。
-scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
-})
+-- PF Step 2：**不再需要占位 2D 相机**。纯 3D 场景可以没有 `Framing2D`
+-- （渲染层不再把"2D 通道"当成整帧前置；有 2D 图元却没相机才报错）。
