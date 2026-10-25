@@ -7,6 +7,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use zela_scene_ecs::domain::SceneView;
 use zela_scene_ecs::{DriverCommand, DriverPod};
 
 use crate::health::HealthOverlay;
@@ -29,6 +30,20 @@ pub fn window_options() -> eframe::NativeOptions {
     }
 }
 
+/// **帧首**产物：本帧视图声明 + 视口 + 本帧 dt。
+///
+/// 拆成 `begin / present_wgpu / finish` 的唯一理由是**让呈现方式可选**：
+/// wgpu 路径用 [`SceneFrame::present_wgpu`]，矢量路径由宿主自己把离屏像素画进
+/// [`Self::viewport`]；两者共用同一条推进 / 输入 / 帧末清理，不形成第二条帧序。
+pub struct FrameBegin {
+    /// 本帧视图声明（图层序 = 合成序）。
+    pub view: SceneView,
+    /// 中央视口矩形（egui 点坐标；已写进场景的 `ViewRect` 资源）。
+    pub viewport: egui::Rect,
+    /// 本帧墙钟 dt（秒）。
+    pub dt: f32,
+}
+
 /// 每帧帧体状态（墙钟、健康 overlay）。
 pub struct SceneFrame {
     driver: Arc<DriverPod>,
@@ -47,18 +62,15 @@ impl SceneFrame {
         }
     }
 
-    /// 推进并呈现一帧。`progress` = 事件订阅方收到的 `(帧数, 全局时间)`。
-    pub fn ui(&mut self, ui: &mut egui::Ui, progress: (u32, f32)) {
+    /// 帧首：构建视图 → 写输入 / 视口 → **推进一帧**。
+    pub fn begin(&mut self, ui: &mut egui::Ui) -> FrameBegin {
         // 墙钟 dt：用单调时钟算，不随渲染帧率波动。
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
 
-        // ── B 阶段帧流程（UI 与场景只经 SceneView / SceneEvent 契约交互）──
-        //
         // 1. 场景 → UI：构建本帧视图声明（2D/3D 图层 + 相机）。
-        //    相机取上一帧末状态——视口事件换算对该滞后不敏感
-        //    （缩放因子/平移量只依赖 scale，不依赖 rect）。
+        //    相机取上一帧末状态——视口事件换算对该滞后不敏感。
         let driver = Arc::clone(&self.driver);
         let view = driver.with_scheduler(|scheduler| {
             EguiSceneHost::build_scene_view(scheduler.world(), scheduler.resources())
@@ -67,19 +79,40 @@ impl SceneFrame {
         // 2. UI → 场景：收集输入事件、绘制面板 chrome、写 ViewRect。
         //    必须在推进之前：System 消费 InputEvents，Axes/FunctionGraph
         //    刷新当帧读 ViewRect。
-        driver.with_scheduler_mut(|scheduler| {
+        let viewport = driver.with_scheduler_mut(|scheduler| {
             EguiSceneHost::begin_frame(ui, &view, scheduler.resources_mut());
+            // 与 `present` 同一来源（布局完成后才写进 ViewRect）。
+            scheduler
+                .resources()
+                .get::<zela_render::ViewRect>()
+                .map(|v| v.rect)
+                .unwrap_or_default()
         });
 
         // 3. **命令推进**：GUI 与 headless 共用同一条 `Advance(dt)` 命令。
-        //    墙钟只决定 dt；推进语义完全由 Driver pod 负责。
         let _receipt = driver.submit(DriverCommand::Advance { dt });
 
-        // 4. 内容提交：2D 队列 + 3D 队列 → painter（原 RenderSubmit 职责）。
-        driver.with_scheduler_mut(|scheduler| {
-            EguiSceneHost::present(ui, &view, scheduler.resources_mut());
-        });
+        FrameBegin {
+            view,
+            viewport: egui::Rect::from_min_max(
+                egui::pos2(viewport.min.x, viewport.min.y),
+                egui::pos2(viewport.max.x, viewport.max.y),
+            ),
+            dt,
+        }
+    }
 
+    /// wgpu 路径的呈现：2D 队列 + 3D 队列 → 合成回调 → painter。
+    pub fn present_wgpu(&self, ui: &mut egui::Ui, begin: &FrameBegin) {
+        let driver = Arc::clone(&self.driver);
+        driver.with_scheduler_mut(|scheduler| {
+            EguiSceneHost::present(ui, &begin.view, scheduler.resources_mut());
+        });
+    }
+
+    /// 帧尾：可观测性（F1 / F10）→ 清理已消费的队列 → 请求下一帧。
+    pub fn finish(&mut self, ui: &mut egui::Ui, begin: &FrameBegin, progress: (u32, f32)) {
+        let driver = Arc::clone(&self.driver);
         // ── 可观测性：F1 切换 health overlay，F10 导出 World 快照 ──
         if ui.input(|i| i.key_pressed(egui::Key::F1)) {
             self.health.toggle();
@@ -102,7 +135,7 @@ impl SceneFrame {
         driver.with_scheduler(|scheduler| {
             let draw_calls = EguiSceneHost::draw_call_count(scheduler.resources());
             self.health.update(
-                dt,
+                begin.dt,
                 scheduler.frame_report(),
                 scheduler.world().len() as usize,
                 draw_calls,
@@ -111,7 +144,7 @@ impl SceneFrame {
         self.health.set_progress(progress.0, progress.1);
         self.health.show(ui);
 
-        // 帧末：清空已被 present 消费的 2D 队列（帧管理归 host）。
+        // 帧末：清空已被消费的 2D / 内容队列（帧管理归 host）。
         driver.with_scheduler_mut(|scheduler| {
             EguiSceneHost::end_frame(scheduler.resources_mut());
         });
@@ -119,5 +152,14 @@ impl SceneFrame {
         // egui 默认事件驱动，无鼠标/键盘事件时不调度 ui()，导致
         // TimeState.elapsed 停止增长、动画卡住。动画引擎需持续重绘，每帧请求下一帧。
         ui.ctx().request_repaint();
+    }
+
+    /// **wgpu 整帧**（等价于 `begin + present_wgpu + finish`）。
+    ///
+    /// `progress` = 事件订阅方收到的 `(帧数, 全局时间)`。
+    pub fn ui(&mut self, ui: &mut egui::Ui, progress: (u32, f32)) {
+        let begin = self.begin(ui);
+        self.present_wgpu(ui, &begin);
+        self.finish(ui, &begin, progress);
     }
 }

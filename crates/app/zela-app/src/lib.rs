@@ -43,6 +43,8 @@ use zela_schedule::scheduler::Scheduler;
 // `ze_scene_core::{CONTENT_TEXTURE_ID, CONTENT_TEXTURE_WIDTH, CONTENT_TEXTURE_HEIGHT}`。
 
 mod assembly;
+// 内置作品清单（GUI 的"作品"下拉；脚本 `include_str!` 编进二进制）。
+pub mod demos;
 pub mod export;
 mod formula;
 // 内嵌 Python 的前置探测：pyo3 初始化失败是 CPython 的 Fatal（abort），

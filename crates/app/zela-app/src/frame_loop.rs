@@ -342,13 +342,10 @@ pub fn frames_for(runtime: &Runtime, fps: f64) -> u32 {
 /// 矢量后端自述的能力（B10 Step 4）：后处理四项全开，采样数取 4（与 2D 路径同口径）。
 /// 只用于 [`zela_scene_bundle::RenderParams::default_for`]：**默认值绑后端能力**的机制
 /// 需要一份 `Capabilities`，而矢量后端不走 `StandardBackends`（进程级开关）。
+///
+/// 实现已下沉到 [`zela_playback::vector_capabilities`]（GUI 用同一份）。
 fn vector_capabilities() -> ze_render_ir::Capabilities {
-    ze_render_ir::Capabilities {
-        max_sample_count: 4,
-        color_format: ze_render_ir::ColorFormat::Rgba8UnormSrgb,
-        depth_format: ze_render_ir::DepthFormat::Depth32Float,
-        post: zela_render_backends::BackendKind::Vector.post_caps(),
-    }
+    zela_playback::vector_capabilities()
 }
 
 /// 一次运行的全部可观测产出（B12 Step 2/3/4）。

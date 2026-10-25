@@ -279,6 +279,93 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     }
 }
 
+/// **视口相机控制**的初始配置（"相机控制与作品接线"的唯一判据）。
+///
+/// - `camera`：拖拽 / 滚轮操作哪台相机（见 `ViewportCamera`）；
+/// - `free_2d`：2D 相机是否交给用户（分镜绑定让位）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewportControl {
+    pub camera: zela_scene_ecs::domain::ViewportCamera,
+    pub free_2d: bool,
+}
+
+/// 按**作品实际有什么相机**给出视口控制配置。
+///
+/// - 只有 3D 相机 ⇒ `ThreeDOrbit`：否则 3D 相机停在 `Path`（动画驱动）模式，
+///   拖拽 / 滚轮被 `CameraInputSystem` 直接忽略 —— 用户看到的是"相机控制没反应"；
+/// - 有 2D 相机 ⇒ `TwoD`；若它**没有动画绑定**（静态取景）⇒ `free_2d = true`，
+///   用户可以直接平移 / 缩放；有动画则保持分镜驱动（面板里仍可手动接管）。
+pub fn viewport_control(runtime: &Runtime) -> ViewportControl {
+    runtime.driver.with_scheduler(|scheduler| {
+        let resources = scheduler.resources();
+        let cam2d = resources.get::<Camera2DHandle>().copied();
+        let mut has_3d = false;
+        zela_scene_ecs::contract::SceneRead::for_each::<ze_scene_core::Camera3D>(
+            &zela_scene_ecs::contract::WorldView::new(scheduler.world()),
+            |_, _| has_3d = true,
+        );
+        // 2D 相机的 `center` / `scale` 若有绑定 ⇒ 分镜在推它，默认不让位。
+        let animated_2d = cam2d.is_some_and(|camera| {
+            resources
+                .get::<zela_scene_ecs::animation::BindingTable>()
+                .is_some_and(|bindings| {
+                    bindings
+                        .bindings
+                        .iter()
+                        .any(|binding| binding.target.target_id() == camera.0)
+                })
+        });
+        ViewportControl {
+            camera: if has_3d && cam2d.is_none() {
+                zela_scene_ecs::domain::ViewportCamera::ThreeDOrbit
+            } else {
+                zela_scene_ecs::domain::ViewportCamera::TwoD
+            },
+            free_2d: cam2d.is_some() && !animated_2d,
+        }
+    })
+}
+
+/// 把场景里的第一台 3D 相机登记为 `Camera3DHandle`（**宿主侧**，GUI 的 3D 相机控制需要）。
+///
+/// 为什么不在 [`assemble_runtime`] 里做：那里注册的**自动轨道**绑定在
+/// `viewport_camera == TwoD`（headless 默认）时会每帧写 `eye`；目标一旦从悬垂 id
+/// 变成真实相机，headless 基线里的 3D 相机就会开始公转。GUI 用 3D 轨道模式时该绑定
+/// 本来就让位，因此只在宿主侧登记 —— headless 逐位不变。
+pub fn install_camera3d(runtime: &Runtime) {
+    let found = runtime.driver.with_scheduler(|scheduler| {
+        if scheduler.resources().get::<Camera3DHandle>().is_some() {
+            return None;
+        }
+        let mut found = None;
+        zela_scene_ecs::contract::SceneRead::for_each::<ze_scene_core::Camera3D>(
+            &zela_scene_ecs::contract::WorldView::new(scheduler.world()),
+            |id, _| {
+                if found.is_none() {
+                    found = Some(id);
+                }
+            },
+        );
+        found
+    });
+    if let Some(id) = found {
+        runtime
+            .driver
+            .with_scheduler_mut(|scheduler| scheduler.resources_mut().insert(Camera3DHandle(id)));
+    }
+}
+
+/// 把 [`viewport_control`] 写进场景的 `UiConfig`（GUI 每次装配 / 切作品后调用）。
+pub fn apply_viewport_control(runtime: &Runtime) {
+    let control = viewport_control(runtime);
+    runtime.driver.with_scheduler_mut(|scheduler| {
+        if let Some(config) = scheduler.resources_mut().get_mut::<UiConfig>() {
+            config.viewport_camera = control.camera;
+            config.free_2d_camera = control.free_2d;
+        }
+    });
+}
+
 /// 2D 相机的语义判据：场景里唯一带 `Framing2D` 的对象。
 ///
 /// **PF Step 2**：纯 3D 场景**允许没有 2D 相机**（返回 `Ok(None)`）—— 此前这个约束
@@ -423,6 +510,26 @@ pub fn render_step_to_view(
     render_frame_to_view(ctx, backends, &callback, screen, clear, view);
     end_frame(runtime);
     true
+}
+
+/// 矢量后端自述的能力：后处理四项全开，采样数取 4（与 2D 路径同口径）。
+///
+/// **单一真源**：headless 帧循环（`zela-app::frame_loop`）与 GUI 都从这里取 ——
+/// 否则同一个后端在两处得到不同的默认参数。
+pub fn vector_capabilities() -> ze_render_ir::Capabilities {
+    ze_render_ir::Capabilities {
+        max_sample_count: 4,
+        color_format: ze_render_ir::ColorFormat::Rgba8UnormSrgb,
+        depth_format: ze_render_ir::DepthFormat::Depth32Float,
+        post: zela_render_backends::BackendKind::Vector.post_caps(),
+    }
+}
+
+/// 矢量后端的默认渲染参数（尺寸已写入）。
+pub fn vector_params(width: u32, height: u32) -> zela_scene_bundle::RenderParams {
+    let mut params = zela_scene_bundle::RenderParams::default_for(&vector_capabilities());
+    params.size = (width, height);
+    params
 }
 
 /// 把目标格式的紧凑像素转换为 **RGBA8**（仅通道顺序，不做域转换）。

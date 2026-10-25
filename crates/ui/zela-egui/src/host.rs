@@ -31,7 +31,7 @@ use zela_scene_ecs::animation::BindingTable;
 use zela_scene_ecs::contract::WorldView;
 use zela_scene_ecs::director_state::DirectorState;
 use zela_scene_ecs::domain::{
-    CameraCommand, InputEvents, LayerDescriptor, LayerKind, SceneEvent, SceneView, ids,
+    CameraCommand, InputEvents, LayerKind, SceneEvent, SceneView, ids,
 };
 use zela_scene_ecs::{Curve, TimeState};
 use zela_schedule::resource::Resources;
@@ -44,10 +44,13 @@ impl EguiSceneHost {
     // ─── 帧编排 ────────────────────────────────────────────────────────────
 
     /// 帧首调用（在 `Scheduler::run_frame` 之前）：
-    /// 1. 收集视口原始输入 → 场景事件；
-    /// 2. 绘制面板 chrome，控件事件并入同一队列；
-    /// 3. 整帧替换写入 [`InputEvents`]（自动清空上一帧的事件）；
-    /// 4. 面板布局完成后更新 [`ViewRect`]。
+    /// 1. **先**绘制面板 chrome（左右侧栏会占用布局空间），控件事件进同一队列；
+    /// 2. 面板布局完成后更新 [`ViewRect`]（只覆盖**中央视口**）；
+    /// 3. 收集视口原始输入 → 场景事件（用刚算出的视口矩形做"是否在视口内"判据）；
+    /// 4. 整帧替换写入 [`InputEvents`]（自动清空上一帧的事件）。
+    ///
+    /// ⚠️ **顺序不能反**：先 `update_view_rect` 会把侧栏区域也算进视口 ⇒
+    /// 画面盖住控制面板（实测「面板消失」），面板里的滚动还会带动相机。
     ///
     /// 注意：ViewRect 必须在 run_frame 之前写入（而非 present 时）——
     /// Prepare/RenderCommit 阶段的 GridBuild/SceneRecord 当帧就要用它，
@@ -58,12 +61,13 @@ impl EguiSceneHost {
             .get::<UiConfig>()
             .map(|c| c.viewport_camera)
             .unwrap_or_default();
-        let mut events = InputEvents::from_events(Self::collect_events(ui, view, target));
-        events.extend(Self::draw_control_panel(ui, view, res));
+        let mut events = Self::draw_control_panel(ui, view, res);
         events.extend(Self::draw_time_panel(ui, res));
         events.extend(Self::draw_param_panel(ui, res));
-        res.insert(events);
-        Self::update_view_rect(ui, res);
+        // 面板占位完成后，剩下的才是中央视口（本帧输入换算直接用它）。
+        let viewport = Self::update_view_rect(ui, res);
+        events.extend(Self::collect_events(ui, view, target, viewport));
+        res.insert(InputEvents::from_events(events));
     }
 
     // ─── 宿主环境（平台相关）──────────────────────────────────────────────
@@ -153,26 +157,33 @@ impl EguiSceneHost {
         ui: &egui::Ui,
         view: &SceneView,
         target: ViewportCamera,
+        viewport: Rect2D,
     ) -> Vec<SceneEvent> {
-        let Some(LayerDescriptor {
-            id: layer,
-            kind: LayerKind::Viewport2D { camera },
-            ..
-        }) = view
-            .layers
-            .iter()
-            .find(|l| matches!(l.kind, LayerKind::Viewport2D { .. }))
-        else {
-            return Vec::new();
+        // **纯 3D 作品没有 2D 图层**：此前这里 `let ... else { return }` 直接吞掉全部输入
+        // ⇒ 3D 相机控制"无效"（实测）。现在只要求"有可操作的图层"：优先 2D，其次 3D。
+        let layer2d = view.layers.iter().find_map(|layer| match &layer.kind {
+            LayerKind::Viewport2D { camera } => Some((layer.id, camera)),
+            _ => None,
+        });
+        let layer = match layer2d {
+            Some((id, _)) => id,
+            None => match view
+                .layers
+                .iter()
+                .find(|layer| matches!(layer.kind, LayerKind::Viewport3D { .. }))
+            {
+                Some(layer) => layer.id,
+                None => return Vec::new(),
+            },
         };
 
-        // 指针是否落在视口矩形内（悬停/点击只在视口内上报）。
-        // M3-2：`camera.rect` 已是理念层 `Rect2D`（`min`/`max` 是字段）。
-        let in_view = |p: egui::Pos2| {
-            p.x >= camera.rect.min.x
-                && p.x <= camera.rect.max.x
-                && p.y >= camera.rect.min.y
-                && p.y <= camera.rect.max.y
+        // 指针是否落在视口矩形内：相机命令同样只认视口内的交互 ——
+        // 否则在左侧面板里滚动 / 拖滑动条也会缩放或转动相机。
+        let in_viewport = |p: egui::Pos2| {
+            p.x >= viewport.min.x
+                && p.x <= viewport.max.x
+                && p.y >= viewport.min.y
+                && p.y <= viewport.max.y
         };
 
         // 每帧位移/旋转换算系数（交互手感，纯数值选择）。
@@ -185,13 +196,14 @@ impl EguiSceneHost {
 
         let mut events = Vec::new();
         ui.input(|i| {
+            let inside = i.pointer.hover_pos().is_some_and(in_viewport);
             match target {
                 ViewportCamera::TwoD => {
-                    // 滚轮缩放（语义命令；与旧行为一致：任意位置滚轮均生效）。
+                    // 滚轮缩放（语义命令；只在视口内生效）。
                     let scroll = i.smooth_scroll_delta.y;
-                    if scroll != 0.0 {
+                    if inside && scroll != 0.0 {
                         events.push(SceneEvent::Camera {
-                            layer: *layer,
+                            layer,
                             command: CameraCommand::Zoom {
                                 factor: 1.0 + scroll * 0.001,
                             },
@@ -201,38 +213,41 @@ impl EguiSceneHost {
                     // 右键/中键拖拽 → 平移（屏幕位移经对象层的
                     // `Camera2D::screen_delta_to_world` 换算为世界位移：缩放 + Y 翻转都在那里；
                     // 「拖拽方向 → 取景中心反向移动」取负是**控制器语义**，留在本层）。
-                    if i.pointer.secondary_down() || i.pointer.middle_down() {
-                        let d = i.pointer.delta();
-                        if d != egui::Vec2::ZERO {
-                            events.push(SceneEvent::Camera {
-                                layer: *layer,
-                                command: CameraCommand::Pan {
-                                    delta: -camera.screen_delta_to_world((d.x, d.y).into()),
-                                },
-                            });
+                    if let Some((_, camera)) = layer2d {
+                        if inside && (i.pointer.secondary_down() || i.pointer.middle_down()) {
+                            let d = i.pointer.delta();
+                            if d != egui::Vec2::ZERO {
+                                events.push(SceneEvent::Camera {
+                                    layer,
+                                    command: CameraCommand::Pan {
+                                        delta: -camera.screen_delta_to_world((d.x, d.y).into()),
+                                    },
+                                });
+                            }
                         }
                     }
                 }
                 ViewportCamera::ThreeDOrbit => {
                     // 滚轮 → Dolly（向前滚 = 靠近 target）。
                     let scroll = i.smooth_scroll_delta.y;
-                    if scroll != 0.0 {
+                    if inside && scroll != 0.0 {
                         events.push(SceneEvent::Camera {
-                            layer: *layer,
+                            layer,
                             command: CameraCommand::Dolly {
                                 delta: scroll * DOLLY_PER_SCROLL,
                             },
                         });
                     }
                     // 拖拽（左/右/中键任一）→ 绕目标公转：向右拖 = 场景向右转。
-                    if i.pointer.primary_down()
-                        || i.pointer.secondary_down()
-                        || i.pointer.middle_down()
+                    if inside
+                        && (i.pointer.primary_down()
+                            || i.pointer.secondary_down()
+                            || i.pointer.middle_down())
                     {
                         let d = i.pointer.delta();
                         if d != egui::Vec2::ZERO {
                             events.push(SceneEvent::Camera {
-                                layer: *layer,
+                                layer,
                                 command: CameraCommand::Orbit {
                                     delta_yaw: -d.x * ORBIT_RAD_PER_PX,
                                     delta_pitch: -d.y * ORBIT_RAD_PER_PX,
@@ -243,14 +258,15 @@ impl EguiSceneHost {
                 }
                 ViewportCamera::ThreeDFps => {
                     // 拖拽 → 原地转头（与鼠标移动同向）。
-                    if i.pointer.primary_down()
-                        || i.pointer.secondary_down()
-                        || i.pointer.middle_down()
+                    if inside
+                        && (i.pointer.primary_down()
+                            || i.pointer.secondary_down()
+                            || i.pointer.middle_down())
                     {
                         let d = i.pointer.delta();
                         if d != egui::Vec2::ZERO {
                             events.push(SceneEvent::Camera {
-                                layer: *layer,
+                                layer,
                                 command: CameraCommand::Look {
                                     delta_yaw: d.x * ORBIT_RAD_PER_PX,
                                     delta_pitch: -d.y * ORBIT_RAD_PER_PX,
@@ -267,9 +283,9 @@ impl EguiSceneHost {
                         axis(egui::Key::Q, egui::Key::E),
                         axis(egui::Key::S, egui::Key::W),
                     ) * MOVE_PER_FRAME;
-                    if delta != ze_notion::Vec3::ZERO {
+                    if inside && delta != ze_notion::Vec3::ZERO {
                         events.push(SceneEvent::Camera {
-                            layer: *layer,
+                            layer,
                             command: CameraCommand::Move { delta },
                         });
                     }
@@ -277,15 +293,16 @@ impl EguiSceneHost {
             }
 
             // 悬停 / 点击（视口内；拾取类事件，与操作目标无关）。
-            if let Some(pos) = i.pointer.latest_pos() {
-                if in_view(pos) {
+            // 只在有 2D 相机时上报：`screen_to_world` 是 2D 语义。
+            if let (Some((_, camera)), Some(pos)) = (layer2d, i.pointer.latest_pos()) {
+                if in_viewport(pos) {
                     events.push(SceneEvent::ViewportHover {
-                        layer: *layer,
+                        layer,
                         scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
                     });
                     if i.pointer.primary_clicked() {
                         events.push(SceneEvent::ViewportClick {
-                            layer: *layer,
+                            layer,
                             scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
                         });
                     }
@@ -554,7 +571,9 @@ impl EguiSceneHost {
     // ─── 布局信息 ──────────────────────────────────────────────────────────
 
     /// 面板布局完成后写入中央视口矩形（原 ViewRectUpdateSystem 的职责）。
-    pub fn update_view_rect(ui: &egui::Ui, res: &mut Resources) {
+    ///
+    /// 返回刚写入的矩形：本帧的输入换算（相机命令是否落在视口内）直接用它。
+    pub fn update_view_rect(ui: &egui::Ui, res: &mut Resources) -> Rect2D {
         // egui::Rect → 理念层 `Rect2D` 的就地转换（后端转换由使用方负责）。
         let egui_rect = ui.available_rect_before_wrap();
         let rect = Rect2D::new(
@@ -564,6 +583,7 @@ impl EguiSceneHost {
         if let Some(vr) = res.get_mut::<ViewRect>() {
             vr.rect = rect;
         }
+        rect
     }
 
     // ─── 内容提交 ──────────────────────────────────────────────────────────

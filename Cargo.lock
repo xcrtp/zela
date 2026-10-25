@@ -6849,6 +6849,7 @@ dependencies = [
  "ze-pod-core",
  "zela-app",
  "zela-egui",
+ "zela-playback",
  "zela-render-backends",
  "zela-scene-ecs",
  "zela-schedule",

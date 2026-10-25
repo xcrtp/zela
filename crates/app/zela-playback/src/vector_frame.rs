@@ -58,6 +58,12 @@ pub struct VectorFrame {
     has_line_meshes: bool,
     /// 本帧网格材质引用的纹理句柄（PG Step 2：路由判断"这些纹理有没有生产方"）。
     mesh_textures: Vec<u64>,
+    /// 录制坐标系的原点（= 本帧 `ViewRect.min`）。
+    ///
+    /// 2D 记录是**绝对屏幕坐标**（egui 点）：GUI 的视口从工具条下方开始，min ≠ 0；
+    /// 矢量画布只有视口那么大 ⇒ 取帧时必须把原点去掉，否则整幅内容按视口偏移平移、
+    /// 底部被裁掉。headless 的 `ViewRect.min = 0` ⇒ 本字段为 0，基线逐位不变。
+    origin: [f32; 2],
 }
 
 impl VectorFrame {
@@ -73,6 +79,12 @@ impl VectorFrame {
                     view_options,
                 );
                 let layers = view.layers.clone();
+                // 录制原点：2D 记录是绝对屏幕坐标，矢量画布只有视口那么大（见 `origin`）。
+                let origin = scheduler
+                    .resources()
+                    .get::<zela_render::ViewRect>()
+                    .map(|rect| [rect.rect.min.x, rect.rect.min.y])
+                    .unwrap_or([0.0, 0.0]);
                 let queue = scheduler.resources().get::<DrawQueue>();
                 let draws = queue
                     .map(zela_render_backends::snapshot_queue)
@@ -163,7 +175,32 @@ impl VectorFrame {
                     mesh_count,
                     has_line_meshes,
                     mesh_textures,
+                    origin,
                 })
+            })
+    }
+
+    /// 两张**纯 2D** 帧是否逐项相同（同一作品、静止画面 ⇒ 可以直接复用上一帧的像素）。
+    ///
+    /// 只对不含 3D 相机的帧成立：3D 的网格 / 灯在**渲染时**才从队列读（不在快照里），
+    /// 快照相同并不代表画面相同 —— 那种情况一律重渲，不冒险。
+    pub fn same_2d_frame(&self, other: &Self) -> bool {
+        if self.content().has_3d_camera || other.content().has_3d_camera {
+            return false;
+        }
+        same_draws(&self.draws, &other.draws)
+            && self.reveals.len() == other.reveals.len()
+            && self.reveals.iter().zip(&other.reveals).all(|(a, b)| {
+                a.start == b.start && a.end == b.end && a.style == b.style && a.path == b.path
+            })
+            && self.content.len() == other.content.len()
+            && self.content.iter().zip(&other.content).all(|(a, b)| {
+                a.handle == b.handle
+                    && a.size == b.size
+                    && a.composite == b.composite
+                    && a.blend == b.blend
+                    && a.opacity == b.opacity
+                    && same_draws(&a.draws, &b.draws)
             })
     }
 
@@ -226,11 +263,17 @@ enum Prepared {
 }
 
 impl VectorFrame {
+    /// 准备一帧的矢量渲染输入。
+    ///
+    /// `scale` = **点 → 画布像素**（HiDPI；headless = 1）：2D 记录是布局点（egui points），
+    /// 而矢量画布的坐标必须与画布像素一致 ⇒ 这里按它（a）去掉视口原点、（b）缩放几何与长度。
+    #[allow(clippy::too_many_arguments)]
     fn prepare(
         &self,
         runtime: &Runtime,
         width: u32,
         height: u32,
+        scale: f32,
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<Prepared, String> {
@@ -264,7 +307,7 @@ impl VectorFrame {
                 // H3：放不进 overlay 的记录**带理由拒绝** —— 2D 记录不可能是网格
                 // （`scene_records` 只产 Fill / Stroke）；若将来多出一种，必须在这里显式报错。
                 records.extend(overlay_records(
-                    self.two_d_records(width, height)?,
+                    self.two_d_records((width, height), scale)?,
                     view_frame_scale,
                 )?);
                 // **PG Step 2（路线 B）**：被 3D 材质采样的内容层作为**相机视图**先渲，
@@ -296,7 +339,7 @@ impl VectorFrame {
                 })
             }
             None => {
-                let records = self.two_d_records(width, height)?;
+                let records = self.two_d_records((width, height), scale)?;
                 Ok(Prepared::TwoD {
                     background,
                     records,
@@ -310,18 +353,33 @@ impl VectorFrame {
     /// 纯 2D 帧直接用；3D 帧由 [`overlay_records`] 打上 OVERLAY 位后叠加。
     /// B14：wgpu 把 reveal 排在 DrawQueue 全部几何**之后**（同一 z 的稳定序）
     /// ⇒ 这里也追加在末尾。样式宽度已是像素、路径已是屏幕空间（录制层换算过）。
+    ///
+    /// 输出坐标 = `(记录点 - 视口原点) × scale`：与矢量画布的像素坐标一致
+    /// （GUI 的视口不在原点、HiDPI 下 scale ≠ 1；headless 两者都退化为恒等）。
     fn two_d_records(
         &self,
-        width: u32,
-        height: u32,
+        canvas: (u32, u32),
+        scale: f32,
     ) -> Result<Vec<zela_render_vector::PathRecord>, String> {
+        // 先平移掉视口原点，再放大到画布像素（`compose` = 先 self 后 other）。
+        let to_canvas = ze_notion::Transform2D::translate(ze_notion::Vec2::new(
+            -self.origin[0],
+            -self.origin[1],
+        ))
+        .compose(ze_notion::Transform2D::scale(ze_notion::Vec2::splat(scale)));
         let mut items: Vec<zela_render_vector::SceneItem<'_>> = self
             .draws
             .iter()
-            .map(|recorded| zela_render_vector::SceneItem {
-                shape: &recorded.shape,
-                transform: recorded.transform,
-                style: recorded.style.clone(),
+            .map(|recorded| {
+                let mut style = recorded.style.clone();
+                // 长度类参数是**点**，必须与几何一起换算（宽度 / 背景描边宽度）。
+                style.stroke_width *= scale;
+                style.paint.background_width *= scale;
+                zela_render_vector::SceneItem {
+                    shape: &recorded.shape,
+                    transform: recorded.transform.compose(to_canvas),
+                    style,
+                }
             })
             .collect();
         let reveal_items: Vec<(ze_render_ir::Shape2D, ze_render_ir::Style2D)> = self
@@ -333,14 +391,16 @@ impl VectorFrame {
             })
             .collect();
         items.extend(reveal_items.iter().map(|(shape, style)| {
+            let mut style = style.clone();
+            style.stroke_width *= scale;
+            style.paint.background_width *= scale;
             zela_render_vector::SceneItem {
                 shape,
-                transform: ze_notion::Transform2D::identity(),
-                style: style.clone(),
+                transform: to_canvas,
+                style,
             }
         }));
-        zela_render_vector::scene_records(&items, (width, height))
-            .map_err(|error| error.to_string())
+        zela_render_vector::scene_records(&items, canvas).map_err(|error| error.to_string())
     }
 
     /// 用矢量后端渲染当前帧，返回 RGBA8（native 同步读回）。
@@ -356,16 +416,51 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<Vec<u8>, String> {
-        let mut rgba = match self.prepare(runtime, width, height, params, background)? {
+        // headless / 对拍：`samples = 4`（与基线记录时一致，不能动）。
+        self.render_with(runtime, width, height, 1.0, 4, params, background)
+    }
+
+    /// 同 [`Self::render`]，但显式给出**点 → 像素**系数（GUI 的 HiDPI 预览用）。
+    ///
+    /// `width` / `height` 是**画布像素**；2D 记录按 `scale` 从布局点换算。
+    /// headless 传 `1.0`（`render` 即此），因此基线逐位不变。
+    ///
+    /// **预览不付 4×MSAA**：矢量后端的抗锯齿是解析式的（逐像素覆盖面积），预览用
+    /// `samples = 1` 已经足够；4 倍采样只是把填充成本乘 4（实测 GUI 每帧省 ~4 ms）。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn render_at(
+        &self,
+        runtime: &Runtime,
+        width: u32,
+        height: u32,
+        scale: f32,
+        params: &zela_scene_bundle::RenderParams,
+        background: [f32; 4],
+    ) -> Result<Vec<u8>, String> {
+        self.render_with(runtime, width, height, scale, 1, params, background)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn render_with(
+        &self,
+        runtime: &Runtime,
+        width: u32,
+        height: u32,
+        scale: f32,
+        samples: u32,
+        params: &zela_scene_bundle::RenderParams,
+        background: [f32; 4],
+    ) -> Result<Vec<u8>, String> {
+        let mut rgba = match self.prepare(runtime, width, height, scale, params, background)? {
             Prepared::ThreeD {
                 view,
                 cameras,
                 records,
-            } => zela_render_vector::render_3d_with(width, height, 4, &view, &cameras, &records)?,
+            } => zela_render_vector::render_3d_with(width, height, samples, &view, &cameras, &records)?,
             Prepared::TwoD {
                 background,
                 records,
-            } => zela_render_vector::render_2d(width, height, 4, background, &records)?,
+            } => zela_render_vector::render_2d(width, height, samples, background, &records)?,
         };
         self.composite_content(width, height, &mut rgba)?;
         Ok(rgba)
@@ -381,7 +476,7 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<Vec<u8>, String> {
-        let mut rgba = match self.prepare(runtime, width, height, params, background)? {
+        let mut rgba = match self.prepare(runtime, width, height, 1.0, params, background)? {
             Prepared::ThreeD {
                 view,
                 cameras,
@@ -413,7 +508,7 @@ impl VectorFrame {
         background: [f32; 4],
     ) -> Result<(), String> {
         self.refuse_zero_copy_with_content()?;
-        match self.prepare(runtime, width, height, params, background)? {
+        match self.prepare(runtime, width, height, 1.0, params, background)? {
             Prepared::ThreeD {
                 view,
                 cameras,
@@ -442,7 +537,7 @@ impl VectorFrame {
         background: [f32; 4],
     ) -> Result<(), String> {
         self.refuse_zero_copy_with_content()?;
-        match self.prepare(runtime, width, height, params, background)? {
+        match self.prepare(runtime, width, height, 1.0, params, background)? {
             Prepared::ThreeD {
                 view,
                 cameras,
@@ -488,16 +583,8 @@ impl VectorFrame {
         rgba: &mut [u8],
     ) -> Result<(), String> {
         for (index, layer) in self.content.iter().enumerate().filter(|(_, l)| l.composite) {
-            let records = content_records(layer)?;
-            let pixels = zela_render_vector::render_2d(
-                layer.size[0],
-                layer.size[1],
-                1,
-                [0.0; 4],
-                &records,
-            )
-            .map_err(|error| format!("内容层 #{index} 渲染失败：{error}"))?;
-            composite_layer(rgba, width, height, &pixels, layer)
+            let pixels = content_raster::render(layer, index)?;
+            composite_layer(rgba, width, height, pixels.as_slice(), layer)
                 .map_err(|error| format!("内容层 #{index}：{error}"))?;
         }
         Ok(())
@@ -526,6 +613,81 @@ impl VectorFrame {
                 .map_err(|error| format!("内容层 #{index}：{error}"))?;
         }
         Ok(())
+    }
+}
+
+/// 逐个字段比（`Recorded2D` 只派生了 `Clone`，没有 `PartialEq`）。
+fn same_draws(a: &[zela_render_backends::Recorded2D], b: &[zela_render_backends::Recorded2D]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(left, right)| {
+            left.shape == right.shape
+                && left.transform == right.transform
+                && left.style == right.style
+                && left.z == right.z
+        })
+}
+
+/// **内容层光栅缓存**（native）：同一份 draw 序列 ⇒ 直接复用上一帧的像素。
+///
+/// 为什么需要：Surface 的内容（Typst 字形轮廓，动辄上万点）在矢量后端是**每帧**重新
+/// 映射 + 三角化的 —— 1024×768 的文字层实测 ~50 ms/帧。GUI 预览每帧都在渲同一张
+/// 静止内容时这是纯浪费。判据用 draw 序列的**逐项相等**（`PartialEq`，不做哈希近似）：
+/// 内容真变了（动画公式 / 换作品）就一定重渲，不会贴旧图。
+#[cfg(not(target_arch = "wasm32"))]
+mod content_raster {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use zela_render_backends::Recorded2D;
+
+    use super::{ContentSnapshot, content_records, same_draws};
+
+    struct Entry {
+        size: [u32; 2],
+        draws: Vec<Recorded2D>,
+        rgba: Arc<Vec<u8>>,
+    }
+
+    static CACHE: OnceLock<Mutex<HashMap<u64, Entry>>> = OnceLock::new();
+
+    pub(super) fn render(
+        layer: &ContentSnapshot,
+        index: usize,
+    ) -> Result<Arc<Vec<u8>>, String> {
+        let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = cache
+            .lock()
+            .map_err(|_| "内容层缓存锁中毒".to_string())?;
+        if let Some(entry) = guard.get(&layer.handle) {
+            if entry.size == layer.size && same_draws(&entry.draws, &layer.draws) {
+                return Ok(Arc::clone(&entry.rgba));
+            }
+        }
+
+        let records = content_records(layer)?;
+        let rgba = zela_render_vector::render_2d(
+            layer.size[0],
+            layer.size[1],
+            1,
+            [0.0; 4],
+            &records,
+        )
+        .map_err(|error| format!("内容层 #{index} 渲染失败：{error}"))?;
+        let rgba = Arc::new(rgba);
+
+        // 多作品切换 / 多尺寸时不无限留垃圾（每层 ~3 MB）。
+        if guard.len() > 8 {
+            guard.clear();
+        }
+        guard.insert(
+            layer.handle,
+            Entry {
+                size: layer.size,
+                draws: layer.draws.clone(),
+                rgba: Arc::clone(&rgba),
+            },
+        );
+        Ok(rgba)
     }
 }
 
@@ -572,18 +734,79 @@ fn composite_layer(
     let (left, top) = ((width as f32 - dw) * 0.5, (height as f32 - dh) * 0.5);
     let opacity = layer.opacity.clamp(0.0, 1.0);
 
-    for y in 0..height {
-        let fy = (y as f32 + 0.5 - top) / dh;
-        if !(0.0..1.0).contains(&fy) {
+    // **采样表**：源索引与权重只依赖 x（或 y），逐像素再算 `floor` / 钳位是纯重复。
+    // 1M 像素的小图叠加里这一项就是数十毫秒（GUI 每帧都走这条路）。
+    // 一侧的 `(i0, i1, t)`；`None` = 该行列不在内容矩形内。
+    let axis = |count: u32, size: f32, offset: f32, extent: f32, limit: u32| -> Vec<Option<(usize, usize, f32)>> {
+        (0..count)
+            .map(|i| {
+                let f = (i as f32 + 0.5 - offset) / extent;
+                if !(0.0..1.0).contains(&f) {
+                    return None;
+                }
+                let at = f * size - 0.5;
+                let i0 = at.floor();
+                let t = at - i0;
+                let clamp = |v: f32| (v as i32).clamp(0, limit as i32 - 1) as usize;
+                Some((clamp(i0), clamp(i0 + 1.0), t))
+            })
+            .collect()
+    };
+    let columns = axis(width, sw as f32, left, dw, sw);
+    let rows = axis(height, sh as f32, top, dh, sh);
+
+    // `Opaque` 是 REPLACE ⇒ 透明像素也必须写（清成 0），不能早退；另两种混合 0 贡献 = 恒等。
+    let can_skip_clear = layer.blend != ze_render_ir::LayerBlend::Opaque;
+    let src_w = sw as usize;
+    // 每源行是否**整行全零**（文字层的大部分行都是）⇒ 对应目标行可以整行跳过。
+    let zero_rows: Vec<bool> = if can_skip_clear {
+        (0..sh as usize)
+            .map(|y| {
+                let start = y * src_w * 4;
+                src[start..start + src_w * 4].iter().all(|&byte| byte == 0)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    for y in 0..height as usize {
+        let Some((y0, y1, ty)) = rows[y] else {
+            continue;
+        };
+        if can_skip_clear && zero_rows[y0] && zero_rows[y1] {
             continue;
         }
-        for x in 0..width {
-            let fx = (x as f32 + 0.5 - left) / dw;
-            if !(0.0..1.0).contains(&fx) {
+        for x in 0..width as usize {
+            let Some((x0, x1, tx)) = columns[x] else {
+                continue;
+            };
+            // **全零早退**：四邻整像素都是 0（RGBA 全 0）⇒ 双线性结果必为 0，
+            // 非 REPLACE 混合下这一步是"什么都不写"（逐位等价）。字形/图形之外的像素
+            // 占九成以上，省掉的是每像素的双线性 + 4 次写回。
+            let pixel = |sy: usize, sx: usize| -> u32 {
+                let i = (sy * src_w + sx) * 4;
+                u32::from_le_bytes([src[i], src[i + 1], src[i + 2], src[i + 3]])
+            };
+            if can_skip_clear
+                && (pixel(y0, x0) | pixel(y0, x1) | pixel(y1, x0) | pixel(y1, x1)) == 0
+            {
                 continue;
             }
-            let [r, g, b, a] = bilinear(src, sw, sh, fx * sw as f32 - 0.5, fy * sh as f32 - 0.5);
-            let index = ((y * width + x) * 4) as usize;
+            let row = |sy: usize| -> [f32; 4] {
+                let a = (sy * sw as usize + x0) * 4;
+                let b = (sy * sw as usize + x1) * 4;
+                std::array::from_fn(|k| {
+                    let left = src[a + k] as f32 / 255.0;
+                    let right = src[b + k] as f32 / 255.0;
+                    left + (right - left) * tx
+                })
+            };
+            let [r0, g0, b0, a0] = row(y0);
+            let [r1, g1, b1, a1] = row(y1);
+            let mix = |a: f32, b: f32| a + (b - a) * ty;
+            let (r, g, b, a) = (mix(r0, r1), mix(g0, g1), mix(b0, b1), mix(a0, a1));
+
+            let index = (y * width as usize + x) * 4;
             let byte = |value: f32| (value * 255.0).round().clamp(0.0, 255.0) as u8;
             match layer.blend {
                 ze_render_ir::LayerBlend::Alpha => {
@@ -610,30 +833,6 @@ fn composite_layer(
         }
     }
     Ok(())
-}
-
-/// 双线性采样（premultiplied RGBA，坐标钳在边缘）。
-fn bilinear(src: &[u8], width: u32, height: u32, x: f32, y: f32) -> [f32; 4] {
-    let (w, h) = (width as i32, height as i32);
-    let (x0, y0) = (x.floor() as i32, y.floor() as i32);
-    let (tx, ty) = (x - x0 as f32, y - y0 as f32);
-    let at = |px: i32, py: i32| -> [f32; 4] {
-        let px = px.clamp(0, w - 1);
-        let py = py.clamp(0, h - 1);
-        let i = ((py * w + px) * 4) as usize;
-        [
-            src[i] as f32 / 255.0,
-            src[i + 1] as f32 / 255.0,
-            src[i + 2] as f32 / 255.0,
-            src[i + 3] as f32 / 255.0,
-        ]
-    };
-    let mix = |a: [f32; 4], b: [f32; 4], t: f32| -> [f32; 4] {
-        std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t)
-    };
-    let top = mix(at(x0, y0), at(x0 + 1, y0), tx);
-    let bottom = mix(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx);
-    mix(top, bottom, ty)
 }
 
 /// 给一批 2D 记录打上 **OVERLAY** 位（屏幕平面），供 3D 帧叠加。

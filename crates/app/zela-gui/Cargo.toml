@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 # 组装层：Pod 装配 / Resources / Runtime（不依赖 UI）。
 zela-app = { path = "../zela-app" }
+# 回放运行时：矢量帧的帧快照与渲染参数（GUI 与 headless 共用同一份）。
+zela-playback = { path = "../zela-playback" }
 # UI 层：EguiSceneHost / SceneFrame / FrameProgress / 主题与字体。
 zela-egui = { path = "../../ui/zela-egui" }
 # 场景类型（Result / DriverPod）与后端安装。

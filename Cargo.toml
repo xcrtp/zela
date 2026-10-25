@@ -81,6 +81,32 @@ opt-level = 3
 debug = false
 incremental = false
 
+# **GUI 开发构建也要能跑矢量预览**：矢量后端的 CPU 侧工作（曲线细分 / 三角化 /
+# 内容层合成）是热路径；`opt-level = 0` 下 1200×839 一帧实测 ~314 ms（3 fps，像卡死）。
+# 只给这条链上的包开优化，其余 crate 仍是 debug（断点 / 增量构建不受影响）。
+[profile.dev.package.zela-render-vector]
+opt-level = 2
+
+[profile.dev.package.zela-playback]
+opt-level = 2
+
+[profile.dev.package.zela-render-backends]
+opt-level = 2
+
+# egui 在 opt-level 0 下把**每帧的像素转换 / 布局**也做了：1200×839 的矢量帧
+# 仅"RGBA→ColorImage→纹理上传"就占 ~60 ms（实测 70 ms 里的大头）。
+[profile.dev.package.egui]
+opt-level = 2
+
+[profile.dev.package.epaint]
+opt-level = 2
+
+[profile.dev.package.egui-wgpu]
+opt-level = 2
+
+[profile.dev.package.eframe]
+opt-level = 2
+
 [workspace.dependencies]
 eframe = { version = "0.36", default-features = false, features = [
     "wgpu",
