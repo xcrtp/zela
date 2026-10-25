@@ -37,8 +37,9 @@ mod render;
 
 pub mod api;
 pub use api::{
-    CameraView, Dash, FilledPath, Gradient, Light, MeshRecord, PathOptions, PathRecord, PointsRecord,
-    SecondPaint, StrokedPath, TextureSource, View3, ViewOptions,
+    CameraView, Dash, FilledPath, Gradient, Light, MeshRecord, MorphGeometry, PathOptions,
+    PathRecord, PointsRecord, SecondPaint, StrokedPath, TextureSource, View3, ViewOptions,
+    add_environment,
 };
 // B15：同步读回只在 native 存在；浏览器只有异步面（没有阻塞读回）。
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,6 +59,13 @@ pub use render::{ResourceTotals, resource_totals, take_resource_totals};
 pub use render::{OverflowTotals, ShadowTotals, msaa_samples, set_sample_override, take_overflow_totals, take_shadow_totals};
 /// **PG Step 3**：内置影棚的 id（`EnvironmentLight` 没有图时用它；**程序化生成，零资产**）。
 pub const BUILTIN_ENVIRONMENT: u32 = environment::STUDIO;
+/// **PH Step 3**：内置影棚 id 的另一个名字（与 [`BUILTIN_ENVIRONMENT`] 同值）。
+///
+/// 公开它是因为计划要求"宿主可显式引用内置"；两个名字都保留以免改掉既有调用点
+/// （`vector3d.rs` 用的是 `BUILTIN_ENVIRONMENT`）。
+pub const STUDIO: u32 = environment::STUDIO;
+/// **PH Step 3**：Radiance `.hdr` 解码入口（RGBE，行优先），配合 [`add_environment`] 使用。
+pub use environment::read_hdr;
 // B18：移动端条纹的逐项排查开关（页面 `?skip=`；默认 0 = 全开）。
 pub use render::{SKIP_AO, SKIP_BLOOM, SKIP_DEPTH, SKIP_ENVIRONMENT, SKIP_LIGHT, SKIP_SHADOW, SKIP_STENCIL, set_skip};
 
@@ -72,7 +80,7 @@ pub fn forget_player_targets() {
 pub mod scene;
 #[cfg(not(target_arch = "wasm32"))]
 pub use scene::render_scene_2d;
-pub use scene::{SceneItem, SceneMapError, fill_paths, scene_records};
+pub use scene::{SceneItem, SceneMapError, fill_paths, morph_records, scene_records};
 
 /// 内容 key：xxh3（64 位，0 保留）。等值内容只上传一次。
 pub fn digest<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> u64 {

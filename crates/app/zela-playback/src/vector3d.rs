@@ -19,9 +19,7 @@
 //!   0.04，理由见下方 `DEFAULT_REFLECTANCE` 的注释），该取舍记在 GAPS X1-03。
 
 use ze_notion::{Color32, Mat4};
-use ze_render_ir::{
-    AmbientOcclusion, Bloom, MeshForm, RenderParams, ShaderVariant, ToneMapping,
-};
+use ze_render_ir::{AmbientOcclusion, Bloom, RenderParams, ShaderVariant, ToneMapping};
 use ze_scene_core::components::{Material3D, MeshGeometry, PrimitiveTopology};
 use ze_scene_core::object::{Camera3D, Projection};
 use zela_render::draw::DrawQueue;
@@ -265,15 +263,34 @@ pub fn lights(queue: Option<&LightQueue>) -> Vec<Light> {
 }
 
 /// 本帧的全部 3D 网格 → 矢量记录（顺序 = 队列顺序）。
-pub fn mesh_records(queue: &DrawQueue) -> Result<Vec<PathRecord>, String> {
-    queue
-        .meshes()
-        .enumerate()
-        .map(|(index, draw)| {
-            mesh_record(&draw.geometry, draw.transform, &draw.material)
-                .map_err(|error| format!("3D 网格 #{index}：{error}"))
-        })
-        .collect()
+///
+/// **PH Step 2**：`lines` 给出线框细条的朝向与宽度。后端没有线框路径
+/// （`MeshForm::Line` 零命中、`vector3d.rs` 对非 Tri 显式 `Err`）⇒ 在**接缝层**
+/// 把 `Lines` 转成细条三角形。宽度是 1 屏幕像素（与 wgpu 的 `LineList` 同口径，
+/// 见 [`LineStyle`]）。
+pub fn mesh_records(queue: &DrawQueue, lines: LineStyle) -> Result<Vec<PathRecord>, String> {
+    let mut out = Vec::new();
+    for (index, draw) in queue.meshes().enumerate() {
+        let record = mesh_record(&draw.geometry, draw.transform, &draw.material, lines)
+            .map_err(|error| format!("3D 网格 #{index}：{error}"))?;
+        if let Some(record) = record {
+            out.push(record);
+        }
+    }
+    Ok(out)
+}
+
+/// **PH Step 2**：线框细条的朝向与宽度。
+///
+/// `world_per_pixel` = `view.frame.1 / height`（焦距平面处 1 屏幕像素对应的世界长度）。
+/// 场景层没有 `line_width` 字段（`MeshGeometry` 只有 positions / normals / uvs /
+/// indices / topology）⇒ **宽度不可由作者控制**；这里取 1 px 与 wgpu 的
+/// `LineList`（不支持 linewidth）同口径，并记账（GAPS PH-06）。
+#[derive(Debug, Clone, Copy)]
+pub struct LineStyle {
+    /// 相机朝向（世界坐标，"指向眼睛"）：细条垂直于它展开，正面朝向相机。
+    pub toward_eye: [f32; 3],
+    pub world_per_pixel: f32,
 }
 
 /// 一条网格：几何 + 模型矩阵 + 材质。
@@ -281,47 +298,76 @@ fn mesh_record(
     geometry: &MeshGeometry,
     transform: Mat4,
     material: &Material3D,
-) -> Result<PathRecord, String> {
-    if geometry.topology != PrimitiveTopology::Triangles {
-        return Err(format!(
-            "矢量后端只接受三角形面（MeshForm::{:?}），本网格是 {:?}",
-            MeshForm::Tri,
-            geometry.topology
-        ));
-    }
-    let positions: Vec<[f64; 3]> = geometry
-        .positions
-        .iter()
-        .map(|p| [p.x as f64, p.y as f64, p.z as f64])
-        .collect();
+    lines: LineStyle,
+) -> Result<Option<PathRecord>, String> {
+    let (positions, normals, triangles, model) = match geometry.topology {
+        PrimitiveTopology::Triangles => {
+            let positions: Vec<[f64; 3]> = geometry
+                .positions
+                .iter()
+                .map(|p| [p.x as f64, p.y as f64, p.z as f64])
+                .collect();
+            let triangles = match &geometry.indices {
+                Some(indices) => indices.clone(),
+                None => (0..positions.len() as u32).collect(),
+            };
+            let normals = geometry.normals.as_ref().map(|normals| {
+                normals
+                    .iter()
+                    .map(|n| [n.x as f64, n.y as f64, n.z as f64])
+                    .collect::<Vec<_>>()
+            });
+            (positions, normals, triangles, mat34(transform))
+        }
+        // **PH Step 2**：线框 → 细条三角形（后端无 `MeshForm::Line` 路径）。
+        PrimitiveTopology::Lines => {
+            if material.texture.is_some() {
+                return Err(
+                    "线框网格带材质纹理：细条没有可用的 UV（不静默贴错，见 GAPS PH-06）"
+                        .to_string(),
+                );
+            }
+            let (positions, normals, triangles) =
+                line_ribbons(&geometry.positions, geometry.indices.as_deref(), transform, lines)?;
+            if triangles.is_empty() {
+                return Ok(None); // 全部线段退化为点（与视线平行）⇒ 没有可画的面积
+            }
+            (positions, Some(normals), triangles, IDENTITY_3X4)
+        }
+        PrimitiveTopology::Points => {
+            return Err(
+                "点拓扑（PrimitiveTopology::Points）尚未映射：矢量侧的点云是 `PointsRecord`，\
+                 网格记录不接受 Points（不静默丢）"
+                    .to_string(),
+            );
+        }
+    };
     if positions.is_empty() {
         return Err("几何没有顶点".to_string());
     }
-    let uvs = match &geometry.uvs {
-        Some(uvs) => Some(
-            uvs.iter()
-                .map(|uv| [uv.x as f64, uv.y as f64])
-                .collect::<Vec<_>>(),
-        ),
-        // **PG Step 2**：几何没有 UV 时按 `uv_projection` 兜底 —— 与 wgpu 侧
-        // `zela_render::vertex_record::mesh_vertex_buffer` 用**同一个函数**，
-        // 否则同一张纹理在两个后端上会贴成不同的样子（Planar 的 `1 − y` 尤其）。
-        None => material.texture.map(|_| {
-            zela_render::vertex_record::fallback_uvs(&geometry.positions, material.uv_projection)
+    let uvs = match geometry.topology {
+        // **PH Step 2**：细条的顶点是接缝层生成的（每段 4 个），原 UV 的逐顶点对应关系
+        // 不再成立；带纹理的线框已在上面的分支显式拒绝，这里也不附加错位的 UV。
+        PrimitiveTopology::Lines => None,
+        _ => match &geometry.uvs {
+            Some(uvs) => Some(
+                uvs.iter()
+                    .map(|uv| [uv.x as f64, uv.y as f64])
+                    .collect::<Vec<_>>(),
+            ),
+            // **PG Step 2**：几何没有 UV 时按 `uv_projection` 兜底 —— 与 wgpu 侧
+            // `zela_render::vertex_record::mesh_vertex_buffer` 用**同一个函数**，
+            // 否则同一张纹理在两个后端上会贴成不同的样子（Planar 的 `1 − y` 尤其）。
+            None => material.texture.map(|_| {
+                zela_render::vertex_record::fallback_uvs(
+                    &geometry.positions,
+                    material.uv_projection,
+                )
                 .into_iter()
                 .map(|uv| [uv.x as f64, uv.y as f64])
                 .collect::<Vec<_>>()
-        }),
-    };
-    let normals = geometry.normals.as_ref().map(|normals| {
-        normals
-            .iter()
-            .map(|n| [n.x as f64, n.y as f64, n.z as f64])
-            .collect::<Vec<_>>()
-    });
-    let triangles = match &geometry.indices {
-        Some(indices) => indices.clone(),
-        None => (0..positions.len() as u32).collect(),
+            }),
+        },
     };
     // **PF Step 1**：`ShaderVariant` 必须映射，不能一律按 PBR 受光。
     //
@@ -356,13 +402,13 @@ fn mesh_record(
     if !material.transparent {
         fill[3] = 1.0;
     }
-    Ok(PathRecord::Mesh(MeshRecord {
+    Ok(Some(PathRecord::Mesh(MeshRecord {
         positions,
         uvs,
         normals,
         triangles,
         fill,
-        model: mat34(transform),
+        model,
         material: material_params,
         colors: None,
         second: None,
@@ -371,8 +417,88 @@ fn mesh_record(
         texture: material
             .texture
             .map(|handle| zela_render_vector::TextureSource::View(handle.id())),
-    }))
+    })))
 }
+
+/// **PH Step 2**：把 `LineList`（每 2 个顶点一段）扩成**细条三角形**。
+///
+/// 每段生成一条垂直于视线、宽 `1 px` 的矩形带（4 顶点 / 2 三角形），法线取
+/// "指向眼睛" ⇒ 与同一相机下的三角形面同一套光照口径。
+///
+/// 顶点输出为**世界坐标**（`model = 恒等`），这样宽度不必随模型缩放换算，
+/// 朝向也只需一次世界空间的 `cross`。
+fn line_ribbons(
+    positions: &[ze_notion::Vec3],
+    indices: Option<&[u32]>,
+    transform: Mat4,
+    lines: LineStyle,
+) -> Result<(Vec<[f64; 3]>, Vec<[f64; 3]>, Vec<u32>), String> {
+    let pairs: Vec<[u32; 2]> = match indices {
+        Some(indices) => {
+            if indices.len() % 2 != 0 {
+                return Err(format!(
+                    "线框索引必须是偶数（每 2 个一段），实际 {}",
+                    indices.len()
+                ));
+            }
+            indices.chunks_exact(2).map(|pair| [pair[0], pair[1]]).collect()
+        }
+        None => (0..positions.len() / 2)
+            .map(|i| [2 * i as u32, 2 * i as u32 + 1])
+            .collect(),
+    };
+    let toward_eye = {
+        let v = ze_notion::Vec3::from_array(lines.toward_eye);
+        if v.length_squared() > 1e-12 {
+            v.normalize()
+        } else {
+            ze_notion::Vec3::Z
+        }
+    };
+    let half = 0.5 * lines.world_per_pixel.max(1e-6);
+    let mut points: Vec<[f64; 3]> = Vec::with_capacity(pairs.len() * 4);
+    let mut normals: Vec<[f64; 3]> = Vec::with_capacity(pairs.len() * 4);
+    let mut triangles: Vec<u32> = Vec::with_capacity(pairs.len() * 6);
+    for [a, b] in pairs {
+        let (Some(a), Some(b)) = (
+            positions.get(a as usize).copied(),
+            positions.get(b as usize).copied(),
+        ) else {
+            return Err(format!(
+                "线框索引越界（{a} / {b}，顶点数 {}）",
+                positions.len()
+            ));
+        };
+        let (a, b) = (transform.transform_point3(a), transform.transform_point3(b));
+        let along = b - a;
+        let side = along.cross(toward_eye);
+        if side.length_squared() <= 1e-12 {
+            continue; // 与视线平行 ⇒ 投影成一个点，没有可画的面积
+        }
+        let side = side.normalize() * half;
+        let base = points.len() as u32;
+        points.extend_from_slice(&[
+            to_f64(a - side),
+            to_f64(a + side),
+            to_f64(b - side),
+            to_f64(b + side),
+        ]);
+        let normal = to_f64(toward_eye);
+        normals.extend_from_slice(&[normal; 4]);
+        triangles.extend_from_slice(&[base, base + 1, base + 2, base + 1, base + 3, base + 2]);
+    }
+    Ok((points, normals, triangles))
+}
+
+fn to_f64(v: ze_notion::Vec3) -> [f64; 3] {
+    [v.x as f64, v.y as f64, v.z as f64]
+}
+
+const IDENTITY_3X4: [[f32; 4]; 3] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+];
 
 fn rgba(color: Color32) -> [f32; 4] {
     [
@@ -525,6 +651,14 @@ mod tests {
         }
     }
 
+    /// **PH Step 2**：线框细条的朝向与宽度（测试默认：看向 +Z、1 世界单位 = 1 px）。
+    fn line_style() -> LineStyle {
+        LineStyle {
+            toward_eye: [0.0, 0.0, 1.0],
+            world_per_pixel: 1.0,
+        }
+    }
+
     /// 网格：无索引 ⇒ 顺序三角形；无 UV / 法线 ⇒ 留 `None`（上游补零 / 求法线）。
     #[test]
     fn mesh_record_maps_geometry_and_material() {
@@ -537,7 +671,9 @@ mod tests {
         material.variant = ShaderVariant::Pbr;
         material.metallic = 0.25;
         material.roughness = 0.75;
-        let record = mesh_record(&geometry, Mat4::IDENTITY, &material).expect("可映射");
+        let record = mesh_record(&geometry, Mat4::IDENTITY, &material, line_style())
+            .expect("可映射")
+            .expect("三角形网格必须产出记录");
         let PathRecord::Mesh(mesh) = record else {
             panic!("应是网格记录");
         };
@@ -564,7 +700,9 @@ mod tests {
             material.metallic = 0.25;
             material.roughness = 0.75;
             let PathRecord::Mesh(mesh) =
-                mesh_record(&geometry, Mat4::IDENTITY, &material).expect("可映射")
+                mesh_record(&geometry, Mat4::IDENTITY, &material, line_style())
+                    .expect("可映射")
+                    .expect("三角形网格必须产出记录")
             else {
                 panic!("应是网格记录");
             };
@@ -601,7 +739,9 @@ mod tests {
             material.variant = ShaderVariant::Flat;
             material.transparent = transparent;
             let PathRecord::Mesh(mesh) =
-                mesh_record(&geometry, Mat4::IDENTITY, &material).expect("可映射")
+                mesh_record(&geometry, Mat4::IDENTITY, &material, line_style())
+                    .expect("可映射")
+                    .expect("三角形网格必须产出记录")
             else {
                 panic!("应是网格记录");
             };
@@ -617,13 +757,56 @@ mod tests {
         );
     }
 
-    /// 非三角形拓扑 ⇒ 显式报错（`MeshForm::Line` 目前没有后端接受）。
+    /// **PH Step 2（H-2a/H-2b）**：`Lines` 不再报错 —— 接缝层把它转成细条三角形。
+    ///
+    /// - H-2a：后端没有线框路径（`MeshForm` 只有 `Tri` / `Line`，矢量 mesh 分支只接受
+    ///   三角形），所以转换必须在这一层做；
+    /// - H-2b：场景层**没有 `line_width`**（`MeshGeometry` 无该字段）⇒ 宽度取 1 屏幕像素，
+    ///   由 [`LineStyle::world_per_pixel`] 换成世界长度。宽度不可由作者控制，已记账。
     #[test]
-    fn non_triangle_topology_fails_explicitly() {
+    fn line_topology_becomes_a_thin_ribbon() {
+        // 一条沿 +X 的线段，宽 2 世界单位（world_per_pixel = 2 ⇒ 半宽 1）。
+        let geometry = MeshGeometry::new(
+            vec![Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0)],
+            Some(vec![0, 1]),
+            PrimitiveTopology::Lines,
+        );
+        let style = LineStyle {
+            toward_eye: [0.0, 0.0, 1.0],
+            world_per_pixel: 2.0,
+        };
+        let PathRecord::Mesh(mesh) =
+            mesh_record(&geometry, Mat4::IDENTITY, &Material3D::color(Color32::WHITE), style)
+                .expect("线框应可映射")
+                .expect("非退化线段必须产出记录")
+        else {
+            panic!("应是网格记录");
+        };
+        assert_eq!(mesh.positions.len(), 4, "每段 4 个角点");
+        assert_eq!(mesh.triangles, vec![0, 1, 2, 1, 3, 2], "每段 2 个三角形");
+        // 展开方向垂直于视线：沿 +X 的线在看向 +Z 时向 ±Y 展开半宽 1。
+        let ys: Vec<f64> = mesh.positions.iter().map(|p| p[1]).collect();
+        assert!(ys.iter().any(|y| (*y - 1.0).abs() < 1e-9), "{ys:?}");
+        assert!(ys.iter().any(|y| (*y + 1.0).abs() < 1e-9), "{ys:?}");
+        assert!(
+            mesh.normals.as_ref().is_some_and(|n| n.iter().all(|n| n[2] > 0.99)),
+            "细条法线应指向相机"
+        );
+        mesh.validate().expect("细条记录必须自洽");
+    }
+
+    /// 点拓扑暂未映射 ⇒ **显式报错**（不静默丢，H3）。
+    #[test]
+    fn point_topology_fails_explicitly() {
         let geometry =
-            MeshGeometry::new(vec![Vec3::ZERO, Vec3::X], None, PrimitiveTopology::Lines);
-        let error = mesh_record(&geometry, Mat4::IDENTITY, &Material3D::color(Color32::WHITE))
-            .unwrap_err();
-        assert!(error.contains("三角形"), "{error}");
+            MeshGeometry::new(vec![Vec3::ZERO, Vec3::X], None, PrimitiveTopology::Points);
+        let error = mesh_record(
+            &geometry,
+            Mat4::IDENTITY,
+            &Material3D::color(Color32::WHITE),
+            line_style(),
+        )
+        .unwrap_err();
+        assert!(error.contains("Points"), "{error}");
     }
 }

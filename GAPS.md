@@ -660,9 +660,9 @@
 |---|---|---|---|---|
 | V-01 | **阴影整块被关**（能力消失，不是参数丢失）：桥给 `Light::Sun` / `Light::Spot` 一律写 `shadows: false`，而后端侧阴影是完整实现 | 渲染 / 3D 光照 | **部分关闭（PB Step 1：开关与超限出口就位，默认仍关）** | `fn zela_playback::vector3d::lights` 不再写字面量，改读 `shadows()`；显式开启 = native `ZELA_SHADOWS=1`、浏览器 `?shadows=1`，**默认关**（PB §1.3：不要一步到位改默认）。能力侧 `const zela_render_vector::shadow::SIZE = 2048`、`MOST = 4`，3×3 PCF、法线偏移 1.5 texel、半径按 2^(1/4) 取整 + 中心对齐整纹素。⚠️ 成本描述（**PC 第二次修正**）：原文"67 MiB/**帧**"不成立（PA 已记），"一次性 ≈67 MiB"也不准确。实际是**按投射光数量**：每盏 **≈16.7 MiB**（2048² × 4 B，`shadow::SIZE`），`MOST = 4` 时上限才是 67 MiB；`shadow_maps` 只在 `layers > 0` 且容量不足时按 `layers` 扩容，且随 `Player` 常驻 ⇒ **一次性、非每帧、多数作品 1–2 盏（增量 17–34 MiB）**。PB 实测开 1 盏：51.5 − 33.5 = 18 MB。超限不再静默：`shadow::fit` 返回 `requested`，`ShadowTotals`（events / requested / cast）经 `ZELA_FRAME_REPORT.vector_shadows` 与浏览器 `[vector-shadows]` 输出。默认是否切换留待"实测通过 + 重录"评估 |
 | V-02 | **bloom 三参只接一个**：`Bloom { threshold, intensity, radius }` 里只有 `intensity` 被透传，threshold / radius 静默丢弃 | 渲染 / 后处理 | **已关闭（PB Step 2：三参全部接通）** | `View3` 新增 `bloom_threshold` / `bloom_radius`，编码进视图的 `occlusion.z/.w`（着色器只读 `.x/.y`，这是仅剩的空槽）；`bloom.wgsl` 的 `spread` 先按最大通道切门槛（施加到整色、保色相），`bloom.rs` 用半径决定金字塔级数（最粗一级纹素 ≈ radius 像素；默认 4.0 在 640×480 上仍是 6 级 ⇒ 半径不改变现状）。GPU 用例 `bloom_threshold_stops_low_light_from_spreading`：门槛 10 与关掉 bloom 同亮。默认 `Bloom::default().threshold = 1.0` ⇒ 只有真正高光发光，3D `[vector]` 基线因此重录 |
-| V-03 | **其余失效契约字段**：`RenderParams` 共 8 个字段，矢量侧仍失效 4 个 | 渲染 / 契约 | **记账（B19 Step 0，与 X1-04 合流；PB Step 2 划掉 bloom 两项）** | 失效：`env`、`msaa`、`supersample`、`filter`（`bloom.threshold` / `bloom.radius` 已由 PB Step 2 接通，见 V-02）。其中 `env`（IBL）最重——**没有它金属材质是死黑的**；它与 X1-04（环境图无脚本入口）合流指向同一件事。定义见 `ze_render_ir::params::RenderParams`；`msaa` / `supersample` / `filter` 在矢量侧由 `Gpu` 自身能力与固定采样决定，宿主传值不参与 |
+| V-03 | **其余失效契约字段**（归零） | 渲染 / 契约 | **已关闭（PG-07 划掉 `env`；PH Step 4 删 `supersample` / `filter`、`msaa` 归类为能力声明）** | 原 4 项：`env` / `msaa` / `supersample` / `filter`。① `env` 已由 PG Step 3 接通（`RenderParams.env` + `ZELA_IBL`，槽位编码修复）；② `supersample` / `filter` 经复核**零消费者** ⇒ PH Step 4 **删除字段**（破坏性变更，见 PH-05）；③ `msaa` **不是失效项**：它由 `is_supported_by` / `RenderTargetDesc::with_sample_count` 消费，是**能力声明**而非逐帧命令（实际采样数由宿主选，`frame_loop` = 4 / 预览 = 1）。定义见 `ze_render_ir::params::RenderParams` |
 | V-04 | **wgpu 冻结定位**（B19 落账，PA 界定范围）：**冻结 = 渲染能力扩张；兼容必需改动允许** | 架构 / 后端关系 | **记账（B19 Step 0；PA Step 2 界定）** | 三层：① **冻结**：后处理栈 / IBL / AO / 阴影等**渲染能力扩张**一律不补——wgpu 的角色是"抽象的第二消费者"，义务是证明同一套抽象能容纳异构后端，而不是追功能；由此 X5-02/03/04/05 的参照物被固定，不再驱动矢量收敛（Step 1 落档）。② **允许**：正确性修复、Rust / wgpu 版本与契约变更的被动跟随，以及**兼容必需的接线改动**（surface 格式、深度格式、MSAA 能力查询、Cargo feature 如 `webgl`）；**冻结 ≠ 放任编译不过**。③ **仍然禁止**：任何让"抽象被迫向 wgpu 看齐"的语义让步。B16 ①（让 wgpu 走 WebGL2）落在此条**允许**范围内，与 V-06 不冲突：V-06 是"不做**矢量**的 WebGL 降级"（解析 AA 依赖 `atomic` storage buffer，WebGL2 无法表达），而 wgpu 后端不依赖 compute / storage（已核实：0 处 storage texture、0 处 storage buffer，仅 `gpu_timing.rs` 一个空 compute pass 且注释写明"不做任何工作"）。B16 ②（换默认后端）已由 B19 Step 3 吸收完成 ⇒ **B16 ① 状态 = 保留待做（依赖本条界定，本批不实现）** |
-| V-05 | **E1/E2 结论**（辩了三轮，结论从未落账）：矢量为主 + wgpu 冻结兼容 ⇒ 融合/分立之争消解 | 架构 / 路由 | **记账（B19 Step 0）** | 原 5 件作品矢量被拒；PC 的**图层级**叠加接住 `surface_matrix` 与其 `_js`（内容层矢量渲染 + CPU 合成）⇒ 现为 **3 件**（demo3d Lines / atlas ContentTexture / capability_gaps 的 2D3D 混排）走冻结的 wgpu，画面差一档；**接受并记账**。基线锁的是"冻结的弱后端"，这是有意的口径，不是待修项 |
+| V-05 | **E1/E2 结论**（辩了三轮，结论从未落账）：矢量为主 + wgpu 冻结兼容 ⇒ 融合/分立之争消解 | 架构 / 路由 | **部分关闭（PH Step 1/2 后归零）** | 原 5 件作品矢量被拒；PC 的**叠加**接住 `surface_matrix` 与其 `_js`，PG Step 2 的**采样**接住 `atlas`（材质采样的内容层当相机视图先渲）⇒ 本批之前为 **2 件**（demo3d Lines / capability_gaps Morph）走冻结的 wgpu。PH Step 1 映射 Morph、Step 2 把 LineList 转细条三角形 ⇒ 两件均进矢量，**被拒作品归零**（基线待 Step 5 重录） |
 | V-06 | **不做兼容渲染器**（WebGL2） | 架构 / 路线 | **记账（B19 Step 0）** | 解析 AA 依赖**每像素链表**（`atomic` storage buffer），WebGL2 无法表达 ⇒ "矢量画质 + 全兼容"这个组合**不存在**；compute 是 WebGPU 核心功能，去掉它也换不来兼容性。故 B16 的 WebGL 接线不以"兼容"为目标（见 §7 本批不做） |
 | V-07 | **产品化三问**冻结为"成人礼"，非路线图项 | 路线 | **记账（B19 Step 0）** | 24/7 功耗、陌生人脚本安全、画面值不值钱——三者都要真实用户与真实负载才能回答，当前数据不足，不作为待办 |
 | V-08 | **分层判据**（结构性 vs 参数性）只停在上一轮讨论，未落成文字与工具行为 | 验收 / 对拍 | **已关闭（B19 Step 1）** | 判据：**结构性**（内容缺失 / 系统性错误）必修；**参数性**（实现选择不同、两边都对）落档不修。落地为 X5-02/03/04/05 的"落档·参数性"终态 + `zela-parity` 输出的 `kind` 列（见 R 段与 §3.3） |
@@ -672,7 +672,7 @@
 | V-12 | 页面状态栏「矢量资源 tex 38 → 51」是**累计创建数**不是当前占用（重播 +13 是稳定的一次性开销，不是泄漏），但极易被读成泄漏 | 文档 / 观测 | **已关闭（B19 Step 0 改文案）** | `fn zela_web::vector_resource_note` 的文案改为"累计创建"，与 `zela_render_vector::resource_totals` 的文档口径一致；数字本身不动（它仍是 churn 的判据） |
 | V-13 | **计划自身的失误**：B18 计划把 H1（MSAA 能力判据）列为"强候选"并给了三处吻合（只在移动端 / 只在 3D / 规则横向），三处都成立却**没有一处是因果**——X8-06 的源码证据在第一环就打断链条。B19 计划又犯了同型的一处：§5.4 断言"换默认不需要重录任何基线"，只看了 `HASHES_WORKS` 的显式对表，**漏了 smoke**（它调 `zela-render` 时不传 `--backend` ⇒ 吃默认值） | 流程 / 计划 | **记账（B19 Step 0）** | 对比：计划的形态是"强候选 + 三处吻合"，执行的形态是"判别实验 + 逐层收敛"；前者照此改一遍还得重录基线，后者每步都能证伪。smoke 的处置见 ARCHITECTURE B19（显式钉 `--backend wgpu`，基线 2847735c 逐位不变）。**规则**：① 计划中的根因候选**必须**配一个能证伪它的判别开关，否则只能写"待验证"；② 声称"不需要重录基线"时，必须列出**所有**吃默认值的入口，不只是显式对表 |
 
-**V 段小计（B19）**：已关闭 6（V-02、V-08、V-09、V-10、V-11、V-12）· 部分关闭 1（V-01）· 记账 6（V-03、V-04、V-05、V-06、V-07、V-13）。
+**V 段小计（B19）**：已关闭 7（V-02、V-03、V-08、V-09、V-10、V-11、V-12）· 部分关闭 2（V-01、V-05）· 记账 4（V-04、V-06、V-07、V-13）。
 
 ---
 
@@ -835,11 +835,35 @@
 
 ---
 
+## AD. PH 批次记账（能力缺口归零：Morph / Lines / 自定义环境，2026-10-25）
+
+> 计划《PH执行计划_能力缺口归零_Morph与Lines与自定义环境》。一句话：**把最后两条被拒路由
+> 变成映射，并把两个 `pub(crate)` 出口开给宿主**。此批之后矢量后端相对 wgpu 无已知能力缺失，
+> 22/22 作品全部可走矢量（基线见 PH-02 / PH-03）。
+>
+> ⚠️ **破坏性变更**（H5 允许）：PH-05 删除 `RenderParams` 的两个字段。API 尚未稳定，
+> 已在条目里显式标注。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PH-01 | **`baselines.txt` 段头事实错误**：`[vector]` 段头仍写"`atlas` 仍回退 wgpu、没有 `[vector]` 条目"，而条目区已有 `atlas = cddaad13…`（PG Step 2 的头条成果） | 文档 / 基线 | **已关闭（Step 0）** | 段头改为三类口径：**纯矢量 17 · 叠加 2（surface_matrix / _js）· 采样 1（atlas）**。⚠️ 计划 §0.1 写"纯矢量 18 · 叠加 2 · 采样 1"（和 = 21）与条目数 20 不符 ⇒ 按条目重算为 17 / 2 / 1，并在段头写明这次修正。同时把"段级叙述同步"写进 `CONTRIBUTING.md` 收尾检查表第 5 项（第 5 次同型） |
+| PH-02 | **Morph 未映射**（路由 `reject_reason` 的 `has_morphs` 分支） | 接缝 / 2D | **已关闭（Step 1）** | 后端语义是"首形状 + **差值形状** + 权重烤进 `m2`"（PD-03）⇒ 接缝层算 `delta = to − from`，权重进 `m2 = mix · I`（`api.rs::attach_morph` / `render.rs::Record::morph` / `scene.rs::morph_records`）。H-1 判别（`morph_mix_changes_the_shape_and_zero_equals_the_start`）：t = 0 **逐位等于**起点、t = 0.5 / 1 各与两端不同（不是"整项乘 0"）；两端曲线数不一致 ⇒ `SceneMapError::UnalignedMorph` 显式拒绝（`unaligned_morph_endpoints_are_rejected`）。缓存键 = `(from 摘要, to 摘要, samples)`（`vector_frame::sampled_endpoints`，含 `samples` 与两端标识，避开 PC-05 的"只比有没有"）。`same_2d_frame` 纳入 `t` ⇒ 动画不会被像素缓存冻住。新增 `[vector] capability_gaps` 基线 |
+| PH-03 | **线框未映射**（`MeshForm::Lines` 零命中；`mesh_record` 对非 Tri 显式 Err） | 接缝 / 3D | **已关闭（Step 2）** | 后端**没有**线框路径（H-2a：`MeshForm` 枚举只有 `Tri` / `Line`，矢量 mesh 分支只接受三角形）⇒ 唯一合法解是接缝层把 `LineList` 转**细条三角形**（`vector3d::line_ribbons`：每段 4 顶点 / 2 三角形，法线取"指向眼睛"）。位置输出为世界坐标 + `model = 恒等`，宽度 `1 px`（`view.frame.1 / height`）。H-2b：场景层**没有 `line_width` 字段** ⇒ 宽度不可由作者控制（PH-06 记账）。用例 `line_topology_becomes_a_thin_ribbon`（宽 2 世界单位 ⇒ ±1 展开 + 法线朝相机）。新增 `[vector] demo3d` 基线 |
+| PH-04 | **自定义 `.hdr` 环境无出口**：`read_hdr` / `add_environment` / `STUDIO` 全是 `pub(crate)` | 公开面 / 3D | **已关闭（Step 3）** | `zela_render_vector::{read_hdr, add_environment, STUDIO}` 公开；`add_environment(id, w, h, rgbe)` 进进程级表，`Player` 按**代数**重装（同 id 再上传 = 替换；不重算 harmonics）。id 0 保留给内置影棚（显式拒绝）。判据 `an_uploaded_environment_actually_lights_the_scene`：**只**给环境灯，上半天亮 / 下半天黑的自定义图与内置影棚的受光均值必须不同（实测通过）；`environment_upload_errors_are_explicit` 钉住错误路径 |
+| PH-05 | **契约字段显式化**（`RenderParams` 里挂了没效果的三项） | 契约 / 后端 | **已关闭（Step 4；破坏性变更）** | 判别后逐项处置：① `supersample` 除 `target_size()` 外**零消费者** ⇒ **删除字段**（连同上限 / 三个错误变体 / `target_size`）；② `filter` 两个后端都不读 `RenderParams.filter`（矢量里的 `.filter` 是迭代器；采样器按纹理各自设置）⇒ **删除字段**；`TextureFilter` 保留（`SurfaceTexture.filter` 是真消费者）；③ `msaa` **保留**：它由 `is_supported_by` 的 `require_sample_count` 与 `target_desc` 消费，是**能力声明**而非逐帧命令（实际采样数由宿主选：`frame_loop` 4 / 预览 1）。⚠️ ①② 是破坏性变更（H5）；默认值变化不影响像素（34 条基线逐位不变） |
+| PH-06 | **线框宽度语义**：场景层没有 `line_width`，接缝层只能取 1 px | 场景 / 3D | **记账（Step 2）** | `MeshGeometry` 只有 positions / normals / uvs / indices / topology。矢量侧宽度 = 1 屏幕像素（焦距平面处换算成世界长度），**作者不可控**；wgpu 的 `LineList` 同样是 1 px（不支持 linewidth）⇒ 此参数上两边一致。但矢量细条**能**控宽（计划 §4.3 的"好消息"），将来加 `line_width` 时只需把它接进 `LineStyle`。`demo3d` 的 vector 与 native 因此是**结构性差异**（线宽/抗锯齿不同），不是回归 |
+| PH-07 | **能力归零后，"默认回退 wgpu"是否仍划算？** | 架构 / 路由 | **记账（本批只回答方向，不实现）** | 回退会同时丢掉：后处理栈（tone / bloom / AO）· 阴影 · 渐变 / dash / 双 paint 全家；而它换来的只是"能力不足兜底"。PH 之后被拒作品为 0 ⇒ 回退分支只剩"adapter 能力不足"与"纹理没有生产方"两种触发，**默认是否仍要保留 wgpu 回退**在阶段二拍（与"默认打开阴影 / IBL"同一决策面）。⚠️ 默认仍关：`ZELA_SHADOWS` / `ZELA_IBL` 都是关，能力全开但默认画面里看不到 |
+| PH-08 | **ARCHITECTURE「明确不可用」两条过时**（"被拒 3 件" / "IBL 无脚本入口"） | 文档 | **已关闭（Step 0/5）** | 改为按 routing.rs 实测口径：被拒曾是 **2 件**（demo3d 线框 / capability_gaps Morph），`atlas` 已由 PG Step 2 的采样接住；IBL 已由 PG Step 3 打开（`ZELA_IBL` + 槽位编码修复）。PH Step 1/2 后两条也进矢量 ⇒ 该节最终写"**0 件被拒**"（见 Step 5 的同步） |
+
+**AD 段小计（PH）**：已关闭 6（PH-01、PH-02、PH-03、PH-04、PH-05、PH-08）· 记账 2（PH-06、PH-07）。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AC**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AC 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–AD**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AD 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|

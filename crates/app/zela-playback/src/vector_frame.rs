@@ -52,8 +52,10 @@ pub struct VectorFrame {
     layers: Vec<LayerDescriptor>,
     draws: Vec<Recorded2D>,
     reveals: Vec<RevealSnapshot>,
+    /// **PH Step 1**：形变项（`MorphShape` 录制产物）。`from` / `to` 是屏幕空间路径，
+    /// 逐帧变的只有 `t`；映射见 `zela_render_vector::morph_records`。
+    morphs: Vec<zela_render::draw::MorphItem>,
     content: Vec<ContentSnapshot>,
-    morph_count: usize,
     mesh_count: usize,
     has_line_meshes: bool,
     /// 本帧网格材质引用的纹理句柄（PG Step 2：路由判断"这些纹理有没有生产方"）。
@@ -134,10 +136,11 @@ impl VectorFrame {
                             .collect()
                     })
                     .unwrap_or_default();
-                let morph_count = scheduler
+                let morphs = scheduler
                     .resources()
                     .get::<zela_render::MorphQueue>()
-                    .map_or(0, |queue| queue.0.len());
+                    .map(|queue| queue.0.clone())
+                    .unwrap_or_default();
                 // ⚠️ B14：**不要在这里取灯**。`take()` 早于 3D 录制阶段运行，
                 // 此时 `LightQueue` 资源还不存在（实测 `None`）⇒ 会静默退回默认灯。
                 // 灯与网格一样，必须在 `render()`（渲染时）再取。
@@ -170,8 +173,8 @@ impl VectorFrame {
                     layers,
                     draws,
                     reveals,
+                    morphs,
                     content,
-                    morph_count,
                     mesh_count,
                     has_line_meshes,
                     mesh_textures,
@@ -192,6 +195,15 @@ impl VectorFrame {
             && self.reveals.len() == other.reveals.len()
             && self.reveals.iter().zip(&other.reveals).all(|(a, b)| {
                 a.start == b.start && a.end == b.end && a.style == b.style && a.path == b.path
+            })
+            // **PH Step 1**：形变逐帧改 `t` ⇒ 不在缓存键里就等于把动画冻在第一帧。
+            && self.morphs.len() == other.morphs.len()
+            && self.morphs.iter().zip(&other.morphs).all(|(a, b)| {
+                a.t == b.t
+                    && a.samples == b.samples
+                    && a.from == b.from
+                    && a.to == b.to
+                    && a.style == b.style
             })
             && self.content.len() == other.content.len()
             && self.content.iter().zip(&other.content).all(|(a, b)| {
@@ -234,13 +246,14 @@ impl VectorFrame {
         FrameContent {
             has_3d_camera,
             // B14：reveal 也是 2D 图元（独立队列，但同样占画面）。
-            has_2d_primitives: self.draws.len() + self.reveals.len(),
+            // PH Step 1：形变项同样是 2D 图元（3D 帧里以 OVERLAY 叠加）。
+            has_2d_primitives: self.draws.len() + self.reveals.len() + self.morphs.len(),
             has_meshes: self.mesh_count,
             has_line_meshes: self.has_line_meshes,
             has_content_texture,
             has_material_content: self.content.iter().any(|layer| !layer.composite),
             has_unserved_material_texture,
-            has_morphs: self.morph_count > 0,
+            has_morphs: !self.morphs.is_empty(),
             vector_only_styles,
         }
     }
@@ -283,6 +296,14 @@ impl VectorFrame {
         });
         match camera3d {
             Some(camera) => {
+                let mut view =
+                    crate::vector3d::view3(&camera, (width, height), background, params)?;
+                // **PH Step 2**：线框细条需要"朝向眼睛"与 1 像素对应的世界长度
+                // （焦距平面处；场景层没有 line_width ⇒ 宽度不可由作者控制）。
+                let lines = crate::vector3d::LineStyle {
+                    toward_eye: view.axes[2],
+                    world_per_pixel: view.frame.1 / height.max(1) as f32,
+                };
                 // B14 / X4-02：网格与灯**都必须在渲染时取**（`take()` 太早，`LightQueue`
                 // 那时还不存在 ⇒ 以前一直静默用默认灯，画面系统性偏暗）。
                 let (mut records, lights) = runtime
@@ -292,7 +313,7 @@ impl VectorFrame {
                             scheduler.resources().get::<zela_render::LightQueue>(),
                         );
                         let records = match scheduler.resources().get::<DrawQueue>() {
-                            Some(queue) => crate::vector3d::mesh_records(queue)?,
+                            Some(queue) => crate::vector3d::mesh_records(queue, lines)?,
                             None => Vec::new(),
                         };
                         Ok((records, lights))
@@ -301,8 +322,6 @@ impl VectorFrame {
                 // **屏幕空间 overlay** 追加进 3D 帧（E-3 已实测：OVERLAY 记录固定压在
                 // 屏幕平面，z 不参与透视）。后端机制本来就有，这里只是接线。
                 //
-                let mut view =
-                    crate::vector3d::view3(&camera, (width, height), background, params)?;
                 let view_frame_scale = view.frame.0 / width as f32;
                 // H3：放不进 overlay 的记录**带理由拒绝** —— 2D 记录不可能是网格
                 // （`scene_records` 只产 Fill / Stroke）；若将来多出一种，必须在这里显式报错。
@@ -400,7 +419,29 @@ impl VectorFrame {
                 style,
             }
         }));
-        zela_render_vector::scene_records(&items, canvas).map_err(|error| error.to_string())
+        let mut records =
+            zela_render_vector::scene_records(&items, canvas).map_err(|error| error.to_string())?;
+        // **PH Step 1**：形变项排在 reveal 之后（两者同为 z = 0 的稳定序，与 wgpu 的
+        // `MorphQueue` / `RevealQueue` 都在 `DrawQueue` 之后一致）。
+        for (index, morph) in self.morphs.iter().enumerate() {
+            let sampled = sampled_endpoints(morph);
+            let (from, to) = &*sampled;
+            let mut style = morph.style.clone();
+            style.stroke_width *= scale;
+            style.paint.background_width *= scale;
+            records.extend(
+                zela_render_vector::morph_records(
+                    &from,
+                    &to,
+                    morph.t,
+                    &style,
+                    to_canvas,
+                    canvas,
+                )
+                .map_err(|error| format!("形变项 #{index}：{error}"))?,
+            );
+        }
+        Ok(records)
     }
 
     /// 用矢量后端渲染当前帧，返回 RGBA8（native 同步读回）。
@@ -862,18 +903,26 @@ fn overlay_records(
         }
         options.background_width *= scale;
     };
+    // **PH Step 1**：形变的第二项是差值几何，与首形状同一坐标系 ⇒ 一起缩放进 overlay。
+    let scale_morph = |morph: &mut Option<zela_render_vector::MorphGeometry>| {
+        if let Some(morph) = morph {
+            scale_path(&mut morph.delta);
+        }
+    };
     records
         .into_iter()
         .map(|record| match record {
             zela_render_vector::PathRecord::Fill(mut path) => {
                 path.options.overlay = true;
                 scale_path(&mut path.points);
+                scale_morph(&mut path.morph);
                 scale_options(&mut path.options);
                 Ok(zela_render_vector::PathRecord::Fill(path))
             }
             zela_render_vector::PathRecord::Stroke(mut path) => {
                 path.options.overlay = true;
                 scale_path(&mut path.points);
+                scale_morph(&mut path.morph);
                 path.width *= scale;
                 scale_options(&mut path.options);
                 Ok(zela_render_vector::PathRecord::Stroke(path))
@@ -933,6 +982,84 @@ fn clip_reveal(path: &Path2D, start: f32, end: f32) -> Option<ze_render_ir::Shap
         return None;
     }
     Some(ze_render_ir::Shape2D::Path(Path2D::from_polyline(&out, false)))
+}
+
+/// **PH Step 1**：形变两端按弧长等点重采样，**按 `(from, to, samples)` 缓存**。
+///
+/// 为什么必须缓存：`delta = to − from` 只依赖两端与 `samples`、**与 `t` 无关**
+/// ⇒ 同一条形变在动画期间只重采样一次，每帧只改记录的 `m2` 权重。
+///
+/// ⚠️ 缓存键**必须含 `samples` 与两端路径标识**：只比"有没有"不比"是哪一个"就是
+/// GAPS PC-05（`Player` 缓存键不含 shadows）的同型 —— 换了 `samples` 或端点却命中旧几何，
+/// 画面会停在上一段动画上。
+fn sampled_endpoints(morph: &zela_render::draw::MorphItem) -> std::sync::Arc<(Path2D, Path2D)> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    static CACHE: OnceLock<Mutex<HashMap<(u64, u64, u32), Arc<(Path2D, Path2D)>>>> = OnceLock::new();
+    let key = (path_digest(&morph.from), path_digest(&morph.to), morph.samples);
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(hit) = guard.get(&key) {
+        return Arc::clone(hit);
+    }
+    // 作品切换 / 大量一次性形变时不无限留垃圾（每项 2 × samples 个点）。
+    if guard.len() >= 64 {
+        guard.clear();
+    }
+    let sampled = Arc::new(morph.sampled_endpoints());
+    guard.insert(key, Arc::clone(&sampled));
+    sampled
+}
+
+/// 路径内容摘要（`Path2D` 没有 `Hash`；这里只用于缓存键，不做跨进程稳定性承诺）。
+fn path_digest(path: &Path2D) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.commands.len().hash(&mut hasher);
+    let point = |p: Vec2, hasher: &mut std::collections::hash_map::DefaultHasher| {
+        p.x.to_bits().hash(hasher);
+        p.y.to_bits().hash(hasher);
+    };
+    for command in &path.commands {
+        match command {
+            ze_notion::PathCommand::MoveTo(p) => {
+                0u8.hash(&mut hasher);
+                point(*p, &mut hasher);
+            }
+            ze_notion::PathCommand::LineTo(p) => {
+                1u8.hash(&mut hasher);
+                point(*p, &mut hasher);
+            }
+            ze_notion::PathCommand::QuadTo { ctrl, end } => {
+                2u8.hash(&mut hasher);
+                point(*ctrl, &mut hasher);
+                point(*end, &mut hasher);
+            }
+            ze_notion::PathCommand::CubicTo { ctrl1, ctrl2, end } => {
+                3u8.hash(&mut hasher);
+                point(*ctrl1, &mut hasher);
+                point(*ctrl2, &mut hasher);
+                point(*end, &mut hasher);
+            }
+            ze_notion::PathCommand::Arc {
+                center,
+                radii,
+                rotation,
+                start_angle,
+                end_angle,
+            } => {
+                4u8.hash(&mut hasher);
+                point(*center, &mut hasher);
+                point(*radii, &mut hasher);
+                rotation.to_bits().hash(&mut hasher);
+                start_angle.to_bits().hash(&mut hasher);
+                end_angle.to_bits().hash(&mut hasher);
+            }
+            ze_notion::PathCommand::Close => 5u8.hash(&mut hasher),
+        }
+    }
+    hasher.finish()
 }
 
 #[cfg(test)]

@@ -54,7 +54,8 @@ pub struct FrameContent {
     /// 2D 图元条数（`DrawQueue` 里的 2D 记录）。
     pub has_2d_primitives: usize,
     pub has_meshes: usize,
-    /// 网格里是否含非三角形（线框）。
+    /// 网格里是否含非三角形（线框）。**PH Step 2 起不再是否决项**：接缝层把
+    /// `LineList` 转成细条三角形；保留字段只为内容事实与诊断。
     pub has_line_meshes: bool,
     /// 是否含内容纹理 / Surface 图层。
     pub has_content_texture: bool,
@@ -66,7 +67,8 @@ pub struct FrameContent {
     /// 网格按句柄采样 ⇒ 不再因"内容纹理被材质采样"整帧拒绝。仍然拒绝的只剩
     /// "纹理不是本帧内容层"（图像资产上传入口还没开，见 Step 4）。
     pub has_unserved_material_texture: bool,
-    /// 是否含形变（Morph）项（B14）：矢量后端尚未映射 ⇒ 显式拒绝，不静默丢。
+    /// 是否含形变（Morph）项（B14）。**PH Step 1 起不再是否决项**：矢量侧按
+    /// `to − from` 差值形状 + 权重烤进 `m2` 映射；保留字段只为内容事实与诊断。
     pub has_morphs: bool,
     /// 本帧用到的**仅矢量支持**的绘制参数（位掩码，见 `ze_render_ir::PathOptions`）。
     ///
@@ -196,9 +198,9 @@ fn order_of(preference: LoopBackend) -> &'static [BackendKind] {
         // 偏好矢量：先矢量，被拒才回退（回退**打印理由**，不是静默）。
         LoopBackend::Vector => &[BackendKind::Vector, BackendKind::Wgpu],
         // B19 Step 3：自动默认矢量 —— B10~B18 建的整套东西（解析 AA、着色栈、资源常驻）
-        // 终于走默认路径；被拒（内容纹理 / 混排 / 线框 / morph / 能力不足）才回退冻结的 wgpu，
+        // 终于走默认路径；被拒（材质纹理没有生产方 / 能力不足）才回退冻结的 wgpu，
         // 且回退**必带理由**。基线不受影响：`cargo verify --step hashes` 用显式 (作品, 后端)
-        // 对表，根本不经过这里。
+        // 对表，根本不经过这里。PH 之后线框与 Morph 已映射，不再是拒绝理由。
         LoopBackend::Auto | LoopBackend::AutoFrame => &[BackendKind::Vector, BackendKind::Wgpu],
     }
 }
@@ -244,15 +246,13 @@ fn reject_reason(
             if content.has_3d_camera && content.has_meshes == 0 {
                 return Some("本帧有 3D 相机但没有任何网格".to_string());
             }
-            if content.has_line_meshes {
-                return Some("网格含线框（矢量后端只接受三角形面，MeshForm::Tri）".to_string());
-            }
-            // B14：reveal 已映射（按弧长裁剪），morph 还没有 ⇒ 显式拒绝，不静默丢画面。
-            if content.has_morphs {
-                return Some(
-                    "本帧含形变（Morph）项，矢量后端尚未映射（B14 记账）".to_string(),
-                );
-            }
+            // **PH Step 1**：Morph 已映射（`to − from` 差值形状 + 权重烤进 `m2`）⇒ 不再拒绝。
+            // 两端曲线数不一致时由接缝层 / 后端**显式报错**（`SceneMapError::UnalignedMorph`），
+            // 不在这里用"有 morph"这个粗粒度事实拒绝整帧。
+            //
+            // **PH Step 2**：线框已映射（接缝层把 `LineList` 转成细条三角形）⇒ 不再拒绝。
+            // 点拓扑仍是显式错误（`MeshGeometry` 的 `Points` 没有映射，见 vector3d.rs），
+            // 但那是渲染时的带理由错误，不是"整帧换后端"。
             None
         }
     }
@@ -447,18 +447,20 @@ mod tests {
         assert!(decision.rejected[0].1.contains("adapter"));
     }
 
-    /// B14：形变项尚未映射 ⇒ 矢量**显式拒绝**（不是静默丢图层），回退 wgpu 并带理由。
+    /// **PH Step 1**：形变项已映射（`to − from` + 权重烤进 `m2`）⇒ 矢量**接受**本帧。
+    ///
+    /// 反向判据：`has_morphs` 仍是内容事实（`FrameContent` 里保留），但不再产生拒绝 ——
+    /// 若将来有人在 `reject_reason` 里加回一条"Morph 尚未映射"，这条用例会立刻红。
     #[test]
-    fn morph_items_reject_the_vector_backend() {
+    fn morph_items_are_accepted_by_the_vector_backend() {
         let content = FrameContent {
             has_2d_primitives: 2,
             has_morphs: true,
             ..Default::default()
         };
         let decision = route(LoopBackend::Vector, content, capable()).unwrap();
-        assert_eq!(decision.backend, BackendKind::Wgpu);
-        assert_eq!(decision.rejected[0].0, BackendKind::Vector);
-        assert!(decision.rejected[0].1.contains("Morph"), "{:?}", decision.rejected);
+        assert_eq!(decision.backend, BackendKind::Vector);
+        assert!(decision.rejected.is_empty(), "Morph 不应再被拒");
     }
 
     /// **PF Step 2**：2D + 3D 混排不再被拒；决策理由写明"屏幕平面叠加"。
@@ -540,13 +542,30 @@ mod tests {
         assert!(decision.reason.contains("双 paint"), "{}", decision.reason);
     }
 
+    /// **PH Step 2**：线框已映射（接缝层转细条三角形）⇒ 矢量接受，不再回退。
+    ///
+    /// 反向判据：若有人把"线框"加回拒绝理由，这条会红。
+    #[test]
+    fn line_meshes_are_accepted_by_the_vector_backend() {
+        let content = FrameContent {
+            has_3d_camera: true,
+            has_meshes: 1,
+            has_line_meshes: true,
+            ..Default::default()
+        };
+        let decision = route(LoopBackend::Vector, content, capable()).unwrap();
+        assert_eq!(decision.backend, BackendKind::Vector);
+        assert!(decision.rejected.is_empty(), "线框不应再被拒");
+    }
+
     /// 全部后端都拒绝 ⇒ 显式错误，且**每条**拒绝理由都非空（A4）。
     #[test]
     fn all_rejected_is_an_explicit_error_with_reasons() {
+        // PH 之后唯一还会被矢量拒绝的内容事实：材质纹理没有生产方（点拓扑是渲染期
+        // 显式错误，不是路由拒绝）。
         let content = FrameContent {
-            has_line_meshes: true,
-            has_meshes: 1,
-            has_3d_camera: true,
+            has_unserved_material_texture: true,
+            has_2d_primitives: 1,
             ..Default::default()
         };
         let error = route_with_order(
@@ -557,7 +576,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("没有后端能画这一帧"));
-        assert!(error.contains("线框"));
+        assert!(error.contains("纹理"), "{error}");
     }
 
     /// C1：同一输入跑两次，决定逐字段相同。

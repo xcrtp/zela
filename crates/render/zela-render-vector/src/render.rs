@@ -492,6 +492,19 @@ impl Record {
         }
     }
 
+    /// **PH Step 1**：把形变的第二项接上 —— 第二项是**差值形状**（`to − from`），
+    /// 权重烤进 `m2 = mix · I`（第二项本来就不带平移，差值里已经含了位移）。
+    ///
+    /// 后端语义不变（`vector.wgsl::curve_h`：两项逐曲线相加），所以"基准 + 目标 +
+    /// mix"的直觉 API 只存在于公开面 / 接缝层（`api.rs::attach_morph`）。
+    pub(crate) fn morph(self, key2: u64, mix: f32) -> Self {
+        Self {
+            key2,
+            m2: [[mix, 0.0, 0.0, 0.0], [0.0, mix, 0.0, 0.0], [0.0, 0.0, mix, 0.0]],
+            ..self
+        }
+    }
+
     /// **PG Step 4**：一团点的记录 —— 形状是 `Kind::Points` 的 raster（`Store::add_points`），
     /// 每点一个面向相机、按场景单位定半径的圆盘；`fill` 是圆盘颜色（逐点色走 `fill_rows`）。
     ///
@@ -2273,6 +2286,11 @@ pub(crate) struct Player {
     list_capacity: u64, // nodes the lists are made with (grown when a frame needs more)
     /// **B17**：`targets` 是哪一代的目标（见 `TARGET_GENERATION`）。
     target_generation: u64,
+    /// **PH Step 3**：已装进来的自定义环境是哪一代（`api::ENVIRONMENT_GENERATION`）。
+    ///
+    /// 与 `target_generation` 同一模式：宿主上传新环境 ⇒ 全局代数 +1 ⇒ 下一帧重装；
+    /// 代数相同 ⇒ 完全不碰（避免每帧重算 harmonics + 重建预过滤立方体）。
+    environment_generation: u64,
 }
 
 // pixels, light, toward, eye, lighting; the lights (`light.wgsl`), each its 16 floats from the view and its shadow map's
@@ -3468,6 +3486,7 @@ impl Player {
             lists: None,
             list_capacity: 0,
             target_generation: TARGET_GENERATION.load(Ordering::Relaxed),
+            environment_generation: 0,
         }
     }
 
@@ -3574,6 +3593,16 @@ impl Player {
     /// An environment (see `Upload::environment`).
     pub(crate) fn add_environment(&mut self, id: u32, width: u32, height: u32, rgbe: &[u8]) -> Result<(), String> {
         self.upload(Upload::environment(id, width, height, rgbe)?)
+    }
+
+    /// **PH Step 3**：已装的自定义环境是哪一代（见 `environment_generation`）。
+    pub(crate) fn environment_generation(&self) -> u64 {
+        self.environment_generation
+    }
+
+    /// 记下这一代已经装好（下一帧同代不重装）。
+    pub(crate) fn set_environment_generation(&mut self, generation: u64) {
+        self.environment_generation = generation;
     }
 
     /// A view's environment's diffuse light and its cube's unit (none: 0 and 1).

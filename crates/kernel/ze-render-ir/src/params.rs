@@ -1,7 +1,7 @@
 // params.rs — 渲染参数契约（B4 Step 1）。
 //
 // # 为什么在这里
-// 分辨率 / 采样 / 过滤 / 色调映射 / 泛光 / AO / 环境图，过去全散落在后端常量与 CLI
+// 分辨率 / 采样 / 色调映射 / 泛光 / AO / 环境图，过去全散落在后端常量与 CLI
 // 默认值里（`MSAA_SAMPLES = 4`、`let mut size = (640, 480)`…）。本模块把它们收口成
 // **一份纯数据**：宿主构造 → 传给后端；不进 Pod 边界、不进 `ze-scene-api`（D5）。
 //
@@ -10,6 +10,16 @@
 // - **有效性 ≠ 一致性**：参数非法 ⇒ [`RenderParams::validate`] 显式报错；
 // - **不支持 ⇒ 报错**：回放端用 [`RenderParams::is_supported_by`] 在渲染前拦下，
 //   不得静默降级（降级会让"同后端 + 同机器一致"失效）。
+//
+// # PH Step 4：删除两类"挂上了没效果"的字段（破坏性变更）
+//
+// - `supersample`：除 `target_size()` 外**零消费者**，两个后端都不读 ⇒ 删除；
+// - `filter`：矢量 / wgpu 两个后端都**不读** `RenderParams.filter`（矢量 `api.rs` 里的
+//   `.filter` 只是迭代器；采样器按纹理各自设置）⇒ 删除。
+//   `TextureFilter` 本身仍保留（`SurfaceTexture.filter` 是真消费者）。
+// - `msaa` **保留**：它不是逐帧命令，而是**能力声明** —— `is_supported_by` 用它做
+//   `require_sample_count` 协商，`target_desc` 用它写 target；实际采样数由宿主选
+//   （`frame_loop` = 4 / GUI 预览 = 1）。
 //
 // # 单一真源
 // `sample_count` 等 target 字段**只由本结构决定**；[`RenderTargetDesc`] 是它的下游投影
@@ -122,12 +132,11 @@ impl Default for AmbientOcclusion {
 /// 渲染参数（**纯数据**，宿主构造，不经过 Pod 边界）。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RenderParams {
-    /// 目标分辨率（逻辑像素；`supersample` 会再放大，见 [`Self::target_size`]）。
+    /// 目标分辨率（逻辑像素 = 渲染像素）。
     pub size: (u32, u32),
-    /// 超采样倍数（1 = 关闭）。
-    pub supersample: u32,
+    /// MSAA **能力声明**（不是逐帧命令）：`is_supported_by` 用它协商采样数，
+    /// `target_desc` 用它写 target；实际采样数由宿主选（PH Step 4 判别结论）。
     pub msaa: Msaa,
-    pub filter: TextureFilter,
     /// 以下四项**默认 `None`**（B4 §0.2：新能力默认关闭，默认值 = 当前行为）。
     pub tone: Option<ToneMapping>,
     pub bloom: Option<Bloom>,
@@ -141,9 +150,7 @@ impl Default for RenderParams {
         Self {
             // 与既有 CLI 默认一致（`zela-render` 的 640×480）。
             size: (640, 480),
-            supersample: 1,
             msaa: Msaa::X4,
-            filter: TextureFilter::Linear,
             tone: None,
             bloom: None,
             ao: None,
@@ -157,16 +164,6 @@ impl Default for RenderParams {
 pub enum RenderParamError {
     #[error("渲染尺寸非法：{width}×{height}（宽高必须 ≥ 1）")]
     EmptySize { width: u32, height: u32 },
-    #[error("supersample 非法：{supersample}（必须 ≥ 1）")]
-    ZeroSupersample { supersample: u32 },
-    #[error("supersample 过大：{supersample}（上限 {max}）")]
-    SupersampleTooLarge { supersample: u32, max: u32 },
-    #[error("尺寸 × supersample 溢出：{width}×{height} × {supersample}")]
-    SizeOverflow {
-        width: u32,
-        height: u32,
-        supersample: u32,
-    },
     #[error("tone.exposure 非法：{exposure}（必须为有限正数）")]
     InvalidExposure { exposure: f32 },
     #[error("bloom 参数非法：threshold={threshold} intensity={intensity} radius={radius}（须有限且 ≥ 0）")]
@@ -183,34 +180,7 @@ pub enum RenderParamError {
     Unsupported { param: &'static str },
 }
 
-/// 超采样倍数上限（1 = 关闭；4 = 4×4 采样，再大没有实际收益）。
-pub const MAX_SUPERSAMPLE: u32 = 4;
-
 impl RenderParams {
-    /// 上游目标分辨率（逻辑尺寸 × `supersample`）。
-    pub fn target_size(&self) -> Result<(u32, u32), RenderParamError> {
-        let s = self.supersample;
-        let width = self
-            .size
-            .0
-            .checked_mul(s)
-            .ok_or(RenderParamError::SizeOverflow {
-                width: self.size.0,
-                height: self.size.1,
-                supersample: s,
-            })?;
-        let height = self
-            .size
-            .1
-            .checked_mul(s)
-            .ok_or(RenderParamError::SizeOverflow {
-                width: self.size.0,
-                height: self.size.1,
-                supersample: s,
-            })?;
-        Ok((width, height))
-    }
-
     /// **有效性**校验（B4 §0.3 ①）：非法 ⇒ 显式错误，不做"纠正"。
     pub fn validate(&self) -> Result<(), RenderParamError> {
         if self.size.0 == 0 || self.size.1 == 0 {
@@ -219,18 +189,6 @@ impl RenderParams {
                 height: self.size.1,
             });
         }
-        if self.supersample == 0 {
-            return Err(RenderParamError::ZeroSupersample {
-                supersample: self.supersample,
-            });
-        }
-        if self.supersample > MAX_SUPERSAMPLE {
-            return Err(RenderParamError::SupersampleTooLarge {
-                supersample: self.supersample,
-                max: MAX_SUPERSAMPLE,
-            });
-        }
-        self.target_size()?;
         if let Some(tone) = self.tone {
             if !tone.exposure.is_finite() || tone.exposure <= 0.0 {
                 return Err(RenderParamError::InvalidExposure {
@@ -311,12 +269,11 @@ impl RenderParams {
 
     /// 下游投影：target 描述（**唯一入口是 `RenderParams`**，§2.3）。
     ///
-    /// 尺寸取 `target_size()`（已含 `supersample`）：超采样意味着先渲到大 target 再缩。
+    /// 尺寸 = `size`（PH Step 4：`supersample` 已删除，两个后端都不消费它）；
+    /// 采样数 = `msaa`（能力声明）。
     pub fn target_desc(&self, format: ColorFormat) -> RenderTargetDesc {
-        let (width, height) = self
-            .target_size()
-            .expect("target_size 已在 validate() 中校验；此处不引入第二条失败路径");
-        RenderTargetDesc::new(width, height, format).with_sample_count(self.msaa.samples())
+        RenderTargetDesc::new(self.size.0, self.size.1, format)
+            .with_sample_count(self.msaa.samples())
     }
 }
 
@@ -334,16 +291,13 @@ mod tests {
         }
     }
 
-    /// **A2**：默认值逐字段等价于当前行为（640×480 / MSAA 4 / Linear / 后处理全关）。
+    /// **A2**：默认值逐字段等价于当前行为（640×480 / MSAA 4 / 后处理全关）。
     #[test]
     fn default_matches_current_behaviour() {
         let p = RenderParams::default();
         assert_eq!(p.size, (640, 480));
-        assert_eq!(p.supersample, 1);
         assert_eq!(p.msaa.samples(), 4);
-        assert_eq!(p.filter, TextureFilter::Linear);
         assert!(p.tone.is_none() && p.bloom.is_none() && p.ao.is_none() && p.env.is_none());
-        assert_eq!(p.target_size().unwrap(), (640, 480));
         p.validate().unwrap();
         assert!(p.is_supported_by(&caps(4, PostCaps::none())).is_ok());
     }
@@ -351,20 +305,6 @@ mod tests {
     /// **A3**：非法参数 ⇒ 显式错误。
     #[test]
     fn invalid_params_are_explicit_errors() {
-        let mut p = RenderParams::default();
-        p.supersample = 0;
-        assert!(matches!(
-            p.validate(),
-            Err(RenderParamError::ZeroSupersample { .. })
-        ));
-
-        let mut p = RenderParams::default();
-        p.supersample = MAX_SUPERSAMPLE + 1;
-        assert!(matches!(
-            p.validate(),
-            Err(RenderParamError::SupersampleTooLarge { .. })
-        ));
-
         let mut p = RenderParams::default();
         p.size = (0, 480);
         assert!(matches!(p.validate(), Err(RenderParamError::EmptySize { .. })));
@@ -420,14 +360,13 @@ mod tests {
         assert!(p.is_supported_by(&caps(8, full)).is_ok());
     }
 
-    /// target 描述是下游投影：尺寸 / 采样数都来自 `RenderParams`（`supersample` 参与尺寸）。
+    /// target 描述是下游投影：尺寸 / 采样数都来自 `RenderParams`。
     #[test]
     fn target_desc_is_a_projection() {
         let mut p = RenderParams::default();
         p.msaa = Msaa::X8;
-        p.supersample = 2;
         let desc = p.target_desc(ColorFormat::Bgra8UnormSrgb);
-        assert_eq!((desc.width, desc.height), (1280, 960));
+        assert_eq!((desc.width, desc.height), (640, 480));
         assert_eq!(desc.sample_count, 8);
         desc.validate().unwrap();
     }

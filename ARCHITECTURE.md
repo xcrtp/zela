@@ -1527,7 +1527,8 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 - **默认后端**：`routing::order_of` 的 `Auto` 从 `[Wgpu, Vector]` 换成 `[Vector, Wgpu]`；
   `zela-render` 默认 `--backend auto`。矢量被拒（材质采样的内容纹理 / 2D3D 混排 / 线框 /
-  morph / 能力不足）才回退 wgpu，**回退必带理由**。27 条基线不受影响：
+  morph / 能力不足）才回退 wgpu，**回退必带理由**（⚠️ PH 之后线框与 morph 已映射，
+  只剩"纹理没有生产方"与"能力不足"两种触发）。27 条基线不受影响：
   `cargo verify --step hashes` 用显式的 (作品, 后端) 对表，不经过 Auto 路由。
   页面 `localStorage` 的后端残留值校验回落。
 - **smoke 是第二个吃默认值的入口**（计划 §5.4 漏了）：它调 `zela-render` 不传 `--backend`。
@@ -1548,10 +1549,12 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 **明确不可用（已记账，不掩盖）**
 
-- 3 件作品矢量被拒（demo3d Lines / atlas ContentTexture / capability_gaps 的 2D3D 混排）
-  ⇒ 走冻结的 wgpu，画面差一档（V-05）。`surface_matrix` 与其 `_js` 已由 PC 的**图层级**
-  叠加接住（内容层由矢量渲染 + CPU 合成，见 PC 节）。
-- 阴影默认关（V-01，显式开关已就位）、IBL / `env` 无脚本入口（V-03）、bloom 三参已全部接通（V-02 关闭）。
+- **0 件作品矢量被拒**：PH Step 1/2 之前是 2 件（demo3d Lines / capability_gaps Morph）；
+  `atlas` 由 PG Step 2 的**采样**接住，`surface_matrix` 与其 `_js` 由 PC 的**叠加**接住，
+  线框与 Morph 由 PH 的接缝层映射接住（V-05 归零，见 PH 节）。矢量侧仍会在**渲染期**
+  对点拓扑 / 未对齐形变 / 无生产方纹理显式报错 —— 那是带理由的失败，不是静默回退。
+- 阴影默认关（V-01，显式开关已就位）、bloom 三参已全部接通（V-02 关闭）；IBL 已由 PG
+  Step 3 打开（`ZELA_IBL` + 槽位编码修复，V-03 的 `env` 失效项已划掉）。
 - 四条参数性残差落档（X5-02/03/04/05）；wgpu 无后处理栈 / IBL（冻结，不补）。
 - miter limit 两边不一致（V2-11）：已实测评估（1°/20° 尖角差 1.4% / 2.7% 覆盖率），
   落档为参数性差异（PB-02）。
@@ -1594,9 +1597,9 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 | `fill_rows` / `stroke_rows` + `gradient_a/b` | 渐变（多 stop 均匀分布 + 轴端点） | ✅ `PathOptions::gradient` | ❌ |
 | brush rows（逐顶点） | 每个顶点一色 | ✅ `MeshRecord::colors` | ❌ |
 | `texture` + `Upload::Texture` | 纹理 key | ❌（PD-03 剥离） | ❌ |
-| `m2` / `key2` | morph 第二组几何（第二项是**差值形状**，权重烤进 `m2`） | ❌（PD-03 剥离） | ❌ |
-| `Upload::Environment` | IBL 环境图（rgbe） | ❌（V-03 / X1-04） | ❌ |
-| `Light::Environment`（kind 4） | 环境图灯 | enum 有，桥接无入口 | ❌ |
+| `m2` / `key2` | morph 第二组几何（第二项是**差值形状**，权重烤进 `m2`） | ✅ `FilledPath/StrokedPath.morph`（PH-02） | ❌（场景形状属阶段三；`MorphQueue` 已由接缝层映射） |
+| `Upload::Environment` | IBL 环境图（rgbe） | ✅ `add_environment` + `read_hdr`（PH-04） | ❌（宿主上传；场景层没有"用哪个环境"的表达） |
+| `Light::Environment`（kind 4） | 环境图灯 | ✅ `Light::Environment`（`RenderParams.env` / `ZELA_IBL`） | ✅（PG-07 槽位编码修复后真发光） |
 | `Upload::Rows` 的 per-point 色 | 点云逐点色 | ❌（只做了网格逐顶点） | ❌ |
 | 形状变体 | `Shape2D` 10 变体全有且全用 | — | 场景对象缺 Ellipse / Polygon / Polyline |
 
@@ -1707,6 +1710,26 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **门禁补齐（PG-12）**：`cargo verify` 新增 **`demo`** 步 —— 按 `demo/manifest.txt` 逐条编译并断言
   `payload hash`（字体由 `cargo_command` 注入，口径与 `build.ps1` 逐字一致）。此前 demo 断言只在
   CI 上跑，脚本改动会「本地全绿、push 才红」（PF 的 demo3d、PG 的 pbr_materials 两次同型）。
+
+### PH 能力缺口归零（Morph / Lines / 自定义环境）
+
+> 一句话：**最后两条被拒路由变成映射，两个 `pub(crate)` 出口开给宿主。** 至此矢量后端相对
+> wgpu **无已知能力缺失**，22/22 作品全部可走矢量。三个 Step 都先做判别实验（H-1 / H-2）。
+
+- **Morph（PH-02）**：后端语义是"首形状 + **差值形状** + 权重烤进 `m2`"，不是"基准 + 目标 + mix"。
+  转换只发生在接缝层：`delta = to − from`、`m2 = t · I`（`api::attach_morph`）。H-1 判别：
+  t = 0 逐位等于起点、t = 0.5 / 1 互异；两端曲线数不一致 ⇒ `SceneMapError::UnalignedMorph`。
+  缓存键含 `(from 摘要, to 摘要, samples)`；`same_2d_frame` 纳入 `t`（否则动画被像素缓存冻住）。
+  `capability_gaps` 第一次进矢量。
+- **Lines（PH-03）**：后端**没有**线框路径（`MeshForm` 只有 `Tri` / `Line`，mesh 分支只接受三角形）
+  ⇒ 接缝层把 `LineList` 扩成**细条三角形**（每段 4 顶点 / 2 三角形、法线朝相机）。宽度 1 px
+  （场景层没有 `line_width`，作者不可控，PH-06）。`demo3d` 第一次进矢量。
+- **自定义环境（PH-04）**：`add_environment` / `read_hdr` / `STUDIO` 公开。判据不是"函数可见"，
+  而是只给环境灯时**自定义图与内置影棚的受光均值不同**（实测通过）；id 0 保留给内置影棚。
+- **契约字段（PH-05，破坏性）**：删除零消费者的 `supersample` / `filter`；`msaa` 保留为
+  **能力声明**（`is_supported_by` + `target_desc` 消费，实际采样数由宿主选）。
+- **记账**：PH-07 记下"能力归零后默认回退 wgpu 是否划算"（阶段二拍）。默认仍关
+  `ZELA_SHADOWS` / `ZELA_IBL` —— 能力全开了，默认画面里看不到，这一点在阶段二决定。
 
 
 

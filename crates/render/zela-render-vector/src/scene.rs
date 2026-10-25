@@ -22,7 +22,7 @@
 use ze_notion::{Color32, Path2D, PathCommand, Transform2D, Vec2};
 use ze_render_ir::{Shape2D, Style2D};
 
-use crate::api::{FilledPath, PathRecord, StrokedPath};
+use crate::api::{FilledPath, MorphGeometry, PathRecord, StrokedPath};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::api::render_2d;
 
@@ -39,6 +39,9 @@ pub struct SceneItem<'a> {
 pub enum SceneMapError {
     #[error("矢量后端暂不支持 {what}（B4 只映射填充族，见 GAPS V2-06）")]
     Unsupported { what: String },
+    /// **PH Step 1**：形变两端重采样后的曲线数不一致 ⇒ 后端无法逐曲线相加。
+    #[error("形变两端未对齐（{from} vs {to} 条曲线）⇒ 后端逐曲线相加，接缝层拒绝")]
+    UnalignedMorph { from: usize, to: usize },
 }
 
 /// 屏幕坐标（经 `transform` 放置后）→ 上游 2D 世界坐标。
@@ -240,6 +243,7 @@ fn open_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         shade_in_3d: false,
         material: None,
         options: Default::default(),
+        morph: None,
     }
 }
 
@@ -259,6 +263,7 @@ fn polygon_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         shade_in_3d: false,
         material: None,
         options: Default::default(),
+        morph: None,
     }
 }
 
@@ -316,6 +321,7 @@ fn ellipse_path(at: Vec2, rx: f32, ry: f32, m: &Transform2D, center: Vec2) -> Fi
         shade_in_3d: false,
         material: None,
         options: Default::default(),
+        morph: None,
     }
 }
 
@@ -374,6 +380,7 @@ fn push_shape(
                     shade_in_3d: false,
                     material: None,
                     options: Default::default(),
+                    morph: None,
                 });
             }
         }
@@ -514,9 +521,79 @@ pub fn scene_records(
                         shape_bits: shape_bits(item.style.stroke_shape),
                         model: IDENTITY,
                         options: options.clone(),
+                        morph: None,
                     }));
                 }
             }
+        }
+    }
+    Ok(out)
+}
+
+/// **PH Step 1**：一条形变项 → 矢量记录（填充 / 描边按样式各一条）。
+///
+/// `from` / `to` 必须已经**按弧长等点重采样**（`MorphItem::sampled_endpoints`），
+/// 否则曲线数不一致 —— 后端逐曲线相加，本函数会显式拒绝而不是画错。
+///
+/// 接缝层的口径转换全在这里：
+/// - 后端第二项是**差值形状**且不带平移 ⇒ 传 `to − from` 的控制点；
+/// - 权重 `mix = t` 由后端烤进 `m2`（`api.rs::attach_morph` / `render.rs::Record::morph`）。
+pub fn morph_records(
+    from: &Path2D,
+    to: &Path2D,
+    mix: f32,
+    style: &Style2D,
+    transform: Transform2D,
+    canvas: (u32, u32),
+) -> Result<Vec<PathRecord>, SceneMapError> {
+    let center = Vec2::new(canvas.0 as f32 * 0.5, canvas.1 as f32 * 0.5);
+    let (start, ranges) = path_subpaths(from, &transform, center);
+    let (end, _) = path_subpaths(to, &transform, center);
+    let curves = |points: &[[f64; 3]]| points.len() / 4;
+    if curves(&start) != curves(&end) {
+        return Err(SceneMapError::UnalignedMorph {
+            from: curves(&start),
+            to: curves(&end),
+        });
+    }
+    if curves(&start) == 0 {
+        return Ok(Vec::new()); // 两端都退化成一个点 ⇒ 没有可画的几何
+    }
+    let delta: Vec<[f64; 3]> = start
+        .iter()
+        .zip(&end)
+        .map(|(a, b)| [b[0] - a[0], b[1] - a[1], b[2] - a[2]])
+        .collect();
+    let morph = MorphGeometry {
+        delta,
+        mix: mix.clamp(0.0, 1.0),
+    };
+    let options = path_options(&style.paint, &transform, center);
+    let mut out = Vec::new();
+    if let Some(fill) = style.fill {
+        out.push(PathRecord::Fill(FilledPath {
+            points: start.clone(),
+            ranges: ranges.clone(),
+            fill: rgba(fill),
+            model: IDENTITY,
+            shade_in_3d: false,
+            material: None,
+            options: options.clone(),
+            morph: Some(morph.clone()),
+        }));
+    }
+    if let Some(stroke) = style.stroke {
+        if style.stroke_width > 0.0 {
+            out.push(PathRecord::Stroke(StrokedPath {
+                points: start,
+                ranges,
+                stroke: rgba(stroke),
+                width: style.stroke_width,
+                shape_bits: shape_bits(style.stroke_shape),
+                model: IDENTITY,
+                options,
+                morph: Some(morph),
+            }));
         }
     }
     Ok(out)

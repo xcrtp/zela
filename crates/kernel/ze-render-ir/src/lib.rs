@@ -46,7 +46,7 @@ pub use layer::{LayerBlend, LayerId};
 pub use mesh::{PrimitiveTopology, ShaderVariant, TextureHandle, UvProjection};
 pub use paint::{BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint};
 pub use params::{
-    AmbientOcclusion, Bloom, MAX_SUPERSAMPLE, Msaa, RenderParamError, RenderParams, TextureFilter,
+    AmbientOcclusion, Bloom, Msaa, RenderParamError, RenderParams, TextureFilter,
     ToneCurve, ToneMapping,
 };
 pub use pipeline::{

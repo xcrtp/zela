@@ -26,10 +26,12 @@ const SAMPLES: u32 = 1024;
 /// a dark floor's reflection); finer ones leave the tails noisy (experiments/b4-ibl).
 const COARSEST: u32 = 16;
 
-#[cfg(any(feature = "python", test))]
 /// A Radiance (.hdr) file's pixels: its width, height, and RGBE bytes row by row from the top (a run-length encoded
 /// file's runs undone).
-pub(crate) fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+///
+/// **PH Step 3**：公开给宿主（此前是 `pub(crate)`）—— 宿主拿到 `.hdr` 文件后可用它解码，
+/// 再把 `(width, height, rgbe)` 交给 [`crate::add_environment`]。
+pub fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     // the header: lines up to an empty one, then the resolution: "-Y height +X width"
     let mut at = 0;
     let line = |at: &mut usize| -> Result<&[u8], String> {
@@ -198,7 +200,9 @@ pub(crate) fn harmonics(width: u32, height: u32, rgbe: &[u8]) -> [[f32; 4]; 9] {
 #[cfg(feature = "render")]
 /// The built-in studio's id (an `EnvironmentLight` without a picture): the player makes it (`studio`), nothing
 /// uploads it.
-pub(crate) const STUDIO: u32 = 0;
+///
+/// **PH Step 3**：公开（宿主可显式引用内置影棚；`crate::BUILTIN_ENVIRONMENT` 是同一值的别名）。
+pub const STUDIO: u32 = 0;
 
 #[cfg(feature = "render")]
 /// A studio's softboxes: azimuth and elevation of their centres (degrees; azimuth 0 is the picture's +x, 90 its +y),

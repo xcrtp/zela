@@ -9,10 +9,100 @@
 //! Rust 入口，供 zela 宿主使用：视图用上游 `feed.py` 的 2D 正交布局（见
 //! `view_2d`），记录用 `Record::filled`（单填充路径）。
 //!
-//! 已知非等价（B4 计划 §5.4）：上游的 `m1/m2` 双变换 + GPU 插值，这里只写 `m1`
-//! （`m2` 留零），因此丢掉"一次上传、GPU 插值"的性能模型；逐帧渲染的正确性不受影响。
+//! 已知非等价（B4 计划 §5.4）：上游的 `m1/m2` 双变换 + GPU 插值。
+//! **PH Step 1** 起 `m2` 已用于形变（`m2 = mix · I` + 差值形状），其余记录仍只写 `m1`。
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::render::{Record, Upload, VIEW_LENGTH, VIEW_LIGHTING, VIEW_OCCLUSION};
+
+// ─── PH Step 3：自定义环境（宿主上传） ─────────────────────────────────────
+
+/// 一条已上传的环境（RGBE 字节；`Arc` 让每次装进 `Player` 不必再复制一份）。
+struct EnvironmentUpload {
+    id: u32,
+    width: u32,
+    height: u32,
+    rgbe: Arc<Vec<u8>>,
+}
+
+/// 宿主上传的环境表（进程级；每个 `Player` 在代数变化时各装一份 —— 预过滤立方体是
+/// **每 player 的 GPU 资源**，不能共享）。
+static UPLOADED_ENVIRONMENTS: OnceLock<Mutex<Vec<EnvironmentUpload>>> = OnceLock::new();
+
+/// 上传代数：任一环境变化 +1。`Player` 按它决定是否重装（同代完全不碰）。
+static ENVIRONMENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// **PH Step 3**：上传一张自定义环境图（Radiance RGBE 字节），供 `Light::Environment { id }` 引用。
+///
+/// `rgbe` 是 `width × height × 4` 字节（行优先、自上而下；用 [`crate::read_hdr`] 解
+/// `.hdr` 文件）。**id 0 保留给内置影棚**（[`crate::STUDIO`] / [`crate::BUILTIN_ENVIRONMENT`]）。
+///
+/// 语义：同 id 再次上传 = **替换**；上传后下一次渲染自动生效（代数变化 ⇒ 每个常驻
+/// player 重装一次，不会每帧重算 harmonics）。
+pub fn add_environment(id: u32, width: u32, height: u32, rgbe: &[u8]) -> Result<(), String> {
+    if id == crate::environment::STUDIO {
+        return Err(format!(
+            "环境 id {id} 是内置影棚的保留 id（STUDIO）；自定义环境请用非 0 id"
+        ));
+    }
+    if width == 0 || height == 0 {
+        return Err(format!("环境尺寸不能为 0（{width}×{height}）"));
+    }
+    let needed = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| format!("环境尺寸过大：{width}×{height}"))?;
+    if rgbe.len() != needed {
+        return Err(format!(
+            "环境字节数 {} ≠ {width}×{height}×4 = {needed}",
+            rgbe.len()
+        ));
+    }
+    let upload = EnvironmentUpload {
+        id,
+        width,
+        height,
+        rgbe: Arc::new(rgbe.to_vec()),
+    };
+    let mut list = UPLOADED_ENVIRONMENTS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match list.iter_mut().find(|entry| entry.id == id) {
+        Some(slot) => *slot = upload,
+        None => list.push(upload),
+    }
+    ENVIRONMENT_GENERATION.fetch_add(1, Ordering::Relaxed);
+    Ok(())
+}
+
+/// 把宿主上传的环境装进当前 player（代数相同则什么都不做）。
+///
+/// 为什么按代数而不是"有就跳过"：同 id 再上传是一次**替换** —— 只比"有没有"会让
+/// 新图永远进不来（GAPS PC-05 的同型：只比存在、不比是哪一个）。
+fn install_environments(player: &mut crate::render::Player) -> Result<(), String> {
+    let generation = ENVIRONMENT_GENERATION.load(Ordering::Relaxed);
+    if player.environment_generation() == generation {
+        return Ok(());
+    }
+    let list = UPLOADED_ENVIRONMENTS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for environment in list.iter() {
+        player.add_environment(
+            environment.id,
+            environment.width,
+            environment.height,
+            &environment.rgbe,
+        )?;
+    }
+    drop(list);
+    player.set_environment_generation(generation);
+    Ok(())
+}
 
 /// 一条填充路径（世界坐标；曲线为每段 4 个控制点）。
 #[derive(Debug, Clone)]
@@ -34,7 +124,29 @@ pub struct FilledPath {
     pub material: Option<[f32; 3]>,
     /// **PD**：可选的后端已实现参数（默认 = 当前行为）。
     pub options: PathOptions,
+    /// **PH Step 1**：形变的第二项（`None` = 普通路径）。
+    ///
+    /// 后端语义是"首形状 + 第二形状"，第二项**不带平移**、权重烤进 `m2`
+    /// ⇒ 公开面收的是**差值形状**（`to − from`），不是目标形状。
+    pub morph: Option<MorphGeometry>,
 }
+
+/// 形变的第二项（PH Step 1）：一条**差值形状**与混合权重。
+///
+/// 后端把第一条记录的位置算成 `m1·from + m2·delta`（`vector.wgsl::curve_h`：第二项
+/// 只加不减、且不加 `m2` 的平移列）⇒ 想要 `from + t·(to − from)`，就传
+/// `delta = to − from`、`mix = t`（打包成 `m2 = t·I`）。
+///
+/// `delta` 的曲线数必须与首形状一致（后端 `instance()` 显式拒绝
+/// "morph between unaligned shapes"）；本入口在打包前也做同一条检查。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MorphGeometry {
+    /// 差值控制点（每段 4 个三次控制点；与首形状同长）。
+    pub delta: Vec<[f64; 3]>,
+    /// 混合权重 ∈ [0, 1]（`MorphShape.t` 原样带过）。
+    pub mix: f32,
+}
+
 
 /// **PE Step 1**：绘制参数类型的唯一真源在 `ze-render-ir`（场景层与后端共用一份）。
 ///
@@ -64,6 +176,7 @@ impl FilledPath {
             shade_in_3d: false,
             material: None,
             options: PathOptions::default(),
+            morph: None,
         }
     }
 }
@@ -294,6 +407,8 @@ pub struct StrokedPath {
     pub model: [[f32; 4]; 3],
     /// **PD**：可选的后端已实现参数（默认 = 当前行为）。
     pub options: PathOptions,
+    /// **PH Step 1**：形变的第二项（`None` = 普通描边）。
+    pub morph: Option<MorphGeometry>,
 }
 
 /// 一盏灯（B6 Step 1.2）：编码移植自上游 `rendering/feed.py::lighting`，
@@ -639,6 +754,8 @@ fn prepare_view(
     if width == 0 || height == 0 {
         return Err(format!("canvas {width}x{height} is empty"));
     }
+    // **PH Step 3**：宿主上传的环境先装进 player（代数相同 ⇒ 空操作）。
+    install_environments(player)?;
     let view_bytes: Vec<u8> = bytemuck::cast_slice(&view).to_vec();
 
     let mut built: Vec<Record> = Vec::with_capacity(records.len());
@@ -656,6 +773,16 @@ fn prepare_view(
                     path.material,
                 );
                 apply_options(&mut record, &path.options, player, key, true)?;
+                record = attach_morph(
+                    player,
+                    record,
+                    path.morph.as_ref(),
+                    &path.points,
+                    &path.ranges,
+                    i,
+                    records.len(),
+                    key_base,
+                )?;
                 built.push(record);
             }
             PathRecord::Stroke(path) => {
@@ -669,6 +796,16 @@ fn prepare_view(
                     path.shape_bits,
                 );
                 apply_options(&mut record, &path.options, player, key, false)?;
+                record = attach_morph(
+                    player,
+                    record,
+                    path.morph.as_ref(),
+                    &path.points,
+                    &path.ranges,
+                    i,
+                    records.len(),
+                    key_base,
+                )?;
                 built.push(record);
             }
             PathRecord::Mesh(mesh) => {
@@ -985,6 +1122,43 @@ async fn frame_to_texture_async(
     let cameras = prepare_cameras(player, cameras)?;
     let frames = player.views(&view, &records, cameras)?;
     player.render_to_async(gpu, &frames, target).await
+}
+
+/// **PH Step 1**：上传形变的**差值形状**并接到记录的第二项（`key2` / `m2`）。
+///
+/// 第二项的键区与首形状分开（首形状 `1..=n`，这里从 `n+1` 起），否则同一帧里两条
+/// 记录会在同一个 `key` 上互相覆盖；相机视图的 `key_base` 是 `(i+1) << 48`，
+/// 同段内加 `2n` 也不会串到相邻视图。
+///
+/// `mix = 0` ⇒ **不挂第二项**（`key2 = 0`）：后端完全跳过它，输出逐位等于普通路径
+/// （这也让 `t = 0` 的首帧与 wgpu 的"起点形状"同口径）。
+fn attach_morph(
+    player: &mut crate::render::Player,
+    record: crate::render::Record,
+    morph: Option<&MorphGeometry>,
+    points: &[[f64; 3]],
+    ranges: &[[u32; 4]],
+    index: usize,
+    records: usize,
+    key_base: u64,
+) -> Result<crate::render::Record, String> {
+    let Some(morph) = morph else { return Ok(record) };
+    if morph.delta.len() != points.len() || morph.delta.len() % 4 != 0 {
+        return Err(format!(
+            "record {index}: 形变差值控制点数 {} ≠ 首形状 {}（后端逐曲线相加；每段必须 4 个控制点）",
+            morph.delta.len(),
+            points.len()
+        ));
+    }
+    if !morph.mix.is_finite() {
+        return Err(format!("record {index}: 形变权重必须是有限数（收到 {}）", morph.mix));
+    }
+    if morph.mix <= 0.0 {
+        return Ok(record);
+    }
+    let key2 = key_base + records as u64 + index as u64 + 1;
+    upload_path(player, key2, index, &morph.delta, ranges)?;
+    Ok(record.morph(key2, morph.mix.min(1.0)))
 }
 
 /// 上传一条路径并返回曲线数（填充与描边共用）。
@@ -1367,6 +1541,7 @@ mod tests {
                 [0.0, 0.0, 1.0, 0.0],
             ],
             options: Default::default(),
+            morph: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[line.clone().into()]) {
             Ok(frame) => frame,
@@ -1421,6 +1596,7 @@ mod tests {
             shade_in_3d: false,
             material: None,
             options: Default::default(),
+            morph: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[fill.into()]) {
             Ok(frame) => frame,
@@ -1445,6 +1621,7 @@ mod tests {
                 [0.0, 0.0, 1.0, 0.0],
             ],
             options: Default::default(),
+            morph: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[stroke.into()]) {
             Ok(frame) => frame,
@@ -2097,6 +2274,7 @@ mod tests {
                 shade_in_3d: false,
                 material: None,
                 options: Default::default(),
+                morph: None,
             }
         };
         // 外圈 CCW、内圈 CW（世界 y 向上）。
@@ -2324,6 +2502,7 @@ mod tests {
                 dash,
                 ..Default::default()
             },
+            morph: None,
         };
         let clear = [0.0, 0.0, 0.0, 1.0];
         let white = |p: &[u8]| p[0] > 160 && p[1] > 160 && p[2] > 160;
@@ -2373,6 +2552,7 @@ mod tests {
                 curve_window: window,
                 ..Default::default()
             },
+            morph: None,
         };
         let clear = [0.0, 0.0, 0.0, 1.0];
         let white = |p: &[u8]| p[0] > 160 && p[1] > 160 && p[2] > 160;
@@ -2473,6 +2653,98 @@ mod tests {
         assert!(right[2] > 160 && right[0] < 80, "右半应是顶点色蓝：{right:?}");
     }
 
+    /// **PH Step 3 判据**：上传的程序化 `.hdr` **真的参与着色**。
+    ///
+    /// 判据不是"函数可见了"，而是：同一块受光网格，只把环境从**内置影棚**
+    /// （`BUILTIN_ENVIRONMENT`）换成**上传的自定义图**（上半天亮、下半天黑），
+    /// 受光像素均值必须不同 —— 相同就说明链路没通（IBL 的教训刚发生过一次）。
+    #[test]
+    fn an_uploaded_environment_actually_lights_the_scene() {
+        let (w, h) = (64u32, 32u32);
+        // RGBE：128 × 2^(e − 136)；e = 131 ⇒ 4.0（天空），e = 0 ⇒ 全黑（地面）。
+        let mut rgbe = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let texel = if y < h / 2 {
+                [128, 128, 128, 131]
+            } else {
+                [0, 0, 0, 0]
+            };
+            for _ in 0..w {
+                rgbe.extend_from_slice(&texel);
+            }
+        }
+        let id = 71;
+        add_environment(id, w, h, &rgbe).expect("上传自定义环境");
+
+        let mesh = || MeshRecord {
+            positions: vec![
+                [-1.0, -1.0, 0.0],
+                [1.0, -1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [-1.0, 1.0, 0.0],
+            ],
+            uvs: None,
+            normals: None,
+            triangles: vec![0, 1, 2, 0, 2, 3],
+            fill: [0.8, 0.2, 0.2, 1.0],
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            material: Some([0.0, 0.5, 0.04]),
+            colors: None,
+            second: None,
+            texture: None,
+        };
+        let frame = |environment: u32| {
+            let view = View3 {
+                frame: (4.0, 4.0),
+                center: [0.0, 0.0, 0.0],
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                zoom: 1.0,
+                focal: 8.0,
+                size: (64, 64),
+                background: [0.0, 0.0, 0.0, 1.0],
+                light_source: [0.0, 0.0, 1.0],
+                exposure: 1.0,
+                tone: Some(ze_render_ir::ToneCurve::Clip),
+                bloom: 0.0,
+                bloom_threshold: 0.0,
+                bloom_radius: 0.0,
+                ao: None,
+                // 只有环境灯：任何亮度差都只能来自环境图。
+                lights: vec![Light::Environment { id: environment }],
+            };
+            render_3d(&view, &[PathRecord::Mesh(mesh())]).expect("3D 渲染失败")
+        };
+        let mean = |frame: &[u8]| {
+            frame
+                .chunks_exact(4)
+                .map(|p| p[0] as u64 + p[1] as u64 + p[2] as u64)
+                .sum::<u64>() as f64
+                / (frame.len() / 4) as f64
+        };
+        let studio = mean(&frame(crate::BUILTIN_ENVIRONMENT));
+        let custom = mean(&frame(id));
+        assert!(custom > 0.1, "自定义环境必须真的照亮网格（均值 {custom}）");
+        assert!(
+            (studio - custom).abs() > 1.0,
+            "自定义环境与内置影棚必须产生不同光照：studio {studio} vs custom {custom}"
+        );
+    }
+
+    /// **PH Step 3**：上传入口的错误必须显式（id 0 保留 / 字节数不符）。
+    #[test]
+    fn environment_upload_errors_are_explicit() {
+        assert!(
+            add_environment(crate::STUDIO, 1, 1, &[128, 128, 128, 129]).is_err(),
+            "id 0 是内置影棚的保留 id"
+        );
+        let error = add_environment(99, 2, 2, &[0, 0, 0, 0]).unwrap_err();
+        assert!(error.contains("字节数"), "{error}");
+    }
+
     /// **PD**：新参数的错误必须显式（不静默修正）。
     #[test]
     fn option_errors_are_explicit() {
@@ -2520,5 +2792,106 @@ mod tests {
         assert!(error.contains("逐顶点色"), "{error}");
         colors.colors = None;
         assert!(render_2d(64, 64, 1, clear, &[PathRecord::Mesh(colors)]).is_ok());
+    }
+
+    /// **PH Step 1（H-1 判别实验）**：Morph 的三态 `t = 0 / 0.5 / 1` 必须**互异**。
+    ///
+    /// 判别口径不是"没有报错"，而是像素：
+    /// - `t = 0` 必须逐位等于**起点形状**（权重 0 ⇒ 不挂第二项）；
+    /// - `t = 0.5` 与两端都不同（真的插值了，不是整项乘 0）；
+    /// - `t = 1` 与起点不同（权重生效）。
+    ///
+    /// 若三态相同，说明 `m2` 没被采样器读进去 —— 与 PG 的 IBL 同型（链路通、整项乘 0），
+    /// 那时应该先查编码而不是调参。
+    #[test]
+    fn morph_mix_changes_the_shape_and_zero_equals_the_start() {
+        use ze_notion::{Path2D, Transform2D, Vec2};
+        use ze_render_ir::Style2D;
+
+        let square = Path2D::from_polyline(
+            &[
+                Vec2::new(16.0, 16.0),
+                Vec2::new(48.0, 16.0),
+                Vec2::new(48.0, 48.0),
+                Vec2::new(16.0, 48.0),
+            ],
+            true,
+        );
+        let diamond = Path2D::from_polyline(
+            &[
+                Vec2::new(32.0, 10.0),
+                Vec2::new(54.0, 32.0),
+                Vec2::new(32.0, 54.0),
+                Vec2::new(10.0, 32.0),
+            ],
+            true,
+        );
+        let style = Style2D {
+            fill: None,
+            stroke: Some(ze_notion::Color32::WHITE),
+            stroke_width: 4.0,
+            ..Default::default()
+        };
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let at = |from: &Path2D, to: &Path2D, mix: f32| {
+            let records =
+                crate::scene::morph_records(from, to, mix, &style, Transform2D::identity(), (64, 64))
+                    .expect("形变映射");
+            render_2d_or_panic(&records, clear)
+        };
+
+        let start = at(&square, &square, 0.0);
+        let zero = at(&square, &diamond, 0.0);
+        let half = at(&square, &diamond, 0.5);
+        let one = at(&square, &diamond, 1.0);
+        assert_eq!(zero, start, "t = 0 必须逐位等于起点形状（key2 = 0）");
+
+        let changed = |a: &[u8], b: &[u8]| {
+            a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(x, y)| x != y).count()
+        };
+        assert!(changed(&zero, &half) > 100, "t = 0 与 t = 0.5 必须不同");
+        assert!(changed(&half, &one) > 100, "t = 0.5 与 t = 1 必须不同");
+        assert!(changed(&zero, &one) > 100, "t = 0 与 t = 1 必须不同");
+    }
+
+    /// **PH Step 1（H3）**：两端曲线数不一致 ⇒ 接缝层**显式拒绝**，不静默画错。
+    #[test]
+    fn unaligned_morph_endpoints_are_rejected() {
+        use ze_notion::{Path2D, Transform2D, Vec2};
+        use ze_render_ir::Style2D;
+
+        let square = Path2D::from_polyline(
+            &[
+                Vec2::new(16.0, 16.0),
+                Vec2::new(48.0, 16.0),
+                Vec2::new(48.0, 48.0),
+                Vec2::new(16.0, 48.0),
+            ],
+            true,
+        );
+        let triangle = Path2D::from_polyline(
+            &[
+                Vec2::new(32.0, 12.0),
+                Vec2::new(52.0, 52.0),
+                Vec2::new(12.0, 52.0),
+            ],
+            true,
+        );
+        let style = Style2D {
+            fill: None,
+            stroke: Some(ze_notion::Color32::WHITE),
+            stroke_width: 4.0,
+            ..Default::default()
+        };
+        let error = crate::scene::morph_records(
+            &square,
+            &triangle,
+            0.5,
+            &style,
+            Transform2D::identity(),
+            (64, 64),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("未对齐"), "{error}");
     }
 }
