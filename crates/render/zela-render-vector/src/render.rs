@@ -232,6 +232,30 @@ static SAMPLE_OVERRIDE: AtomicU32 = AtomicU32::new(0);
 /// （见 [`forget_targets`]）——只比较"有没有外部目标"会漏掉"换了一张"。
 static TARGET_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// **PI-04（PC-05）**：阴影开关的代数与最近状态。
+///
+/// `Player` 的 `shadow_maps` 只扩不缩（按层扩容、随 player 常驻），而 player 缓存键原先
+/// 只有 `(w, h, samples)` ⇒ 运行期切换 `set_shadows` 会复用**另一状态**下建的 player
+/// （与 B18「只比有没有、不比是哪一个」同型）。这里把状态纳入键：状态变化 ⇒ 新键。
+static SHADOW_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// 0 = 还没设置过，1 = 开，2 = 关。
+static SHADOW_STATE: AtomicU32 = AtomicU32::new(0);
+
+/// **PI-04（PC-05）**：登记宿主当前的阴影开关（只在**变化**时推进代数）。
+///
+/// 由 `zela-playback::vector3d::{set_shadows, shadows}` 调用；渲染侧不解释"阴影"语义，
+/// 只把它当成 player 缓存的一个状态维度。
+pub fn set_shadow_state(on: bool) {
+    let value = if on { 1 } else { 2 };
+    if SHADOW_STATE.swap(value, Ordering::Relaxed) != value {
+        SHADOW_GENERATION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn shadow_generation() -> u64 {
+    SHADOW_GENERATION.load(Ordering::Relaxed)
+}
+
 /// **B17**：下一次取用 player 时丢掉它的 `Targets`（新一次播放要换离屏目标时调用）。
 ///
 /// `take_player` 让画布 / 附件跨播放保留，但"外部目标"那一份 `Targets` 绑定的是**上一次
@@ -1399,7 +1423,10 @@ pub(crate) struct Gpu {
     blend: [Option<wgpu::ShaderModule>; 2], // single/multisample texture forms (the shadow passes share either)
     shadow_passes: HashMap<usize, wgpu::RenderPipeline>, // by the light's slot in its view, made when first cast
     /// B17：按 (width, height, samples) 常驻的 player；逐帧只重传路径，不重建整套 GPU 资源。
-    players: HashMap<(u32, u32, u32), Player>,
+    ///
+    /// **PI-04（PC-05）**：键里带阴影代数（`SHADOW_GENERATION`）—— `shadow_maps` 只扩不缩，
+    /// 复用另一状态下的 player 会带着不匹配的阴影容量。
+    players: HashMap<(u32, u32, u32, u64), Player>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1682,7 +1709,13 @@ impl Gpu {
     /// 每帧只重传路径与记录，不重建画布 / 附件 / 缓冲 / 列表；`Player::reset` 清掉上一帧的
     /// 逻辑内容、保留容量。取出期间由调用方独占，用完必须 [`Self::put_player`] 归还。
     pub(crate) fn take_player(&mut self, width: u32, height: u32, samples: u32) -> Player {
-        match self.players.remove(&(width, height, samples)) {
+        let generation = shadow_generation();
+        // 同尺寸 / 采样数、**旧阴影代数**的 player 直接丢：它的 shadow_maps 是按另一状态
+        // 建的（只扩不缩），留着既不会被命中，也会与当前状态并存两份。
+        self.players.retain(|(w, h, s, g), _| {
+            *w != width || *h != height || *s != samples || *g == generation
+        });
+        match self.players.remove(&(width, height, samples, generation)) {
             Some(mut player) => {
                 player.reset();
                 player
@@ -1691,9 +1724,9 @@ impl Gpu {
         }
     }
 
-    /// **B17**：归还 player。缓存上限 4 份（尺寸 / 采样数变化的诊断场景），超出时丢弃任意一份。
+    /// **B17**：归还 player。缓存上限 4 份（尺寸 / 采样数 / 阴影状态变化的诊断场景），超出时丢弃任意一份。
     pub(crate) fn put_player(&mut self, width: u32, height: u32, samples: u32, player: Player) {
-        let key = (width, height, samples);
+        let key = (width, height, samples, shadow_generation());
         if self.players.len() >= 4 && !self.players.contains_key(&key) {
             if let Some(victim) = self.players.keys().next().copied() {
                 self.players.remove(&victim);

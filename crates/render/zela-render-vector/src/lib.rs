@@ -57,6 +57,8 @@ pub use render::init_gpu;
 pub use render::{ResourceTotals, resource_totals, take_resource_totals};
 // B18：MSAA 能力查询（adapter 自述）、判别实验的采样覆盖、链表溢出的显式记录。
 pub use render::{OverflowTotals, ShadowTotals, msaa_samples, set_sample_override, take_overflow_totals, take_shadow_totals};
+/// **PI-04（PC-05）**：把宿主的阴影开关登记进 player 缓存键（状态变化 ⇒ 换 player）。
+pub use render::set_shadow_state;
 /// **PG Step 3**：内置影棚的 id（`EnvironmentLight` 没有图时用它；**程序化生成，零资产**）。
 pub const BUILTIN_ENVIRONMENT: u32 = environment::STUDIO;
 /// **PH Step 3**：内置影棚 id 的另一个名字（与 [`BUILTIN_ENVIRONMENT`] 同值）。

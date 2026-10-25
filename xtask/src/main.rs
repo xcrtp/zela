@@ -671,12 +671,12 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     // P 段（B12）、Q 段（B13）、R 段（B14）、S 段（B15）、T 段（B17）、U 段（B18）、
     // V 段（B19 跨批补记）、W 段（PA 记账收尾）、X 段（PB 参数开启）、Y 段（PC 内容纹理层）、
     // Z 段（PD 能力普查）、AA 段（PE 能力入口）、AB 段（PF 接缝）、AC 段（PG 全开放）、
-    // AD 段（PH 能力缺口归零）
+    // AD 段（PH 能力缺口归零）、AE 段（PI 渲染层收尾与成本度量）
     // 都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
-        "## AD.",
+        "## AD.", "## AE.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -703,6 +703,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("PF-")
                     || id.starts_with("PG-")
                     || id.starts_with("PH-")
+                    || id.starts_with("PI-")
                     || id.starts_with("S4-")
                     || id.starts_with("W1-")
                     || id.starts_with("X1-")

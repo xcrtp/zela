@@ -28,6 +28,7 @@
 | 二、主体编译 | `zela-schedule` / `zela-scene` / `zela-render` **通过**；`zela-render-backends` **23 × E0277** | 见 §4 |
 | 二、运行时 | `Instant::now()` 每帧调用（telemetry 默认开）→ wasm 上 panic | **P0（编译通过但必炸）** |
 | 三、wgpu | `is_webgpu_compliant = true`；**push constants 0 命中**；**无硬编码 limits**；wgpu 30.0.1 | 低风险 |
+| 四、CI 判别（W-1） | 本地无头 Edge **能**拿到 WebGPU adapter 并播完作品；但 **CI 镜像未实测** ⇒ **不新建 CI 链路，维持手动** | 见 §10 |
 
 一句话：**浏览器移植的真正顺序是「先换 Lua 供给 → 再解 Send/Sync → 再关掉 wasm 不支持的 std 时间/线程」，而不是先改渲染。**
 
@@ -395,3 +396,43 @@ cargo check -p ze-prerender --features typst --target wasm32-unknown-unknown
 grep -rn "push_constant" crates/            # 0
 grep -rn "Limits::\|required_limits\|Features::" crates/   # 0
 ```
+
+---
+
+## 10. 探测四：wasm CI 判别实验（W-1，2026-10-25）
+
+> 计划《PI执行计划_渲染层收尾与成本度量》§5。目的只有一个：**判断「wasm 实测进 CI」是否值得从零建一条链路**。
+> 注意现有门禁的形态：`xtask::step_wasm` 全是 `cargo check --target wasm32-unknown-unknown` ⇒ 它是**编译门禁**，
+> 一次浏览器都没开过。
+
+### 10.1 本地代理实验（Windows + Edge）
+
+| 组合 | `navigator.gpu.requestAdapter()` |
+|---|---|
+| `--headless=new` 默认 | `no-adapter` |
+| `+ --enable-unsafe-swiftshader` | `no-adapter` |
+| `+ --use-webgpu-adapter=swiftshader`（强制软件） | `no-adapter` |
+| `+ --use-angle=swiftshader --use-webgpu-adapter=swiftshader` | `no-adapter` |
+| **`+ --enable-unsafe-swiftshader --ignore-gpu-blocklist --enable-gpu-rasterization`** | **`adapter = nvidia/lovelace`（真实适配器）** |
+| 有头（无 `--headless`） | `adapter = nvidia/lovelace` |
+
+⇒ 结论一：**「无头浏览器没有 GPU」不是硬障碍**，`--use-webgpu-adapter=swiftshader` 反而是拿到 adapter 的反向操作
+（强制软件走 Dawn-SwiftShader 在本机不可用）。拿到 adapter 后，`zela-web` 能完整播完作品并给出资源行
+（例：`atlas` 40 tex / 50.2 MB，`pbr_scene` 660 帧 20.33 ms/帧 —— 详见 GAPS PI-09）。
+
+### 10.2 判定：**维持手动，不新建 CI 链路**
+
+- 本机实验**不能代表** `ubuntu-latest` + 托管 Chrome 的行为（Dawn 后端、SwiftShader 版本、驱动版本都不同）；
+  要确认只能真在 CI 上跑一次，而**一次失败就等于给主干加一条不稳定门禁**。
+- 既有政策已覆盖该边界：`architecture.yml` 的注释写明托管 runner 无 GPU、只能装 Mesa lavapipe，
+  ⇒ **CI 只断言 `--script == --bundle`（同机自洽 + `--skip-baseline`）**，不比较像素。
+  wasm 若进 CI，也只能沿用这一条，收益仅限「能跑起来」。
+- PC / PG / PI 三批的浏览器实测本来就是**手动 Edge + CDP** 做的（PC-08 / PI-09 都是），没有因为手动而丢过数据。
+
+### 10.3 一条必须写进账的边界
+
+> 已知跨端浮点分歧**首次出现在 fourier 第 103 帧**，而 smoke 只渲前 15 帧
+> ⇒ **smoke 绿了不代表跨端确定性没问题。**
+
+⇒ 「wasm 进 CI」的收益上限是「**能启动、能渲出帧、同机自洽**」，不是「画面一致」。真要跨端一致，
+需要的是 `ZELA_HASH_RUNNER` 指向与录制设备一致的 runner（见 `architecture.yml`），与 wasm 无关。

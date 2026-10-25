@@ -236,8 +236,9 @@ fn reject_reason(
             // "材质的纹理不是本帧内容层" ⇒ 显式拒绝。
             if content.has_unserved_material_texture {
                 return Some(
-                    "本帧有网格材质的纹理不是内容层（没有生产方）⇒ 矢量侧缺少该纹理的\
-                     上传入口（GAPS PG Step 4：纹理资产）"
+                    "本帧有网格材质的纹理不是内容层（没有生产方）⇒ 显式拒绝：上传入口已开放\
+                     （PG-08 的 `TextureSource::Image` + `add_texture`），当前缺的是**场景层的\
+                     非内容层纹理来源**（图片资产概念，属阶段三，见 GAPS PI-01/PI-02）"
                         .to_string(),
                 );
             }

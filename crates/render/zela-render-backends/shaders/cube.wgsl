@@ -95,18 +95,33 @@ fn vs_main(
     return out;
 }
 
+// **PI-04（PF-02）**：透明桶用 `PREMULTIPLIED_ALPHA_BLENDING`，但 `fs_*` 返回的是**直色**
+// ⇒ wgpu 侧透明材质偏亮。透明 entry point 在输出前预乘 alpha；不透明桶（REPLACE）与
+// `Additive`（One/One）沿用直色，逐位不变。
+fn premultiply(c: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(c.rgb * c.a, c.a);
+}
+
 // ShaderVariant::Flat：无光照，纹理预乘 over 颜色（加光前的行为）。
-@fragment
-fn fs_flat(in: VertexOutput) -> @location(0) vec4<f32> {
+fn color_flat(in: VertexOutput) -> vec4<f32> {
     let tex = textureSample(t, s, in.uv);
     // 预乘 over：`tex` 已是预乘 alpha，故直接相加；输出 alpha 取材质色。
     let albedo = tex.rgb + in.color.rgb * (1.0 - tex.a);
     return vec4<f32>(albedo, in.color.a);
 }
 
-// ShaderVariant::Lambert：朗伯漫反射只作用于材质色，纹理作为 decal 叠在其上（默认变体）。
 @fragment
-fn fs_lambert(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_flat(in: VertexOutput) -> @location(0) vec4<f32> {
+    return color_flat(in);
+}
+
+@fragment
+fn fs_flat_pm(in: VertexOutput) -> @location(0) vec4<f32> {
+    return premultiply(color_flat(in));
+}
+
+// ShaderVariant::Lambert：朗伯漫反射只作用于材质色，纹理作为 decal 叠在其上（默认变体）。
+fn color_lambert(in: VertexOutput) -> vec4<f32> {
     let tex = textureSample(t, s, in.uv);
     let n = normalize(in.normal);
     // 环境光 + 全部方向光的朗伯项累加（B1-A）。默认场景 = 单方向光 (0,0,1)
@@ -130,6 +145,16 @@ fn fs_lambert(in: VertexOutput) -> @location(0) vec4<f32> {
     // 不被 `lit` 压暗（否则最暗处公式会变成 0.2 的深灰）。
     let albedo = tex.rgb + in.color.rgb * lit * (1.0 - tex.a);
     return vec4<f32>(albedo, in.color.a);
+}
+
+@fragment
+fn fs_lambert(in: VertexOutput) -> @location(0) vec4<f32> {
+    return color_lambert(in);
+}
+
+@fragment
+fn fs_lambert_pm(in: VertexOutput) -> @location(0) vec4<f32> {
+    return premultiply(color_lambert(in));
 }
 
 // sRGB 编码的 8-bit 材质色 → 线性域（PBR 的 GGX/Smith/Schlick 假设线性亮度；
@@ -158,8 +183,7 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 //   direct += (kd·albedo/π + spec)·intensity·ndl·lightColor
 //   ambient = counts.y·albedo；brdf = ambient + (1−counts.y)·direct
 // 输出：`tex.rgb + brdf·(1−tex.a)`，alpha = 材质色（与 Lambert 同一 decal 合成口径）。
-@fragment
-fn fs_pbr(in: VertexOutput) -> @location(0) vec4<f32> {
+fn color_pbr(in: VertexOutput) -> vec4<f32> {
     // ── 法线：几何法线 + 屏幕空间 TBN 变换法线贴图 ──
     let n_g = normalize(in.normal);
     let p1 = dpdx(in.world_pos);
@@ -233,4 +257,14 @@ fn fs_pbr(in: VertexOutput) -> @location(0) vec4<f32> {
     let tex = textureSample(t, s, in.uv);
     let out_rgb = tex.rgb + brdf * (1.0 - tex.a);
     return vec4<f32>(out_rgb, in.color.a);
+}
+
+@fragment
+fn fs_pbr(in: VertexOutput) -> @location(0) vec4<f32> {
+    return color_pbr(in);
+}
+
+@fragment
+fn fs_pbr_pm(in: VertexOutput) -> @location(0) vec4<f32> {
+    return premultiply(color_pbr(in));
 }

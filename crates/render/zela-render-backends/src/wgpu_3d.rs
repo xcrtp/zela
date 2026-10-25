@@ -179,11 +179,18 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// 因此该映射是后端侧的自由函数而非 `ShaderVariant` 的固有方法。
 /// 该 match 是**穷尽**的 —— 新增变体漏写入口即编译失败（B1-E 起以此替代原
 /// `SHADER_VARIANTS` 预建穷举测试：按需构建下不再有"预建表"可漏）。
-fn variant_entry_point(variant: ShaderVariant) -> &'static str {
-    match variant {
-        ShaderVariant::Flat => "fs_flat",
-        ShaderVariant::Lambert => "fs_lambert",
-        ShaderVariant::Pbr => "fs_pbr",
+///
+/// **PI-04（PF-02）**：透明桶（`LayerBlend::Alpha` = 预乘 alpha over）必须用 `*_pm`
+/// 入口 —— `fs_*` 输出的是**直色**，直接进预乘混合会偏亮（`fusion` 的两个半透明面板）。
+/// 不透明（REPLACE）与 `Additive`（One/One）沿用直色入口，逐位不变。
+fn variant_entry_point(variant: ShaderVariant, blend: LayerBlend) -> &'static str {
+    match (variant, blend) {
+        (ShaderVariant::Flat, LayerBlend::Alpha) => "fs_flat_pm",
+        (ShaderVariant::Lambert, LayerBlend::Alpha) => "fs_lambert_pm",
+        (ShaderVariant::Pbr, LayerBlend::Alpha) => "fs_pbr_pm",
+        (ShaderVariant::Flat, _) => "fs_flat",
+        (ShaderVariant::Lambert, _) => "fs_lambert",
+        (ShaderVariant::Pbr, _) => "fs_pbr",
     }
 }
 
@@ -245,7 +252,7 @@ fn to_wgpu_cull_mode(cull: CullMode) -> Option<wgpu::Face> {
 /// IR `LayerBlend` → wgpu `BlendState`（后端翻译，B2-2）。
 ///
 /// - `Opaque` → `REPLACE`（与 B2-2 之前逐位一致）；
-/// - `Alpha` → **预乘** alpha over（`cube.wgsl` 输出预乘色，见 RC.1 注释）；
+/// - `Alpha` → **预乘** alpha over（透明桶走 `fs_*_pm` 入口，见 `variant_entry_point`）；
 /// - `Additive` → `src: One, dst: One`。
 fn to_wgpu_blend(blend: LayerBlend) -> wgpu::BlendState {
     match blend {
@@ -1357,7 +1364,7 @@ impl WgpuBackend3D {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &self.shader,
-                    entry_point: Some(variant_entry_point(key.variant)),
+                    entry_point: Some(variant_entry_point(key.variant, key.blend)),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: self.format,

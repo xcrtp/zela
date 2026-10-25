@@ -52,19 +52,26 @@ const SHADOWS_OFF: u8 = 2;
 /// 是否让灯投影（0 = 还没问过）。
 static SHADOWS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(SHADOWS_UNSET);
 
-/// **PB Step 1（V-01）**：显式开关阴影（宿主用：`ZELA_SHADOWS=1` / 浏览器 `?shadows=1`）。
+/// **PB Step 1（V-01）**：显式开关阴影（宿主用：`ZELA_SHADOWS=0` / 浏览器 `?shadows=0` 关）。
 ///
-/// 为什么不直接改 `shadows: false` 字面量：开阴影会让 `Buffers` 新增一块
-/// 2048²×4 的深度阵列（B17 之后随 `Player` 常驻 ⇒ **一次性** ≈67 MiB，不是每帧），
-/// 且会改 `[vector]` 基线。先给显式开关，实测通过后再谈默认。
+/// 为什么先给显式开关再谈默认：开阴影会让 `Buffers` 新增一块 2048²×4 的深度阵列
+///（B17 之后随 `Player` 常驻 ⇒ **一次性**，不是每帧），且会改 `[vector]` 基线。
+///
+/// **PI-3（2026-10-25）已按实测拍板：默认开。** 依据（M-3，`pbr_lights` 320×240）：
+/// GPU 每帧 3.645 → 3.604 ms（无可测变化，落在噪声内），资源 39 tex / 34.70 MB →
+/// 40 tex / 51.48 MB（**+16.77 MB 一次性**）。⇒ 只付一次显存，不付每帧时间。
 pub fn set_shadows(on: bool) {
     SHADOWS.store(
         if on { SHADOWS_ON } else { SHADOWS_OFF },
         std::sync::atomic::Ordering::Relaxed,
     );
+    // **PI-04（PC-05）**：阴影状态是 player 缓存的一个维度 —— 让渲染侧推进代数，
+    // 下一帧换一个 player（`shadow_maps` 只扩不缩，不能跨状态复用）。
+    zela_render_vector::set_shadow_state(on);
 }
 
-/// 当前是否投影：默认 **关**；native 首次读取时看 `ZELA_SHADOWS`，浏览器由 [`set_shadows`] 决定。
+/// 当前是否投影：默认 **开**（PI-3）；native 首次读取时看 `ZELA_SHADOWS`（`0` ⇒ 关），
+/// 浏览器由 [`set_shadows`] 决定。
 pub fn shadows() -> bool {
     match SHADOWS.load(std::sync::atomic::Ordering::Relaxed) {
         SHADOWS_ON => true,
@@ -72,14 +79,15 @@ pub fn shadows() -> bool {
         _ => {
             #[cfg(not(target_arch = "wasm32"))]
             let on = std::env::var("ZELA_SHADOWS")
-                .map(|value| matches!(value.trim(), "1" | "on" | "true"))
-                .unwrap_or(false);
+                .map(|value| !matches!(value.trim(), "0" | "off" | "false"))
+                .unwrap_or(true);
             #[cfg(target_arch = "wasm32")]
-            let on = false;
+            let on = true;
             SHADOWS.store(
                 if on { SHADOWS_ON } else { SHADOWS_OFF },
                 std::sync::atomic::Ordering::Relaxed,
             );
+            zela_render_vector::set_shadow_state(on);
             on
         }
     }
@@ -89,7 +97,12 @@ pub fn shadows() -> bool {
 //
 // 场景层没有"用哪个环境"的表达（`ze-scene-*` 只有方向光 / 点光，PG 不碰场景层），
 // 所以本批走**宿主开关**（与 PB Step 1 的 `ZELA_SHADOWS` 同一模式）：native 读
-// `ZELA_IBL=1`，浏览器由 [`set_environment`] 决定。默认关 ⇒ 既有基线逐位不变。
+// `ZELA_IBL`，浏览器由 [`set_environment`] 决定。
+//
+// **PI-3（2026-10-25）已按实测拍板：默认开。** 依据（M-4，`pbr_materials` 320×240）：
+// GPU 每帧 3.618 → 4.039 ms（**+0.42 ms / +11.6%**），资源**实际** ≈ +35.5 MB
+//（记账 +203.4 MB 是 `texture_bytes()` 对 mipmapped 纹理的过计：按 size×mip 级数算，
+// 实际约 4/3 ⇒ 计数口径缺口见 GAPS PI-07）。用户已确认接受这个每帧成本。
 //
 // 影棚本身是**程序化生成的**（`environment.rs::studio()`，1024×512 + 4 个柔光箱），
 // 不需要任何 radiance 资产 —— PD-03 里"需要真实资产"的旧成本描述已作废。
@@ -108,7 +121,7 @@ pub fn set_environment(on: bool) {
     );
 }
 
-/// 当前是否给视图加环境光：默认 **关**；native 首次读取时看 `ZELA_IBL`。
+/// 当前是否给视图加环境光：默认 **开**（PI-3）；native 首次读取时看 `ZELA_IBL`（`0` ⇒ 关）。
 pub fn environment() -> bool {
     match ENVIRONMENT.load(std::sync::atomic::Ordering::Relaxed) {
         ENVIRONMENT_ON => true,
@@ -116,10 +129,10 @@ pub fn environment() -> bool {
         _ => {
             #[cfg(not(target_arch = "wasm32"))]
             let on = std::env::var("ZELA_IBL")
-                .map(|value| matches!(value.trim(), "1" | "on" | "true"))
-                .unwrap_or(false);
+                .map(|value| !matches!(value.trim(), "0" | "off" | "false"))
+                .unwrap_or(true);
             #[cfg(target_arch = "wasm32")]
-            let on = false;
+            let on = true;
             ENVIRONMENT.store(
                 if on { ENVIRONMENT_ON } else { ENVIRONMENT_OFF },
                 std::sync::atomic::Ordering::Relaxed,

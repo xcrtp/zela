@@ -784,13 +784,13 @@
 | 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
 | PF-01 | **`ShaderVariant` 未映射**：`vector3d::mesh_record` 无条件写 `material: Some(...)` ⇒ Flat（无光照）也被 PBR 照亮 | 接缝 / 3D 着色 | **已关闭（Step 1）** | 判别：同一立方体只改变体，矢量侧三条哈希**完全相同**（`d2cf72af…` ×3），wgpu 三条不同（`dfc1f7e3…` / `4cc2fb7f…` / `fa90743d…`）。修后：Flat → 无材质（平涂）、Lambert → `[0,1,0.04]`（纯漫反射近似）、Pbr → 透传；三条矢量哈希变为 `9c51bff1…` / `a4293307…` / `d2cf72af…`。单测 `shader_variant_maps_to_material_semantics`。fusion 中心均值 77.7 → 128.6、峰值 137 → 222 |
-| PF-02 | **透明合成口径**：wgpu 透明 pipeline 用 `PREMULTIPLIED_ALPHA_BLENDING`，而 `cube.wgsl` 三个变体输出**直色** ⇒ wgpu 侧偏亮；矢量 OIT 的 alpha 合成是对的 | 后端关系 / 合成 | **记账（V-04 允许的"正确性修复"，本批不做）** | `wgpu_3d::to_wgpu_blend` 的注释写"cube.wgsl 输出预乘色"，但 `fs_flat` 返回 `albedo`（直色）、`fs_lambert` 返回 `color*lit`（直色）——注释与代码不符。修法在 wgpu 侧（预乘输出或改 blend），属冻结后端的正确性修复；本批 H1 不含 wgpu。X5-05 据此从"参数性落档"改为"结构性 + 剩余口径差异" |
+| PF-02 | **透明合成口径**：wgpu 透明 pipeline 用 `PREMULTIPLIED_ALPHA_BLENDING`，而 `cube.wgsl` 三个变体输出**直色** ⇒ wgpu 侧偏亮；矢量 OIT 的 alpha 合成是对的 | 后端关系 / 合成 | **已关闭（PI-05）** | `wgpu_3d::to_wgpu_blend` 的注释写"cube.wgsl 输出预乘色"，但 `fs_flat` 返回 `albedo`（直色）、`fs_lambert` 返回 `color*lit`（直色）——注释与代码不符。PI 批在 wgsl 侧修（新增 `fs_*_pm` 预乘入口，`LayerBlend::Alpha` 时选用），影响面实测枚举：只有 `fusion` 的 `[native]` 变（`dc61e7cf…` → `e5608dac…`），vector 不变 |
 | PF-03 | **2D 相机占位约束从渲染层泄漏到脚本层**：纯 3D 场景必须手写 `Camera2D`，否则装配期报错 | 装配 / 脚本 API | **已关闭（Step 2）** | `SceneAssembly.camera2d: Option<Camera2DHandle>`；无相机时只跳过 2D 录制。**H3**：无相机但**确有 2D 图元** ⇒ 显式错误（判据复用 `record_scene` 的 8 组组合，不另维护清单）。`demo3d.lua` / `pbr_lights.lua` / `fusion.lua` 三处占位已删除；三件 `[native]` 哈希**逐位不变**（`983c0d88…` / `1d1ea6b4…` / `dc61e7cf…`），纯 3D 无相机脚本的矢量哈希与带相机版本相同（`9c51bff1…`） |
 | PF-04 | **`double_sided` 在矢量侧不可表达**：后端没有 culling 开关，两面都画 | 接缝 / 3D | **记账** | 不透明网格两面深度遮挡 ⇒ 无差别；**半透明 + `double_sided = false`** 会多出背面。矢量桥已注释写明；要支持需给后端加三角形剔除（新增后端行为，违反本批边界） |
 | PF-05 | **overlay 坐标系与 2D 记录不同**：overlay 矩阵是 3D 视图的 frame 单位，而 `scene_records` 给的是屏幕像素偏移 | 接缝 / 2D-3D | **已关闭（Step 2）** | 实测症状：不换算时 2D 内容整体放大到画外（只剩网格）。修法：`overlay_records` 统一乘 `frame_w / width`（几何 / 描边宽度 / 渐变轴端点 / 背景宽度）。E-3 用例 `overlay_path_lands_on_the_screen_plane_in_a_3d_frame`：z=3 的 overlay 记录不随透视放大 |
 | PF-06 | **`capability_gaps` 仍不能进矢量**：混排已放行，但它还含 `Morph`（B14 记账、PD-03 顺延） | 作品 / 验证 | **记账（退路 §7）** | 决策日志实测：`首选 Vector 被拒 ⇒ 回退到 Wgpu`，原因「本帧含形变（Morph）项」。⇒ 混排证据改由新作品 `cap_mix`（cube + 2D 圆/箭头，静态 1 帧）承担，新增 1 条 `[vector]` 基线；`capability_gaps` 的矢量化要等 Morph 映射（PG） |
 
-**AB 段小计（PF）**：已关闭 3（PF-01、PF-03、PF-05）· 记账 3（PF-02、PF-04、PF-06）。
+**AB 段小计（PF）**：已关闭 4（PF-01、PF-02、PF-03、PF-05）· 记账 2（PF-04、PF-06）。
 
 ---
 
@@ -860,11 +860,37 @@
 
 ---
 
+## AE. PI 批次记账（渲染层收尾与成本度量，2026-10-25）
+
+> 计划《PI执行计划_渲染层收尾与成本度量》。四件事：**弥合最后一处纹理出口**、**把成本测出来**、
+> **按数据拍默认开关**、**收尾两项记账项**（外加一项 wasm CI 判别实验，不直接进 CI）。
+> 本段的核心是**数字**：M-1..M-5 全部落在这里，避免下一批在无历史的情况下重测（PJ 的可观测性 L1）。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PI-01 | **过时拒绝理由**：`routing.rs` 对"网格材质纹理不是内容层"仍写"矢量侧缺少该纹理的**上传入口**（PG Step 4）"，而 PG Step 4 正是**开这个入口**的那一步 | 路由 / 文档 | **已关闭** | 前半句（无生产方 ⇒ 显式拒绝）保留；后半句改为「上传入口已开放（PG-08 的 `TextureSource::Image` + `add_texture`），当前缺的是**场景层的非内容层纹理来源**（图片资产概念，属阶段三）」。判据：被拒作品数仍为 0（该分支的触发条件未变，只是把理由说对了） |
+| PI-02 | **F1 定性更正**：`TextureSource::Image` 的"零生产消费者"曾被定为阶段一未弥合接缝 | 契约 / 分层 | **已关闭（结论落档）** | 方向是**底层往上** ⇒ 按方向性原则**充分暴露、无需求方也保留**。消费者需场景层有图片资产概念（`Shape2D` 无 Image 变体、无图片组件）⇒ **阶段三**。接缝层唯一生产者是 `content_texture_handle`（`CONTENT_TEXTURE_ID_BASE`）⇒ 只能映射 `View`，映射 `Image` 在结构上不可达。**记此条是为了防止下一批再以「零消费者」为由讨论删它** |
+| PI-03 | **默认开关拍板**（依赖 PI-2） | 渲染 / 决策 | **已关闭** | **两个都开**（用户按 M-3/M-4 数据拍板）：`shadows()` / `environment()` 默认 `true`，`ZELA_SHADOWS=0` / `ZELA_IBL=0` 仍可关（浏览器 `?shadows=0`）。依据：阴影 +16.77 MB **一次性**、每帧无可测变化（M-3）；IBL +0.42 ms/帧（+11.6%）、实际 ≈+35.5 MB，用户确认接受（M-4）。⚠️ 只动 `[vector]` 基线（wgpu 侧 grep `shadow` / `env` 零命中，V-04 冻结） |
+| PI-04 | **PC-05 落地**：`shadow_maps` 只扩不缩 + `Player` 缓存键不含 shadows 状态 | 渲染 / 资源生命周期 | **已关闭** | `players` 键改为 `(w, h, samples, shadow_generation)`；`set_shadow_state(on)` 只在状态**真的变化**时推进代数（同值重复调用不换代，避免无谓重建）；`take_player` 先 `retain` 掉同 `(w,h,s)` 的旧代数再取新键 ⇒ 切换不再复用"上一种阴影状态"的 player。同 B18「只比有没有、不比是哪一个」的修法 |
+| PI-05 | **PF-02 落地**：wgpu 透明 pipeline 用 `PREMULTIPLIED_ALPHA_BLENDING`，而 `cube.wgsl` 三变体输出**直色** | 后端 / 合成 | **已关闭** | 在 wgsl 侧修（V-04 允许的正确性修复）：`cube.wgsl` 拆出 `color_*` 与 `fs_*_pm`（`premultiply(c) = vec4(c.rgb*c.a, c.a)`），`wgpu_3d::variant_entry_point(variant, blend)` 在 `LayerBlend::Alpha` 时选 `fs_*_pm`。**影响面实测枚举**（不是假设）：只有 `fusion` 变 —— native `dc61e7cf…` → `e5608dac…`，vector `8226d53b…` 不变；其余 13 条 `[native]` 逐位不变 |
+| PI-06 | **M-1 长跑**：资源是否随帧数增长 | 验证 / 资源 | **已关闭（有边界）** | `fourier` **12240 帧**、`fusion` **10200 帧**（320×240，`--fps` 放大帧数的压力代理）。两件都 `first == last`，末帧增量 0 ⇒ **无 churn**（B17 判据成立）。fourier 另有 2 个 buffer 的**一次性**增长（首帧 22 → 总 24）。⚠️ 边界：`帧数 = duration × fps` 是压力代理，**回答不了"能不能挂 24 小时"**（没有真实时间老化 / GC / 驱动长期行为） |
+| PI-07 | **M-2 内容纹理帧的每帧耗时**（PC 路线 A 引入，F4 从未补） | 验证 / 性能 | **已关闭** | `atlas` **120 帧**（剔除首帧）median **2.556 ms**、p99 **4.575 ms**；`surface_matrix` 只有 **1 帧**（`duration = 0`）⇒ **81.874 ms 是冷启动**，不能当稳态数字。口径：`ZELA_FRAME_TIMING=1` 的 `[timing]`，剔除 sink/hash 项 |
+| PI-08 | **M-3 / M-4 开阴影与开 IBL 的增量** | 验证 / 成本 | **已关闭** | **M-3**（`pbr_lights`）：关 GPU 3.645 ms / 39 tex 34.70 MB；开 GPU 3.604 ms / **40 tex 51.48 MB（+16.77 MB）** ⇒ 帧时间无可测变化（与 PC-07 的 16.7 MiB 独立吻合）。**M-4**（`pbr_materials`）：关 3.618 ms / 39 tex 34.70 MB；开 **4.039 ms（+0.42 ms / +11.6%）** / 42 tex，账面 +203.4 MB 但**实际 ≈ +35.5 MB**（见 PI-10） |
+| PI-09 | **M-5 浏览器侧回读增量**（PC 08 之后零数据） | 验证 / 浏览器 | **已关闭（有边界）** | Edge `--headless=new` + **真实适配器**（`nvidia/lovelace`，`--enable-unsafe-swiftshader --ignore-gpu-blocklist --enable-gpu-rasterization` ⇒ `navigator.gpu` 可用）、640×480、CDP 读状态行：`atlas`（内容层 + 材质纹理）**40 tex / 36 buf / 50.2 MB，7.22 ms/帧（138 fps）**；`surface_matrix`（内容层叠加）17 tex / 34 buf / 15.1 MB（1 帧）；对照 `pbr_scene`（纯 3D）38 tex / 29 buf / 35.3 MB，20.33 ms/帧（49 fps）、`fourier`（纯 2D）14 tex / 22 buf / 35.5 MB，29.36 ms/帧（34 fps）。⇒ ① **资源量级**与 PC-08（39 tex / 52.0 MB）同量级；② 回读走的是**每帧临时** staging buffer（不进常驻 totals）；③ ⚠️ **边界：跨作品对照被工作量差异淹没**（内容纹理作品反而最快）⇒ 本项只给同方法论量级对照，**没有隔离出"回读增量"这个单一数字** |
+| PI-10 | **资源计数过计**：`ResourceTotals::texture_bytes()` 对 mipmapped 纹理按 `size × mip_level_count` 求和 | 可观测 / 资源 | **记账** | M-4 因此记出 +203.4 MB，而同一份资源按"每级实际字节"求和只有 ≈ +35.5 MB（1024×512 影棚 + 预滤 mip 链，约 4/3 而非 6 倍）。⇒ 计数口径是"上限估计"，**不能当显存占用量引用**；修法需要按级尺寸逐级累加（改的是计数函数，不是渲染），留给可观测性批 |
+| PI-11 | **G-2 路径级纹理判别**（`FilledPath` / `StrokedPath` 无 texture 字段） | 契约 / 2D | **记账（不开）** | 判别结论：**无效**。① 两个路径记录类型**没有** texture 字段（只有 `MeshRecord.texture`，其文档已写明"纹理只对网格生效；路径记录没有采样器入口"）；② 后端唯一绑定图像的地方是 `Draw::draw` 的 `Kind::Mesh` 分支（`pass.set_bind_group(1, image_groups[..])`），`Kind::Path` 走解析覆盖度合成（`vector.wgsl` 无逐记录图像采样、无 uv）⇒ 即便硬写 `Record.texture` 也**画不出来**。按"路径无 uv 映射 ⇒ 记账不开"处置（与 V-13 ① 同型：先判别，再决定） |
+| PI-12 | **W-1 wasm CI 判别实验**：`step_wasm` 全是 `cargo check --target wasm32` ⇒ 现有"wasm 门禁"是编译门禁 | 验证 / CI | **已关闭（维持手动）** | 本地代理实验：Edge `--headless=new` + SwiftShader 组合**能**拿到 adapter（`nvidia/lovelace`；强制 `--use-webgpu-adapter=swiftshader` 反而 `no-adapter`），说明"headless 无 GPU"不是硬障碍。但 **ubuntu-latest 的 Chrome 未实测**（本机无法代表 CI 镜像），且既有政策已覆盖该边界（`architecture.yml`：托管 runner 无 GPU ⇒ 只断言 `--script == --bundle`、不比基线）。⇒ 结论写进 `WASM_PORT_SURVEY.md`：**维持手动浏览器实测**，不新建 CI 链路。边界照记：跨端浮点分歧首次出现在 fourier **第 103 帧**，而 smoke 只渲前 15 帧 ⇒ smoke 绿 ≠ 画面一致 |
+| PI-13 | **功耗零数据** | 验证 / 成本 | **记账** | 仓库内无任何功耗支持（无外部工具、无采样点）⇒ 本批如实记为「**无数据**」，不以帧时间代功耗 |
+
+**AE 段小计（PI）**：已关闭 10（PI-01、PI-02、PI-03、PI-04、PI-05、PI-06、PI-07、PI-08、PI-09、PI-12）· 记账 3（PI-10、PI-11、PI-13）。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AD**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AD 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–AE**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AE 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|

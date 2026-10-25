@@ -436,7 +436,7 @@ async fn run() -> Result<(), JsValue> {
         PRESENT_COPY.store(true, Ordering::Relaxed);
         web_sys::console::log_1(&JsValue::from_str("[copy] 呈现改用 copy_texture_to_texture"));
     }
-    // PB Step 1（V-01）：?shadows=1 / 0 显式开关阴影（默认关，见 GAPS V-01）。
+    // PB Step 1（V-01）：?shadows=1 / 0 显式开关阴影（默认开，PI-3 按 M-3 实测拍板）。
     if let Some(value) = params.get("shadows") {
         let on = matches!(value.as_str(), "1" | "on" | "true");
         zela_playback::vector3d::set_shadows(on);
