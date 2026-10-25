@@ -212,6 +212,17 @@ fn set_status(document: &Document, message: &str) {
     }
 }
 
+/// 取一帧 surface 纹理：必须在**同一个任务**里画完并 present（见帧循环里的注释）。
+fn current_texture(surface: &wgpu::Surface<'_>) -> Result<wgpu::SurfaceTexture, JsValue> {
+    match surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(texture)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => Ok(texture),
+        other => Err(js_err(format!(
+            "get_current_texture 未取得可用帧：{other:?}"
+        ))),
+    }
+}
+
 fn show_error(error: &JsValue) {
     let message = error
         .as_string()
@@ -587,21 +598,13 @@ async fn run_with(
         }
 
         // ── 渲染最后一步 ──
-        let output = match surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            other => {
-                return Err(js_err(format!(
-                    "get_current_texture 未取得可用帧：{other:?}"
-                )));
-            }
-        };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
+        //
+        // **帧纹理不跨 `await` 持有**：矢量渲染要等 GPU（OIT 计数回读），让出事件循环后
+        // 浏览器会回收已取到的 surface 纹理 ⇒ blit 写进已销毁的纹理、画面全黑，且合成器
+        // 随后停跑（rAF 不再回调）。因此矢量分支在渲染**之后**才取帧纹理（见下）。
         // 与 native 导出循环逐字一致：Advance → 构造回调 → 渲染 → end_frame。
         let Some(callback) = step_frame(&runtime, dt) else {
+            let output = current_texture(&surface)?;
             end_frame(&runtime);
             display_ctx.queue.present(output);
             index += 1;
@@ -652,6 +655,7 @@ async fn run_with(
                     .render_async(&runtime, WIDTH, HEIGHT, &vector_params, background)
                     .await
                     .map_err(js_err)?;
+                let output = current_texture(&surface)?;
                 present_vector_frame(&display_ctx, &mut scratch, &output, &rgba)?;
                 display_ctx.queue.present(output);
                 hasher.push_frame(&rgba);
@@ -662,6 +666,7 @@ async fn run_with(
                     .render_async(&runtime, WIDTH, HEIGHT, &vector_params, background)
                     .await
                     .map_err(js_err)?;
+                let output = current_texture(&surface)?;
                 present_vector_frame(&display_ctx, &mut scratch, &output, &rgba)?;
                 display_ctx.queue.present(output);
             } else {
@@ -680,10 +685,15 @@ async fn run_with(
                     )
                     .await
                     .map_err(js_err)?;
+                let output = current_texture(&surface)?;
                 target.present(&display_ctx, &output);
                 display_ctx.queue.present(output);
             }
         } else {
+            let output = current_texture(&surface)?;
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
             render_frame_to_view(
                 &display_ctx,
                 &mut display_backends,
