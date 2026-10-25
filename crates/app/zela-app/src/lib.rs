@@ -45,6 +45,10 @@ use zela_schedule::scheduler::Scheduler;
 mod assembly;
 pub mod export;
 mod formula;
+// 内嵌 Python 的前置探测：pyo3 初始化失败是 CPython 的 Fatal（abort），
+// Rust 侧捕获不到 ⇒ 必须在第一次碰 pyo3 之前先探测（见模块文档）。
+#[cfg(feature = "python")]
+mod python_env;
 // B9 Step 3：`zela-render` 与 `zela-verify` 共用的**唯一**帧循环。
 pub mod frame_loop;
 // B10 Step 2/4：3D 场景 → 矢量后端（`View3` + `MeshRecord`）的桥。
@@ -546,6 +550,17 @@ mod tests {
     use zela_scene_ecs::domain::CameraMode;
     use zela_scene_ecs::{AnimValue, Interp};
     use zela_schedule::scheduler::Phase;
+
+    /// Python 节点是否装上：解释器缺失 / 嵌入失败时 `assemble` 会**跳过**它（不崩），
+    /// 依赖 Python 的等价性用例随之跳过。
+    #[cfg(feature = "python")]
+    fn python_ready(assembly: &assembly::PodAssembly) -> bool {
+        if assembly.has_python() {
+            return true;
+        }
+        eprintln!("[skip] 本机 Python 解释器不可用 ⇒ 跳过该用例");
+        false
+    }
 
     /// **B3 Step 5 / 作品 A（非像素断言）**：`surface_matrix.lua` 的每种
     /// 脚本可表达组合都真的录进了内容层（Circle/Arrow 各 Fill+Stroke、Path Stroke）。
@@ -1471,6 +1486,9 @@ mod tests {
         // Python 版：同一个 placeholder 引擎。
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
             .expect("Pod 装配成功（含 Python）");
+        if !python_ready(&assembly) {
+            return;
+        }
         let script = assembly
             .run_python_script(crate::assembly::STORYBOARD_PY)
             .expect("Python 分镜执行成功");
@@ -1514,6 +1532,9 @@ mod tests {
 
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
             .expect("脚本 Pod 装配成功（含 Python）");
+        if !python_ready(&assembly) {
+            return;
+        }
         let lua = assembly
             .run_script(include_str!("../scripts/fourier.lua"))
             .expect("Lua 傅里叶脚本执行成功");
@@ -1842,6 +1863,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
 
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
             .expect("脚本 Pod 装配成功");
+        if !python_ready(&assembly) {
+            return;
+        }
         let lua_source = r#"
 local o = scene.spawn({ Transform { x = 0.0, y = 0.0, z = 0.0 } })
 scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes {
@@ -1898,6 +1922,9 @@ scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes
 
         let assembly =
             crate::assembly::assemble(std::sync::Arc::new(placeholder_engine())).expect("装配成功");
+        if !python_ready(&assembly) {
+            return;
+        }
         let script = assembly
             .run_python_script(
                 r#"
@@ -1963,6 +1990,9 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
 
         let assembly = crate::assembly::assemble(Arc::new(placeholder_engine()))
             .expect("Python + Lua 装配成功");
+        if !python_ready(&assembly) {
+            return;
+        }
         let report = assembly.broker.plan().validate().expect("装配图合法");
         assert!(
             report.order.iter().any(|name| name == "python"),
@@ -2079,6 +2109,9 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
 
         // 默认装配（python 是默认 feature）包含 python 节点，Lua 侧能看到 python 表。
         let assembly = crate::assembly::assemble(Arc::new(placeholder_engine())).expect("装配成功");
+        if !python_ready(&assembly) {
+            return;
+        }
         assert!(!assembly.lua.registered_global_names("python").is_empty());
     }
 }

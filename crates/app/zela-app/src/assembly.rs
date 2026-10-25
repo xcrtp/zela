@@ -84,20 +84,16 @@ fn requirements(service: &str, signatures: &[FnSig], required: bool) -> Vec<Serv
         .collect()
 }
 
-/// 装配失败：语言节点初始化或 Broker 校验。
+/// 装配失败：Broker 校验（语言节点初始化失败不再算装配失败，见 [`assemble`]）。
 #[derive(Debug)]
 pub enum AssemblyError {
     Broker(BrokerError),
-    #[cfg(feature = "python")]
-    Python(ze_pod_core::PodError),
 }
 
 impl std::fmt::Display for AssemblyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Broker(error) => write!(f, "{error}"),
-            #[cfg(feature = "python")]
-            Self::Python(error) => write!(f, "Python 适配器初始化失败：{error}"),
         }
     }
 }
@@ -129,6 +125,12 @@ impl PodAssembly {
     /// `content` 能力是否被脚本实际调用过（ZSB Meta 的最小集口径）。
     pub fn content_used(&self) -> bool {
         self.content.used()
+    }
+
+    /// Python 节点是否真的装上了（解释器缺失 / 嵌入失败时会跳过，见 [`assemble`]）。
+    #[cfg(all(test, feature = "python"))]
+    pub fn has_python(&self) -> bool {
+        self.broker.nodes().iter().any(|node| node.name == "python")
     }
 
     /// 宿主 → Lua：执行分镜脚本，取回 `SceneScript`。
@@ -166,11 +168,29 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
 
     #[cfg(feature = "python")]
     {
-        let python = Arc::new(ze_pod_py::PyPod::new().map_err(AssemblyError::Python)?);
-        python.register_capability::<SceneApi>("scene", true);
-        python.register_capability::<ContentApi>("content", true);
-        // P1：Python 闭包要求 `Send + Sync` ⇒ 登记 SyncPod 徽章，Broker 走 inject_sync。
-        nodes.push(PodNode::new_sync("python", python, &["python"]));
+        // 内嵌 Python 的初始化失败是 CPython 的 **Fatal**（`Py_InitializeEx` 直接
+        // `abort()`），Rust 侧既捕获不到也没机会提示。所以：
+        //   1. 先起子进程探测"有一个能 import encodings 的解释器"，并把它指给
+        //      `PYTHONHOME`（`python_env` 的文档里写了真因）；
+        //   2. 探测或 `PyPod::new()` 任一步失败 ⇒ **只提示、跳过本节点**，
+        //      其余 Pod（scene / content / lua）照常装配。
+        match crate::python_env::ensure() {
+            Ok(()) => match ze_pod_py::PyPod::new() {
+                Ok(python) => {
+                    let python = Arc::new(python);
+                    python.register_capability::<SceneApi>("scene", true);
+                    python.register_capability::<ContentApi>("content", true);
+                    // P1：Python 闭包要求 `Send + Sync` ⇒ 登记 SyncPod 徽章，Broker 走 inject_sync。
+                    nodes.push(PodNode::new_sync("python", python, &["python"]));
+                }
+                Err(error) => {
+                    eprintln!("[zela-app] Python Pod 未装配（其余 Pod 照常）：{error}")
+                }
+            },
+            Err(why) => {
+                eprintln!("[zela-app] Python Pod 未装配（其余 Pod 照常）：{why}")
+            }
+        }
     }
 
     #[cfg(feature = "js")]

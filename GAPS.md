@@ -815,7 +815,9 @@
 | PG-11 | **`RenderParams` 仍失效的 3 个字段** | 契约 / 后端 | **记账（Step 1 结论）** | `msaa` / `supersample` / `filter`：矢量后端没有对应旋钮（采样数由 adapter + `?msaa=` 排查开关决定；无超采样；采样器固定 linear）。要接就先定语义，不在本批硬做 |
 | PG-12 | **demo payload 断言只在 CI 上跑** ⇒ 脚本改动后 push 才红 | 验证 / 门禁 | **已关闭（PG 补丁：新增验证步骤）** | 两次同型事故：PF 的 `demo3d`（删占位相机）、PG 的 `pbr_materials`（同因）。根因：Pages 工作流只跑 `build.ps1`，而 `cargo verify` 的七步里没有任何一步编译 manifest 里的作品 ⇒ 删一个场景对象改了 ZSB，本地全绿、CI 当场红（`payload hash 不符（pbr_materials / linux）：实测 e1688f07… 期望 6eeed7ff…`）。修法：新增 `cargo verify --step demo`（在 `check…coverage` 之后、`smoke` 之前），逐条按 manifest 编译并断言 `payload hash`，字体目录由 `cargo_command` 统一注入；口径与 `build.ps1` 逐字一致（`-` 跳过、`windows:…,linux:…` 只断言本机平台）。连带修正 4 条 manifest 值：`pbr_materials e1688f07…`、`pbr_scene 75bb7816…`、`shaded_meshes 7d7081ba…`、`atlas 1233e169…`（都是删占位相机导致的 ZSB 变化；`pbr_lights` / `surface_matrix` 等未变）。本机实测 22 条断言通过 |
 
-**AC 段小计（PG）**：已关闭 10（PG-01…PG-05、PG-07…PG-10、PG-12）· 记账 2（PG-06、PG-11）。
+| PG-13 | **内嵌 Python 初始化失败会让整个进程死掉**（`cargo run` 报 `Fatal Python error: Failed to import encodings module`） | 装配 / 环境 | **已关闭** | 真因：`pyo3` 的 `auto-initialize` 在 Windows 上按**本进程 exe** 推算前缀 ⇒ 找不到 `Lib/encodings`；而这是 CPython 的 **Fatal**（`abort()`），Rust 侧捕获不到 ⇒ 只能**前置探测**，不能靠 `Result`。修法：`ze-pod-py/build.rs` 从 pyo3 的 `links` 配置取出**编译期解释器**（`ZELA_PYO3_EXECUTABLE` / `ZELA_PYO3_VERSION`）；`zela-app/src/python_env.rs` 在第一次碰 pyo3 之前用它（备选 `PYO3_PYTHON` → `python`/`python3`/`py -3` → PATH 扫描）跑 `import encodings` 并取 `sys.prefix` 写 `PYTHONHOME`，且**版本必须与编译期一致**（实测 PATH 里 msys64 的 3.14 排在 anaconda 3.13 之前，指错前缀照样 Fatal）；找不到 ⇒ 打印可操作提示并**跳过 Python Pod**（其余 Pod 照常），不再 abort。实测（不设任何 Python 环境变量）：`zela-render demo3d.lua` 装配 `scene -> content -> python -> lua`、渲染 8 帧完成 |
+
+**AC 段小计（PG）**：已关闭 11（PG-01…PG-05、PG-07…PG-10、PG-12、PG-13）· 记账 2（PG-06、PG-11）。
 
 ### Step 1 普查表（A 方向：场景层已经要给、渲染层丢掉；B 方向：后端已有、公开面没有）
 
