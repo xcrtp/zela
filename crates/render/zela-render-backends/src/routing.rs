@@ -58,11 +58,14 @@ pub struct FrameContent {
     pub has_line_meshes: bool,
     /// 是否含内容纹理 / Surface 图层。
     pub has_content_texture: bool,
-    /// 内容纹理是否被 **3D 材质采样**（`composite = false`）。
-    ///
-    /// PC（路线 A）：`composite = true` 的层可由矢量"图层级"叠加（内容层自己渲、再合成），
-    /// 不再拒绝整帧；只有要被材质采样的层才需要矢量侧纹理采样（路线 B）。
+    /// 是否有**被 3D 材质采样**的内容层（`composite = false`，PG Step 2 的路线 B）。
     pub has_material_content: bool,
+    /// 网格材质引用的纹理里，是否有**没有生产方**的（不是本帧的内容层）。
+    ///
+    /// **PG Step 2（路线 B）**：`composite = false` 的内容层由矢量侧当相机视图先渲、
+    /// 网格按句柄采样 ⇒ 不再因"内容纹理被材质采样"整帧拒绝。仍然拒绝的只剩
+    /// "纹理不是本帧内容层"（图像资产上传入口还没开，见 Step 4）。
+    pub has_unserved_material_texture: bool,
     /// 是否含形变（Morph）项（B14）：矢量后端尚未映射 ⇒ 显式拒绝，不静默丢。
     pub has_morphs: bool,
     /// 本帧用到的**仅矢量支持**的绘制参数（位掩码，见 `ze_render_ir::PathOptions`）。
@@ -226,12 +229,13 @@ fn reject_reason(
                 }
             }
             // 2) 内容能力（与 frame_loop 里原先"硬报错"的判据同一组事实）。
-            // PC（路线 A）：`composite = true` 的内容层可以图层级叠加（内容层自己渲），
-            // 不再因"整帧含内容纹理"拒绝；只有被 3D 材质采样的层仍需要路线 B。
-            if content.has_material_content {
+            // PC（路线 A）解了 `composite = true` 的图层级叠加；PG Step 2（路线 B）解了
+            // `composite = false` 的材质采样（内容层当相机视图先渲）。仍画不了的只有
+            // "材质的纹理不是本帧内容层" ⇒ 显式拒绝。
+            if content.has_unserved_material_texture {
                 return Some(
-                    "本帧的内容纹理被 3D 材质采样（composite = false）⇒ 需要矢量侧纹理采样，\
-                     属路线 B（GAPS PC-01 / PB-04）"
+                    "本帧有网格材质的纹理不是内容层（没有生产方）⇒ 矢量侧缺少该纹理的\
+                     上传入口（GAPS PG Step 4：纹理资产）"
                         .to_string(),
                 );
             }
@@ -278,7 +282,10 @@ pub fn route_with_order(
                     format!("首选 {who:?} 被拒 ⇒ 回退到 {kind:?}")
                 };
                 // PC（S1-5）：后端组合方式必须可观测 —— 含内容层时不是"纯矢量"。
-                let reason = if *kind == BackendKind::Vector && content.has_content_texture {
+                // PG Step 2：材质采样的层叫"采样"，不是"叠加"（两者语义不同，不能混写）。
+                let reason = if *kind == BackendKind::Vector && content.has_material_content {
+                    format!("{reason}（图层级：内容层由矢量渲染、3D 材质按纹理采样）")
+                } else if *kind == BackendKind::Vector && content.has_content_texture {
                     format!("{reason}（图层级：内容层由矢量渲染后叠加）")
                 } else {
                     reason
@@ -361,12 +368,12 @@ mod tests {
         assert!(decision.reason.contains("自动"));
     }
 
-    /// §6.3 的核心增量：`--backend vector` + **被材质采样的**内容纹理 ⇒ 回退 wgpu，**理由非空**。
+    /// §6.3 的核心增量 + **PG Step 2**：材质的纹理**没有生产方** ⇒ 回退 wgpu，**理由非空**。
     #[test]
     fn vector_falls_back_to_wgpu_with_a_reason() {
         let content = FrameContent {
             has_content_texture: true,
-            has_material_content: true,
+            has_unserved_material_texture: true,
             ..plain_2d()
         };
         let decision = route(LoopBackend::Vector, content, capable()).unwrap();
@@ -382,12 +389,34 @@ mod tests {
     fn composited_content_is_no_longer_rejected() {
         let content = FrameContent {
             has_content_texture: true,
-            has_material_content: false,
+            has_unserved_material_texture: false,
             ..plain_2d()
         };
         let decision = route(LoopBackend::Vector, content, capable()).unwrap();
         assert_eq!(decision.backend, BackendKind::Vector);
         assert!(decision.rejected.is_empty(), "图层级内容不应被拒");
+    }
+
+    /// **PG Step 2（路线 B）**：被材质采样、但纹理由本帧内容层生产的层 ⇒ 矢量接受
+    /// （内容层当相机视图先渲，网格按句柄采样）。
+    #[test]
+    fn material_sampled_content_is_served_by_a_camera_view() {
+        let content = FrameContent {
+            has_3d_camera: true,
+            has_meshes: 1,
+            has_content_texture: true,
+            has_material_content: true,
+            has_unserved_material_texture: false,
+            ..plain_2d()
+        };
+        let decision = route(LoopBackend::Auto, content, capable()).unwrap();
+        assert_eq!(decision.backend, BackendKind::Vector);
+        assert!(decision.rejected.is_empty(), "有生产方的材质纹理不应被拒");
+        assert!(
+            decision.reason.contains("纹理采样"),
+            "理由必须写明是材质采样：{}",
+            decision.reason
+        );
     }
 
     /// 显式矢量 + 能力齐备 + 单纯 2D ⇒ 真的用矢量（不回退）。
@@ -557,7 +586,7 @@ mod tests {
             plain_2d(),
             FrameContent {
                 has_content_texture: true,
-                has_material_content: true,
+                has_unserved_material_texture: true,
                 ..plain_2d()
             },
             FrameContent {
@@ -620,7 +649,7 @@ mod tests {
     fn decision_json_escapes_and_carries_the_rejection() {
         let content = FrameContent {
             has_content_texture: true,
-            has_material_content: true,
+            has_unserved_material_texture: true,
             ..plain_2d()
         };
         let decision = route(LoopBackend::Vector, content, capable()).unwrap();
@@ -628,7 +657,7 @@ mod tests {
         assert!(line.starts_with("[decision] {"));
         assert!(line.contains("\"backend\":\"Wgpu\""));
         assert!(line.contains("\"backend\":\"Vector\",\"reason\":\""));
-        assert!(line.contains("内容纹理"));
+        assert!(line.contains("纹理"));
         assert!(!line.contains('\n'));
     }
 }

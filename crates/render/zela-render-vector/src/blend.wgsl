@@ -540,7 +540,12 @@ fn shaded(in: Shaded) -> vec4<f32> {
 fn lit_light(in: Shaded, texel: vec4<f32>) -> vec4<f32> {
     var base = in.color;
     if (in.textured != 0u) {
-        base = vec4<f32>(texel.rgb / max(texel.a, 1e-6), texel.a * in.color.a);
+        // Modified by Zela（PG Step 2）：纹理是**预乘 decal**，叠在材质色**之上** ——
+        // 与 wgpu 侧 `cube.wgsl` 的 `albedo = tex.rgb + color * lit * (1 - tex.a)` 同一语义。
+        // 上游原本是「画面即表面」（`texel.rgb / texel.a` 取代材质色）⇒ 透明的内容层
+        // （如 Surface 的文字画布）会让整块表面消失、只剩墨迹。逐位影响面严格限于
+        // 「带纹理 + 有材质」的记录：不透明画面（`texel.a = 1`）两项都退化为 `texel.rgb`。
+        base = vec4<f32>(texel.rgb + in.color.rgb * (1.0 - texel.a), in.color.a);
     }
     let v = select(view.toward.xyz, normalize(view.eye.xyz - in.world), view.eye.w > 0.5);
     let m = material_of(in.i);

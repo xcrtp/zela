@@ -37,8 +37,8 @@ mod render;
 
 pub mod api;
 pub use api::{
-    Dash, FilledPath, Gradient, Light, MeshRecord, PathOptions, PathRecord, SecondPaint,
-    StrokedPath, View3, ViewOptions,
+    CameraView, Dash, FilledPath, Gradient, Light, MeshRecord, PathOptions, PathRecord, PointsRecord,
+    SecondPaint, StrokedPath, TextureSource, View3, ViewOptions,
 };
 // B15：同步读回只在 native 存在；浏览器只有异步面（没有阻塞读回）。
 #[cfg(not(target_arch = "wasm32"))]
@@ -56,6 +56,8 @@ pub use render::init_gpu;
 pub use render::{ResourceTotals, resource_totals, take_resource_totals};
 // B18：MSAA 能力查询（adapter 自述）、判别实验的采样覆盖、链表溢出的显式记录。
 pub use render::{OverflowTotals, ShadowTotals, msaa_samples, set_sample_override, take_overflow_totals, take_shadow_totals};
+/// **PG Step 3**：内置影棚的 id（`EnvironmentLight` 没有图时用它；**程序化生成，零资产**）。
+pub const BUILTIN_ENVIRONMENT: u32 = environment::STUDIO;
 // B18：移动端条纹的逐项排查开关（页面 `?skip=`；默认 0 = 全开）。
 pub use render::{SKIP_AO, SKIP_BLOOM, SKIP_DEPTH, SKIP_ENVIRONMENT, SKIP_LIGHT, SKIP_SHADOW, SKIP_STENCIL, set_skip};
 
@@ -81,8 +83,11 @@ pub fn digest<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> u64 {
     hasher.digest().max(1)
 }
 
-/// 相机视图：(key, width, height, view, records)。
-pub(crate) type CameraView = (u64, u32, u32, Vec<u8>, Vec<u8>);
+/// 打包好的相机视图：(key, width, height, view, records)。
+///
+/// 与公开类型 [`api::CameraView`] 区分：那个由调用方给（含 `PathRecord`），
+/// 这个已经过 `prepare_view` 上传成字节。
+pub(crate) type CameraFrame = (u64, u32, u32, Vec<u8>, Vec<u8>);
 
 pub(crate) fn check_key(key: u64) -> Result<(), String> {
     if key == 0 {

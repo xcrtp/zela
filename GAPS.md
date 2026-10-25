@@ -439,7 +439,7 @@
 | X1-01 | 渲染能力契约只描述 namespace（标量 / 枚举），**无法表达"这个后端接受哪种 3D 网格"** | 渲染 IR | **已关闭（B10 Step 1）** | `RenderCapabilitySet` 新增 `mesh: MeshForms`（`MeshForm::Tri` / `Line`）+ `require_mesh()`：不支持所请求形态 ⇒ **显式报错**（不静默换一种）。`from_names` **不猜**（留空集），两个后端各自显式自述 `tri`（wgpu：`standard_3d()`；矢量：`Upload::mesh` 的 `triangles`）。单测 3 条：`from_names_does_not_guess_mesh_forms` / `unsupported_mesh_form_fails_explicitly` / 并集 |
 | X1-02 | 上游的 `Upload::{Mesh, Texture, Environment}` 与 `Record` 的 mesh 记录都在，但 `pub(crate)` 挡住 ⇒ 宿主无法提交 3D 网格 | 渲染后端 / 宿主 | **已关闭（B10 Step 2/3）** | 新公开入口：`MeshRecord`（f64 顶点 / 可选 UV·法线 / u32 三角形 / 材质 / 模型矩阵）+ `PathRecord::Mesh` + `render_3d_with(width,height,samples,view,records)`；`Record::mesh` 写 `params=[0, 三角形数]` 与 `material[3]=1`（受光的关键）。⚠️ **计划 §5.1 与代码不符**：计划说"顶点解析按 f32/u32 硬编码、缺 Float2x3，是全批唯一需发明处"；本仓的 `mesh::Mesh::new` 实际吃 **f64 三元组**（`read::<[f64;3]>`）并在内部压成 `[pos,v]/[normal,u]` ⇒ **不需要新增顶点格式分支**，Step 3 退化为"加一个记录变体" |
 | X1-03 | `Material3D` 没有 upstream 的 reflectance 分量（材质四元组是 `[metallic, roughness, reflectance, 1]`） | 场景组件 / 材质映射 | **记账（B10 Step 2；PA Step 3 同步文字）** | 宿主桥取常数 **0.04**（电介质 F0；B14 Step 2 从旧值 0.5 改来），写在 `zela_playback::vector3d::DEFAULT_REFLECTANCE`（B11 Step 5 从 `zela-app` 移入）。触发：作品需要金属/电介质强区分时，把 reflectance 进 `Material3D`（会改场景 API 版本） |
-| X1-04 | **环境图（IBL）**：上游 `Upload::Environment` 与 `Light::Environment{id}` 已接出，但场景脚本没有环境图入口，`RenderParams.env` 也没有任何代码桥接到上传 | 渲染后端 / 脚本 | **记账（B10 Step 2）** | `Light::Environment { id }` 按上游编码（`kind=4`，id 放 `slot[7]`）；`upload(Upload::environment(...))` 可用了。触发：脚本层需要"环境光照"时，先定环境图的 ZSB 载体（图片资源）与 `RenderParams.env` 的宿主接线 |
+| X1-04 | **环境图（IBL）**：上游 `Upload::Environment` 与 `Light::Environment{id}` 已接出，但场景脚本没有环境图入口，`RenderParams.env` 也没有任何代码桥接到上传 | 渲染后端 / 脚本 | **部分关闭（PG Step 3：内置影棚走通；自定义 .hdr 仍记账）** | PG 实测真因更深一层：环境灯槽位只写了 `kind` / `id`，`color.rgb` 与 `axis.w` 为 0 ⇒ `light.wgsl` 的 kind-4 分支把整项乘成 0（**接了也不发光**）。PG 补齐编码（id 移到 `cone.x`）并接上 `RenderParams.env` + 宿主开关 `ZELA_IBL`，内置影棚（程序化生成、零资产）实测金属亮度 47.5 → 93.1。**仍缺**：自定义 .hdr 的上传出口（`add_environment` 仍 `pub(crate)`）与脚本层表达力 |
 | X1-05 | 着色栈的**作品级证据**（V2-15 的收尾）：此前只有单元测试，没有一件作品在着色栈下出帧 | 作品 / 基线 | **已关闭（B10 Step 4）** | 新作品 `shaded_meshes.lua`（墙 + 地板 + 中央亮立方体，全部是真网格）+ `--backend vector`：帧哈希 **`58ab1f0e…`** 进 `[vector]` 基线。判据（`tests/vector3d_shading.rs`，同一份 ZSB 只切 `vector_params`）：tone AgX≠clip（差 >2000 像素）、bloom 关掉更暗、AO 关掉更亮。`frame_loop` 的 3D 分支：`Camera3D → View3`、`LightQueue → Light`（方向取反 + 环境 0.2）、`DrawQueue::meshes → MeshRecord` |
 | X1-06 | 2D 图元与 3D 网格**混排帧**仍不支持：有 3D 相机时若队列里还有 2D 图元 ⇒ 显式报错 | 渲染后端 / 装配 | **已关闭（PF Step 2）** | 2D 记录以 `PathOptions.overlay`（`Record.flags` 的 OVERLAY 位）叠进 3D 帧：`scene_records` 产出的像素偏移乘 `frame_w/width` 换到 overlay 坐标系；路由不再拒绝混排并在理由里写明「图层级：N 条 2D 记录以屏幕平面叠加进 3D 帧」。能力用例 `overlay_path_lands_on_the_screen_plane_in_a_3d_frame`（E-3：z=3 的 overlay 记录不随透视放大）；作品 `cap_mix`（cube + 2D 圆/箭头，新 `[vector]` 基线）。H3：网格类 2D 记录不进 overlay ⇒ 显式报错 |
 | X1-07 | 矢量后端的 2D 入口**不吃** `RenderParams`（`render_scene_2d` 仍用 `ViewOptions::default()`）⇒ 同一份 `params` 在 2D/3D 两条路径上的含义不一致 | 渲染后端 / 宿主 | **记账（B10 Step 4）** | 实测：`vector_paths` 的帧哈希在 B10 前后**逐位不变**（`98d61c1a…`）—— 2D 分支不读 params，所以"着色栈默认开"只影响 3D 帧。触发：2D 也要 tone/bloom 时，把 `ViewOptions` 从 `RenderParams` 投影过去（会改 2D 基线） |
@@ -448,7 +448,7 @@
 | X1-10 | **字形孔洞被填**：`ze_content::stroke_outlines` 按**子轮廓**产出多条 `StrokeOutline` ⇒ `content.text` 给每个 counter（`o`/`e` 的内圈）一个独立 `Path`，脚本逐条 `Fill` ⇒ 内圈被当作实心形状填满（wgpu / 矢量后端表现一致，与渲染器无关） | 内容路径 / 矢量后端作品 | **已关闭（字形孔洞修复）** | `stroke_outlines` 改为**每个字形一条** `Path2D`（全部子轮廓 `MoveTo` 分段 + `Close`，闭合时去掉重复尾点），填充按 nonzero 规则挖孔。证据：`vector_paths` 修复前后同帧仅 **424 px** 变化，bbox x 281–369 / y 419–440（正是 `e`、`o` 的 counter），其余笔画逐像素不变；`ze-content` 新增 `counter_contour_stays_in_the_same_path`，矢量后端既有 `concave_ring_keeps_its_hole` 证明多子路径 nonzero 正确。payload 随字形数变化（fourier 63→50 对象），`[vector] vector_paths` 重录为 `07bd4301…` |
 | X1-11 | **4 条 `[native]` 帧基线相对 HEAD 不可复现**（fourier / storyboard / surface_matrix / surface_matrix.js）：实测 `45669d03…` / `e6ed98b6…` / `9a34bf69…`，基线 `b6eaa864…` / `6de42d6b…` / `928cd5f9…` | 基线 / 验证 | **已关闭（B13 Step 0）** | 病因 = **同一作品两套字体口径**：payload 断言在 `build.ps1` 的 `ZELA_TYPST_FONT_DIR` 下做，帧基线却在系统字体下录（`grep ZELA_TYPST_FONT_DIR xtask/` 零命中）。修法：`tools/typst-fonts.txt` 成为唯一真源（版本 + 文件名 + SHA-256），`build.ps1` 与 xtask 共读；xtask 的 `cargo_command`（`xtask/src/main.rs`）对**所有**对拍子进程注入 `ZELA_TYPST_FONT_DIR`，字体缺失**显式报错**（不静默退回系统字体）。关闭判据 = **可复现**：同代码连续两次录制 16 条哈希逐位相同（`target/xtask/b13-font-run1|2.log`）。4 条新值 `0cb8b4a1…` / `be286560…` / `a6e4394c…`（`surface_matrix` 与 `_js` 相同）；另外 atlas `d180e51f…`、vector_paths `c34f7a3d…` 同步变化（两件也含文本）。此前排除项（回退 `stroke.rs` diff = 0、旧代码+确定字体 = payload `a5bdfbe7…` 等）逐条保留，见 git 历史 `25c1d3a` 的提交说明 |
 
-**N 段小计（B10）**：已关闭 8（X1-01、X1-02、X1-05、X1-06、X1-08、X1-09、X1-10、X1-11）· 记账 3（X1-03、X1-04、X1-07）。
+**N 段小计（B10）**：已关闭 8（X1-01、X1-02、X1-05、X1-06、X1-08、X1-09、X1-10、X1-11）· 部分关闭 1（X1-04）· 记账 2（X1-03、X1-07）。
 
 ---
 
@@ -745,7 +745,7 @@
 |---|---|---|---|---|
 | PD-01 | **覆盖范围从未被声明**：27 条基线与 `zela-parity` 只覆盖公开出来的子集 | 文档 / 验证 | **已关闭（PD Step 1）** | 普查对照表落进 `ARCHITECTURE.md` 的 PD 节：后端能力 / 真实语义 / 公开面 / 场景层四列，未覆盖项逐条列明。已核实的反例：`Shape2D` 10 个变体**全有且全在用**（缺的是场景对象）；`paint.wgsl` 的 `stops(first, second, count, m, t)` **原生支持多 stop** |
 | PD-02 | **已实现但未暴露的参数**（标量 / 双 paint / dash / gradient / 逐顶点色） | 渲染 / 公开面 | **已关闭（PD Step 2 + 3）** | 新增 `PathOptions { background, background_width, second, dash, curve_window, gradient }` 与 `MeshRecord::{colors, second}`；每个字段都指向 `Record` 的既有槽位（`apply_options`）。逐参 GPU 用例：`background_stroke_changes_pixels_outside_the_fill`、`second_paint_replaces_the_fill_at_mix_one`、`dash_breaks_a_stroke`、`curve_window_shows_only_the_first_curve`、`gradient_stops_vary_along_the_axis`（含 2 vs 3 stop 中点差异）、`per_vertex_colors_replace_the_mesh_fill`；错误路径 `option_errors_are_explicit`（色标 < 2 / period = 0 / 窗口反向 / 顶点色数不符） |
-| PD-03 | **剥离到 PE 的能力**：纹理 / morph / IBL / 场景图元 / 点云逐点色 | 渲染 / 公开面 | **记账（PD §8 退路）** | 各自的具体阻塞：**纹理** = 需要先设计"纹理源"（图像 or 内容层 key）+ `TEXTURED` 标志，与 PB-04 的路线 B 是同一件事；**morph** = `clip = C1·S1 + C2·S2`，第二项是**差值形状**且权重烤进 `m2`（`dash[3]` 只管 paint2），"传目标几何 + mix"的 API 形状与后端语义不符，需要先定形状再暴露；**IBL** = `Upload::Environment` 要 rgbe 解码 + cube 绑定 + `Light::Environment` 桥接，且用例需要真实 radiance 资产（= V-03 / X1-04）；**场景图元** = `Ellipse`/`Polygon`/`Polyline` 是场景对象，改的是组件注册表与 `zela.scene` 指纹，不是 Record 暴露；**点云逐点色** = 公开面还没有 Points 记录类型，逐点色无处可挂。**每项都必须先写出"改变输出"的用例才许进公开面（P3）** |
+| PD-03 | **剥离到 PE 的能力**：纹理 / morph / IBL / 场景图元 / 点云逐点色 | 渲染 / 公开面 | **记账（PD §8 退路）** | 各自的具体阻塞：**纹理** = 需要先设计"纹理源"（图像 or 内容层 key）+ `TEXTURED` 标志，与 PB-04 的路线 B 是同一件事；**morph** = `clip = C1·S1 + C2·S2`，第二项是**差值形状**且权重烤进 `m2`（`dash[3]` 只管 paint2），"传目标几何 + mix"的 API 形状与后端语义不符，需要先定形状再暴露；**IBL** = **零资产**：内置影棚 `STUDIO` 是程序化生成的（`environment.rs:216 studio()`，1024×512 + 4 个柔光箱，`render.rs:3581` 惰性 `or_insert_with`），缺的只是公开面出口 + 场景层接线（PG 已改此条，原文"需要真实 radiance 资产"不成立）；**场景图元** = `Ellipse`/`Polygon`/`Polyline` 是场景对象，改的是组件注册表与 `zela.scene` 指纹，不是 Record 暴露；**点云逐点色** = 公开面还没有 Points 记录类型，逐点色无处可挂。**每项都必须先写出"改变输出"的用例才许进公开面（P3）** |
 | PD-04 | **单位与坐标口径的陷阱**：`dash` 的 period 是**曲线参数 u**（1 = 一条曲线），不是像素；渐变的轴端点在**场景空间**、不吃 `model` | 公开面 / 语义 | **已关闭（PD Step 2：写进类型文档 + 用例钉住）** | `Dash` 文档写明 u 单位；`Gradient` 文档写明轴端点要传"模型变换之后"的位置（上游 `paint()` 直接投影 `gradient_a/b`，不乘记录矩阵）；`curve_window` 的 `[lo, hi]` 也是曲线索引 + t（`vector.wgsl` 的 `piece()` 先减曲线号再 clamp）。三条都各有用例或显式报错，不靠口头约定 |
 | PD-05 | **指纹一次付清**：`Style2D` / `Shape2D` / 场景组件本批是否需要动 | 契约 / 版本 | **已关闭（PD Step 2）** | 都没有动：新参数挂在矢量 crate 的公开结构（`PathOptions` / `MeshRecord`）上，`Record` 结构体尺寸与布局不变（336 字节断言仍在）。⇒ `zela.scene` 指纹**不变**，27 条基线 DIFF 0。`Record` 只把 10 个字段的可见性放宽到 `pub(crate)`（同 crate 内），不产生行为差异 |
 | PD-06 | **记账残余**：`MeshRecord` 文档仍写"本批不带纹理"、V-03 仍列 6 个失效字段 | 文档 | **已关闭（PD Step 4）** | `MeshRecord` 的"不带纹理"仍然成立（PD-03）；V-03 已在 PB 划掉 bloom 两项、现剩 4 项（`env` / `msaa` / `supersample` / `filter`），本轮复核无变化 |
@@ -794,11 +794,49 @@
 
 ---
 
+## AC. PG 批次记账（渲染能力全开放与自封闭，2026-10-25）
+
+> 计划《PG执行计划_渲染能力全开放与自封闭》。一句话：**把后端已写好、没有出口的能力开出出口；
+> 把渲染层强加给调用方的约束拆掉**，仍不碰 `ze-scene-*`。
+> 判别逻辑按计划 §1.4 硬执行：每个能力先做判别实验，做不到就剥离。
+
+| 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| PG-01 | **占位相机（自封闭反例）**：纯 3D 作品必须手写 `Camera2D` | 装配 / 脚本 | **已关闭（Step 0）** | 删 4 处：`pbr_materials` / `pbr_scene` / `shaded_meshes` / `atlas`。`[native]` 逐位不变（`pbr_materials 834ad967…`、`pbr_scene ff2ae135…`、`atlas e330bbc0…`），`shaded_meshes [vector] 1bfa7b43…` 不变。**第 5 处 `surface_matrix` 经判别实验保留**：删掉后 `[native] a6e4394c…→9a34bf69…`、`[vector] 3e9d4b0e…→e313809d…` 都变 ⇒ 它参与内容层的 2D 落地，不是占位（注释已改写） |
+| PG-02 | **PD-03 的 IBL 成本描述过时**："用例需要真实 radiance 资产" | 文档 | **已关闭（Step 0）** | 内置影棚 `environment.rs::studio()` 是**程序化生成**（1024×512 + 4 个柔光箱，`render.rs` 首次引用时惰性造），零资产。PD-03 条目已改写（同 V-01 的"过时成本会让下一个人不敢动"） |
+| PG-03 | **双向普查**（A：场景层要、渲染层没有；B：后端有、公开面没有） | 公开面 / 记账 | **已关闭（Step 1）** | 见下方"Step 1 普查表"：A 方向 4 项（`env` 本批补齐；`msaa`/`supersample`/`filter` 仍是失效字段；`double_sided` 记账 PF-04）；B 方向 5 项（多视图 / `Upload::{Points,Texture}` / `STUDIO` 本批补齐；`Grow`、`Environment` 上传仍无公开出口） |
+| PG-04 | **2D 内容进 3D（路线 B）不可达**：`views()` 的 cameras 四处传 `Vec::new()`，记录也没有纹理字段 | 公开面 / 3D | **已关闭（Step 2）** | 新增公开面：`CameraView { content_2d / scene_3d }`（额外视图先渲进 canvas，主帧按 `key` 采样）、`MeshRecord.texture ∈ { View(key), Image{..} }`；四个 3D 入口加 `cameras` 参数。判别实验 G-1（`a_camera_view_is_sampled_by_a_mesh`）：相机视图红、网格绿 ⇒ 采样后红；不带宽 ⇒ 绿；引用不存在的 key ⇒ `unknown texture`。`atlas` 因此进矢量（`cddaad13…`，见 PG-05 的图） |
+| PG-05 | **`atlas` 的 3D 材质采样与 UV 兜底** | 接缝 / 3D | **已关闭（Step 2）** | 内容层当相机视图（尺寸 = 图层 texel，2D 视图口径与 `render_content` 完全一致）；网格无 UV 时用 `zela_render::vertex_record::fallback_uvs`（**与 wgpu 同一个函数**，Planar 的 `1 − y` 不会反转）。实测帧：平面正立、公式可读；`[native]` 不变、新增 `[vector]` 基线 |
+| PG-06 | **纹理的合成语义**：上游是"画面即表面"（`texel.rgb / texel.a` 取代材质色），wgpu 是"纹理作为 decal 叠在受光材质色上" | 后端行为 / 语义 | **记账（已按 wgpu 语义改，但只覆盖材质路径）** | 透明的内容层（Surface 的文字画布）在旧语义下让整块表面消失、只剩墨迹（实测第一版：平面全黑）。`blend.wgsl::lit_light` 改为 `texel.rgb + color.rgb·(1 − texel.a)`，口径与 `cube.wgsl` 相同；**不透明画面（`texel.a = 1`）两项都退化为 `texel.rgb`** ⇒ 无既有行为变化。⚠️ 未改的：无材质的 `unlit` 仍按"画面即表面"（`Upload::Texture` 的将来消费者会看到两套语义）；wgpu 侧墨迹显示为浅蓝（与 PF-02 同源，wgpu 冻结） |
+| PG-07 | **IBL 永远不发光**：`Light::Environment` 的槽位只写了 kind 与 id | 渲染 / 3D | **已关闭（Step 3）** | 真因不是"没接场景层"：`light.wgsl` 的 kind-4 分支把整项乘 `color.rgb`（未写 = 0）与 `axis.w`（未写 = 0）⇒ 即使视图里有环境灯，贡献恒为 0。补齐编码（`place`=图 +x、`axis`=图 up、`color.rgb`=1、`color.w`=最粗一级、`axis.w`=单位光强），并把 **id 移到 `cone.x`**（`color.w` 归着色器读作最粗一级，两者不能同槽；`environment_of` / `with_sun` 同步）。接线：`RenderParams.env`（IR 既有字段）+ 宿主开关 `ZELA_IBL=1` / `set_environment`。判据实测（pbr_materials 第 60 帧，受光像素均值）：**47.5 → 93.1** |
+| PG-08 | **点云与纹理资产无出口**（PD-03 顺延） | 公开面 | **已关闭（Step 4）** | `PointsRecord`（每点一个圆盘；**半径是每个对象一个** —— 后端把半径放实例槽 `extra.x`，逐点半径需改后端槽位，不做）+ `TextureSource::Image`（内联 RGBA8，与相机视图共用 `image_groups`）。各一条"改变输出"用例：`per_point_colors_change_a_point_cloud`（白点 → 左红右蓝）、`an_inline_texture_changes_the_mesh`（绿网格贴 1×1 红图 → 红；字节数不符显式报错）。`Upload::Points` / `Upload::Texture` 的死代码警告随之消失 |
+| PG-09 | **键空间**：相机视图记录、brush rows、内联图像三者共用 `u64` 键 | 后端内部 | **已关闭（Step 2/4）** | 主帧记录 `1..=n`；相机视图记录 `(i+1)<<48`（否则同一 `key` 在两份记录里指向同一条 shape）；rows = `1<<40 + key`；内联图像 = `1<<41 + key`；相机视图键 = 内容层的 `content_texture_handle`（`1<<32 + index`）。冲突会让后上传的渐变 / 图像覆盖前面的 |
+| PG-10 | **`has_material_content` 拒绝分支移除** | 路由 | **已关闭（Step 2）** | 现在只有"材质的纹理**没有生产方**"才拒绝（`FrameContent::has_unserved_material_texture`，理由写明"缺纹理上传入口"）；材质采样的层在决策理由里写"**按纹理采样**"（与 PC 的"叠加"区分）。用例：`material_sampled_content_is_served_by_a_camera_view` / `vector_falls_back_to_wgpu_with_a_reason` |
+| PG-11 | **`RenderParams` 仍失效的 3 个字段** | 契约 / 后端 | **记账（Step 1 结论）** | `msaa` / `supersample` / `filter`：矢量后端没有对应旋钮（采样数由 adapter + `?msaa=` 排查开关决定；无超采样；采样器固定 linear）。要接就先定语义，不在本批硬做 |
+
+**AC 段小计（PG）**：已关闭 9（PG-01…PG-05、PG-07…PG-10）· 记账 2（PG-06、PG-11）。
+
+### Step 1 普查表（A 方向：场景层已经要给、渲染层丢掉；B 方向：后端已有、公开面没有）
+
+| 方向 | 项 | 结论 | 理由 / 证据 |
+|---|---|---|---|
+| A | `RenderParams.env` | **补齐**（PG-07） | IR 字段一直在，矢量桥零命中；补齐后金属亮度翻倍 |
+| A | `RenderParams.msaa` / `supersample` / `filter` | **记账**（PG-11） | 后端无对应旋钮，硬接等于编一套语义 |
+| A | `Material3D.double_sided` | **沿用 PF-04** | 后端无 culling 开关 |
+| A | `Material3D.texture` | **补齐**（PG-04/05） | 内容层 → 相机视图，网格按句柄采样 |
+| B | `views()` 多视图 | **补齐**（PG-04） | `CameraView` 公开面 |
+| B | `Upload::Points` | **补齐**（PG-08） | `PointsRecord` |
+| B | `Upload::Texture` | **补齐**（PG-08） | `TextureSource::Image` |
+| B | 内置影棚 `STUDIO` | **补齐**（PG-07） | `Light::Environment{ id: BUILTIN_ENVIRONMENT }` |
+| B | `Upload::Grow` / `Upload::Environment`（自定义 .hdr 上传） | **剥离到 PH** | `Grow` 服务曲线续接（morph/形变的同族）；自定义环境要 RGBE 解码入口 + 句柄管理，本批只做"零资产的影棚" |
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AB**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AB 段，含"部分关闭"与"落档"）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–AC**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AC 段，含"部分关闭"与"落档"）。
 
 | 类别 | 数量 |
 |---|---|

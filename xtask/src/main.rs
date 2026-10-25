@@ -668,11 +668,12 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
     // K 段（B4+B5+B6）、L 段（B8+B9）、M 段（B7）、N 段（B10）、O 段（B11）、
     // P 段（B12）、Q 段（B13）、R 段（B14）、S 段（B15）、T 段（B17）、U 段（B18）、
-    // V 段（B19 跨批补记）、W 段（PA 记账收尾）、X 段（PB 参数开启）、Y 段（PC 内容纹理层）
-    // 与 Z 段（PD 能力普查）都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
+    // V 段（B19 跨批补记）、W 段（PA 记账收尾）、X 段（PB 参数开启）、Y 段（PC 内容纹理层）、
+    // Z 段（PD 能力普查）、AA 段（PE 能力入口）、AB 段（PF 接缝）、AC 段（PG 全开放）
+    // 都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
-        "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.",
+        "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -697,6 +698,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("PD-")
                     || id.starts_with("PE-")
                     || id.starts_with("PF-")
+                    || id.starts_with("PG-")
                     || id.starts_with("S4-")
                     || id.starts_with("W1-")
                     || id.starts_with("X1-")
@@ -1487,6 +1489,8 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     ("cap_window", Some("vector")),
     // PF Step 2：2D/3D 混排（2D 记录以屏幕平面 overlay 叠进 3D 帧）。
     ("cap_mix", Some("vector")),
+    // PG Step 2（路线 B）：内容层当相机视图、3D 材质按纹理采样 ⇒ atlas 进矢量。
+    ("atlas", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。

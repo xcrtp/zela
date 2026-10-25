@@ -10,13 +10,8 @@
 --   bloom  中央亮立方体外侧的辉光
 --   ao     墙（+Z 面）与地板（−Y 面）交汇的内角
 --
--- 环境图（IBL）不在本作品里：场景脚本没有环境图入口（GAPS X1-04），
--- 本批只把 `Upload::Environment` 的宿主入口接出来。
-
--- 运行时要求存在 2D 相机（Framing2D）；本作品是纯 3D 帧，它只占位。
-scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 },
-})
+-- 环境图（IBL）默认关：PG Step 3 起由**宿主开关**触发（native `ZELA_IBL=1` / 浏览器
+-- `set_environment`），用内置影棚（程序化生成、零资产）；脚本层仍没有"选哪个环境"的表达。
 
 -- 相机：从 +Z 斜上方看向内角。
 scene.spawn({

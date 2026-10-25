@@ -93,7 +93,3 @@ scene.spawn({
         fov_y = 1.0,
     },
 })
--- 运行时要求存在 2D 相机（本作品无可合成 2D 层，仅占位）。
-scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 },
-})

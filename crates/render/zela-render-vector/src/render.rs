@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::{CameraView, check_key, environment, mesh::Mesh, read};
+use crate::{CameraFrame, check_key, environment, mesh::Mesh, read};
 
 // Modified by Zela: 去掉 `dxc` / `lavapipe` 两个平台相关模块（未移植；DXC 由 wgpu 后端处理）。
 #[path = "bloom.rs"]
@@ -391,7 +391,8 @@ pub(crate) struct Record {
     pub(crate) stroke_rows: u64,
     fill_rows2: u64,
     stroke_rows2: u64,
-    texture: u64,
+    /// **PG Step 2**：`api.rs` 写入纹理键（非 0 ⇒ 该网格按 `image_groups` 采样）。
+    pub(crate) texture: u64,
     pub(crate) flags: u64,
     m1: Mat34,
     m2: Mat34,
@@ -487,6 +488,28 @@ impl Record {
                 Some([metallic, roughness, reflectance]) => [metallic, roughness, reflectance, 1.0],
                 None => [0.0; 4],
             },
+            ..Zeroable::zeroed()
+        }
+    }
+
+    /// **PG Step 4**：一团点的记录 —— 形状是 `Kind::Points` 的 raster（`Store::add_points`），
+    /// 每点一个面向相机、按场景单位定半径的圆盘；`fill` 是圆盘颜色（逐点色走 `fill_rows`）。
+    ///
+    /// 半径的槽位是 `gradient_a[3]`：`encode` 把它算成实例的 `extra.x = 半径 × 像素缩放 / 2`
+    /// （`render.rs:2711`），所以这里写**直径**（`2 × radius`）。
+    pub(crate) fn points(key: u64, steps: u32, m: Mat34, fill: [f32; 4], radius: f32) -> Self {
+        let clear = [0.0; 4];
+        Record {
+            key1: key,
+            m1: m,
+            fill,
+            fill2: fill,
+            stroke: clear,
+            stroke2: clear,
+            background: clear,
+            background2: clear,
+            params: [0.0, steps as f32, 0.0, 0.0],
+            gradient_a: [0.0, 0.0, 0.0, 2.0 * radius],
             ..Zeroable::zeroed()
         }
     }
@@ -2121,9 +2144,10 @@ impl ShadowMaps {
     }
 }
 
-/// A view's environment: its first light that is one (kind 4), the id it carries where a point light's reach is.
+/// A view's environment: its first light that is one (kind 4), the id it carries (`cone.x`, PG Step 3:
+/// it cannot share `color.w` with the cube's coarsest level).
 fn environment_of(view: &[f32]) -> Option<u32> {
-    (0..LIGHTS).map(|l| &view[VIEW_LIGHTING + 8 + 16 * l..][..16]).find(|slot| slot[3].round() as u32 == 4).map(|slot| slot[7].round() as u32)
+    (0..LIGHTS).map(|l| &view[VIEW_LIGHTING + 8 + 16 * l..][..16]).find(|slot| slot[3].round() as u32 == 4).map(|slot| slot[12].round() as u32)
 }
 
 /// A 3D view's ambient occlusion, where it has some and a light that it shuts out (light from all around: an ambient
@@ -3559,7 +3583,7 @@ impl Player {
 
     /// Views to draw: the cameras' (each into a texture that later views sample by its key), then
     /// the frame; each with the lights the engine lights by (`with_sun`).
-    pub(crate) fn views(&mut self, view: &[u8], records: &[u8], cameras: Vec<CameraView>) -> Result<Vec<Frame>, String> {
+    pub(crate) fn views(&mut self, view: &[u8], records: &[u8], cameras: Vec<CameraFrame>) -> Result<Vec<Frame>, String> {
         let mut frames = Vec::with_capacity(cameras.len() + 1);
         for (key, width, height, v, r) in cameras {
             check_key(key)?;
@@ -3577,7 +3601,8 @@ impl Player {
             return view;
         }
         let Some(at) = (0..LIGHTS).map(|l| VIEW_LIGHTING + 8 + 16 * l).find(|&at| view[at + 3].round() as u32 == 4) else { return view };
-        let id = view[at + 7].round() as u32;
+        // PG Step 3：环境 id 在槽 12（`color.w` 归立方体最粗一级，见 `api.rs::Light::Environment`）。
+        let id = view[at + 12].round() as u32;
         if id == environment::STUDIO {
             self.environments.entry(id).or_insert_with(|| {
                 let (width, height, pixels) = environment::studio();

@@ -24,8 +24,11 @@ use crate::Runtime;
 ///
 /// 内容层的 draw 在 `ContentTextureQueue` 里（按 `LayerId` 索引），与视口 `DrawQueue`
 /// 互不相交。`composite = true` 的层在视口之后按 contain 居中叠加；`composite = false`
-/// 的层要被 3D 材质采样，那是矢量后端还没有的能力（路由会显式拒绝，见 PB-04）。
+/// 的层要被 3D 材质采样（PG Step 2 起走**路线 B**：作为相机视图先渲，网格按
+/// `handle` 采样它）。
 struct ContentSnapshot {
+    /// 该层的纹理句柄 id —— 也就是主帧网格记录里的 `texture` 键。
+    handle: u64,
     size: [u32; 2],
     composite: bool,
     blend: ze_render_ir::LayerBlend,
@@ -53,6 +56,8 @@ pub struct VectorFrame {
     morph_count: usize,
     mesh_count: usize,
     has_line_meshes: bool,
+    /// 本帧网格材质引用的纹理句柄（PG Step 2：路由判断"这些纹理有没有生产方"）。
+    mesh_textures: Vec<u64>,
 }
 
 impl VectorFrame {
@@ -83,8 +88,10 @@ impl VectorFrame {
                         LayerKind::ContentTexture {
                             size_px,
                             composite,
+                            texture,
                             ..
                         } => Some(ContentSnapshot {
+                            handle: texture.id(),
                             size: *size_px,
                             composite: *composite,
                             blend: layer.blend,
@@ -138,6 +145,15 @@ impl VectorFrame {
                     }
                     None => (0, false),
                 };
+                // PG Step 2：材质引用的纹理句柄（没有 texture 的网格不进表）。
+                let mesh_textures: Vec<u64> = queue
+                    .map(|queue| {
+                        queue
+                            .meshes()
+                            .filter_map(|mesh| mesh.material.texture.map(|handle| handle.id()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 Ok(Self {
                     layers,
                     draws,
@@ -146,6 +162,7 @@ impl VectorFrame {
                     morph_count,
                     mesh_count,
                     has_line_meshes,
+                    mesh_textures,
                 })
             })
     }
@@ -157,9 +174,14 @@ impl VectorFrame {
             .iter()
             .any(|layer| matches!(layer.kind, LayerKind::Viewport3D { .. }));
         let has_content_texture = !self.content.is_empty();
-        // PC（路线 A）：只有 `composite = true` 的内容层能在图层级叠加；`composite = false`
-        // 的层要被 3D 材质采样 ⇒ 仍是路线 B（矢量侧纹理采样），路由必须拒绝它。
-        let has_material_content = self.content.iter().any(|layer| !layer.composite);
+        // **PG Step 2（路线 B）**：`composite = false` 的层由矢量侧当相机视图先渲、
+        // 网格按句柄采样（[`ContentSnapshot::handle`]）。唯一画不了的情形是材质引用的
+        // 纹理**没有生产方**（不是本帧的内容层）⇒ 显式拒绝，不静默贴白。
+        let content_handles: Vec<u64> = self.content.iter().map(|layer| layer.handle).collect();
+        let has_unserved_material_texture = self
+            .mesh_textures
+            .iter()
+            .any(|texture| !content_handles.contains(texture));
         // PE Step 3：本帧用到多少**仅矢量支持**的绘制参数（wgpu 会忽略这些字段，
         // 路由必须把"忽略"写进决策理由，不得静默）。
         let vector_only_styles = self
@@ -179,7 +201,8 @@ impl VectorFrame {
             has_meshes: self.mesh_count,
             has_line_meshes: self.has_line_meshes,
             has_content_texture,
-            has_material_content,
+            has_material_content: self.content.iter().any(|layer| !layer.composite),
+            has_unserved_material_texture,
             has_morphs: self.morph_count > 0,
             vector_only_styles,
         }
@@ -192,6 +215,8 @@ impl VectorFrame {
 enum Prepared {
     ThreeD {
         view: zela_render_vector::View3,
+        /// PG Step 2：先渲的相机视图（内容层当纹理源）。空 ⇒ 与 PG 之前逐位相同。
+        cameras: Vec<zela_render_vector::CameraView>,
         records: Vec<zela_render_vector::PathRecord>,
     },
     TwoD {
@@ -242,8 +267,33 @@ impl VectorFrame {
                     self.two_d_records(width, height)?,
                     view_frame_scale,
                 )?);
+                // **PG Step 2（路线 B）**：被 3D 材质采样的内容层作为**相机视图**先渲，
+                // 网格记录里的 `texture` 就是这层的句柄（`handle`）⇒ 后端按 key 采样 canvas。
+                // 内容层自己用矢量 2D 路径渲染（与 PC 路线 A 同一份 `content_records`），
+                // 因此坐标口径（1 世界单位 = 1 层像素）完全一致。
+                let mut cameras = Vec::new();
+                for (index, layer) in self.content.iter().enumerate().filter(|(_, l)| !l.composite) {
+                    cameras.push(zela_render_vector::CameraView::content_2d(
+                        layer.handle,
+                        layer.size[0],
+                        layer.size[1],
+                        [0.0; 4],
+                        content_records(layer)
+                            .map_err(|error| format!("内容层 #{index}（材质采样）：{error}"))?,
+                    ));
+                }
                 view.lights = lights;
-                Ok(Prepared::ThreeD { view, records })
+                // **PG Step 3**：环境图灯（`params.env` 或宿主开关 ⇒ 内置影棚）。
+                // 必须排在 `view.lights` 之后：`with_sun` 会把环境图的太阳拆成**第 count 盏**
+                // 方向光，槽位按 `count` 计算（见 `render.rs::with_sun`）。
+                if let Some(environment) = crate::vector3d::environment_light(params) {
+                    view.lights.push(environment);
+                }
+                Ok(Prepared::ThreeD {
+                    view,
+                    cameras,
+                    records,
+                })
             }
             None => {
                 let records = self.two_d_records(width, height)?;
@@ -307,9 +357,11 @@ impl VectorFrame {
         background: [f32; 4],
     ) -> Result<Vec<u8>, String> {
         let mut rgba = match self.prepare(runtime, width, height, params, background)? {
-            Prepared::ThreeD { view, records } => {
-                zela_render_vector::render_3d_with(width, height, 4, &view, &records)?
-            }
+            Prepared::ThreeD {
+                view,
+                cameras,
+                records,
+            } => zela_render_vector::render_3d_with(width, height, 4, &view, &cameras, &records)?,
             Prepared::TwoD {
                 background,
                 records,
@@ -330,8 +382,13 @@ impl VectorFrame {
         background: [f32; 4],
     ) -> Result<Vec<u8>, String> {
         let mut rgba = match self.prepare(runtime, width, height, params, background)? {
-            Prepared::ThreeD { view, records } => {
-                zela_render_vector::render_3d_with_async(width, height, 4, &view, &records).await?
+            Prepared::ThreeD {
+                view,
+                cameras,
+                records,
+            } => {
+                zela_render_vector::render_3d_with_async(width, height, 4, &view, &cameras, &records)
+                    .await?
             }
             Prepared::TwoD {
                 background,
@@ -357,8 +414,12 @@ impl VectorFrame {
     ) -> Result<(), String> {
         self.refuse_zero_copy_with_content()?;
         match self.prepare(runtime, width, height, params, background)? {
-            Prepared::ThreeD { view, records } => zela_render_vector::render_3d_to_texture(
-                target, width, height, 4, &view, &records,
+            Prepared::ThreeD {
+                view,
+                cameras,
+                records,
+            } => zela_render_vector::render_3d_to_texture(
+                target, width, height, 4, &view, &cameras, &records,
             ),
             Prepared::TwoD {
                 background,
@@ -382,9 +443,13 @@ impl VectorFrame {
     ) -> Result<(), String> {
         self.refuse_zero_copy_with_content()?;
         match self.prepare(runtime, width, height, params, background)? {
-            Prepared::ThreeD { view, records } => {
+            Prepared::ThreeD {
+                view,
+                cameras,
+                records,
+            } => {
                 zela_render_vector::render_3d_to_texture_async(
-                    target, width, height, 4, &view, &records,
+                    target, width, height, 4, &view, &cameras, &records,
                 )
                 .await
             }
@@ -613,6 +678,12 @@ fn overlay_records(
                 path.width *= scale;
                 scale_options(&mut path.options);
                 Ok(zela_render_vector::PathRecord::Stroke(path))
+            }
+            // PG Step 4：点云也是屏幕空间图元（点 + 半径一起缩放到 overlay 坐标系）。
+            zela_render_vector::PathRecord::Points(mut cloud) => {
+                scale_path(&mut cloud.points);
+                cloud.radius *= scale;
+                Ok(zela_render_vector::PathRecord::Points(cloud))
             }
             zela_render_vector::PathRecord::Mesh(_) => Err(
                 "2D 记录里出现网格：网格不能作为屏幕平面 overlay（H3 拒绝，不静默丢弃）"

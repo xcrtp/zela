@@ -1678,4 +1678,32 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **capability_gaps 仍进不了矢量**：混排放行后它还被 `Morph` 挡住（决策日志实测）
   ⇒ PF-06，混排证据由 `cap_mix` 承担。
 
+### PG 渲染能力全开放与自封闭
+
+> 一句话：**后端已写好、没有出口的能力全部开出来；渲染层强加给调用方的约束拆掉**。
+> 仍不碰 `ze-scene-*`；每个能力先做判别实验（G-1 / IBL 实测），做不到就剥离。
+
+- **Step 0 自封闭**：删掉 4 处占位 `Camera2D`（`pbr_materials` / `pbr_scene` /
+  `shaded_meshes` / `atlas`），`[native]` 逐位不变；第 5 处 `surface_matrix` 经判别实验**保留**
+  （删掉后 `[native]` 与 `[vector]` 都变 ⇒ 它参与内容层的 2D 落地，不是占位）。
+  PD-03 的 IBL 成本描述改写：内置影棚是**程序化生成**，零资产。
+- **Step 2 路线 B（2D 内容进 3D）**：公开面新增 `CameraView { content_2d / scene_3d }`
+  —— 额外视图先渲进自己的 canvas，主帧记录按 `key` 采样；`MeshRecord.texture` 是
+  `TextureSource::{View, Image}`。判别实验 G-1 通过（红视图 / 绿网格 ⇒ 采样后红；
+  不带宽 ⇒ 绿；不存在的 key ⇒ `unknown texture`）。`atlas` 因此进矢量：内容层当相机视图
+  （尺寸 = 图层 texel），无 UV 几何用**与 wgpu 同一个** `fallback_uvs`。
+  键空间分离：相机视图记录 `(i+1)<<48`、rows `1<<40 + key`、内联图像 `1<<41 + key`。
+- **纹理语义（PG-06）**：`blend.wgsl::lit_light` 从"画面即表面"改为 **decal over 材质色**
+  （`texel.rgb + color.rgb·(1 − texel.a)`），与 `cube.wgsl` 同语义；不透明画面两项都退化，
+  无既有行为变化。`unlit`（无材质）仍按原语义 —— 记账。
+- **Step 3 IBL**：真因不是"没接场景层"，而是环境灯槽位只写了 kind / id ⇒ `light.wgsl`
+  的 kind-4 分支乘上 `color.rgb = 0`、`axis.w = 0`，**贡献恒为 0**。补齐编码并把 id 移到
+  `cone.x`（`color.w` 归着色器读作立方体最粗一级）。接线 = `RenderParams.env` + 宿主开关
+  `ZELA_IBL` / `set_environment`。判据：pbr_materials 受光像素均值 **47.5 → 93.1**。
+- **Step 4 纯暴露**：`PointsRecord`（半径是每个对象一个 —— 后端把半径放实例槽 `extra.x`）
+  与 `TextureSource::Image`；各一条"改变输出"用例，`Upload::{Points,Texture}` 的死代码警告消失。
+- **路由**：`has_material_content` 的整帧拒绝改为"纹理**没有生产方**"才拒绝
+  （`has_unserved_material_texture`）；材质采样的层在决策理由里写「按纹理采样」（与 PC 的「叠加」区分）。
+
+
 

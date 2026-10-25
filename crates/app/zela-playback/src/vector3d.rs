@@ -87,6 +87,67 @@ pub fn shadows() -> bool {
     }
 }
 
+// ─── PG Step 3：IBL（内置影棚）开关 ────────────────────────────────────────────
+//
+// 场景层没有"用哪个环境"的表达（`ze-scene-*` 只有方向光 / 点光，PG 不碰场景层），
+// 所以本批走**宿主开关**（与 PB Step 1 的 `ZELA_SHADOWS` 同一模式）：native 读
+// `ZELA_IBL=1`，浏览器由 [`set_environment`] 决定。默认关 ⇒ 既有基线逐位不变。
+//
+// 影棚本身是**程序化生成的**（`environment.rs::studio()`，1024×512 + 4 个柔光箱），
+// 不需要任何 radiance 资产 —— PD-03 里"需要真实资产"的旧成本描述已作废。
+
+const ENVIRONMENT_UNSET: u8 = 0;
+const ENVIRONMENT_ON: u8 = 1;
+const ENVIRONMENT_OFF: u8 = 2;
+
+static ENVIRONMENT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(ENVIRONMENT_UNSET);
+
+/// 显式开关 IBL（宿主用：浏览器 / 测试）。
+pub fn set_environment(on: bool) {
+    ENVIRONMENT.store(
+        if on { ENVIRONMENT_ON } else { ENVIRONMENT_OFF },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// 当前是否给视图加环境光：默认 **关**；native 首次读取时看 `ZELA_IBL`。
+pub fn environment() -> bool {
+    match ENVIRONMENT.load(std::sync::atomic::Ordering::Relaxed) {
+        ENVIRONMENT_ON => true,
+        ENVIRONMENT_OFF => false,
+        _ => {
+            #[cfg(not(target_arch = "wasm32"))]
+            let on = std::env::var("ZELA_IBL")
+                .map(|value| matches!(value.trim(), "1" | "on" | "true"))
+                .unwrap_or(false);
+            #[cfg(target_arch = "wasm32")]
+            let on = false;
+            ENVIRONMENT.store(
+                if on { ENVIRONMENT_ON } else { ENVIRONMENT_OFF },
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            on
+        }
+    }
+}
+
+/// **PG Step 3**：本帧的环境图灯（`Light::Environment`）。
+///
+/// 两个入口都通向同一条后端链路（`render.rs::with_sun` 惰性造影棚、`light.wgsl` 的
+/// `environment_at`）：
+/// 1. `RenderParams.env`（IR 既有字段，自定义环境的将来入口）；
+/// 2. 宿主开关 ⇒ 内置影棚 [`zela_render_vector::BUILTIN_ENVIRONMENT`]。
+pub fn environment_light(params: &RenderParams) -> Option<Light> {
+    if let Some(handle) = params.env {
+        return Some(Light::Environment {
+            id: handle.id() as u32,
+        });
+    }
+    environment().then_some(Light::Environment {
+        id: zela_render_vector::BUILTIN_ENVIRONMENT,
+    })
+}
+
 /// 把 `Camera3D` 分解成矢量后端的 `View3`（透视）。
 ///
 /// 失败条件（都显式，不静默近似）：
@@ -236,11 +297,22 @@ fn mesh_record(
     if positions.is_empty() {
         return Err("几何没有顶点".to_string());
     }
-    let uvs = geometry.uvs.as_ref().map(|uvs| {
-        uvs.iter()
-            .map(|uv| [uv.x as f64, uv.y as f64])
-            .collect::<Vec<_>>()
-    });
+    let uvs = match &geometry.uvs {
+        Some(uvs) => Some(
+            uvs.iter()
+                .map(|uv| [uv.x as f64, uv.y as f64])
+                .collect::<Vec<_>>(),
+        ),
+        // **PG Step 2**：几何没有 UV 时按 `uv_projection` 兜底 —— 与 wgpu 侧
+        // `zela_render::vertex_record::mesh_vertex_buffer` 用**同一个函数**，
+        // 否则同一张纹理在两个后端上会贴成不同的样子（Planar 的 `1 − y` 尤其）。
+        None => material.texture.map(|_| {
+            zela_render::vertex_record::fallback_uvs(&geometry.positions, material.uv_projection)
+                .into_iter()
+                .map(|uv| [uv.x as f64, uv.y as f64])
+                .collect::<Vec<_>>()
+        }),
+    };
     let normals = geometry.normals.as_ref().map(|normals| {
         normals
             .iter()
@@ -294,6 +366,11 @@ fn mesh_record(
         material: material_params,
         colors: None,
         second: None,
+        // **PG Step 2**：材质纹理 → 记录的纹理来源。句柄 id 由场景层稳定派生
+        // （内容层 = `content_texture_handle(surface)`），主帧按同一个 key 采样相机视图。
+        texture: material
+            .texture
+            .map(|handle| zela_render_vector::TextureSource::View(handle.id())),
     }))
 }
 

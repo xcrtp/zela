@@ -196,6 +196,25 @@ pub struct MeshRecord {
     pub colors: Option<Vec<[f32; 4]>>,
     /// **PD**：第二套表面色与混合进度（tween；只用到其中的 `fill` 与 `mix`）。
     pub second: Option<SecondPaint>,
+    /// **PG Step 2/4**：纹理来源（`None` = 无纹理）。纹理只对网格生效
+    /// （`render.rs` 的 mesh 分支绑定 `image_groups`）；路径记录没有采样器入口。
+    pub texture: Option<TextureSource>,
+}
+
+/// 网格的纹理来源（PG Step 2/4）。
+///
+/// 两条来源落在后端**同一张采样表**里（`render.rs` 的 `image_groups`）：相机视图的 canvas
+/// 与上传的 RGBA 图像按同一个 `uv` 采样，所以公开面只需要一个"网格带纹理"的字段。
+#[derive(Debug, Clone, PartialEq)]
+pub enum TextureSource {
+    /// 同一帧里**更早**的相机视图（[`CameraView`] 的 `key`）；找不到 ⇒ 显式 `unknown texture`。
+    View(u64),
+    /// 直接带一张 RGBA8 图像（行优先；`width * height * 4` 字节）。
+    Image {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
 }
 
 impl MeshRecord {
@@ -392,11 +411,28 @@ impl Light {
                 out[12] = -outer * scale;
                 out[13] = if shadows { 1.0 } else { 0.0 };
             }
-            // B10 Step 2：环境图槽位 —— `kind = 4`，id 放在"点光 reach"的位置
-            // （上游 `environment_of` 读 `slot[7]`）。
+            // B10 Step 2：环境图槽位 —— `kind = 4`。
+            //
+            // **PG Step 3**：此前只写了 kind 与 id，`color.rgb` / `axis.w`（立方体里 1 代表的
+            // 光强）全是 0 ⇒ `light.wgsl` 的 kind-4 分支把整项乘成 0，**IBL 永远不发光**
+            // （这也是"接了 STUDIO 画面逐位不变"的真因）。这里补齐成上游的完整编码：
+            // - `place.xyz` = 图的 +x（世界 +x），`axis.xyz` = 图的 up（世界 +z）⇒ 方向基准；
+            // - `color.rgb` = 白色环境光（1 = 单位光强），`color.w` = 立方体最粗一级；
+            // - `axis.w` = 立方体里 1 代表的光强（`Environment::unit`）；
+            // - `cone.x`（槽 12）= **id**：上游把它塞在"点光 reach"槽（`color.w`），
+            //   而着色器把 `color.w` 读作最粗一级 —— 两者不能同槽。
             Light::Environment { id } => {
                 out[3] = 4.0;
-                out[7] = id as f32;
+                out[0] = 1.0;
+                out[8] = 0.0;
+                out[9] = 0.0;
+                out[10] = 1.0;
+                out[4] = 1.0;
+                out[5] = 1.0;
+                out[6] = 1.0;
+                out[7] = (crate::environment::LEVELS - 1) as f32;
+                out[11] = 1.0;
+                out[12] = id as f32;
             }
         }
         out
@@ -524,6 +560,8 @@ struct Prepared {
 
 /// brush rows 的键空间（与路径 / 网格的键 `1..=n` 分开；`Store` 的 `brushes` 是独立映射）。
 const ROW_KEY_BASE: u64 = 1 << 40;
+/// **PG Step 4**：内联图像纹理的键空间（与 rows `1<<40`、相机视图键 `1<<32…` 都分开）。
+const IMAGE_KEY_BASE: u64 = 1 << 41;
 
 /// 把 [`PathOptions`] 写进一条记录：**每个字段都对应 `Record` 里一个已实现的槽位**。
 ///
@@ -587,12 +625,16 @@ fn apply_options(
 
 /// 把一帧的路径 / 网格上传进**常驻 player** 并打包记录：同步 / 异步两条渲染路径共用这一份，
 /// 避免两套实现在几何映射上漂移（B15）；player 由 [`crate::render::Gpu::take_player`] 复用（B17）。
+///
+/// `key_base`：记录键的基址（主帧恒 0 ⇒ 键 1..=n；各相机视图各用一段，
+/// 否则同一个 `key` 在两份记录里指向同一条 shape，后上传的会覆盖先前的）。
 fn prepare_view(
     player: &mut crate::render::Player,
     view: Vec<f32>,
     width: u32,
     height: u32,
     records: &[PathRecord],
+    key_base: u64,
 ) -> Result<Prepared, String> {
     if width == 0 || height == 0 {
         return Err(format!("canvas {width}x{height} is empty"));
@@ -601,7 +643,7 @@ fn prepare_view(
 
     let mut built: Vec<Record> = Vec::with_capacity(records.len());
     for (i, record) in records.iter().enumerate() {
-        let key = i as u64 + 1;
+        let key = key_base + i as u64 + 1;
         match record {
             PathRecord::Fill(path) => {
                 let curves = upload_path(player, key, i, &path.points, &path.ranges)?;
@@ -673,6 +715,59 @@ fn prepare_view(
                     record.fill2 = second.fill;
                     record.dash[3] = second.mix.clamp(0.0, 1.0);
                 }
+                // PG Step 2/4：纹理来源写进记录。
+                // - `View(key)`：`render.rs` 由 `texture != 0` 推出 TEXTURED，按 key 采样 canvas；
+                // - `Image`：图像上传进同一张 `image_groups` 表，键空间与 brush rows 分开。
+                match &mesh.texture {
+                    None => {}
+                    Some(TextureSource::View(view_key)) => record.texture = *view_key,
+                    Some(TextureSource::Image {
+                        width,
+                        height,
+                        rgba,
+                    }) => {
+                        let image_key = IMAGE_KEY_BASE + key;
+                        if *width == 0 || *height == 0 {
+                            return Err(format!(
+                                "record {i}: 纹理尺寸不能为 0（{width}×{height}）"
+                            ));
+                        }
+                        let needed = *width as usize * *height as usize * 4;
+                        if rgba.len() != needed {
+                            return Err(format!(
+                                "record {i}: 纹理字节数 {} ≠ {width}×{height}×4 = {needed}",
+                                rgba.len()
+                            ));
+                        }
+                        player.add_texture(image_key, *width, *height, rgba)?;
+                        record.texture = image_key;
+                    }
+                }
+                built.push(record);
+            }
+            PathRecord::Points(points) => {
+                points
+                    .validate()
+                    .map_err(|error| format!("record {i}: {error}"))?;
+                // 后端的上传格式是 `[f32; 4]`（第 4 个分量当前不被读）。
+                let vertices: Vec<[f32; 4]> = points
+                    .points
+                    .iter()
+                    .map(|p| [p[0] as f32, p[1] as f32, p[2] as f32, 0.0])
+                    .collect();
+                player.upload(Upload::points(key, bytemuck::cast_slice(&vertices))?)?;
+                let mut record = Record::points(
+                    key,
+                    vertices.len() as u32,
+                    points.model,
+                    points.fill,
+                    points.radius,
+                );
+                if let Some(colors) = &points.colors {
+                    let row_key = ROW_KEY_BASE | key;
+                    player.add_rows(row_key, bytemuck::cast_slice(colors))?;
+                    record.fill_rows = row_key;
+                }
                 built.push(record);
             }
         }
@@ -684,6 +779,44 @@ fn prepare_view(
     })
 }
 
+/// 相机视图的键段：第 i 个视图用 `(i + 1) << CAMERA_KEY_SHIFT` 起的一段，
+/// 与主帧的 1..=n、rows（`1<<40`）、图像纹理（`1<<41`）都不重叠。
+const CAMERA_KEY_SHIFT: u64 = 48;
+
+/// 把相机视图逐个打包成后端要的 `(key, width, height, view, records)`。
+fn prepare_cameras(
+    player: &mut crate::render::Player,
+    cameras: &[CameraView],
+) -> Result<Vec<crate::CameraFrame>, String> {
+    let mut out: Vec<crate::CameraFrame> = Vec::with_capacity(cameras.len());
+    for (index, camera) in cameras.iter().enumerate() {
+        if camera.key == 0 {
+            return Err(format!("相机视图 #{index} 的 key 不能是 0（0 是主帧）"));
+        }
+        if out.iter().any(|(key, ..)| *key == camera.key) {
+            return Err(format!("相机视图 #{index} 的 key {} 重复", camera.key));
+        }
+        let key_base = (index as u64 + 1) << CAMERA_KEY_SHIFT;
+        let prepared = prepare_view(
+            player,
+            camera.view.clone(),
+            camera.width,
+            camera.height,
+            &camera.records,
+            key_base,
+        )
+        .map_err(|error| format!("相机视图 #{index}（key {}）：{error}", camera.key))?;
+        out.push((
+            camera.key,
+            camera.width,
+            camera.height,
+            prepared.view,
+            prepared.records,
+        ));
+    }
+    Ok(out)
+}
+
 /// 用给定 view 渲染一帧并读回（native）：同步 API 不变（`frame_loop` / `zela-verify` /
 /// `export` 都是同步调用方）。
 #[cfg(not(target_arch = "wasm32"))]
@@ -692,13 +825,16 @@ fn render_with_view(
     width: u32,
     height: u32,
     samples: u32,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
     crate::render::with_gpu(|gpu| {
         let mut player = gpu.take_player(width, height, samples);
         let result = (|| {
-            let Prepared { view, records } = prepare_view(&mut player, view, width, height, records)?;
-            let frames = player.views(&view, &records, Vec::new())?;
+            let Prepared { view, records } =
+                prepare_view(&mut player, view, width, height, records, 0)?;
+            let cameras = prepare_cameras(&mut player, cameras)?;
+            let frames = player.views(&view, &records, cameras)?;
             let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
             player.pixels(gpu, &frames, &mut out)?;
             Ok(out)
@@ -715,12 +851,13 @@ async fn render_with_view_async(
     width: u32,
     height: u32,
     samples: u32,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
     let mut slot = crate::render::GpuSlot::take()?;
     let gpu = slot.get();
     let mut player = gpu.take_player(width, height, samples);
-    let result = frame_pixels_async(&mut player, gpu, view, width, height, records).await;
+    let result = frame_pixels_async(&mut player, gpu, view, width, height, cameras, records).await;
     gpu.put_player(width, height, samples, player);
     result
 }
@@ -733,10 +870,12 @@ async fn frame_pixels_async(
     view: Vec<f32>,
     width: u32,
     height: u32,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    let Prepared { view, records } = prepare_view(player, view, width, height, records)?;
-    let frames = player.views(&view, &records, Vec::new())?;
+    let Prepared { view, records } = prepare_view(player, view, width, height, records, 0)?;
+    let cameras = prepare_cameras(player, cameras)?;
+    let frames = player.views(&view, &records, cameras)?;
     let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
     player.pixels_async(gpu, &frames, &mut out).await?;
     Ok(out)
@@ -780,6 +919,7 @@ fn render_to_texture(
     width: u32,
     height: u32,
     samples: u32,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
     check_target(target, width, height)?;
@@ -787,8 +927,10 @@ fn render_to_texture(
     crate::render::with_gpu(|gpu| {
         let mut player = gpu.take_player(width, height, samples);
         let result = (|| {
-            let Prepared { view, records } = prepare_view(&mut player, view, width, height, records)?;
-            let frames = player.views(&view, &records, Vec::new())?;
+            let Prepared { view, records } =
+                prepare_view(&mut player, view, width, height, records, 0)?;
+            let cameras = prepare_cameras(&mut player, cameras)?;
+            let frames = player.views(&view, &records, cameras)?;
             player.render_to(gpu, &frames, &target_view)
         })();
         gpu.put_player(width, height, samples, player);
@@ -804,6 +946,7 @@ async fn render_to_texture_async(
     width: u32,
     height: u32,
     samples: u32,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
     check_target(target, width, height)?;
@@ -811,7 +954,17 @@ async fn render_to_texture_async(
     let mut slot = crate::render::GpuSlot::take()?;
     let gpu = slot.get();
     let mut player = gpu.take_player(width, height, samples);
-    let result = frame_to_texture_async(&mut player, gpu, view, &target_view, width, height, records).await;
+    let result = frame_to_texture_async(
+        &mut player,
+        gpu,
+        view,
+        &target_view,
+        width,
+        height,
+        cameras,
+        records,
+    )
+    .await;
     gpu.put_player(width, height, samples, player);
     result
 }
@@ -825,10 +978,12 @@ async fn frame_to_texture_async(
     target: &wgpu::TextureView,
     width: u32,
     height: u32,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    let Prepared { view, records } = prepare_view(player, view, width, height, records)?;
-    let frames = player.views(&view, &records, Vec::new())?;
+    let Prepared { view, records } = prepare_view(player, view, width, height, records, 0)?;
+    let cameras = prepare_cameras(player, cameras)?;
+    let frames = player.views(&view, &records, cameras)?;
     player.render_to_async(gpu, &frames, target).await
 }
 
@@ -859,20 +1014,24 @@ fn upload_path(
 /// （没有阻塞读回，同步签名会踩 `getMappedRange` 的 `OperationError`）。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_3d(view: &View3, records: &[PathRecord]) -> Result<Vec<u8>, String> {
-    render_3d_with(view.size.0, view.size.1, 1, view, records)
+    render_3d_with(view.size.0, view.size.1, 1, view, &[], records)
 }
 
 /// 同 [`render_3d`]，但显式给画布尺寸与**采样数**（`frame_loop` 的 3D 分支用 4，
 /// 与 2D 路径同口径；`render_3d` 固定 1 是 B6 遗留的调用约定）。
+///
+/// `cameras`：本帧**先渲**的相机视图（[`CameraView`]）—— 主帧记录按 `key` 采样它们。
+/// 空切片 ⇒ 与 PG 之前逐位相同。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_3d_with(
     width: u32,
     height: u32,
     samples: u32,
     view: &View3,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    render_with_view(view_3d(view), width, height, samples, records)
+    render_with_view(view_3d(view), width, height, samples, cameras, records)
 }
 
 /// 一条绘制记录（保持声明顺序 = 绘制顺序）。
@@ -882,6 +1041,105 @@ pub enum PathRecord {
     Stroke(StrokedPath),
     /// **B10 Step 2**：3D 网格（可受光）。
     Mesh(MeshRecord),
+    /// **PG Step 4**：点云（每个点一个面向相机的圆盘，半径按场景单位）。
+    Points(PointsRecord),
+}
+
+/// 一团点（PG Step 4）：`points` 是模型空间的 `[x, y, z]`，每个点画一个**同半径**的圆盘。
+///
+/// 后端本来就有这条通道（`Store::add_points` 的 `Kind::Points`），只是公开面没有记录类型
+/// ⇒ `Upload::Points` 一直是死代码。逐点色走与网格同一套 brush rows。
+///
+/// ⚠️ **半径是每个对象一个**（后端把半径放在实例槽 `extra.x`，`blend.wgsl::disk` 读它），
+/// 不是逐点一个 —— 逐点半径需要后端改槽位，本批不做。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PointsRecord {
+    pub points: Vec<[f64; 3]>,
+    /// 圆盘半径（场景单位；**直径**写进记录，后端 `extra.x = 半径 × 像素缩放`）。
+    pub radius: f32,
+    /// 颜色（straight RGBA）；逐点色为 `None` 时用它。
+    pub fill: [f32; 4],
+    /// 逐点色（长度须等于 `points`；`None` ⇒ 用 `fill`）。
+    pub colors: Option<Vec<[f32; 4]>>,
+    /// 3×4 模型矩阵（行主序）。
+    pub model: [[f32; 4]; 3],
+}
+
+impl PointsRecord {
+    /// 自洽性检查（显式失败，不静默丢点）。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.points.is_empty() {
+            return Err("points: 点为空".to_string());
+        }
+        if !(self.radius > 0.0) || !self.radius.is_finite() {
+            return Err(format!("points: 半径必须为正（实际 {}）", self.radius));
+        }
+        if let Some(colors) = &self.colors {
+            if colors.len() != self.points.len() {
+                return Err(format!(
+                    "points: 逐点色 {} ≠ 点数 {}",
+                    colors.len(),
+                    self.points.len()
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// **PG Step 2**：一个额外的相机视图 —— 先渲进自己的 canvas，主帧的记录按 `key` 采样它。
+///
+/// 后端本来就有这条链路（`Player::views` 的 `cameras` + `image_groups` 按 key 采样），
+/// 此前公开面四个入口全传 `Vec::new()` ⇒ 场景层没有出口。语义是**任何可渲染内容**：
+/// `view` 字节既可以是 2D 正交（[`CameraView::content_2d`]）也可以是 3D 透视
+/// （[`CameraView::scene_3d`]），后端不区分。
+///
+/// 约束（后端既有，且**显式报错**，不静默）：
+/// - `key` 非 0，且不得与同一帧的其它视图重复（0 是主帧）；
+/// - 只能在**更早**的视图里被采样（`render.rs` 的 `earlier` 判据），即相机视图总在主帧之前渲染；
+/// - 主帧记录引用一个不存在的 key ⇒ `unknown texture`。
+#[derive(Debug, Clone)]
+pub struct CameraView {
+    /// 采样键：主帧记录的 `texture` 指它。
+    pub key: u64,
+    pub width: u32,
+    pub height: u32,
+    /// 视图字节（由构造器打包，布局见 `view_2d` / `view_3d`）。
+    view: Vec<f32>,
+    pub records: Vec<PathRecord>,
+}
+
+impl CameraView {
+    /// 2D 内容视图：世界坐标 = 以画布中心为原点的像素（与 [`render_2d`] 同口径）。
+    ///
+    /// 这条正是"内容层当纹理源"的形状：图层 draw 已按纹理像素录好，
+    /// 渲进 `width×height` 的 canvas 后被 3D 材质按 UV 采样。
+    pub fn content_2d(
+        key: u64,
+        width: u32,
+        height: u32,
+        background: [f32; 4],
+        records: Vec<PathRecord>,
+    ) -> Self {
+        Self {
+            key,
+            width,
+            height,
+            view: view_2d_with(width, height, background, ViewOptions::default()),
+            records,
+        }
+    }
+
+    /// 3D 视图：与 [`render_3d`] 同口径（画中画 / 反射 / 多相机都走这一条）。
+    pub fn scene_3d(key: u64, view: &View3, records: Vec<PathRecord>) -> Self {
+        Self {
+            key,
+            width: view.size.0,
+            height: view.size.1,
+            view: view_3d(view),
+            records,
+        }
+    }
 }
 
 impl From<FilledPath> for PathRecord {
@@ -899,6 +1157,12 @@ impl From<StrokedPath> for PathRecord {
 impl From<MeshRecord> for PathRecord {
     fn from(mesh: MeshRecord) -> Self {
         Self::Mesh(mesh)
+    }
+}
+
+impl From<PointsRecord> for PathRecord {
+    fn from(points: PointsRecord) -> Self {
+        Self::Points(points)
     }
 }
 
@@ -945,6 +1209,7 @@ pub fn render_2d_with(
         width,
         height,
         samples,
+        &[],
         records,
     )
 }
@@ -963,6 +1228,7 @@ pub async fn render_2d_async(
         width,
         height,
         samples,
+        &[],
         records,
     )
     .await
@@ -975,9 +1241,10 @@ pub async fn render_3d_with_async(
     height: u32,
     samples: u32,
     view: &View3,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    render_with_view_async(view_3d(view), width, height, samples, records).await
+    render_with_view_async(view_3d(view), width, height, samples, cameras, records).await
 }
 
 /// **B15（乙）**：2D 一帧直接合成进 `target`，像素**不经过 CPU**（native 同步版）。
@@ -1002,6 +1269,7 @@ pub fn render_2d_to_texture(
         width,
         height,
         samples,
+        &[],
         records,
     )
 }
@@ -1014,9 +1282,10 @@ pub fn render_3d_to_texture(
     height: u32,
     samples: u32,
     view: &View3,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    render_to_texture(view_3d(view), target, width, height, samples, records)
+    render_to_texture(view_3d(view), target, width, height, samples, cameras, records)
 }
 
 /// **B15（乙）**：2D 一帧直接合成进 `target`（浏览器异步版）。
@@ -1038,6 +1307,7 @@ pub async fn render_2d_to_texture_async(
         width,
         height,
         samples,
+        &[],
         records,
     )
     .await
@@ -1051,9 +1321,10 @@ pub async fn render_3d_to_texture_async(
     height: u32,
     samples: u32,
     view: &View3,
+    cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    render_to_texture_async(view_3d(view), target, width, height, samples, records).await
+    render_to_texture_async(view_3d(view), target, width, height, samples, cameras, records).await
 }
 
 #[cfg(test)]
@@ -1513,6 +1784,7 @@ mod tests {
             material,
             colors: None,
             second: None,
+            texture: None,
         };
         let view = |tone: ze_render_ir::ToneCurve| View3 {
             frame: (4.0, 4.0),
@@ -1590,6 +1862,7 @@ mod tests {
             material: None,
             colors: None,
             second: None,
+            texture: None,
         };
         base.validate().expect("合法三角面");
 
@@ -1608,6 +1881,193 @@ mod tests {
         let mut bad_uv = base.clone();
         bad_uv.uvs = Some(vec![[0.0, 0.0]; 2]);
         assert!(bad_uv.validate().is_err());
+    }
+
+    /// **PG Step 2 判别实验 G-1**：相机视图能被主帧的网格按 `texture` 采样到。
+    ///
+    /// 两块内容：相机视图里一整块**红**；主帧一块网格本来是**绿**、UV 覆盖 0..1。
+    /// - `texture = Some(View(key))` ⇒ 采样到红（红通道压过绿）—— 证明"链路真的服务这个场景"；
+    /// - `texture = None`          ⇒ 还是绿 —— 证明红**不是**别处漏进来的；
+    /// - `View(不存在的 key)`       ⇒ 显式 `unknown texture`（不静默画白）。
+    #[test]
+    fn a_camera_view_is_sampled_by_a_mesh() {
+        let red = FilledPath::polygon(
+            &[
+                [-40.0, -40.0, 0.0],
+                [40.0, -40.0, 0.0],
+                [40.0, 40.0, 0.0],
+                [-40.0, 40.0, 0.0],
+            ],
+            [1.0, 0.0, 0.0, 1.0],
+        );
+        // 相机视图铺满画布（2D 视图 1 世界单位 = 1 px ⇒ ±40 覆盖 64×64 还有余）。
+        let camera = CameraView::content_2d(
+            7,
+            64,
+            64,
+            [0.0, 0.0, 0.0, 0.0],
+            vec![PathRecord::Fill(red)],
+        );
+        // 主帧：一块 ±1 世界单位的四边形（画幅 4 ⇒ 占中间 32×32），UV 覆盖整张纹理，
+        // `v = 1` 在 +y（图像上沿）。
+        let quad = |texture: Option<TextureSource>| {
+            PathRecord::Mesh(MeshRecord {
+                positions: vec![
+                    [-1.0, -1.0, 0.0],
+                    [1.0, -1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [-1.0, 1.0, 0.0],
+                ],
+                uvs: Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+                normals: Some(vec![[0.0, 0.0, 1.0]; 4]),
+                triangles: vec![0, 1, 2, 0, 2, 3],
+                fill: [0.0, 1.0, 0.0, 1.0],
+                model: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                ],
+                material: None,
+                colors: None,
+                second: None,
+                texture,
+            })
+        };
+        let view = lit_view(None, 0.0, None, true);
+        let frame = |texture: Option<TextureSource>| {
+            render_3d_with(64, 64, 1, &view, &[camera.clone()], &[quad(texture)])
+                .unwrap_or_else(|error| panic!("相机视图渲染失败：{error}"))
+        };
+
+        let sampled = pixel(&frame(Some(TextureSource::View(7))), 64, 32, 32);
+        assert!(
+            sampled[0] > 180 && sampled[1] < 80,
+            "网格应采样到相机视图的红：{sampled:?}"
+        );
+        let plain = pixel(&frame(None), 64, 32, 32);
+        assert!(
+            plain[1] > 180 && plain[0] < 80,
+            "不带纹理时应还是网格自身的绿：{plain:?}"
+        );
+
+        let error = render_3d_with(
+            64,
+            64,
+            1,
+            &view,
+            &[camera],
+            &[quad(Some(TextureSource::View(9)))],
+        )
+        .expect_err("采样不存在的 key 必须显式报错");
+        assert!(error.contains("unknown texture"), "{error}");
+    }
+
+    /// **PG Step 4（纹理资产）**：网格可以自带一张 RGBA8 图像（与相机视图共用采样出口）。
+    ///
+    /// 判据 = "改变输出"：同一块绿网格，贴上 1×1 红图 ⇒ 红；不给纹理 ⇒ 绿。
+    #[test]
+    fn an_inline_texture_changes_the_mesh() {
+        let quad = |texture: Option<TextureSource>| {
+            PathRecord::Mesh(MeshRecord {
+                positions: vec![
+                    [-1.0, -1.0, 0.0],
+                    [1.0, -1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [-1.0, 1.0, 0.0],
+                ],
+                uvs: Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+                normals: Some(vec![[0.0, 0.0, 1.0]; 4]),
+                triangles: vec![0, 1, 2, 0, 2, 3],
+                fill: [0.0, 1.0, 0.0, 1.0],
+                model: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                ],
+                material: None,
+                colors: None,
+                second: None,
+                texture,
+            })
+        };
+        let view = lit_view(None, 0.0, None, true);
+        let red_image = TextureSource::Image {
+            width: 1,
+            height: 1,
+            rgba: vec![255, 0, 0, 255],
+        };
+        let textured = render_3d_with(64, 64, 1, &view, &[], &[quad(Some(red_image.clone()))])
+            .expect("内联纹理应能渲染");
+        let center = pixel(&textured, 64, 32, 32);
+        assert!(
+            center[0] > 180 && center[1] < 80,
+            "贴上红图后网格应是红的：{center:?}"
+        );
+        let plain = render_3d_with(64, 64, 1, &view, &[], &[quad(None)]).expect("无纹理");
+        let center = pixel(&plain, 64, 32, 32);
+        assert!(
+            center[1] > 180 && center[0] < 80,
+            "无纹理时应是网格自身的绿：{center:?}"
+        );
+
+        let error = render_3d_with(
+            64,
+            64,
+            1,
+            &view,
+            &[],
+            &[quad(Some(TextureSource::Image {
+                width: 2,
+                height: 2,
+                rgba: vec![0; 4],
+            }))],
+        )
+        .expect_err("纹理字节数不符必须显式报错");
+        assert!(error.contains("纹理字节数"), "{error}");
+    }
+
+    /// **PG Step 4（点云逐点色）**：每个点一个圆盘，逐点色取代单一 `fill`。
+    #[test]
+    fn per_point_colors_change_a_point_cloud() {
+        let points = |colors: Option<Vec<[f32; 4]>>| PointsRecord {
+            points: vec![[-10.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+            radius: 6.0,
+            fill: [1.0, 1.0, 1.0, 1.0],
+            colors,
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+        };
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let plain = render_2d_or_panic(&[PathRecord::Points(points(None))], clear);
+        let left = pixel(&plain, 64, 22, 32);
+        assert!(left[0] > 180 && left[1] > 180, "无逐点色时用 fill（白）：{left:?}");
+
+        let colored = render_2d_or_panic(
+            &[PathRecord::Points(points(Some(vec![
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+            ])))],
+            clear,
+        );
+        let (a, b) = (pixel(&colored, 64, 22, 32), pixel(&colored, 64, 42, 32));
+        assert!(a[0] > 160 && a[2] < 80, "左点应是逐点色的红：{a:?}");
+        assert!(b[2] > 160 && b[0] < 80, "右点应是逐点色的蓝：{b:?}");
+
+        let error = render_2d(
+            64,
+            64,
+            1,
+            clear,
+            &[PathRecord::Points(PointsRecord {
+                colors: Some(vec![[1.0; 4]]),
+                ..points(None)
+            })],
+        )
+        .expect_err("逐点色数不符必须显式报错");
+        assert!(error.contains("逐点色"), "{error}");
     }
 
     /// **闭合孔洞**：同一路径里的两条子路径（外圈 CCW + 内圈 CW）按 nonzero 规则
@@ -2005,6 +2465,7 @@ mod tests {
                 [0.0, 0.0, 1.0, 1.0],
             ]),
             second: None,
+            texture: None,
         };
         let frame = render_2d_or_panic(&[PathRecord::Mesh(mesh)], [0.0, 0.0, 0.0, 1.0]);
         let (left, right) = (pixel(&frame, 64, 26, 32), pixel(&frame, 64, 38, 32));
@@ -2053,6 +2514,7 @@ mod tests {
             material: None,
             colors: Some(vec![[1.0; 4]]),
             second: None,
+            texture: None,
         };
         let error = render_2d(64, 64, 1, clear, &[PathRecord::Mesh(colors.clone())]).unwrap_err();
         assert!(error.contains("逐顶点色"), "{error}");

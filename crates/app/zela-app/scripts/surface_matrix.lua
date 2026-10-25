@@ -84,7 +84,10 @@ for i = 1, #fills do
     })
 end
 
--- 运行时要求存在 2D 相机（内容层是纹理源；此相机仅占位）。
+-- **PG Step 0 判定：这不是占位**。删掉它之后两条基线都变了 ——
+-- `[native] a6e4394c… → 9a34bf69…`、`[vector] 3e9d4b0e… → e313809d…` ⇒ 内容层的 2D
+-- 记录确实经 Camera2D 落到图层像素上（PC 路线 A 的叠加只跳过"叠到屏幕"这一步，
+-- 不跳过图层自身的 2D 变换）。
 scene.spawn({
     Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 30.0 },
 })
