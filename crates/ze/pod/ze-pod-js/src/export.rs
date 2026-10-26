@@ -172,6 +172,21 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
         }
         out.push_str("};\n\n");
 
+        // ── 算子类型签名（L2 前哨，A 批）──────────────────────────────
+        // 纯注释：签名是文档/诊断数据，脚本侧没有对应导出。
+        if !capability.ops.is_empty() {
+            out.push_str(&format!(
+                "// ── {} 算子类型签名（L2）────────────────────────\n",
+                capability.name
+            ));
+            for op in capability.ops {
+                for line in op.render_lines() {
+                    out.push_str(&format!("// {line}\n"));
+                }
+            }
+            out.push('\n');
+        }
+
         // `clock_*` 的别名表（与绑定层一致）：`clock.time()` / `clock.shift(…)` …
         let clock_calls: Vec<&ze_pod_core::ErasedFn> = capability
             .calls

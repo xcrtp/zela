@@ -105,7 +105,8 @@ pub use registry::{ErasedCall, RegistryPod};
 pub use topic::{PublishReport, publish as publish_topic};
 pub use type_name::{IntoPodTypeName, PodTypeName};
 pub use typespec::{
-    ErasedFn, Field, FnIo, HANDLE_SPEC, ParamSpec, ScalarKind, TypeSpec, UNIT_SPEC, Variant,
+    ErasedFn, Field, FnIo, HANDLE_SPEC, Kind, OpDef, OpSig, ParamSpec, ScalarKind, TypeSpec,
+    UNIT_SPEC, Variant,
 };
 pub use value::{
     PodBytes, ScalarValue, PodType, PodValue, PodValueError, describe, expect_enum, expect_struct,

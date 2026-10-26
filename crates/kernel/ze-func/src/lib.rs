@@ -53,7 +53,7 @@ pub mod expr;
 pub mod program;
 
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
-pub use expr::{ChannelRef, Expr, ExprError, Id, Literal, Node, OpRef};
+pub use expr::{ChannelRef, ChannelType, Expr, ExprError, Id, Literal, Node, OpRef};
 pub use program::{CompiledExpr, EvalError, Mono, Step, Value};
 
 /// 表达式 payload 的 schema 版本。

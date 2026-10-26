@@ -123,6 +123,28 @@ impl From<[f32; 3]> for Literal {
     }
 }
 
+/// 通道承载的值类型（**kernel 侧最小封闭集**）。
+///
+/// 与 `ze_pod_core::TypeSpec` 同构但**不依赖它**：`ze-func` 是 kernel 层，
+/// 不能反向依赖 pod 机制（分层铁律）。装配期由 pod 把这里翻译成 `TypeSpec` 做合一。
+///
+/// 它是**元数据**：通道引用的该字段 `#[serde(skip)]` ⇒ 不进 payload
+/// （既有产物逐位不变），解码后回到 `Unknown`（类型只在装配期推导，运行期不需要）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ChannelType {
+    /// 未知（解码后的 payload / 尚未接线的通道）。
+    #[default]
+    Unknown,
+    /// 数值（`time` / `frame` / 标量字段）。
+    Number,
+    /// 布尔。
+    Bool,
+    /// 二维向量。
+    Vec2,
+    /// 三维向量。
+    Vec3,
+}
+
 /// **通道引用**：`namespace` + `name` 是**数据**（与 [`OpRef`] 同形）。
 ///
 /// # 为什么不是封闭枚举
@@ -135,12 +157,33 @@ impl From<[f32; 3]> for Literal {
 /// - 组件字段通道 = `("zela.scene", "Circle.radius")`。
 ///
 /// 领域无关层只定义**形状**，词汇由宿主单子 `M` 的实现决定。
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChannelRef {
     /// 命名词汇表的 namespace（空串 = 宿主基础通道）。
     pub namespace: String,
     /// 通道名（基础通道是 `time` / `frame`；组件字段是地址 `Circle.radius`）。
     pub name: String,
+    /// 通道承载的类型（装配期推导用；**不进 payload**）。
+    #[serde(skip)]
+    pub ty: ChannelType,
+}
+
+// 通道的**身份**是 `(namespace, name)`：类型是元数据。
+// 因此 `Eq` / `Hash` 只看名字 —— 这样解码后的 `Unknown` 与原值相等，
+// round-trip 逐字段一致的用例仍然成立；类型只在装配期推导时被读。
+impl PartialEq for ChannelRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.namespace == other.namespace && self.name == other.name
+    }
+}
+
+impl Eq for ChannelRef {}
+
+impl std::hash::Hash for ChannelRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.namespace.hash(state);
+        self.name.hash(state);
+    }
 }
 
 impl ChannelRef {
@@ -148,12 +191,21 @@ impl ChannelRef {
         Self {
             namespace: namespace.into(),
             name: name.into(),
+            ty: ChannelType::Unknown,
         }
     }
 
     /// 宿主基础通道（`time` / `frame` …）—— 空 namespace。
+    ///
+    /// 基础通道都是数值（时间秒 / 帧号整数），因此直接标 `Number`。
     pub fn builtin(name: impl Into<String>) -> Self {
-        Self::new("", name)
+        Self::new("", name).with_type(ChannelType::Number)
+    }
+
+    /// 带上类型（组件字段通道用：`Circle.radius` → `Number`）。
+    pub fn with_type(mut self, ty: ChannelType) -> Self {
+        self.ty = ty;
+        self
     }
 
     /// 是否宿主基础通道（由 `Mono::read` 直接提供）。
@@ -528,6 +580,28 @@ mod tests {
         assert_eq!(component.qualified(), "zela.scene::Circle.radius");
         assert!(!component.is_builtin());
         assert!(ChannelRef::builtin("time").is_builtin());
+    }
+
+    /// **A 批**：通道类型是**元数据** —— 标了类型也不进 payload（既有产物逐位不变）。
+    #[test]
+    fn channel_type_is_metadata_only() {
+        let typed = ChannelRef::builtin("time");
+        assert_eq!(typed.ty, ChannelType::Number);
+        assert_eq!(
+            serde_json::to_value(&typed).unwrap(),
+            json!({ "namespace": "", "name": "time" }),
+            "ty 不能进 payload"
+        );
+
+        // 组件字段通道的容器给了类型名，但 ze-func 只认内核的小封闭集。
+        let component = ChannelRef::new("zela.scene", "Circle.radius")
+            .with_type(ChannelType::Number);
+        assert_eq!(component.ty, ChannelType::Number);
+        assert_eq!(
+            serde_json::to_value(&component).unwrap()["channel"],
+            Value::Null,
+            "ChannelRef 直接序列化时没有外层包装"
+        );
     }
 
     /// **提案 #6 D**：`Select` 的序列化形状钉死（本轮只留格式、不实现求值）。

@@ -230,6 +230,7 @@ fn table_constructors_are_generated_for_expression_ops() {
         docs: MathApi::docs(),
         meta: MathApi::meta(),
         channels: &[],
+        ops: ze_pod_func::SIGNATURES,
     }];
     let lua = ze_pod_lua::lua_ls(&capabilities);
     assert!(lua.contains("---@class Sin"), "Sin 类型声明缺失");
@@ -237,8 +238,20 @@ fn table_constructors_are_generated_for_expression_ops() {
     assert!(lua.contains("function Mul(spec) end"), "Mul 构造器缺失");
     assert!(lua.contains("function Scale(spec) end"), "Scale 构造器缺失");
 
+    // **A 批**：声明文件输出算子的 L2 类型签名（文档/诊断用）。
+    assert!(lua.contains("Sin: (F64) -> F64"), "缺 Sin 的类型签名：\n{lua}");
+    assert!(
+        lua.contains("Mul: (Vector, F64) -> Vector"),
+        "几何位置多态必须体现在签名里：\n{lua}"
+    );
+    assert!(lua.contains("And: (Bool, Bool) -> Bool"));
+
     let json = ze_pod_binding::capabilities_json(&capabilities);
     assert!(json.contains("zela.math.Sin"), "JSON 应含 Sin 的类型名");
+    assert!(
+        json.contains("\"display\":\"(F64) -> F64\""),
+        "JSON 的 ops 应带可读签名"
+    );
     let value: serde_json::Value = serde_json::from_str(&json).expect("合法 JSON");
     assert_eq!(
         value["schema_version"].as_u64(),

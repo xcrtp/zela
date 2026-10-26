@@ -471,6 +471,17 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
         push_imports(&mut out, &imports);
         out.push('\n');
 
+        // ── 算子类型签名（L2 前哨，A 批）──────────────────────────────
+        if !capability.ops.is_empty() {
+            out.push_str("# ── 算子类型签名（L2）────────────────────────\n");
+            for op in capability.ops {
+                for line in op.render_lines() {
+                    out.push_str(&format!("# {line}\n"));
+                }
+            }
+            out.push('\n');
+        }
+
         for (index, item) in capability.calls.iter().enumerate() {
             if let Some(doc) = capability.docs.get(index) {
                 push_description(&mut out, doc.description);
@@ -544,6 +555,7 @@ mod tests {
                 docs: MiniScene::docs(),
                 meta: MiniScene::meta(),
                 channels: &[],
+                ops: &[],
             },
             CapabilityDocs {
                 name: "python",
@@ -551,6 +563,7 @@ mod tests {
                 docs: PythonApi::docs(),
                 meta: PythonApi::meta(),
                 channels: &[],
+                ops: &[],
             },
         ])
     }

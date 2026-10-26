@@ -98,6 +98,117 @@ pub struct Variant {
     pub fields: &'static [Field],
 }
 
+/// 类型变量的 **kind**（L2 的封闭小集合）。
+///
+/// 只有这三种：数值 / 向量 / 布尔。第三方扩展走单态重载列表兜底（U4：不开放注册）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// 数值（F32 / F64）。
+    Num,
+    /// 向量（`zela.Vec2` / `zela.Vec3`）。
+    Vector,
+    /// 布尔。
+    Bool,
+}
+
+impl Kind {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Kind::Num => "Num",
+            Kind::Vector => "Vector",
+            Kind::Bool => "Bool",
+        }
+    }
+}
+
+/// **算子签名**（L2：rank-1 + kind + 重载列表中的一条）。
+///
+/// `params` / `ret` 里的 [`TypeSpec::Var`] 按名字引用 `vars` 中的 kind；
+/// 合一（B 批）逐条尝试，多条成功 ⇒ **显式歧义错误**（硬约束 4）。
+#[derive(Clone, Copy, Debug)]
+pub struct OpSig {
+    pub params: &'static [&'static TypeSpec],
+    pub ret: &'static TypeSpec,
+    /// 变量名 → kind。
+    pub vars: &'static [(&'static str, Kind)],
+    /// 变参：`params` 只写元素类型（`sum` 的任意多项求和）。
+    pub variadic: bool,
+}
+
+impl OpSig {
+    /// 人类可读签名：`(Num, Vector) -> Vector`（文档与诊断共用）。
+    pub fn render(&self) -> String {
+        let mut params: Vec<String> = self
+            .params
+            .iter()
+            .map(|ty| render_type(ty, self.vars))
+            .collect();
+        if self.variadic {
+            params.push("...".to_string());
+        }
+        format!("({}) -> {}", params.join(", "), render_type(self.ret, self.vars))
+    }
+}
+
+/// 一个算子的全部重载。
+#[derive(Clone, Copy, Debug)]
+pub struct OpDef {
+    pub name: &'static str,
+    pub sigs: &'static [OpSig],
+}
+
+impl OpDef {
+    /// 文档行：`Mul: (Vector, Num) -> Vector`。
+    ///
+    /// 用**构造器名**（首字母大写）而不是函数名：脚本侧写的是 `Mul { … }`。
+    pub fn render_lines(&self) -> Vec<String> {
+        let mut chars = self.name.chars();
+        let display = match chars.next() {
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            None => String::new(),
+        };
+        self.sigs
+            .iter()
+            .map(|sig| format!("{display}: {}", sig.render()))
+            .collect()
+    }
+}
+
+/// 类型在文档里的短名（`zela.Vec2` → `Vec2`，变量 → kind）。
+fn render_type(spec: &TypeSpec, vars: &'static [(&'static str, Kind)]) -> String {
+    match spec {
+        TypeSpec::Scalar(kind) => match kind {
+            ScalarKind::F32 => "F32".to_string(),
+            ScalarKind::F64 => "F64".to_string(),
+            ScalarKind::Bool => "Bool".to_string(),
+            ScalarKind::String => "String".to_string(),
+            other => format!("{other:?}"),
+        },
+        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } | TypeSpec::Opaque(name) => {
+            short(name)
+        }
+        TypeSpec::Array { elem } => format!("Array<{}>", render_type(elem, vars)),
+        TypeSpec::Var(name) => vars
+            .iter()
+            .find(|(candidate, _)| *candidate == *name)
+            .map(|(_, kind)| kind.name().to_string())
+            .unwrap_or_else(|| (*name).to_string()),
+        TypeSpec::App { ty, args } => {
+            let args: Vec<String> = args.iter().map(|arg| render_type(arg, vars)).collect();
+            if args.is_empty() {
+                short(ty)
+            } else {
+                format!("{}<{}>", short(ty), args.join(", "))
+            }
+        }
+    }
+}
+
+/// 去掉 `zela.` 前缀的短名。
+fn short(name: &'static str) -> String {
+    name.strip_prefix("zela.").unwrap_or(name).to_string()
+}
+
 /// `()` 的 schema：**空结构体**（不额外引入 `Unit` 变体，保持五变体最小集）。
 pub const UNIT_SPEC: &TypeSpec = &TypeSpec::Struct {
     name: "()",

@@ -1,0 +1,210 @@
+//! **算子签名表**（L2 类型化的数据面）。
+//!
+//! 每条 [`OpSig`] 是 rank-1 多态 + kind 约束（`Num` / `Vector` / `Bool`）。
+//! 为什么需要它：`mul` 的 `Vec2 × F64 → Vec2` 里**返回类型等于第一个参数的类型**，
+//! L0 的单态重载列表必须穷举所有几何组合；有了类型变量 + kind，一行就够。
+//!
+//! 本文件只放**数据**：
+//! - 文档生成器把 [`OpDef::render_lines`] 打进声明文件（`Sin: (F64) -> F64`）；
+//! - 装配期（B 批）逐条尝试合一，多条成功 ⇒ **显式歧义错误**（硬约束 4）。
+//!
+//! 签名里 [`TypeSpec::Var`] 的名字只是 `vars` 的键，**不是**自由命名空间。
+
+use ze_pod_core::{Kind, OpDef, OpSig, ScalarKind, TypeSpec};
+
+const F64: &TypeSpec = &TypeSpec::Scalar(ScalarKind::F64);
+const BOOL: &TypeSpec = &TypeSpec::Scalar(ScalarKind::Bool);
+const VAR_A: &TypeSpec = &TypeSpec::Var("a");
+
+const NUM_A: &[(&str, Kind)] = &[("a", Kind::Num)];
+const VEC_A: &[(&str, Kind)] = &[("a", Kind::Vector)];
+const NO_VARS: &[(&str, Kind)] = &[];
+
+/// 一元数值：`sin` / `cos`。
+const UNARY_NUM: OpSig = OpSig {
+    params: &[F64],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// 二元同类型：`add` 的两种（数值 / 向量）。
+const SAME_NUM: OpSig = OpSig {
+    params: &[VAR_A, VAR_A],
+    ret: VAR_A,
+    vars: NUM_A,
+    variadic: false,
+};
+const SAME_VEC: OpSig = OpSig {
+    params: &[VAR_A, VAR_A],
+    ret: VAR_A,
+    vars: VEC_A,
+    variadic: false,
+};
+
+/// `mul` / `scale`：数值×数值、向量×数值、数值×向量（**返回值绑在向量那一侧**）。
+const SCALE_NUM: OpSig = OpSig {
+    params: &[F64, F64],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+const SCALE_VEC_LEFT: OpSig = OpSig {
+    params: &[VAR_A, F64],
+    ret: VAR_A,
+    vars: VEC_A,
+    variadic: false,
+};
+const SCALE_VEC_RIGHT: OpSig = OpSig {
+    params: &[F64, VAR_A],
+    ret: VAR_A,
+    vars: VEC_A,
+    variadic: false,
+};
+
+/// `sum`：任意多项同类型求和（变参）。
+const SUM_NUM: OpSig = OpSig {
+    params: &[VAR_A],
+    ret: VAR_A,
+    vars: NUM_A,
+    variadic: true,
+};
+const SUM_VEC: OpSig = OpSig {
+    params: &[VAR_A],
+    ret: VAR_A,
+    vars: VEC_A,
+    variadic: true,
+};
+
+/// 比较：数值 → Bool。
+const CMP_NUM: OpSig = OpSig {
+    params: &[F64, F64],
+    ret: BOOL,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// 相等：数值或布尔。
+const EQ_NUM: OpSig = OpSig {
+    params: &[F64, F64],
+    ret: BOOL,
+    vars: NO_VARS,
+    variadic: false,
+};
+const EQ_BOOL: OpSig = OpSig {
+    params: &[BOOL, BOOL],
+    ret: BOOL,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// 布尔组合子：**只吃 Bool**（最严）。
+const AND: OpSig = OpSig {
+    params: &[BOOL, BOOL],
+    ret: BOOL,
+    vars: NO_VARS,
+    variadic: false,
+};
+const NOT: OpSig = OpSig {
+    params: &[BOOL],
+    ret: BOOL,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `zela.math` 全部算子的签名表（顺序与 [`crate::OPS`] 一致）。
+pub static SIGNATURES: &[OpDef] = &[
+    OpDef {
+        name: "sin",
+        sigs: &[UNARY_NUM],
+    },
+    OpDef {
+        name: "cos",
+        sigs: &[UNARY_NUM],
+    },
+    OpDef {
+        name: "add",
+        sigs: &[SAME_NUM, SAME_VEC],
+    },
+    OpDef {
+        name: "mul",
+        sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
+    },
+    OpDef {
+        name: "scale",
+        sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
+    },
+    OpDef {
+        name: "sum",
+        sigs: &[SUM_NUM, SUM_VEC],
+    },
+    OpDef {
+        name: "lt",
+        sigs: &[CMP_NUM],
+    },
+    OpDef {
+        name: "gt",
+        sigs: &[CMP_NUM],
+    },
+    OpDef {
+        name: "le",
+        sigs: &[CMP_NUM],
+    },
+    OpDef {
+        name: "ge",
+        sigs: &[CMP_NUM],
+    },
+    OpDef {
+        name: "eq",
+        sigs: &[EQ_NUM, EQ_BOOL],
+    },
+    OpDef {
+        name: "ne",
+        sigs: &[EQ_NUM, EQ_BOOL],
+    },
+    OpDef {
+        name: "and",
+        sigs: &[AND],
+    },
+    OpDef {
+        name: "or",
+        sigs: &[AND],
+    },
+    OpDef {
+        name: "not",
+        sigs: &[NOT],
+    },
+];
+
+/// 查一个算子的签名（未知算子返回 `None`）。
+pub fn signature_of(name: &str) -> Option<&'static OpDef> {
+    SIGNATURES.iter().find(|def| def.name == name)
+}
+
+#[cfg(test)]
+mod tests {
+    /// 签名表与算子表**同名同序**：漏登记会在这里当场暴露。
+    #[test]
+    fn signatures_cover_every_op_once() {
+        let names: Vec<&str> = super::SIGNATURES.iter().map(|def| def.name).collect();
+        assert_eq!(names.as_slice(), crate::ops::OPS);
+    }
+
+    /// 文档行用构造器名（`Sin`），与脚本侧的 `Sin { … }` 一致。
+    #[test]
+    fn signature_renders_for_docs() {
+        let sin = super::signature_of("sin").expect("sin 已登记");
+        assert_eq!(sin.render_lines(), vec!["Sin: (F64) -> F64"]);
+
+        let mul = super::signature_of("mul").expect("mul 已登记");
+        assert_eq!(
+            mul.render_lines(),
+            vec![
+                "Mul: (F64, F64) -> F64",
+                "Mul: (Vector, F64) -> Vector",
+                "Mul: (F64, Vector) -> Vector",
+            ]
+        );
+    }
+}
+

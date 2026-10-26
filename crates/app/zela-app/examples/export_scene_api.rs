@@ -39,6 +39,7 @@ fn main() {
             docs: SceneApi::docs(),
             meta: SceneApi::meta(),
             channels: zela_scene_ecs::pod::channels(),
+            ops: &[],
         },
         CapabilityDocs {
             name: "content",
@@ -46,6 +47,7 @@ fn main() {
             docs: ContentApi::docs(),
             meta: ContentApi::meta(),
             channels: &[],
+            ops: &[],
         },
         CapabilityDocs {
             name: "expr",
@@ -53,6 +55,7 @@ fn main() {
             docs: MathApi::docs(),
             meta: MathApi::meta(),
             channels: &[],
+            ops: ze_pod_func::SIGNATURES,
         },
         CapabilityDocs {
             name: "python",
@@ -60,6 +63,7 @@ fn main() {
             docs: ze_pod_py::PythonApi::docs(),
             meta: ze_pod_py::PythonApi::meta(),
             channels: &[],
+            ops: &[],
         },
     ];
 

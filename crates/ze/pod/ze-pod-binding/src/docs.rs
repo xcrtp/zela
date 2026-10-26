@@ -17,7 +17,10 @@ use crate::plan::collect_types;
 ///
 /// 与 capability 的 `version` 分开：后者描述**函数集合**，本常量描述
 /// `capabilities_json` 的**顶层结构**。加函数不递增它；改 JSON 形态才递增。
-pub const DOCS_SCHEMA_VERSION: u32 = 1;
+///
+/// `1 → 2`（L2 类型化 A 批）：每个 capability 增加 `ops`（算子签名表），
+/// 每个 channel 增加 `value`（字段的 `TypeSpec`），并带 `display` 文本。
+pub const DOCS_SCHEMA_VERSION: u32 = 2;
 
 /// 一个 capability 的导出视图。
 #[derive(Clone, Copy)]
@@ -28,6 +31,8 @@ pub struct CapabilityDocs {
     pub meta: CapabilityMeta,
     /// 该能力挂到组件构造器上的**通道常量**（`Circle.channel.radius` …；默认空）。
     pub channels: &'static [ze_pod_core::ChannelSpec],
+    /// 该能力的**算子签名表**（L2 类型化；只有 `zela.math` 非空）。
+    pub ops: &'static [ze_pod_core::OpDef],
 }
 
 /// 所有能力可达的类型（递归收集、按名字去重）。
@@ -233,13 +238,53 @@ pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
             let _ = write!(
                 out,
                 "\n        {{\"namespace\":\"{}\",\"component\":\"{}\",\"name\":\"{}\",\
-                 \"address\":\"{}\",\"type\":\"{}\"}}",
+                 \"address\":\"{}\",\"type\":\"{}\",\"value\":{}}}",
                 escape(channel.namespace),
                 escape(channel.component),
                 escape(channel.name),
                 escape(channel.address),
-                escape(channel.value_type)
+                escape(channel.value_type),
+                spec_ref(channel.ty)
             );
+        }
+        out.push_str("\n      ],\n      \"ops\": [");
+        for (index, op) in capability.ops.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "\n        {{\"name\":\"{}\",\"signatures\":[",
+                escape(op.name)
+            );
+            for (sig_index, sig) in op.sigs.iter().enumerate() {
+                if sig_index > 0 {
+                    out.push(',');
+                }
+                let params: Vec<String> = sig.params.iter().map(|ty| spec_ref(ty)).collect();
+                let vars: Vec<String> = sig
+                    .vars
+                    .iter()
+                    .map(|(name, kind)| {
+                        format!(
+                            "{{\"name\":\"{}\",\"kind\":\"{}\"}}",
+                            escape(name),
+                            kind.name()
+                        )
+                    })
+                    .collect();
+                let _ = write!(
+                    out,
+                    "{{\"params\":[{}],\"returns\":{},\"vars\":[{}],\"variadic\":{},\
+                     \"display\":\"{}\"}}",
+                    params.join(","),
+                    spec_ref(sig.ret),
+                    vars.join(","),
+                    sig.variadic,
+                    escape(&sig.render())
+                );
+            }
+            out.push_str("]}");
         }
         out.push_str("\n      ]\n    }");
     }

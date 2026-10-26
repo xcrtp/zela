@@ -51,6 +51,11 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
 
     let mut out =
         String::from("---@meta\n\n---@class Handle zela 场景句柄（组件 / 对象 / 曲线 / 动作）\n\n");
+    if !channels.is_empty() {
+        // 通道携带值类型（A 批）：`Circle.channel.radius` 是 `Channel<number>`。
+        // 只作绑定目标，脚本读不到值 —— 泛型参数只用于编辑器提示与未来类型检查。
+        out.push_str("---@class Channel<T> 组件字段通道（只能作绑定目标）\n\n");
+    }
 
     // ── 类型（一次）────────────────────────────────────────────────────
     for (&full_name, &spec) in &types {
@@ -86,9 +91,9 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     out.push_str(&format!("---@class {lua_name}Channel\n"));
                     for channel in own_channels {
                         out.push_str(&format!(
-                            "---@field {} {}\n",
+                            "---@field {} Channel<{}>\n",
                             channel.name,
-                            short_name(channel.value_type)
+                            lua_type_name(channel.ty)
                         ));
                     }
                     out.push('\n');
@@ -179,6 +184,20 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                 item.signature.name,
                 names.join(", ")
             ));
+        }
+        // ── 算子类型签名（L2 前哨，A 批）──────────────────────────────
+        // 纯注释：签名是**文档/诊断**用的数据，脚本侧没有对应的全局。
+        if !capability.ops.is_empty() {
+            out.push_str(&format!(
+                "-- ── {} 算子类型签名（L2）────────────────────────\n",
+                capability.name
+            ));
+            for op in capability.ops {
+                for line in op.render_lines() {
+                    out.push_str(&format!("-- {line}\n"));
+                }
+            }
+            out.push('\n');
         }
         // `clock_*` 的别名表（与绑定层一致）：`clock.time()` / `clock.shift(…)` …
         let clock_calls: Vec<_> = capability

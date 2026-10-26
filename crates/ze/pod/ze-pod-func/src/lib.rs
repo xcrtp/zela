@@ -24,6 +24,7 @@
 pub mod api;
 pub mod expr_pod;
 pub mod ops;
+pub mod signature;
 
 pub use api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec, EqSpec, GeSpec,
@@ -34,6 +35,8 @@ pub use expr_pod::{
     ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding, SCENE_NAMESPACE,
 };
 pub use ops::eval as eval_op;
+pub use ops::OPS;
+pub use signature::{SIGNATURES, signature_of};
 
 /// 本函子库在 Broker 里的 Service 名（脚本侧全局表名也是它：`expr.*`）。
 ///

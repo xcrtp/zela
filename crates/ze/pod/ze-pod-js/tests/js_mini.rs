@@ -268,6 +268,7 @@ fn docs_are_complete_and_structural() {
         docs: MiniApi::docs(),
         meta: MiniApi::meta(),
         channels: &[],
+        ops: &[],
     }];
 
     let ts = ze_pod_js::d_ts(&capabilities);
