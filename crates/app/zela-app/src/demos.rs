@@ -75,6 +75,7 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_channels2d", "2D字段通道", "cap_channels2d.lua"),
     lua!("cap_channels3d", "3D字段通道", "cap_channels3d.lua"),
     lua!("expr_read", "通道读端与值分支", "expr_read.lua"),
+    lua!("sine_trace", "小球画正弦", "sine_trace.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。

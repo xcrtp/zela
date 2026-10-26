@@ -59,3 +59,5 @@ expr_demo       表达式驱动          expr_demo.lua   2f373603228c530752c2e56
 cap_channels2d  2D字段通道          cap_channels2d.lua  fa9a5806ccebd6370d9737a95075b495a23fbb4f721391b349d2b565e4a13a33
 cap_channels3d  3D字段通道          cap_channels3d.lua  077d88791c5ebe5765ed16d79e3758e7258b4cce4275a59dee64a49e2548dbae
 expr_read       通道读端与值分支     expr_read.lua       367d769992ffc959715db79d42daa17735b1e88ba0bb48da162ea7daeb4ad368
+# 内容作品：小球随 Reveal 画出正弦（书写进度与小珠位置逐段同步）。
+sine_trace      小球画正弦          sine_trace.lua      8125a95db8e8099967c67fb511bac788be3bde542b6ad3c41e04d79a6dae193c
