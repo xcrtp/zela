@@ -38,24 +38,28 @@ fn main() {
             calls: SceneApi::calls(),
             docs: SceneApi::docs(),
             meta: SceneApi::meta(),
+            channels: zela_scene_ecs::pod::channels(),
         },
         CapabilityDocs {
             name: "content",
             calls: ContentApi::calls(),
             docs: ContentApi::docs(),
             meta: ContentApi::meta(),
+            channels: &[],
         },
         CapabilityDocs {
             name: "expr",
             calls: MathApi::calls(),
             docs: MathApi::docs(),
             meta: MathApi::meta(),
+            channels: &[],
         },
         CapabilityDocs {
             name: "python",
             calls: ze_pod_py::PythonApi::calls(),
             docs: ze_pod_py::PythonApi::docs(),
             meta: ze_pod_py::PythonApi::meta(),
+            channels: &[],
         },
     ];
 

@@ -257,6 +257,7 @@ fn docs_are_complete_and_structural() {
         calls: MiniApi::calls(),
         docs: MiniApi::docs(),
         meta: MiniApi::meta(),
+        channels: &[],
     }];
 
     let lua_text = ze_pod_lua::lua_ls(&capabilities);

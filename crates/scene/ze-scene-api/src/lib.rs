@@ -22,7 +22,9 @@ pub use api::{ContentApi, SceneApi};
 pub use content_service::{
     CONTENT_SERVICE_NAME, CONTENT_SERVICE_VERSION, ContentServicePod, PathStore,
 };
-pub use scene_service::{FINISH_PATH, RESET_PATH, SERVICE_NAME, SERVICE_VERSION, SceneServicePod};
+pub use scene_service::{
+    FINISH_PATH, RESET_PATH, SERVICE_NAME, SERVICE_VERSION, SceneServicePod, channels,
+};
 pub use types::*;
 
 use std::sync::Arc;

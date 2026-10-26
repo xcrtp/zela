@@ -2,6 +2,7 @@
 //
 // 本文件不引用任何 domain 类型：能力清单由调用方（App / domain crate）传入。
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,15 @@ fn push_description(out: &mut String, text: &str) {
 /// 从 `CapabilityDocs` 生成 LuaLS 注解（**无 domain 知识**）。
 pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
     let types = ze_pod_binding::reachable_types(capabilities);
+    // 组件短名 → 通道常量（`Circle.radius`）。构造器是**可调用表**，
+    // 常量因此能作为字段声明出来（否则 `Circle.radius` 会被诊断成 undefined-field）。
+    let mut channels: BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelSpec>> =
+        BTreeMap::new();
+    for capability in capabilities {
+        for channel in capability.channels {
+            channels.entry(channel.component).or_default().push(channel);
+        }
+    }
 
     let mut out =
         String::from("---@meta\n\n---@class Handle zela 场景句柄（组件 / 对象 / 曲线 / 动作）\n\n");
@@ -47,8 +57,14 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
         let lua_name = short_name(full_name);
         match spec {
             TypeSpec::Struct { name, fields } => {
+                let own_channels = channels.get(lua_name).map(Vec::as_slice).unwrap_or(&[]);
                 out.push_str(&format!("---@class {lua_name}\n"));
                 for field in *fields {
+                    // 通道常量与组件字段**同名**时（`Opacity.value`）：类描述的是
+                    // 构造器对象（常量挂在这里），字段留给 `call(...)` 的实参。
+                    if own_channels.iter().any(|channel| channel.name == field.name) {
+                        continue;
+                    }
                     // 提案 #6 C：默认值进声明文件（`Color.a = 255`），但不进产物。
                     let default =
                         ze_pod_binding::field_default_literal(name, field.name)
@@ -59,6 +75,14 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                         field.name,
                         lua_type_name(field.ty),
                         default
+                    ));
+                }
+                // 通道常量：Lua 运行期是挂在**可调用表**上的字段。
+                for channel in own_channels {
+                    out.push_str(&format!(
+                        "---@field {} {}\n",
+                        channel.name,
+                        short_name(channel.value_type)
                     ));
                 }
                 out.push('\n');
@@ -86,8 +110,9 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     "---@overload fun({}): {returns}\n",
                     positional.join(", ")
                 ));
+                // 运行期是"表 + `__call`"⇒ 声明成可调用表，通道常量才能挂在上面。
                 out.push_str(&format!(
-                    "---@param spec {lua_name}\n---@return {returns}\nfunction {lua_name}(spec) end\n\n"
+                    "---@operator call(...): {returns}\n{lua_name} = {{}}\n\n"
                 ));
             }
             TypeSpec::Enum { variants, .. } => {

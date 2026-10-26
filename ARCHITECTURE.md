@@ -1857,4 +1857,8 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   作者侧只剩**组件常量**：`Circle.radius` / `Opacity.value`（`Pod::channels()` 从场景地址表导出，
   挂在可调用构造器上）；写错常量名在绑定层立即暴露。
   `BindSpec.target` 仍是 `ChannelSpec { namespace, name }` 数据，但字符串只活在内部。
+- **常量要进声明文件**：`ChannelSpec` 带 `value_type`；LuaLS 把构造器声明成**可调用表**
+  （`---@operator call(...)` + `---@field radius Channel`），`.d.ts` 用 `function` + `namespace`
+  合并，`.pyi` 用 `Protocol` 建模可调用对象。否则编辑器会把 `Circle.radius` 诊断成
+  undefined-field。与组件字段同名的常量（`Opacity.value`）只保留常量那一条声明。
 - **影响**：`expr_demo` 改用常量；产物里的库版本 `4 → 5` ⇒ payload 重录为 `94d731b4…`，像素不变。

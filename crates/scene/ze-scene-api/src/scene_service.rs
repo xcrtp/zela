@@ -429,28 +429,8 @@ impl Pod for SceneServicePod {
     }
 
     /// 场景地址表 → 可挂到组件构造器上的**通道常量**（提案 #6 B）。
-    ///
-    /// 只导出**单字段**规格（`address == "组件.字段"`）：组合选择键
-    /// （`Camera2DFraming` / `RevealRange`）没有单一的 `(组件, 字段)`，不能当常量挂。
     fn channels(&self) -> &'static [ze_pod_core::ChannelSpec] {
-        static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelSpec>> = OnceLock::new();
-        CHANNELS.get_or_init(|| {
-            use ze_scene_core::animation::TARGETS;
-            TARGETS
-                .iter()
-                .filter(|entry| {
-                    let spec = entry.spec;
-                    spec.address == format!("{}.{}", spec.component, spec.field)
-                })
-                .map(|entry| ze_pod_core::ChannelSpec {
-                    namespace: "zela.scene",
-                    component: entry.spec.component,
-                    name: entry.spec.field,
-                    address: entry.spec.address,
-                    ty: entry.spec.ty,
-                })
-                .collect()
-        })
+        channels()
     }
 
     fn call(&self, id: FunctionId, _args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
@@ -477,6 +457,36 @@ fn service(pod: &dyn Pod) -> &SceneServicePod {
     pod.as_any()
         .downcast_ref::<SceneServicePod>()
         .expect("SceneApi 的调用者必须是 SceneServicePod")
+}
+
+/// 场景地址表 → **通道常量**（`Circle.radius` …），与 [`Pod::channels`] 同一份。
+///
+/// 只导出**单字段**规格（`address == "组件.字段"`）：组合选择键
+/// （`Camera2DFraming` / `RevealRange`）没有单一的 `(组件, 字段)`，不能当常量挂。
+///
+/// 声明文件生成器也调它（不需要构造 Pod 实例）。
+pub fn channels() -> &'static [ze_pod_core::ChannelSpec] {
+    static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelSpec>> = OnceLock::new();
+    CHANNELS.get_or_init(|| {
+        use ze_scene_core::animation::TARGETS;
+        TARGETS
+            .iter()
+            .filter(|entry| {
+                let spec = entry.spec;
+                spec.address == format!("{}.{}", spec.component, spec.field)
+            })
+            .map(|entry| ze_pod_core::ChannelSpec {
+                namespace: "zela.scene",
+                component: entry.spec.component,
+                name: entry.spec.field,
+                address: entry.spec.address,
+                ty: entry.spec.ty,
+                // 常量的值是 `{ namespace, name }`：与 `zela.math.Bind.target`
+                // 同一个 PodType（声明文件据此标注 `Circle.radius: Channel`）。
+                value_type: "zela.math.Channel",
+            })
+            .collect()
+    })
 }
 
 fn color32(color: crate::types::Color) -> Color32 {

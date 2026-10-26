@@ -26,6 +26,8 @@ pub struct CapabilityDocs {
     pub calls: &'static [ErasedFn],
     pub docs: &'static [FnDoc],
     pub meta: CapabilityMeta,
+    /// 该能力挂到组件构造器上的**通道常量**（`Circle.radius` …；默认空）。
+    pub channels: &'static [ze_pod_core::ChannelSpec],
 }
 
 /// 所有能力可达的类型（递归收集、按名字去重）。
@@ -222,6 +224,22 @@ pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
                 spec_ref(item.io.ret)
             );
             out.push_str("        }");
+        }
+        out.push_str("\n      ],\n      \"channels\": [");
+        for (index, channel) in capability.channels.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "\n        {{\"namespace\":\"{}\",\"component\":\"{}\",\"name\":\"{}\",\
+                 \"address\":\"{}\",\"type\":\"{}\"}}",
+                escape(channel.namespace),
+                escape(channel.component),
+                escape(channel.name),
+                escape(channel.address),
+                escape(channel.value_type)
+            );
         }
         out.push_str("\n      ]\n    }");
     }

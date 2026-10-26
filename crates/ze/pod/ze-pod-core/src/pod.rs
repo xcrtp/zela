@@ -23,8 +23,10 @@ pub struct ChannelSpec {
     pub name: &'static str,
     /// 规范地址（`Circle.radius`）。
     pub address: &'static str,
-    /// 字段类型（声明文件 / 类型检查用）。
+    /// 字段类型（写方向 / 文档用）。
     pub ty: &'static TypeSpec,
+    /// 常量**值**的 PodType 名（`{ namespace, name }` 结构体；声明文件用它标注）。
+    pub value_type: &'static str,
 }
 
 /// per-Pod 局部的函数编号（函数集合属于某个状态机）。

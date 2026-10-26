@@ -181,20 +181,52 @@ fn push_imports(out: &mut String, imports: &BTreeMap<String, BTreeSet<String>>) 
     }
 }
 
+/// 组件短名 → 通道常量（`Circle.radius`）。
+fn channels_by_component(
+    capabilities: &[CapabilityDocs],
+) -> BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelSpec>> {
+    let mut out: BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelSpec>> = BTreeMap::new();
+    for capability in capabilities {
+        for channel in capability.channels {
+            out.entry(channel.component).or_default().push(channel);
+        }
+    }
+    out
+}
+
 fn render_type(
     out: &mut String,
     full_name: &'static str,
     spec: &'static TypeSpec,
     components: &BTreeSet<&'static str>,
+    channels: &[&'static ze_pod_core::ChannelSpec],
 ) {
     let name = short_name(full_name);
     match spec {
         TypeSpec::Struct { name: type_name, fields } => {
             if components.contains(full_name) {
-                out.push_str(&format!(
-                    "def {name}({}) -> Handle: ...\n",
-                    params(fields, components, type_name)
-                ));
+                if channels.is_empty() {
+                    out.push_str(&format!(
+                        "def {name}({}) -> Handle: ...\n",
+                        params(fields, components, type_name)
+                    ));
+                } else {
+                    // 带通道常量的组件在运行期是"可调用对象"⇒ 用 Protocol 建模，
+                    // 这样 `Circle.radius` 与 `Circle(...)` 都是合法表达式。
+                    out.push_str(&format!("class _{name}Ctor(Protocol):\n"));
+                    for channel in channels {
+                        out.push_str(&format!(
+                            "    {}: {}\n",
+                            channel.name,
+                            short_name(channel.value_type)
+                        ));
+                    }
+                    out.push_str(&format!(
+                        "    def __call__(self, {}) -> Handle: ...\n",
+                        params(fields, components, type_name)
+                    ));
+                    out.push_str(&format!("{name}: _{name}Ctor\n"));
+                }
             } else {
                 out.push_str(&format!("class {name}:\n"));
                 if fields.is_empty() {
@@ -314,12 +346,13 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
     }
 
     let mut files = BTreeMap::new();
+    let component_channels = channels_by_component(capabilities);
 
     // ── 包 __init__.pyi：Handle + 共享类型 + 子模块再导出 ───────────────
     for package in &packages {
         let mut out = String::from(
             "# 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。\n\
-             from typing import Any, List\n\n",
+             from typing import Any, List, Protocol\n\n",
         );
         let root = root_of(package);
         if package == root {
@@ -339,6 +372,14 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
         let mut references = BTreeSet::new();
         for (_, spec) in &package_types {
             collect_named(spec, &mut references);
+        }
+        // 通道常量的值类型（`Channel`）也要进导入表。
+        for (full_name, _) in &package_types {
+            if let Some(channels) = component_channels.get(short_name(full_name)) {
+                for channel in channels {
+                    references.insert(channel.value_type);
+                }
+            }
         }
         let mut imports: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for name in references {
@@ -363,7 +404,11 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
         out.push('\n');
 
         for (full_name, spec) in package_types {
-            render_type(&mut out, full_name, spec, &components);
+            let own = component_channels
+                .get(short_name(full_name))
+                .cloned()
+                .unwrap_or_default();
+            render_type(&mut out, full_name, spec, &components, &own);
             out.push('\n');
         }
         files.insert(format!("{}/__init__.pyi", package.replace('.', "/")), out);
@@ -480,12 +525,14 @@ mod tests {
                 calls: MiniScene::calls(),
                 docs: MiniScene::docs(),
                 meta: MiniScene::meta(),
+                channels: &[],
             },
             CapabilityDocs {
                 name: "python",
                 calls: PythonApi::calls(),
                 docs: PythonApi::docs(),
                 meta: PythonApi::meta(),
+                channels: &[],
             },
         ])
     }
