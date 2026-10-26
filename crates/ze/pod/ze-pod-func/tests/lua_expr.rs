@@ -159,9 +159,11 @@ fn lua_builds_an_expression_and_exports_it() {
         root["node"]["data"]["args"][1]["node"]["data"]["op"]["name"],
         "sin"
     );
-    // 通道是零元叶子：脚本拿不到 `t` 的数值。
-    let text = serde_json::to_string(root).unwrap();
-    assert!(text.contains("\"channel\":\"time\""));
+    // 通道是零元叶子：脚本拿不到 `t` 的数值（v2 形状是 namespace + name）。
+    let channel = &root["node"]["data"]["args"][1]["node"]["data"]["args"][0]["node"]["data"]["args"]
+        [0]["node"]["data"]["channel"];
+    assert_eq!(channel["namespace"], "", "基础通道的空 namespace");
+    assert_eq!(channel["name"], "time");
 }
 
 /// `sum` 接收数组；空数组退化为字面量零（不产生无参 call）。
