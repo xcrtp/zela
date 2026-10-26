@@ -464,6 +464,28 @@ impl Timeline {
         }
     }
 
+    /// 产物里出现的**函子库身份**（去重、按 namespace / version 排序）。
+    ///
+    /// 输入流的配对校验需要它：同一份 ZSB 的 payload hash 已覆盖库版本，
+    /// 但把身份**显式**写进输入流，版本漂移时能给出可读的错误而不是"hash 不符"。
+    pub fn libraries(&self) -> Vec<LibraryRef> {
+        let mut out: Vec<LibraryRef> = self
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::Expr { library, .. } => Some(library.clone()),
+                Step::Wait(_) | Step::Play { .. } => None,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            a.namespace
+                .cmp(&b.namespace)
+                .then_with(|| a.version.cmp(&b.version))
+        });
+        out.dedup();
+        out
+    }
+
     /// **静止时刻**（D 批）：所有只依赖 Time 的门都失效的最晚时刻。
     ///
     /// 它不是"作品时长"——录得长就是尾部静止，录得短就是截断；渲染多久由

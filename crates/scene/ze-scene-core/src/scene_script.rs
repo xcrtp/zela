@@ -575,6 +575,11 @@ impl SceneScript {
         self.timeline.still_time()
     }
 
+    /// 产物里出现的**函子库身份**（输入流配对校验用；见 [`Timeline::libraries`]）。
+    pub fn libraries(&self) -> Vec<LibraryRef> {
+        self.timeline.libraries()
+    }
+
     /// **合并**：把 `other` 整体接到本脚本之后（拼接命令序列，§3.3）。
     ///
     /// 三条规则：

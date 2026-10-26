@@ -20,8 +20,11 @@
 use std::sync::Arc;
 
 // B11 Step 4/5：3D → 矢量后端的桥（native 与浏览器共用）与按帧渲染。
+pub mod input_replay;
 pub mod vector3d;
 pub mod vector_frame;
+
+pub use input_replay::apply_input_frame;
 
 /// B12 Step 1.1：headless / 浏览器入口的 tracing 订阅器。
 ///

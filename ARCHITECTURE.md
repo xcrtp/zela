@@ -1999,3 +1999,23 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   （`None` = 不可推导，由 `forest_duration` 兜底），`zela-app` 不再 `unwrap_or(0.0)`。
 - **零产物代价**：区间集不进 payload ⇒ 23 条 demo payload 逐位不变；
   36 条像素基线 ok 36 / DIFF 0。
+
+### 类型系统 D 批：输入流产品（2026-10-26）
+
+> 一句话：**ZSB 不记录输入**。`Render(ZSB, InputStream) → Frames`，零输入是默认。
+
+- **独立产物**（[`input_stream.rs`](crates/scene/zela-scene-bundle/src/input_stream.rs)）：
+  `zela.input/1`，**按帧号索引**的稀疏事件（`{ frame, events }`，空帧不写）。
+  事件就是 `SceneEvent` 的 tagged JSON（`WidgetId` / `CameraCommand` 跟它一起进格式）。
+- **配对校验**：`Pairing { zsb_payload_hash, libraries }` 记录"这份流为谁而录"；
+  加载时 payload hash / 函子库身份不匹配 ⇒ **显式失败**（经典 TAS desync 的防线）。
+  `SceneScript::libraries()` 从表达式绑定里取身份（payload hash 已覆盖它，显式写出来
+  是为了版本漂移时给出可读错误）。
+- **录制默认关**：`Recorder::default()` 是 disabled，`capture` 是 no-op；
+  `Recorder::recording(pairing)` 才产生流（`finish` 返回 `Some`）。
+- **重放**（[`input_replay.rs`](crates/app/zela-playback/src/input_replay.rs)）：
+  `apply_input_frame(driver, events)` 在 `Advance` **之前**整帧替换 `InputEvents`；
+  `zela-render --bundle … --input-stream FILE` 先配对再按帧重放。
+  零输入（空流）= `Render(ZSB, ∅)`，与既有 36 条基线同一条路径。
+- **确定性门禁**：同一份流重放两次，Director 状态逐位相同；ZSB 变更后加载旧流 ⇒
+  显式 fail。宿主侧"录制开关 + 保存"的 UI 入口尚未接线（GAPS AI-05）。

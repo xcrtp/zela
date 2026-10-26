@@ -7009,6 +7009,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "ze-func",
  "ze-render-ir",
  "ze-scene-core",
  "zela-scene-ecs",

@@ -33,7 +33,12 @@
 use serde::{Deserialize, Serialize};
 
 pub mod frame_hash;
+pub mod input_stream;
 pub mod sha256;
+
+pub use input_stream::{
+    FrameEvents, INPUT_FORMAT, InputError, InputStream, LibraryId, Pairing, Recorder,
+};
 
 use zela_scene_ecs::scene_script::SceneScript;
 

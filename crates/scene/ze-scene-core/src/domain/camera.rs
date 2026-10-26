@@ -12,6 +12,7 @@
 //
 // 本模块是纯数据：不得出现任何 `egui::` 类型（B 阶段验收红线）。
 
+use serde::{Deserialize, Serialize};
 use ze_notion::{Vec2, Vec3};
 
 /// 相机交互模式（可插拔控制器选择）。
@@ -61,7 +62,8 @@ impl CameraMode {
 /// 坐标约定：[`CameraCommand::Pan`] 的 `delta` 为**世界坐标**（Y-up）下的
 /// 取景位移量——屏幕→世界的换算（含 Y 翻转）由 host 借助
 /// `Camera2D::screen_to_world` 完成，控制器拿到的已是世界空间量。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum CameraCommand {
     /// 环绕观察：绕取景目标旋转（delta_yaw 水平角、delta_pitch 垂直角，弧度）。
     /// 仅 `Orbit` 模式消费。

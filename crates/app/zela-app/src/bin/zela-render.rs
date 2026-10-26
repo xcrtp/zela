@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! zela-render <脚本路径> [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash]
-//! zela-render --bundle <file.zsb> [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash]
+//! zela-render --bundle <file.zsb> [--input-stream FILE] [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash]
 //! ```
 //!
 //! - 默认 **ffmpeg 管道**（rawvideo → libx264）；ffmpeg 不在 PATH ⇒ **明确报错**并提示 `--frames`；
@@ -38,6 +38,8 @@ use zela_scene_bundle::frame_hash::FrameSequenceHash;
 struct Args {
     script: Option<PathBuf>,
     bundle: Option<PathBuf>,
+    /// 输入流（独立产物；只与 `--bundle` 搭配，配对校验需要 ZSB payload hash）。
+    input_stream: Option<PathBuf>,
     frames_dir: Option<PathBuf>,
     hash_out: Option<PathBuf>,
     /// B8 Step 2：是否挂 `HashSink`（主流程默认**不挂**）。
@@ -67,6 +69,7 @@ impl Args {
 
         let mut script: Option<PathBuf> = None;
         let mut bundle: Option<PathBuf> = None;
+        let mut input_stream: Option<PathBuf> = None;
         let mut frames_dir = None;
         let mut hash_out = None;
         let mut hash = false;
@@ -121,6 +124,13 @@ impl Args {
                         .parse()
                         .map_err(|_| "--fps 必须是数字".to_string())?;
                 }
+                // D 批：输入流（帧索引 + 事件；独立于 ZSB）。
+                "--input-stream" => {
+                    i += 1;
+                    input_stream = Some(PathBuf::from(
+                        raw.get(i).ok_or("--input-stream 需要一个文件参数")?,
+                    ));
+                }
                 "--out" => {
                     i += 1;
                     out = PathBuf::from(raw.get(i).ok_or("--out 需要一个文件参数")?);
@@ -168,10 +178,16 @@ impl Args {
         if script.is_none() && bundle.is_none() {
             return Err("缺少脚本路径（或 --bundle <file.zsb>）".to_string());
         }
+        if input_stream.is_some() && bundle.is_none() {
+            return Err(
+                "输入流只能与 --bundle 搭配（配对校验需要 ZSB 的 payload hash）".to_string(),
+            );
+        }
 
         Ok(Self {
             script,
             bundle,
+            input_stream,
             frames_dir,
             hash_out,
             hash,
@@ -235,6 +251,7 @@ fn run() -> Result<(), String> {
         }
     }
 
+    let mut input_stream: Option<zela_scene_bundle::InputStream> = None;
     let mut runtime = if let Some(script_path) = &args.script {
         let source = std::fs::read_to_string(script_path)
             .map_err(|e| format!("读取脚本 {} 失败：{e}", script_path.display()))?;
@@ -260,6 +277,22 @@ fn run() -> Result<(), String> {
                 |value| format!("≈ {value:.3}s")
             )
         );
+        // D 批：输入流是**独立产物**，加载时先做配对校验（不匹配 ⇒ 显式失败）。
+        if let Some(path) = &args.input_stream {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("读取输入流 {} 失败：{e}", path.display()))?;
+            let stream = zela_scene_bundle::InputStream::from_json(&text)
+                .map_err(|e| format!("输入流解析失败（{}）：{e}", path.display()))?;
+            stream
+                .pairing
+                .validate(&bundle)
+                .map_err(|e| format!("输入流与 ZSB 不匹配（{}）：{e}", path.display()))?;
+            eprintln!(
+                "[input] {} 个帧有事件（配对 hash 一致，零输入是默认）",
+                stream.frames.len()
+            );
+            input_stream = Some(stream);
+        }
         build_bundle_runtime(ctx.clone(), &bundle).map_err(|e| e.to_string())?
     } else {
         unreachable!("Args::parse 已保证二者恰有一个")
@@ -320,6 +353,13 @@ fn run() -> Result<(), String> {
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "inline".to_string());
 
+    // D 批：输入流按帧索引重放。`run_frames` 在回调**之前**推进一帧，
+    // 因此第 0 帧先在循环外装填，回调里装填下一帧（空帧会清空上一帧）。
+    let input_driver = std::sync::Arc::clone(&runtime.driver);
+    if let Some(stream) = &input_stream {
+        zela_playback::apply_input_frame(&input_driver, stream.events_at(0));
+    }
+
     // B9 Step 3：帧循环唯一实现在 `zela_app::frame_loop`（与 `zela-verify` 共用）。
     let run = run_frames(
         &ctx,
@@ -335,6 +375,10 @@ fn run() -> Result<(), String> {
         },
         need_rgba,
         &mut |index, frame| {
+            // D 批：本帧已渲染 ⇒ 装填下一帧的事件（帧索引，不按时间）。
+            if let Some(stream) = &input_stream {
+                zela_playback::apply_input_frame(&input_driver, stream.events_at(index + 1));
+            }
             // B2-6：旁路采样（只打印，不改序列哈希）。
             if digest_sample > 0 && index % digest_sample == 0 {
                 let digest =
