@@ -976,6 +976,25 @@
 
 ---
 
+## AJ. 通道读端与字段注册批次记账（`ze-scene-macros`，2026-10-27）
+
+> 计划《通道读端与字段注册执行计划：新建 `ze-scene-macros` + 显式注册》（E → F → G → H，每批一次提交）。
+> 口径：**注册去三字符串 → 字段通道 derive → 读端 monad → Select**；36 条像素基线不得重录，
+> `zela.scene` 指纹不动（E/F 只改"怎么注册"，不改注册了什么）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AJ-01 | **组件注册去三字符串已落地（E 批）** | api / 注册 | **已关闭（E）** | 新建 [`ze-scene-macros`](crates/scene/ze-scene-macros/src/lib.rs)（proc-macro，**不带 `zela-` 前缀**，避开 xtask 判据 2b 的生产依赖门禁）。`#[derive(SceneComponent)]` 从 `#[pod_type(name = "...")]` 取 `POD_TYPE_NAME`、从 ident 的 snake_case（仅"小写→大写"插 `_`，`Camera2D → camera2d`）推导 `CTOR_NAME`；`RegisterSceneComponent::register_component::<T>(ctor)` 内部调 `register_fn1_named::<T, Handle>`，25 条注册点从 5 行降到 1 行，删掉 75 个手写字符串。`ze-scene-api` 顶部 `extern crate self as ze_scene_api;` 供宏生成的全路径引用。**验收**：25 个组件名测试钉住（`component_names_match_registered_ctors`）、声明文件逐字节一致、`SCENE_API_FINGERPRINT = 16274693131949166351` 不变 |
+| AJ-02 | **`Channels` derive + 字段全量注册（F 批）** | 场景 / 动画 | **已关闭（F）** | `#[derive(Channels)]` + `#[channel(name = "...", field: Ty)]`（`name` 缺省 = 规范地址 `Component.field`；显式名保留旧持久化名 `CircleRadius` / `Phase` / `MorphT` / `CameraEye` / `Reveal.end` 等，**老 payload 一字不改**）。类型映射**封闭**：`f32 → Scalar(F32)`、`Vec2 → zela.Vec2`、`Vec3 → zela.Vec3`、`bool → Scalar(Bool)`，其它类型**编译期报错**。10 个既有组件加 derive（18 条派生通道），另手写 7 条（`Dash.period/duty/phase`、`CurveWindow.lo/hi`、`Gradient.from/to` —— 类型在 `ze-render-ir`，core 不能反向依赖）；`TARGETS` 现共 32 条（手写 14 + 派生 18），`Gradient.stops` 因无 `AnimValue` 表示不注册。组合键 `Camera2DFraming` / `RevealRange` 保留手写并标 `FieldSpec.is_composite`，`channels()` 的筛选从字符串拼比对改为 `!is_composite`（硬约束 3）。新增字段：`Circle.center`、`Reveal.start`、`Camera2D.center/scale`、`Arrow.from/to/head_length/head_width`、`Light.intensity`、`Material3D.metallic/roughness`。**验收**：`derived_channels_in_targets`（地址无重复 + 旧名齐全）、`derived_write_read_roundtrip`、`composite_specs_flagged`；`SCENE_API_FINGERPRINT` 不变（函数签名未动）。新增的 13 条通道当前无作品直接驱动 ⇒ 在 [`capability_exemptions.txt`](crates/app/zela-app/scripts/demo/capability_exemptions.txt) 豁免并指向本行（后续内容批次逐条删除）；`xtask` 的覆盖门禁同步从 `#[channel(...)]` 属性抽通道（否则 derive 掉的通道会从门禁里静默消失） |
+| AJ-03 | **通道读端 monad + 帧内定序（G 批）** | 表达式 / 场景 / 产物 | **已关闭（G）** | ① [`SceneMono`](crates/scene/zela-scene-ecs/src/expr_mono.rs) 持 `&'a dyn SceneRead`，`Mono::read_object(channel, object)` 按 `channel.name` 查 `TARGETS` → 调 `spec.read`；协议值 `AnimValue → Value`。② `ze-func` 新增 `Node::Read { channel, object }` / `Step::Read`；`Mono::read_object` 的**默认实现显式失败**（`MissingChannel`），既有宿主实现不破。③ 脚本侧 `expr.read { channel = Circle.channel.radius, object = curve }`（`ReadSpec`，**对象显式传入**，无隐式"读自己"），`zela.math@6 → @7`、`MATH_API_FINGERPRINT` 更新。④ `is_injected()` 改**查注册表**（`zela.scene` 地址在 `TARGETS` 里即放行），装配期 `Node::Read` 也过同一检查；`Read.object` 越界 ⇒ `UnknownObject`。⑤ 产物里 `Read.object` 仍是**脚本局部句柄下标**（与 `handle_ref` 惯例一致），`commit` 时 `Timeline::rewrite_read_objects` 重写为 `ObjectId` 打包值再编译。⑥ **帧内定序**：`check_read_order` 在装配期扫每条表达式绑定的读集（含 `Select` 分支递归），若同一 `(地址, 对象)` 的写者时钟起点晚于读者 ⇒ `ExprBindError::ReadOrderConflict`（显式报错，不静默读到旧值）。**验收**：`read_object_reads_component_field_through_scene`、`read_object_fails_explicitly_for_unregistered_and_missing_component`、`read_without_host_impl_fails_explicitly`，以及读先于写/顺序正确的场景脚本用例 |
+| AJ-04 | **`Select` 求值（H 批）** | 表达式层 | **已关闭（H）** | [`program.rs`](crates/kernel/ze-func/src/program.rs) 实现 `Step::Select { cond, then, else }`：`cond` 编进外层程序，两个分支各自是**独立子程序**（独立值表 + 根索引）⇒ 运行期只 `eval` 被选中那一支，未选中支的通道 / 算子**一次都不求值**（惰性是结构性的，不靠短路标记）。`cond` 不是 `Bool` ⇒ `EvalError::SelectCondition`（显式，不静默当真 / 假）。删除 `first_unimplemented`（`ExprError::UnsupportedNode` 保留为公开枚举变体）。**验收**：`select_picks_branch_by_condition`、`select_is_lazy_on_the_unselected_branch`（未选中支读缺失通道不报错）、`select_condition_must_be_bool`；`check_read_order` 的读集收集同步递归进分支 |
+
+**AJ 段小计（E–H 四批）**：已关闭 4（AJ-01…AJ-04）· 待处理 0 · 36 条像素基线未重录 · `zela.scene` 指纹不变。
+> AI-06 / AI-07 / AI-08 仍为**待处理**（`last_active` 不变式、历史 `Replay` 无消费者、输入流能放不能录）—— 与 E–H 无交集，本轮未动。
+
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后

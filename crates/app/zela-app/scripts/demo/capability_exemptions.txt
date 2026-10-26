@@ -19,3 +19,20 @@ Target:Framing2D.center -> AG-02  # Camera2DFraming 的 Vec2 分支已覆盖该�
 Target:Framing2D.scale -> AG-02   # Camera2DFraming 的 Scalar 分支已覆盖该字段写入
 Target:Reveal.end -> AG-02        # RevealRange 的 Scalar 分支已覆盖该字段写入
 Target:Reveal.range -> AG-02      # RevealRange 的 Vec2 分支已覆盖该字段写入
+
+# F 批（AJ-02）：字段通道由 12 条扩到 32 条（derive 生成），下列新通道当前
+# 还没有作品直接驱动。触发条件：后续内容批次为它们写作品后**逐条删除**。
+Target:Circle.center -> AJ-02        # 圆平移（尚未有作品驱动）
+Target:Arrow.from -> AJ-02           # 箭头起点
+Target:Arrow.to -> AJ-02             # 箭头终点
+Target:Arrow.head_length -> AJ-02    # 箭头头部长度
+Target:Arrow.head_width -> AJ-02     # 箭头头部宽度
+Target:Camera2D.center -> AJ-02      # 2D 相机中心（旧键 Camera2DFraming 覆盖）
+Target:Camera2D.scale -> AJ-02       # 2D 相机缩放（旧键 Camera2DFraming 覆盖）
+Target:Reveal.start -> AJ-02         # 书写起点（旧键 RevealRange 覆盖区间）
+Target:Material3D.metallic -> AJ-02  # PBR 金属度
+Target:Material3D.roughness -> AJ-02 # PBR 粗糙度
+Target:Light.intensity -> AJ-02      # 光照强度
+Target:Gradient.from -> AJ-02        # 渐变起点色
+Target:Gradient.to -> AJ-02          # 渐变终点色
+
