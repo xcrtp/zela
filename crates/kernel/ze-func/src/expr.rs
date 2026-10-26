@@ -36,14 +36,28 @@ pub enum Node {
     ///
     /// 自引用 = 递归 = 要 `fix` ⇒ 装配期禁环（[`Expr::validate`]）。
     Ref { to: Id },
+    /// **值分支**（提案 #6 D：只留格式，尚未实现求值）。
+    ///
+    /// 形状从第一版就定下来（`cond` / `then` / `else` 三个命名子表达式），
+    /// 理由与 `Ref` 相同：事后加字段 = 新格式，而这批已经付过一次
+    /// `payload 1 → 2` 的代价。`CompiledExpr::compile` 对它是**显式未实现错误**，
+    /// 不会静默算错。
+    Select {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        r#else: Box<Expr>,
+    },
 }
 
 impl Node {
     /// 直接子表达式（`Pure` / `Channel` / `Ref` 是叶子）。
-    pub fn children(&self) -> &[Expr] {
+    pub fn children(&self) -> Vec<&Expr> {
         match self {
-            Node::Call { args, .. } => args,
-            Node::Pure { .. } | Node::Channel { .. } | Node::Ref { .. } => &[],
+            Node::Call { args, .. } => args.iter().collect(),
+            Node::Select {
+                cond, then, r#else,
+            } => vec![cond, then, r#else],
+            Node::Pure { .. } | Node::Channel { .. } | Node::Ref { .. } => Vec::new(),
         }
     }
 }
@@ -247,6 +261,15 @@ impl Expr {
         Self::new(Node::Ref { to: to.into() })
     }
 
+    /// 值分支（格式已定，求值未实现；见 [`Node::Select`]）。
+    pub fn select(cond: Expr, then: Expr, otherwise: Expr) -> Self {
+        Self::new(Node::Select {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            r#else: Box::new(otherwise),
+        })
+    }
+
     /// 装配期校验：重名 id / 悬空 `Ref` / 环。
     ///
     /// 环检测沿用 `ze-time` 的 visited-set 形态（`clock.rs` 是全仓唯一递归环检测），
@@ -271,6 +294,9 @@ pub enum ExprError {
     /// `Ref` 成环（`a → b → a`）—— 自引用是递归，本层不支持。
     #[error("Ref 成环：{0}")]
     Cycle(String),
+    /// 节点类型只有序列化格式、尚未实现求值（`Select`，提案 #6 D）。
+    #[error("节点 `{0}` 尚未实现求值（格式已保留）")]
+    UnsupportedNode(&'static str),
 }
 
 /// 收集全部带 `id` 的节点（**调用方必须先 `validate`**；重名时后写覆盖）。
@@ -502,6 +528,47 @@ mod tests {
         assert_eq!(component.qualified(), "zela.scene::Circle.radius");
         assert!(!component.is_builtin());
         assert!(ChannelRef::builtin("time").is_builtin());
+    }
+
+    /// **提案 #6 D**：`Select` 的序列化形状钉死（本轮只留格式、不实现求值）。
+    #[test]
+    fn select_format_is_pinned() {
+        let expr = Expr::select(
+            Expr::channel(ChannelRef::builtin("event")),
+            Expr::pure(1.0),
+            Expr::pure(0.0),
+        );
+        let raw = serde_json::to_value(&expr).expect("必须可序列化");
+        assert_eq!(
+            raw,
+            json!({
+                "node": {
+                    "type": "select",
+                    "data": {
+                        "cond": {
+                            "node": {
+                                "type": "channel",
+                                "data": { "channel": { "namespace": "", "name": "event" } }
+                            }
+                        },
+                        "then": {
+                            "node": {
+                                "type": "pure",
+                                "data": { "value": { "type": "f64", "data": 1.0 } }
+                            }
+                        },
+                        "else": {
+                            "node": {
+                                "type": "pure",
+                                "data": { "value": { "type": "f64", "data": 0.0 } }
+                            }
+                        }
+                    }
+                }
+            })
+        );
+        let decoded: Expr = serde_json::from_value(raw).expect("格式必须可解码");
+        assert_eq!(decoded, expr, "round-trip 必须逐字段一致");
     }
 
     #[test]

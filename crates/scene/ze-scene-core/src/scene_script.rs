@@ -83,7 +83,7 @@ fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
                 return Some(channel.clone());
             }
         }
-        expr.node.children().iter().find_map(first_unsupported)
+        expr.node.children().into_iter().find_map(first_unsupported)
     }
     match first_unsupported(expr) {
         Some(channel) => Err(ExprBindError::UnsupportedChannel(channel)),

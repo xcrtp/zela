@@ -95,6 +95,9 @@ impl CompiledExpr {
     /// 编译并校验（悬空 `Ref` / 环 / 重名 id 都在这里显式失败）。
     pub fn compile(expr: &Expr) -> Result<Self, ExprError> {
         expr.validate()?;
+        if let Some(name) = first_unimplemented(expr) {
+            return Err(ExprError::UnsupportedNode(name));
+        }
         let defs = crate::expr::definitions(expr);
         let mut steps = Vec::new();
         let mut memo = BTreeMap::new();
@@ -130,6 +133,14 @@ impl CompiledExpr {
         }
         Ok(values[self.root].clone())
     }
+}
+
+/// 只有格式、尚未实现求值的节点（提案 #6 D）。
+fn first_unimplemented(expr: &Expr) -> Option<&'static str> {
+    if let Node::Select { .. } = &expr.node {
+        return Some("select");
+    }
+    expr.node.children().into_iter().find_map(first_unimplemented)
 }
 
 fn literal_value(literal: &Literal) -> Value {
@@ -183,6 +194,8 @@ fn compile_node<'a>(
                 .expect("compile 之前必须通过 Expr::validate");
             compile_node(target, defs, memo, steps)
         }
+        // `compile` 入口已用 `first_unimplemented` 显式拒绝（不静默算错）。
+        Node::Select { .. } => unreachable!("Select 在 compile 入口被拒绝"),
     };
 
     if let Some(id) = expr.id.as_deref() {
@@ -336,6 +349,16 @@ mod tests {
                 op: "zela.future::warp".to_string(),
                 message: "未知算子 `warp`".to_string(),
             }
+        );
+    }
+
+    /// **提案 #6 D**：`Select` 只有格式 ⇒ 编译期**显式未实现**（不静默算错）。
+    #[test]
+    fn select_is_explicitly_unimplemented() {
+        let expr = Expr::select(Expr::pure(true), Expr::pure(1.0), Expr::pure(0.0));
+        assert_eq!(
+            CompiledExpr::compile(&expr).unwrap_err(),
+            ExprError::UnsupportedNode("select")
         );
     }
 }

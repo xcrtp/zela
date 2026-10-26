@@ -1831,3 +1831,15 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   `expr.bind` 的 `ChannelSpec` 同形，三语言不需要专用令牌。
 - **验收**：Lua / JS 等价脚本（位置 / 具名 / 省 `a` / 常量）产出逐字节相同的 `SceneScript`；
   23 条 demo payload 与 36 条像素基线全部不变；声明基线 9 文件重生成后逐字节一致。
+
+
+### 提案 #6 D 批：`Select` 只留格式（2026-10-26）
+
+> 一句话：**格式先付，求值后置**。`Node::Select { cond, then, else }` 写进 schema v2，
+> 但 `CompiledExpr::compile` 对它返回显式未实现错误。
+
+- 形状是三个**命名子表达式**（`cond` / `then` / `else`），不是位置数组 —— 事后加字段
+  就是新格式，而本批已经付过 `payload 1 → 2` 的代价。
+- `Node::children()` 覆盖三个分支 ⇒ 悬空 `Ref` / 环 / 通道校验对 `Select` 同样生效。
+- **不实现**：求值遇到 `Select` 是 `ExprError::UnsupportedNode("select")`，不静默算错。
+- **未落地**：`Reveal.current_pos` 的读通道还没接进宿主 `M`，值分支暂时没有真实条件可用（GAPS AG-04）。
