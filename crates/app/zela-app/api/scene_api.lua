@@ -8,6 +8,7 @@
 ---@field head_length number
 ---@field head_width number
 
+---@overload fun(from: Vec2, to: Vec2, head_length: number, head_width: number): Handle
 ---@param spec Arrow
 ---@return Handle
 function Arrow(spec) end
@@ -17,6 +18,7 @@ function Arrow(spec) end
 ---@field grid LineStyle
 ---@field axis LineStyle
 
+---@overload fun(min_px: number, grid: LineStyle, axis: LineStyle): Handle
 ---@param spec Axes2D
 ---@return Handle
 function Axes2D(spec) end
@@ -25,6 +27,7 @@ function Axes2D(spec) end
 ---@field color Color
 ---@field width number
 
+---@overload fun(color: Color, width: number): Handle
 ---@param spec BackgroundStroke
 ---@return Handle
 function BackgroundStroke(spec) end
@@ -33,6 +36,7 @@ function BackgroundStroke(spec) end
 ---@field center Vec2
 ---@field scale number
 
+---@overload fun(center: Vec2, scale: number): Handle
 ---@param spec Camera2D
 ---@return Handle
 function Camera2D(spec) end
@@ -43,6 +47,7 @@ function Camera2D(spec) end
 ---@field up Vec3
 ---@field fov_y number
 
+---@overload fun(eye: Vec3, target: Vec3, up: Vec3, fov_y: number): Handle
 ---@param spec Camera3D
 ---@return Handle
 function Camera3D(spec) end
@@ -52,6 +57,7 @@ function Camera3D(spec) end
 ---@field y number
 ---@field r number
 
+---@overload fun(x: number, y: number, r: number): Handle
 ---@param spec Circle
 ---@return Handle
 function Circle(spec) end
@@ -60,8 +66,9 @@ function Circle(spec) end
 ---@field r integer
 ---@field g integer
 ---@field b integer
----@field a integer
+---@field a integer 默认 255
 
+---@overload fun(r: integer, g: integer, b: integer, a?: integer): Color
 ---@param spec Color
 ---@return Color
 function Color(spec) end
@@ -70,6 +77,7 @@ function Color(spec) end
 ---@field half_extent number
 ---@field solid boolean
 
+---@overload fun(half_extent: number, solid: boolean): Handle
 ---@param spec Cube
 ---@return Handle
 function Cube(spec) end
@@ -132,6 +140,7 @@ function Curve.Keyframes(spec) end
 ---@field lo number
 ---@field hi number
 
+---@overload fun(lo: number, hi: number): Handle
 ---@param spec CurveWindow
 ---@return Handle
 function CurveWindow(spec) end
@@ -141,6 +150,7 @@ function CurveWindow(spec) end
 ---@field duty number
 ---@field phase number
 
+---@overload fun(period: number, duty: number, phase: number): Handle
 ---@param spec Dash
 ---@return Handle
 function Dash(spec) end
@@ -148,6 +158,7 @@ function Dash(spec) end
 ---@class Fill
 ---@field color Color
 
+---@overload fun(color: Color): Handle
 ---@param spec Fill
 ---@return Handle
 function Fill(spec) end
@@ -158,6 +169,7 @@ function Fill(spec) end
 ---@field x number
 ---@field y number
 
+---@overload fun(source: string, font_size: number, x: number, y: number): Formula
 ---@param spec Formula
 ---@return Formula
 function Formula(spec) end
@@ -167,6 +179,7 @@ function Formula(spec) end
 ---@field from Vec3
 ---@field to Vec3
 
+---@overload fun(stops: table, from: Vec3, to: Vec3): Handle
 ---@param spec Gradient
 ---@return Handle
 function Gradient(spec) end
@@ -174,6 +187,7 @@ function Gradient(spec) end
 ---@class Group
 ---@field id integer
 
+---@overload fun(id: integer): Handle
 ---@param spec Group
 ---@return Handle
 function Group(spec) end
@@ -192,6 +206,7 @@ KeyframeInterp.Step = {}
 ---@field color Color
 ---@field intensity number
 
+---@overload fun(kind: LightKind, color: Color, intensity: number): Handle
 ---@param spec Light
 ---@return Handle
 function Light(spec) end
@@ -215,6 +230,7 @@ function LightKind.Point(spec) end
 ---@field width number
 ---@field color Color
 
+---@overload fun(width: number, color: Color): LineStyle
 ---@param spec LineStyle
 ---@return LineStyle
 function LineStyle(spec) end
@@ -228,6 +244,7 @@ function LineStyle(spec) end
 ---@field transparent boolean
 ---@field texture Texture
 
+---@overload fun(color: Color, variant: ShaderVariant, metallic: number, roughness: number, double_sided: boolean, transparent: boolean, texture: Texture): Handle
 ---@param spec Material3D
 ---@return Handle
 function Material3D(spec) end
@@ -239,6 +256,7 @@ function Material3D(spec) end
 ---@field t number
 ---@field samples integer
 
+---@overload fun(from: table, to: table, closed: boolean, t: number, samples: integer): Handle
 ---@param spec Morph
 ---@return Handle
 function Morph(spec) end
@@ -246,6 +264,7 @@ function Morph(spec) end
 ---@class Name
 ---@field value string
 
+---@overload fun(value: string): Handle
 ---@param spec Name
 ---@return Handle
 function Name(spec) end
@@ -253,6 +272,7 @@ function Name(spec) end
 ---@class Opacity
 ---@field value number
 
+---@overload fun(value: number): Handle
 ---@param spec Opacity
 ---@return Handle
 function Opacity(spec) end
@@ -260,6 +280,7 @@ function Opacity(spec) end
 ---@class Parent
 ---@field parent Handle
 
+---@overload fun(parent: Handle): Handle
 ---@param spec Parent
 ---@return Handle
 function Parent(spec) end
@@ -269,6 +290,7 @@ function Parent(spec) end
 ---@field color Color
 ---@field width number
 
+---@overload fun(path: Handle, color: Color, width: number): Path
 ---@param spec Path
 ---@return Path
 function Path(spec) end
@@ -276,6 +298,7 @@ function Path(spec) end
 ---@class PathShape
 ---@field path Path
 
+---@overload fun(path: Path): Handle
 ---@param spec PathShape
 ---@return Handle
 function PathShape(spec) end
@@ -284,6 +307,7 @@ function PathShape(spec) end
 ---@field phase number
 ---@field omega number
 
+---@overload fun(phase: number, omega: number): Handle
 ---@param spec PhaseAnim
 ---@return Handle
 function PhaseAnim(spec) end
@@ -292,6 +316,7 @@ function PhaseAnim(spec) end
 ---@field points table
 ---@field closed boolean
 
+---@overload fun(points: table, closed: boolean): Handle
 ---@param spec Polyline
 ---@return Handle
 function Polyline(spec) end
@@ -300,6 +325,7 @@ function Polyline(spec) end
 ---@field points table
 ---@field closed boolean
 
+---@overload fun(points: table, closed: boolean): Handle
 ---@param spec Reveal
 ---@return Handle
 function Reveal(spec) end
@@ -307,6 +333,7 @@ function Reveal(spec) end
 ---@class RevealPath
 ---@field path Path
 
+---@overload fun(path: Path): Handle
 ---@param spec RevealPath
 ---@return Handle
 function RevealPath(spec) end
@@ -315,6 +342,7 @@ function RevealPath(spec) end
 ---@field t number
 ---@field value number
 
+---@overload fun(t: number, value: number): ScalarKey
 ---@param spec ScalarKey
 ---@return ScalarKey
 function ScalarKey(spec) end
@@ -325,6 +353,7 @@ function ScalarKey(spec) end
 ---@field background Color
 ---@field mix number
 
+---@overload fun(fill: Color, stroke: Color, background: Color, mix: number): Handle
 ---@param spec SecondPaint
 ---@return Handle
 function SecondPaint(spec) end
@@ -345,6 +374,7 @@ ShaderVariant.Pbr = {}
 ---@field width number
 ---@field color Color
 
+---@overload fun(width: number, color: Color): Handle
 ---@param spec Stroke
 ---@return Handle
 function Stroke(spec) end
@@ -365,6 +395,7 @@ function Stroke(spec) end
 ---@field fit_margin number
 ---@field composite boolean
 
+---@overload fun(min_x: number, min_y: number, max_x: number, max_y: number, mapping: SurfaceMapping, anchor_x: number, anchor_y: number, renderer: SurfaceRenderer, texel_width: integer, texel_height: integer, filter: TextureFilter, mipmap: boolean, fit_margin: number, composite: boolean): Handle
 ---@param spec Surface
 ---@return Handle
 function Surface(spec) end
@@ -393,6 +424,7 @@ SurfaceRenderer.Renderer3D = {}
 ---@field x number
 ---@field y number
 
+---@overload fun(source: string, font_size: number, x: number, y: number): Text
 ---@param spec Text
 ---@return Text
 function Text(spec) end
@@ -423,6 +455,7 @@ TextureFilter.Linear = {}
 ---@field y number
 ---@field z number
 
+---@overload fun(x: number, y: number, z: number): Handle
 ---@param spec Transform
 ---@return Handle
 function Transform(spec) end
@@ -432,6 +465,7 @@ function Transform(spec) end
 ---@field rotation Vec4
 ---@field scale Vec3
 
+---@overload fun(position: Vec3, rotation: Vec4, scale: Vec3): Handle
 ---@param spec Transform3D
 ---@return Handle
 function Transform3D(spec) end
@@ -452,6 +486,7 @@ TransformChannel.Scale = {}
 ---@field x number
 ---@field y number
 
+---@overload fun(x: number, y: number): Vec2
 ---@param spec Vec2
 ---@return Vec2
 function Vec2(spec) end
@@ -461,6 +496,7 @@ function Vec2(spec) end
 ---@field y number
 ---@field z number
 
+---@overload fun(x: number, y: number, z: number): Vec3
 ---@param spec Vec3
 ---@return Vec3
 function Vec3(spec) end
@@ -471,6 +507,7 @@ function Vec3(spec) end
 ---@field z number
 ---@field w number
 
+---@overload fun(x: number, y: number, z: number, w: number): Vec4
 ---@param spec Vec4
 ---@return Vec4
 function Vec4(spec) end
@@ -479,6 +516,7 @@ function Vec4(spec) end
 ---@field a Handle
 ---@field b Handle
 
+---@overload fun(a: Handle, b: Handle): Handle
 ---@param spec Add
 ---@return Handle
 function Add(spec) end
@@ -489,6 +527,7 @@ function Add(spec) end
 ---@field root Handle
 ---@field duration number
 
+---@overload fun(object: Handle, target: Channel, root: Handle, duration: number): Bind
 ---@param spec Bind
 ---@return Bind
 function Bind(spec) end
@@ -497,6 +536,7 @@ function Bind(spec) end
 ---@field namespace string
 ---@field name string
 
+---@overload fun(namespace: string, name: string): Channel
 ---@param spec Channel
 ---@return Channel
 function Channel(spec) end
@@ -504,6 +544,7 @@ function Channel(spec) end
 ---@class Cos
 ---@field of Handle
 
+---@overload fun(of: Handle): Handle
 ---@param spec Cos
 ---@return Handle
 function Cos(spec) end
@@ -512,6 +553,7 @@ function Cos(spec) end
 ---@field a Handle
 ---@field b Handle
 
+---@overload fun(a: Handle, b: Handle): Handle
 ---@param spec Mul
 ---@return Handle
 function Mul(spec) end
@@ -520,6 +562,7 @@ function Mul(spec) end
 ---@field k number
 ---@field of Handle
 
+---@overload fun(k: number, of: Handle): Handle
 ---@param spec Scale
 ---@return Handle
 function Scale(spec) end
@@ -527,6 +570,7 @@ function Scale(spec) end
 ---@class Sin
 ---@field of Handle
 
+---@overload fun(of: Handle): Handle
 ---@param spec Sin
 ---@return Handle
 function Sin(spec) end
@@ -534,6 +578,7 @@ function Sin(spec) end
 ---@class Sum
 ---@field terms table
 
+---@overload fun(terms: table): Handle
 ---@param spec Sum
 ---@return Handle
 function Sum(spec) end

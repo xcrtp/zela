@@ -61,10 +61,18 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
     for (&full_name, &spec) in &types {
         let name = short_name(full_name);
         match spec {
-            TypeSpec::Struct { fields, .. } => {
+            TypeSpec::Struct { name: type_name, fields } => {
                 out.push_str(&format!("export interface {name} {{\n"));
                 for field in *fields {
-                    out.push_str(&format!("  {}: {};\n", field.name, ts_type_name(field.ty)));
+                    // 提案 #6 C：默认值进声明文件（`Color.a = 255`），可选字段用 `?`。
+                    let optional =
+                        ze_pod_binding::field_default_literal(type_name, field.name).is_some();
+                    out.push_str(&format!(
+                        "  {}{}: {};\n",
+                        field.name,
+                        if optional { "?" } else { "" },
+                        ts_type_name(field.ty)
+                    ));
                 }
                 out.push_str("}\n");
                 let component = capabilities.iter().any(|capability| {
@@ -73,8 +81,25 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                         .is_some()
                 });
                 let returns = if component { "Handle" } else { name };
+                let positional: Vec<String> = fields
+                    .iter()
+                    .map(|field| {
+                        let optional =
+                            ze_pod_binding::field_default_literal(type_name, field.name).is_some();
+                        format!(
+                            "{}{}: {}",
+                            field.name,
+                            if optional { "?" } else { "" },
+                            ts_type_name(field.ty)
+                        )
+                    })
+                    .collect();
                 out.push_str(&format!(
-                    "export declare function {name}(spec: {name}): {returns};\n\n"
+                    "export declare function {name}(spec: {name}): {returns};\n"
+                ));
+                out.push_str(&format!(
+                    "export declare function {name}({}): {returns};\n\n",
+                    positional.join(", ")
                 ));
             }
             TypeSpec::Enum { variants, .. } => {

@@ -83,6 +83,12 @@ fn register_function(
 }
 
 /// 自动注册所有可达类型的构造器（组件 / 值 / 枚举）。
+///
+/// # 提案 #6 C：构造器是**可调用表**
+///
+/// - `Circle { ... }`（具名）与 `Circle(0.0, 0.0, 0.55)`（位置）都走同一个 `__call`；
+/// - 组件 / 值类型的表上挂**通道常量**（`Circle.radius`，来自 `Pod::channels()`）；
+/// - 缺字段时读默认值白名单（`Color.a = 255`），默认值不进产物。
 fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua::Result<()> {
     for (&full_name, &spec) in &plan.types {
         let lua_name = short_name(full_name);
@@ -90,26 +96,28 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
             TypeSpec::Struct { name, fields } => {
                 let fields = *fields;
                 let type_name = *name;
-                match plan.component_ctor(type_name) {
-                    // 组件：`Circle { ... }` ⇒ 调用宿主构造函数 ⇒ 句柄。
-                    Some(ctor) => {
-                        let call = ctor.call;
-                        let svc = Arc::clone(&service);
-                        let func = lua.create_function(move |lua, spec: Table| {
-                            let value = table_to_pod(&spec, fields, type_name, None)?;
-                            let out = call(&*svc, &[value]).map_err(mlua::Error::external)?;
-                            pod_to_lua(lua, &out)
-                        })?;
-                        lua.globals().set(lua_name, func)?;
-                    }
-                    // 纯值结构体：`Color { ... }` ⇒ 值令牌。
-                    None => {
-                        let func = lua.create_function(move |_, spec: Table| {
-                            table_to_pod(&spec, fields, type_name, None).map(LuaPodValue)
-                        })?;
-                        lua.globals().set(lua_name, func)?;
-                    }
-                }
+                let call = plan.component_ctor(type_name).map(|ctor| ctor.call);
+                let svc = Arc::clone(&service);
+                let mt = lua.create_table()?;
+                mt.set(
+                    "__call",
+                    lua.create_function(move |lua, (_this, args): (Table, MultiValue)| {
+                        let value = args_to_pod(args, fields, type_name, None)?;
+                        match call {
+                            Some(call) => {
+                                let out =
+                                    call(&*svc, &[value]).map_err(mlua::Error::external)?;
+                                pod_to_lua(lua, &out)
+                            }
+                            None => Ok(Value::UserData(
+                                lua.create_userdata(LuaPodValue(value))?,
+                            )),
+                        }
+                    })?,
+                )?;
+                let ctor = lua.create_table()?;
+                ctor.set_metatable(Some(mt))?;
+                lua.globals().set(lua_name, ctor)?;
             }
             TypeSpec::Enum { name, variants } => {
                 let table = lua.create_table()?;
@@ -135,7 +143,70 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
             _ => {}
         }
     }
+    attach_channels(lua, service.channels())?;
     Ok(())
+}
+
+/// 把 `Pod::channels()` 的常量挂到**可调用表**上（`Circle.radius`）。
+///
+/// 常量就是普通表 `{ namespace = ..., name = ... }` —— 与 `expr.bind` 的
+/// `ChannelSpec` 同形，三种语言不需要专用令牌。
+fn attach_channels(
+    lua: &Lua,
+    channels: &'static [ze_pod_core::ChannelSpec],
+) -> mlua::Result<()> {
+    for channel in channels {
+        let Value::Table(ctor) = lua.globals().get::<Value>(channel.component)? else {
+            continue;
+        };
+        let value = lua.create_table()?;
+        value.set("namespace", channel.namespace)?;
+        value.set("name", channel.address)?;
+        ctor.set(channel.name, value)?;
+    }
+    Ok(())
+}
+
+/// 构造器实参 → `PodValue`（具名 / 位置双形态 + 默认值）。
+///
+/// **形态判别**：唯一实参是 table ⇒ 具名；否则按字段顺序取位置参数。
+/// Lua 的空表因此不会被误判成"零个位置参数"（`Vec2{}` 是具名空结构）。
+fn args_to_pod(
+    args: MultiValue,
+    fields: &'static [Field],
+    type_name: &'static str,
+    variant: Option<&'static str>,
+) -> mlua::Result<PodValue> {
+    let values: Vec<Value> = args.into_iter().collect();
+    if values.len() == 1 {
+        if let Value::Table(table) = &values[0] {
+            return table_to_pod(table, fields, type_name, variant);
+        }
+    }
+    if values.len() > fields.len() {
+        return Err(mlua::Error::RuntimeError(format!(
+            "`{type_name}` 最多接受 {} 个位置参数，实际 {}",
+            fields.len(),
+            values.len()
+        )));
+    }
+    let mut out = Vec::with_capacity(fields.len());
+    for (index, field) in fields.iter().enumerate() {
+        let value = match values.get(index) {
+            Some(value) if !value.is_nil() => lua_to_pod(value, field.ty)?,
+            _ => ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "`{type_name}` 缺少字段 `{}`（位置参数也不足）",
+                    field.name
+                ))
+            })?,
+        };
+        out.push((field.name, value));
+    }
+    Ok(match variant {
+        Some(variant) => PodValue::Enum(type_name, variant, out),
+        None => PodValue::Struct(type_name, out),
+    })
 }
 
 fn table_to_pod(
@@ -148,10 +219,15 @@ fn table_to_pod(
     for field in fields {
         let value: Value = table.get(field.name)?;
         if value.is_nil() {
-            return Err(mlua::Error::RuntimeError(format!(
-                "`{type_name}` 缺少字段 `{}`",
-                field.name
-            )));
+            // 默认值白名单（`Color.a = 255`）；不在白名单里 ⇒ 显式报错。
+            let default = ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "`{type_name}` 缺少字段 `{}`",
+                    field.name
+                ))
+            })?;
+            values.push((field.name, default));
+            continue;
         }
         values.push((field.name, lua_to_pod(&value, field.ty)?));
     }

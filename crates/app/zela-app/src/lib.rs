@@ -2062,7 +2062,7 @@ for i = 0, 8 do
     points[#points + 1] = Vec2 { x = x, y = 0.7 }
 end
 scene.spawn({ Reveal { points = points, closed = false } })
-scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp { from = 0.8, to = 1.6, dur = 0.5 }), 0.5)
+scene.animate(dot, scene.clip("CircleRadius", Curve.Ramp { from = 0.8, to = 1.6, dur = 0.5 }), 0.5)
 "#;
         let js_source = r#"
 scene.spawn([Camera2D({ center: Vec2({ x: 0.0, y: 0.0 }), scale: 40.0 })]);
@@ -2076,7 +2076,7 @@ for (let i = 0; i <= 8; i += 1) {
   points.push(Vec2({ x: x, y: 0.7 }));
 }
 scene.spawn([Reveal({ points: points, closed: false })]);
-scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1.6, dur: 0.5 })), 0.5);
+scene.animate(dot, scene.clip("CircleRadius", Curve.Ramp({ from: 0.8, to: 1.6, dur: 0.5 })), 0.5);
 "#;
 
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
@@ -2089,6 +2089,78 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
             lua.to_json().expect("serialize lua"),
             js.to_json().expect("serialize js"),
             "Lua 与 JS 的装配产物必须逐字节相同"
+        );
+    }
+
+    /// **提案 #6 C 验收**：位置参数 + `Color.a` 默认值 + 通道常量（`Circle.radius`）
+    /// 在 Lua / JS 两侧产出的装配产物**逐字节相同**。
+    ///
+    /// Lua 用位置参数 + 常量；JS 用具名对象 + 常量（`Color` 故意省 `a`）。
+    #[cfg(feature = "js")]
+    #[test]
+    fn positional_constructors_and_channel_constants_agree_across_languages() {
+        use ze_prerender::placeholder_engine;
+
+        let lua_source = r#"
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
+local y = Add { a = expr.pure(0.5), b = Sin { of = expr.time() } }
+expr.bind { object = dot, target = Circle.radius, root = y, duration = 2.0 }
+"#;
+        let js_source = r#"
+scene.spawn([Camera2D({ center: Vec2(0.0, 0.0), scale: 40.0 })]);
+const dot = scene.spawn([
+  Circle({ x: 0.0, y: 0.0, r: 0.5 }),
+  Fill({ color: Color({ r: 96, g: 196, b: 255 }) }),
+]);
+const y = Add({ a: expr.pure(0.5), b: Sin({ of: expr.time() }) });
+expr.bind({ object: dot, target: Circle.radius, root: y, duration: 2.0 });
+"#;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功（含 js）");
+        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
+        let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
+
+        assert_eq!(lua.duration(), js.duration(), "两侧时长必须一致");
+        assert_eq!(
+            lua.to_json().expect("serialize lua"),
+            js.to_json().expect("serialize js"),
+            "位置参数 / 缺省 Color.a / 通道常量必须与具名写法产出同一份 payload"
+        );
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_positional_constructors_match_lua() {
+        use ze_prerender::placeholder_engine;
+
+        let lua_source = r#"
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
+local y = Add { a = expr.pure(0.5), b = Sin { of = expr.time() } }
+expr.bind { object = dot, target = Circle.radius, root = y, duration = 2.0 }
+"#;
+        let python_source = r#"
+scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)])
+dot = scene.spawn([Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255))])
+y = Add(a=expr.pure(0.5), b=Sin(of=expr.time()))
+expr.bind(Bind(object=dot, target=Circle.radius, root=y, duration=2.0))
+"#;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功（含 python）");
+        if !python_ready(&assembly) {
+            return;
+        }
+        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
+        let py = assembly
+            .run_python_script(python_source)
+            .expect("Python 脚本执行成功");
+        assert_eq!(
+            lua.to_json().expect("serialize lua"),
+            py.to_json().expect("serialize python"),
+            "Python 的位置参数 / 默认值 / 通道常量必须与 Lua 等价"
         );
     }
 
@@ -2119,8 +2191,8 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
         assert!(!assembly.lua.registered_global_names("python").is_empty());
     }
 
-    /// S3：Lua 用 `expr.bind{...}` 提交表达式动画，宿主把它并入 `SceneScript`
-    /// —— 装配期解析对象名 / 目标名，产物里是一条 `BindingDriver::Expr`。
+    /// S3 / 提案 #6 B：Lua 用 `expr.bind{ object = <句柄>, target = Circle.radius, ... }`
+    /// 提交表达式动画，宿主把它并入 `SceneScript` —— 产物里是一条 `BindingDriver::Expr`。
     #[test]
     fn expression_binding_reaches_the_recipe_through_lua() {
         use ze_prerender::placeholder_engine;
@@ -2132,12 +2204,11 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
             .run_script(
                 r#"
                 scene.spawn({ Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 } })
-                scene.spawn({
+                local dot = scene.spawn({
                     Circle { x = 0.0, y = 0.0, r = 0.25 },
-                    Name { value = "dot" },
                 })
                 local y = Sin { of = expr.time() }
-                expr.bind { object = "dot", target = "CircleRadius", root = y, duration = 2.0 }
+                expr.bind { object = dot, target = Circle.radius, root = y, duration = 2.0 }
                 "#,
             )
             .expect("脚本执行成功");

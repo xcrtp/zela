@@ -22,9 +22,11 @@
 #![forbid(unsafe_code)]
 
 pub mod codec;
+pub mod defaults;
 pub mod docs;
 pub mod plan;
 
 pub use codec::{ValueCodec, invoke};
+pub use defaults::{field_default, field_default_literal};
 pub use docs::{CapabilityDocs, DOCS_SCHEMA_VERSION, capabilities_json, reachable_types};
 pub use plan::{BindingPlan, collect_types, short_name};

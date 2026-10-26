@@ -46,13 +46,19 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
     for (&full_name, &spec) in &types {
         let lua_name = short_name(full_name);
         match spec {
-            TypeSpec::Struct { fields, .. } => {
+            TypeSpec::Struct { name, fields } => {
                 out.push_str(&format!("---@class {lua_name}\n"));
                 for field in *fields {
+                    // 提案 #6 C：默认值进声明文件（`Color.a = 255`），但不进产物。
+                    let default =
+                        ze_pod_binding::field_default_literal(name, field.name)
+                            .map(|value| format!(" 默认 {value}"))
+                            .unwrap_or_default();
                     out.push_str(&format!(
-                        "---@field {} {}\n",
+                        "---@field {} {}{}\n",
                         field.name,
-                        lua_type_name(field.ty)
+                        lua_type_name(field.ty),
+                        default
                     ));
                 }
                 out.push('\n');
@@ -63,6 +69,23 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                         .is_some()
                 });
                 let returns = if component { "Handle" } else { lua_name };
+                // 位置参数形态（按字段顺序；有默认值的尾部字段可省略）。
+                let positional: Vec<String> = fields
+                    .iter()
+                    .map(|field| {
+                        let optional =
+                            ze_pod_binding::field_default_literal(name, field.name).is_some();
+                        if optional {
+                            format!("{}?: {}", field.name, lua_type_name(field.ty))
+                        } else {
+                            format!("{}: {}", field.name, lua_type_name(field.ty))
+                        }
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "---@overload fun({}): {returns}\n",
+                    positional.join(", ")
+                ));
                 out.push_str(&format!(
                     "---@param spec {lua_name}\n---@return {returns}\nfunction {lua_name}(spec) end\n\n"
                 ));

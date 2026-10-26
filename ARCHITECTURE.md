@@ -1814,3 +1814,20 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   从场景地址表导出单字段规格；`expr.channel(addr)`（`zela.math@4`）是 C 批挂常量前的显式入口。
 - **验收**：`expr_demo` 去掉 `Name{}` 与 target 字符串，payload `2611dda9…`；23 条 demo payload
   断言通过；`--script` / `--bundle` 各 80 帧序列哈希同为 `0f77479c…`。
+
+
+### 提案 #6 C 批：三语言构造器便捷化（2026-10-26）
+
+> 一句话：**构造器是可调用对象**，位置参数与通道常量都挂在它上面；默认值只在边界补。
+
+- **Lua**：`Table` + `__call` 元表（全仓首次使用 `__call`）；**JS**：原生函数对象直接 `set` 属性；
+  **Python**：`PyCFunction` → `functools.partial`（C 函数不能挂属性）。
+- **位置参数 + 具名双形态**：唯一实参是容器 ⇒ 具名；否则按字段顺序。判别只看"首参是不是容器"，
+  位置参数永不接受 table / object ⇒ Lua 的 `Vec2()` vs `Vec2{}` 歧义不存在。
+  ⚠️ 与计划硬约束 5「同一构造器只一种形态」有偏差（既有 251 处脚本全具名），见 GAPS AG-06。
+- **默认值白名单**（[`defaults.rs`](crates/ze/pod/ze-pod-binding/src/defaults.rs)）：`Color.a = 255`。
+  **不进产物**（构造完即完整值），但进 LuaLS / `.d.ts` / `.pyi`（可选字段 / `a = 255`）。
+- **通道常量**：`Circle.radius` 挂在构造器上，值是 `{ namespace, name }` 数据 —— 与
+  `expr.bind` 的 `ChannelSpec` 同形，三语言不需要专用令牌。
+- **验收**：Lua / JS 等价脚本（位置 / 具名 / 省 `a` / 常量）产出逐字节相同的 `SceneScript`；
+  23 条 demo payload 与 36 条像素基线全部不变；声明基线 9 文件重生成后逐字节一致。

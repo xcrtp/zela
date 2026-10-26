@@ -142,12 +142,20 @@ fn py_type(spec: &'static TypeSpec, components: &BTreeSet<&'static str>) -> Stri
     }
 }
 
-fn params(fields: &'static [ze_pod_core::Field], components: &BTreeSet<&'static str>) -> String {
+fn params(
+    fields: &'static [ze_pod_core::Field],
+    components: &BTreeSet<&'static str>,
+    type_name: &'static str,
+) -> String {
     fields
         .iter()
         .map(|field| {
+            // 提案 #6 C：默认值进声明文件（`Color.a = 255`）。
+            let default = ze_pod_binding::field_default_literal(type_name, field.name)
+                .map(|value| format!(" = {value}"))
+                .unwrap_or_default();
             format!(
-                "{}: {}",
+                "{}: {}{default}",
                 py_ident(field.name),
                 py_type(field.ty, components)
             )
@@ -181,11 +189,11 @@ fn render_type(
 ) {
     let name = short_name(full_name);
     match spec {
-        TypeSpec::Struct { fields, .. } => {
+        TypeSpec::Struct { name: type_name, fields } => {
             if components.contains(full_name) {
                 out.push_str(&format!(
                     "def {name}({}) -> Handle: ...\n",
-                    params(fields, components)
+                    params(fields, components, type_name)
                 ));
             } else {
                 out.push_str(&format!("class {name}:\n"));
@@ -202,11 +210,11 @@ fn render_type(
                 }
                 out.push_str(&format!(
                     "    def __init__(self, {}) -> None: ...\n",
-                    params(fields, components)
+                    params(fields, components, type_name)
                 ));
             }
         }
-        TypeSpec::Enum { variants, .. } => {
+        TypeSpec::Enum { name: type_name, variants } => {
             out.push_str(&format!("class {name}:\n"));
             if variants.is_empty() {
                 out.push_str("    ...\n");
@@ -219,7 +227,7 @@ fn render_type(
                     out.push_str(&format!(
                         "    @staticmethod\n    def {}({}) -> {}: ...\n",
                         variant.name,
-                        params(variant.fields, components),
+                        params(variant.fields, components, type_name),
                         name
                     ));
                 }

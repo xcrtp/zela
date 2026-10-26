@@ -11,6 +11,7 @@ export interface Arrow {
   head_width: number;
 }
 export declare function Arrow(spec: Arrow): Handle;
+export declare function Arrow(from: Vec2, to: Vec2, head_length: number, head_width: number): Handle;
 
 export interface Axes2D {
   min_px: number;
@@ -18,18 +19,21 @@ export interface Axes2D {
   axis: LineStyle;
 }
 export declare function Axes2D(spec: Axes2D): Handle;
+export declare function Axes2D(min_px: number, grid: LineStyle, axis: LineStyle): Handle;
 
 export interface BackgroundStroke {
   color: Color;
   width: number;
 }
 export declare function BackgroundStroke(spec: BackgroundStroke): Handle;
+export declare function BackgroundStroke(color: Color, width: number): Handle;
 
 export interface Camera2D {
   center: Vec2;
   scale: number;
 }
 export declare function Camera2D(spec: Camera2D): Handle;
+export declare function Camera2D(center: Vec2, scale: number): Handle;
 
 export interface Camera3D {
   eye: Vec3;
@@ -38,6 +42,7 @@ export interface Camera3D {
   fov_y: number;
 }
 export declare function Camera3D(spec: Camera3D): Handle;
+export declare function Camera3D(eye: Vec3, target: Vec3, up: Vec3, fov_y: number): Handle;
 
 export interface Circle {
   x: number;
@@ -45,20 +50,23 @@ export interface Circle {
   r: number;
 }
 export declare function Circle(spec: Circle): Handle;
+export declare function Circle(x: number, y: number, r: number): Handle;
 
 export interface Color {
   r: number;
   g: number;
   b: number;
-  a: number;
+  a?: number;
 }
 export declare function Color(spec: Color): Color;
+export declare function Color(r: number, g: number, b: number, a?: number): Color;
 
 export interface Cube {
   half_extent: number;
   solid: boolean;
 }
 export declare function Cube(spec: Cube): Handle;
+export declare function Cube(half_extent: number, solid: boolean): Handle;
 
 export type Curve = Curve.Value;
 export declare namespace Curve {
@@ -77,6 +85,7 @@ export interface CurveWindow {
   hi: number;
 }
 export declare function CurveWindow(spec: CurveWindow): Handle;
+export declare function CurveWindow(lo: number, hi: number): Handle;
 
 export interface Dash {
   period: number;
@@ -84,11 +93,13 @@ export interface Dash {
   phase: number;
 }
 export declare function Dash(spec: Dash): Handle;
+export declare function Dash(period: number, duty: number, phase: number): Handle;
 
 export interface Fill {
   color: Color;
 }
 export declare function Fill(spec: Fill): Handle;
+export declare function Fill(color: Color): Handle;
 
 export interface Formula {
   source: string;
@@ -97,6 +108,7 @@ export interface Formula {
   y: number;
 }
 export declare function Formula(spec: Formula): Formula;
+export declare function Formula(source: string, font_size: number, x: number, y: number): Formula;
 
 export interface Gradient {
   stops: Color[];
@@ -104,11 +116,13 @@ export interface Gradient {
   to: Vec3;
 }
 export declare function Gradient(spec: Gradient): Handle;
+export declare function Gradient(stops: Color[], from: Vec3, to: Vec3): Handle;
 
 export interface Group {
   id: number;
 }
 export declare function Group(spec: Group): Handle;
+export declare function Group(id: number): Handle;
 
 export type KeyframeInterp = KeyframeInterp.Value;
 export declare namespace KeyframeInterp {
@@ -123,6 +137,7 @@ export interface Light {
   intensity: number;
 }
 export declare function Light(spec: Light): Handle;
+export declare function Light(kind: LightKind, color: Color, intensity: number): Handle;
 
 export type LightKind = LightKind.Value;
 export declare namespace LightKind {
@@ -136,6 +151,7 @@ export interface LineStyle {
   color: Color;
 }
 export declare function LineStyle(spec: LineStyle): LineStyle;
+export declare function LineStyle(width: number, color: Color): LineStyle;
 
 export interface Material3D {
   color: Color;
@@ -147,6 +163,7 @@ export interface Material3D {
   texture: Texture;
 }
 export declare function Material3D(spec: Material3D): Handle;
+export declare function Material3D(color: Color, variant: ShaderVariant, metallic: number, roughness: number, double_sided: boolean, transparent: boolean, texture: Texture): Handle;
 
 export interface Morph {
   from: Vec2[];
@@ -156,21 +173,25 @@ export interface Morph {
   samples: number;
 }
 export declare function Morph(spec: Morph): Handle;
+export declare function Morph(from: Vec2[], to: Vec2[], closed: boolean, t: number, samples: number): Handle;
 
 export interface Name {
   value: string;
 }
 export declare function Name(spec: Name): Handle;
+export declare function Name(value: string): Handle;
 
 export interface Opacity {
   value: number;
 }
 export declare function Opacity(spec: Opacity): Handle;
+export declare function Opacity(value: number): Handle;
 
 export interface Parent {
   parent: Handle;
 }
 export declare function Parent(spec: Parent): Handle;
+export declare function Parent(parent: Handle): Handle;
 
 export interface Path {
   path: Handle;
@@ -178,40 +199,47 @@ export interface Path {
   width: number;
 }
 export declare function Path(spec: Path): Path;
+export declare function Path(path: Handle, color: Color, width: number): Path;
 
 export interface PathShape {
   path: Path;
 }
 export declare function PathShape(spec: PathShape): Handle;
+export declare function PathShape(path: Path): Handle;
 
 export interface PhaseAnim {
   phase: number;
   omega: number;
 }
 export declare function PhaseAnim(spec: PhaseAnim): Handle;
+export declare function PhaseAnim(phase: number, omega: number): Handle;
 
 export interface Polyline {
   points: Vec2[];
   closed: boolean;
 }
 export declare function Polyline(spec: Polyline): Handle;
+export declare function Polyline(points: Vec2[], closed: boolean): Handle;
 
 export interface Reveal {
   points: Vec2[];
   closed: boolean;
 }
 export declare function Reveal(spec: Reveal): Handle;
+export declare function Reveal(points: Vec2[], closed: boolean): Handle;
 
 export interface RevealPath {
   path: Path;
 }
 export declare function RevealPath(spec: RevealPath): Handle;
+export declare function RevealPath(path: Path): Handle;
 
 export interface ScalarKey {
   t: number;
   value: number;
 }
 export declare function ScalarKey(spec: ScalarKey): ScalarKey;
+export declare function ScalarKey(t: number, value: number): ScalarKey;
 
 export interface SecondPaint {
   fill: Color;
@@ -220,6 +248,7 @@ export interface SecondPaint {
   mix: number;
 }
 export declare function SecondPaint(spec: SecondPaint): Handle;
+export declare function SecondPaint(fill: Color, stroke: Color, background: Color, mix: number): Handle;
 
 export type ShaderVariant = ShaderVariant.Value;
 export declare namespace ShaderVariant {
@@ -234,6 +263,7 @@ export interface Stroke {
   color: Color;
 }
 export declare function Stroke(spec: Stroke): Handle;
+export declare function Stroke(width: number, color: Color): Handle;
 
 export interface Surface {
   min_x: number;
@@ -252,6 +282,7 @@ export interface Surface {
   composite: boolean;
 }
 export declare function Surface(spec: Surface): Handle;
+export declare function Surface(min_x: number, min_y: number, max_x: number, max_y: number, mapping: SurfaceMapping, anchor_x: number, anchor_y: number, renderer: SurfaceRenderer, texel_width: number, texel_height: number, filter: TextureFilter, mipmap: boolean, fit_margin: number, composite: boolean): Handle;
 
 export type SurfaceMapping = SurfaceMapping.Value;
 export declare namespace SurfaceMapping {
@@ -274,6 +305,7 @@ export interface Text {
   y: number;
 }
 export declare function Text(spec: Text): Text;
+export declare function Text(source: string, font_size: number, x: number, y: number): Text;
 
 export type Texture = Texture.Value;
 export declare namespace Texture {
@@ -295,6 +327,7 @@ export interface Transform {
   z: number;
 }
 export declare function Transform(spec: Transform): Handle;
+export declare function Transform(x: number, y: number, z: number): Handle;
 
 export interface Transform3D {
   position: Vec3;
@@ -302,6 +335,7 @@ export interface Transform3D {
   scale: Vec3;
 }
 export declare function Transform3D(spec: Transform3D): Handle;
+export declare function Transform3D(position: Vec3, rotation: Vec4, scale: Vec3): Handle;
 
 export type TransformChannel = TransformChannel.Value;
 export declare namespace TransformChannel {
@@ -316,6 +350,7 @@ export interface Vec2 {
   y: number;
 }
 export declare function Vec2(spec: Vec2): Vec2;
+export declare function Vec2(x: number, y: number): Vec2;
 
 export interface Vec3 {
   x: number;
@@ -323,6 +358,7 @@ export interface Vec3 {
   z: number;
 }
 export declare function Vec3(spec: Vec3): Vec3;
+export declare function Vec3(x: number, y: number, z: number): Vec3;
 
 export interface Vec4 {
   x: number;
@@ -331,12 +367,14 @@ export interface Vec4 {
   w: number;
 }
 export declare function Vec4(spec: Vec4): Vec4;
+export declare function Vec4(x: number, y: number, z: number, w: number): Vec4;
 
 export interface Add {
   a: Handle;
   b: Handle;
 }
 export declare function Add(spec: Add): Handle;
+export declare function Add(a: Handle, b: Handle): Handle;
 
 export interface Bind {
   object: Handle;
@@ -345,39 +383,46 @@ export interface Bind {
   duration: number;
 }
 export declare function Bind(spec: Bind): Bind;
+export declare function Bind(object: Handle, target: Channel, root: Handle, duration: number): Bind;
 
 export interface Channel {
   namespace: string;
   name: string;
 }
 export declare function Channel(spec: Channel): Channel;
+export declare function Channel(namespace: string, name: string): Channel;
 
 export interface Cos {
   of: Handle;
 }
 export declare function Cos(spec: Cos): Handle;
+export declare function Cos(of: Handle): Handle;
 
 export interface Mul {
   a: Handle;
   b: Handle;
 }
 export declare function Mul(spec: Mul): Handle;
+export declare function Mul(a: Handle, b: Handle): Handle;
 
 export interface Scale {
   k: number;
   of: Handle;
 }
 export declare function Scale(spec: Scale): Handle;
+export declare function Scale(k: number, of: Handle): Handle;
 
 export interface Sin {
   of: Handle;
 }
 export declare function Sin(spec: Sin): Handle;
+export declare function Sin(of: Handle): Handle;
 
 export interface Sum {
   terms: Handle[];
 }
 export declare function Sum(spec: Sum): Handle;
+export declare function Sum(terms: Handle[]): Handle;
 
 export declare const scene: {
   circle(shape: Circle): Handle;

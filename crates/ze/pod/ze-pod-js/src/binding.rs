@@ -169,12 +169,10 @@ fn register_types(
                 let fields = *fields;
                 let type_name = *name;
                 match plan.component_ctor(type_name) {
-                    // 组件：`Circle({...})` ⇒ 调用宿主构造函数 ⇒ 句柄令牌。
+                    // 组件：`Circle({...})` / `Circle(0, 0, 0.5)` ⇒ 调用宿主构造函数 ⇒ 句柄令牌。
                     Some(ctor) => {
                         let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                            let input = object_arg(args, type_name)?;
-                            let value = object_to_pod(ctx, &input, fields, type_name, None)
-                                .map_err(|e| js_native(e.to_string()))?;
+                            let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
                             let service = host_state(ctx).service(service_index).ok_or_else(|| {
                                 JsError::from_native(
                                     JsNativeError::typ().with_message("能力未注册"),
@@ -189,18 +187,16 @@ fn register_types(
                             NativeFunction::from_copy_closure(closure),
                         )
                         .name(global)
-                        .length(1)
+                        .length(fields.len())
                         .build();
                         ctx.global_object()
                             .set(JsString::from(global), function, false, ctx)
                             .map_err(js_err_to_pod)?;
                     }
-                    // 纯值结构体：`Color({...})` ⇒ 值令牌。
+                    // 纯值结构体：`Color({...})` / `Color(96, 196, 255)` ⇒ 值令牌。
                     None => {
                         let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                            let input = object_arg(args, type_name)?;
-                            let value = object_to_pod(ctx, &input, fields, type_name, None)
-                                .map_err(|e| js_native(e.to_string()))?;
+                            let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
                             pod_to_js_result(ctx, &value)
                         };
                         let function = FunctionObjectBuilder::new(
@@ -208,7 +204,7 @@ fn register_types(
                             NativeFunction::from_copy_closure(closure),
                         )
                         .name(global)
-                        .length(1)
+                        .length(fields.len())
                         .build();
                         ctx.global_object()
                             .set(JsString::from(global), function, false, ctx)
@@ -264,7 +260,87 @@ fn register_types(
             _ => {}
         }
     }
+    attach_channels(ctx, service_index)?;
     Ok(())
+}
+
+/// 把 `Pod::channels()` 的常量挂到构造器函数对象上（`Circle.radius`）。
+///
+/// 常量是普通对象 `{ namespace, name }` —— 与 `expr.bind` 的 `ChannelSpec` 同形。
+fn attach_channels(ctx: &mut Context, service_index: usize) -> Result<(), PodError> {
+    let Some(service) = host_state(ctx).service(service_index) else {
+        return Ok(());
+    };
+    for channel in service.channels() {
+        let ctor = ctx
+            .global_object()
+            .get(JsString::from(channel.component), ctx)
+            .map_err(js_err_to_pod)?;
+        let Some(ctor) = ctor.as_object() else {
+            continue;
+        };
+        let value: JsValue = ObjectInitializer::new(ctx)
+            .property(
+                JsString::from("namespace"),
+                JsString::from(channel.namespace),
+                Attribute::all(),
+            )
+            .property(
+                JsString::from("name"),
+                JsString::from(channel.address),
+                Attribute::all(),
+            )
+            .build()
+            .into();
+        ctor.set(JsString::from(channel.name), value, false, ctx)
+            .map_err(js_err_to_pod)?;
+    }
+    Ok(())
+}
+
+/// 构造器实参 → `PodValue`（具名 / 位置双形态 + 默认值）。
+///
+/// **形态判别**：唯一实参是对象 ⇒ 具名；否则按字段顺序取位置参数
+/// （JS 的数字 / 字符串不会与对象字面量混淆，故没有 Lua 的空表歧义）。
+fn js_args_to_pod(
+    ctx: &mut Context,
+    args: &[JsValue],
+    fields: &'static [Field],
+    type_name: &'static str,
+    variant: Option<&'static str>,
+) -> JsResult<PodValue> {
+    if args.len() == 1 {
+        if let Some(object) = args[0].as_object() {
+            return object_to_pod(ctx, &object, fields, type_name, variant)
+                .map_err(|e| js_native(e.to_string()));
+        }
+    }
+    if args.len() > fields.len() {
+        return Err(js_native(format!(
+            "`{type_name}` 最多接受 {} 个位置参数，实际 {}",
+            fields.len(),
+            args.len()
+        )));
+    }
+    let mut values = Vec::with_capacity(fields.len());
+    for (index, field) in fields.iter().enumerate() {
+        let raw = args.get(index).cloned().unwrap_or_else(JsValue::undefined);
+        let value = if raw.is_undefined() {
+            ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                js_native(format!(
+                    "`{type_name}` 缺少字段 `{}`（位置参数也不足）",
+                    field.name
+                ))
+            })?
+        } else {
+            js_to_pod(ctx, &raw, field.ty).map_err(|e| js_native(e.to_string()))?
+        };
+        values.push((field.name, value));
+    }
+    Ok(match variant {
+        Some(variant) => PodValue::Enum(type_name, variant, values),
+        None => PodValue::Struct(type_name, values),
+    })
 }
 
 fn js_native(message: impl Into<String>) -> JsError {
@@ -305,10 +381,15 @@ fn object_to_pod(
             .get(JsString::from(field.name), ctx)
             .map_err(js_err_to_pod)?;
         if value.is_undefined() {
-            return Err(PodError::CallFailed(format!(
-                "`{type_name}` 缺少字段 `{}`",
-                field.name
-            )));
+            // 默认值白名单（`Color.a = 255`）；不在白名单里 ⇒ 显式报错。
+            let default = ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                PodError::CallFailed(format!(
+                    "`{type_name}` 缺少字段 `{}`",
+                    field.name
+                ))
+            })?;
+            values.push((field.name, default));
+            continue;
         }
         values.push((field.name, js_to_pod(ctx, &value, field.ty)?));
     }

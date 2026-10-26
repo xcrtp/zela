@@ -225,6 +225,14 @@ fn make_function<'py>(
     )
 }
 
+/// 构造器：**可调用对象**（`functools.partial` 包一层 C 函数）。
+///
+/// 提案 #6 C：`PyCFunction` 不能挂属性，而组件构造器要带通道常量
+/// （`Circle.radius`）⇒ 必须换成支持 `setattr` 的可调用对象。`partial`
+/// 保留 C 函数的调用语义，又带 `__dict__`。
+///
+/// 参数形态：位置参数（按字段顺序，可省略有默认值的尾部字段）或 kwargs；
+/// 缺字段读默认值白名单（`Color.a = 255`）。
 fn make_ctor<'py>(
     py: Python<'py>,
     fields: &'static [Field],
@@ -232,8 +240,8 @@ fn make_ctor<'py>(
     variant: Option<&'static str>,
     ctor: Option<ErasedFn>,
     service: Arc<dyn SyncPod>,
-) -> PyResult<Bound<'py, PyCFunction>> {
-    PyCFunction::new_closure(
+) -> PyResult<Bound<'py, PyAny>> {
+    let inner = PyCFunction::new_closure(
         py,
         None,
         None,
@@ -242,16 +250,22 @@ fn make_ctor<'py>(
             let codec = PyCodec { py };
             let mut values = Vec::with_capacity(fields.len());
             for (index, field) in fields.iter().enumerate() {
-                let item: Bound<'_, PyAny> = match kwargs {
-                    Some(dict) => dict.get_item(field.name)?.ok_or_else(|| {
-                        PyErr::new::<PyTypeError, _>(format!(
-                            "`{type_name}` 缺少字段 `{}`",
-                            field.name
-                        ))
-                    })?,
-                    None => args.get_item(index)?,
+                let item: Option<Bound<'_, PyAny>> = match kwargs {
+                    Some(dict) => dict.get_item(field.name)?,
+                    None => args.get_item(index).ok(),
                 };
-                values.push((field.name, codec.to_pod(&item, field.ty)?));
+                let value = match item {
+                    Some(item) => codec.to_pod(&item, field.ty)?,
+                    None => ze_pod_binding::field_default(type_name, field.name).ok_or_else(
+                        || {
+                            PyErr::new::<PyTypeError, _>(format!(
+                                "`{type_name}` 缺少字段 `{}`",
+                                field.name
+                            ))
+                        },
+                    )?,
+                };
+                values.push((field.name, value));
             }
             let value = match variant {
                 Some(variant) => ze_pod_core::PodValue::Enum(type_name, variant, values),
@@ -269,7 +283,10 @@ fn make_ctor<'py>(
                     .unbind()),
             }
         },
-    )
+    )?;
+    let functools = py.import("functools")?;
+    let partial = functools.getattr("partial")?.call1((inner,))?;
+    Ok(partial)
 }
 
 /// 一个已注册能力的绑定器（泛型在注册时单态化，运行时只留 fn 指针）。
@@ -402,6 +419,31 @@ fn register_types(
                 }
             }
             _ => {}
+        }
+    }
+    attach_channels(py, this, service_module, &service)?;
+    Ok(())
+}
+
+/// 把 `Pod::channels()` 的常量挂到**构造器对象**上（`Circle.radius`）。
+///
+/// 常量是普通 dict `{ "namespace": ..., "name": ... }` —— 与 `expr.bind` 的
+/// `ChannelSpec` 同形；三种语言不需要专用令牌。
+fn attach_channels(
+    py: Python<'_>,
+    this: &PyPod,
+    service_module: &Bound<'_, PyModule>,
+    service: &Arc<dyn SyncPod>,
+) -> PyResult<()> {
+    for channel in service.channels() {
+        let value = PyDict::new(py);
+        value.set_item("namespace", channel.namespace)?;
+        value.set_item("name", channel.address)?;
+        for module in [this.module.bind(py), service_module] {
+            let Ok(ctor) = module.getattr(channel.component) else {
+                continue;
+            };
+            ctor.setattr(channel.name, &value)?;
         }
     }
     Ok(())
