@@ -61,13 +61,17 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                 out.push_str(&format!("---@class {lua_name}\n"));
                 for field in *fields {
                     // 提案 #6 C：默认值进声明文件（`Color.a = 255`），但不进产物。
-                    let default =
-                        ze_pod_binding::field_default_literal(name, field.name)
-                            .map(|value| format!(" 默认 {value}"))
-                            .unwrap_or_default();
+                    // **有默认值 ⇒ 字段可选**：LuaLS 的 `@field` 不带 `?` 就是必填，
+                    // 少了 `?` 会把 `expr.bind{ … }`（省略 duration 等）误报成"缺字段"。
+                    let default = ze_pod_binding::field_default_literal(name, field.name);
+                    let optional = if default.is_some() { "?" } else { "" };
+                    let default = default
+                        .map(|value| format!(" 默认 {value}"))
+                        .unwrap_or_default();
                     out.push_str(&format!(
-                        "---@field {} {}{}\n",
+                        "---@field {}{} {}{}\n",
                         field.name,
+                        optional,
                         lua_type_name(field.ty),
                         default
                     ));
