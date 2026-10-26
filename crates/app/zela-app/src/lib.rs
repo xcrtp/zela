@@ -383,7 +383,7 @@ fn build_runtime(
     // ── 2D 场景：脚本 / 能力 demo（启动参数切换，见 `SceneChoice`）──────────
     // 两条来源产出**同形的三样东西**：时钟树 + 绑定表 + 主 2D 相机句柄；
     // demo 额外产出一个"待插入的组级开关"（N2 的组控制）。
-    let (forest2d, bindings2d, camera2d_handle, group_visibility, script_duration) =
+    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint) =
         build_scene_source(&mut scene, &engine, &source)?;
 
     // S3-3 内容纹理：由场景中的 `Surface(Renderer2D)` 生成（唯一装配入口）。
@@ -399,7 +399,7 @@ fn build_runtime(
         bindings: bindings2d,
         camera2d: camera2d_handle,
         group_visibility,
-        duration: script_duration,
+        record_hint,
         camera3d: demo3d.as_ref().map(|demo| demo.camera3d),
         content_textures,
     };
@@ -421,7 +421,7 @@ fn build_scene_source(
     BindingTable,
     Option<Camera2DHandle>,
     GroupVisibility,
-    f64,
+    Option<f64>,
 )> {
     // ── 任意脚本（headless）──
     if let SceneSource::Script { source, language } = source {
@@ -439,8 +439,9 @@ fn build_scene_source(
                 script.len()
             ),
         }
-        // 只作为默认录制长度的提示；`ExportSpec.frames` 才是录制长度的唯一依据。
-        let duration = script.still_time().unwrap_or(0.0);
+        // 只作为默认录制长度的提示（`None` = 不可推导 ⇒ 交给时钟树兜底）；
+        // `ExportSpec.frames` 才是录制长度的唯一依据（AH-05：不再用 0 冒充）。
+        let record_hint = script.still_time();
         let recipe = script
             .commit(scene)
             .map_err(|e| Error::InitializationError(format!("脚本 commit 失败：{e}")))?;
@@ -451,7 +452,7 @@ fn build_scene_source(
             recipe.bindings,
             camera,
             GroupVisibility::default(),
-            duration,
+            record_hint,
         ));
     }
 
@@ -480,7 +481,7 @@ fn build_scene_source(
             // 默认**不隐藏任何组**（全可见）⇒ 看得见 `cos` 淡出（N4）。
             eprintln!("[zela-app] 场景 = 能力 demo（N 线：Name / Group / Visibility / Opacity）");
             let d = zela_authored::capability_demo::build(scene);
-            Ok((d.forest, d.bindings, Some(d.camera), d.group_visibility, 0.0))
+            Ok((d.forest, d.bindings, Some(d.camera), d.group_visibility, None))
         }
         SceneChoice::PythonStoryboard => {
             #[cfg(not(feature = "python"))]
@@ -664,7 +665,7 @@ mod tests {
             "绑定数一致"
         );
         assert_eq!(duration_a, duration_b, "静止时刻一致");
-        assert_eq!(duration_a, 4.5, "默认分镜的静止时刻 = 最后一段的结束");
+        assert_eq!(duration_a, Some(4.5), "默认分镜的静止时刻 = 最后一段的结束");
         let _ = (camera_a, camera_b);
     }
 
@@ -709,6 +710,7 @@ mod tests {
                 id: object_id_of(camera3d),
             }),
             predicate: None,
+            active: None,
             reset: zela_scene_ecs::animation::ResetBehavior::Hold,
             initial: None,
             seek_kind: SeekKind::O1,
@@ -728,6 +730,7 @@ mod tests {
                 id: object_id_of(camera2d),
             }),
             predicate: None,
+            active: None,
             reset: zela_scene_ecs::animation::ResetBehavior::Hold,
             initial: None,
             seek_kind: SeekKind::O1,
@@ -2337,7 +2340,16 @@ expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
         );
         let node = recipe.forest.get(binding.clock).expect("时钟节点");
         assert_eq!(node.span, None, "新语义下时钟不钳区间");
-        assert_eq!(binding.seek_kind, zela_scene_ecs::animation::SeekKind::Replay);
+        // **AH-07**：可分析的时间门 ⇒ Hold 是纯函数 `f(last_active(t))` ⇒ O1。
+        assert!(
+            binding.active.is_some(),
+            "predicate 应已分析成局部时间区间集"
+        );
+        assert_eq!(
+            binding.seek_kind,
+            zela_scene_ecs::animation::SeekKind::O1,
+            "predicate + Hold 不再需要重放"
+        );
     }
 }
 

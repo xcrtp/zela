@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use ze_func::{CompiledExpr, Expr, Literal, Node};
+use ze_func::{CompiledExpr, Expr};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, ClockProgram, Curve, PlayMode};
 
@@ -443,6 +443,11 @@ impl Timeline {
                             continue;
                         }
                     };
+                    // **C 批**：predicate → 局部时间区间集。可分析时生效判定与 Hold
+                    // 都是纯函数（AH-06 / AH-07）；不可分析才回退到逐帧求值。
+                    let active = predicate
+                        .as_ref()
+                        .and_then(crate::animation::predicate::analyze);
                     let predicate = match predicate {
                         Some(expr) => match CompiledExpr::compile(expr) {
                             Ok(program) => Some(program),
@@ -453,7 +458,7 @@ impl Timeline {
                         },
                         None => None,
                     };
-                    bindings.bind_expr_gated(id, program, target, predicate, *reset);
+                    bindings.bind_expr_gated(id, program, target, predicate, active, *reset);
                 }
             }
         }
@@ -465,38 +470,68 @@ impl Timeline {
     /// `ExportSpec { fps, frames }` 决定。`None` = **不可推导**（含非时间依赖、
     /// 恒生效的 predicate，或负速率时钟），调用方必须显式说明，不能拿 0 冒充。
     ///
-    /// 能推导的形状：
-    /// - `Play` 段：`start + duration`（段后 `Hold` ⇒ 画面静止）；
-    /// - `Expr` 段：predicate 是 `Lt { time, Pure(d) }`，且时钟链是正速率的仿射映射
-    ///   （空链 / `shift` / `scale` / `nest` 都可）⇒ 解 `a·t + b = d`。
+    /// # 可分析性（AH-05 / AH-06）
+    ///
+    /// - `Play` 段：`start + duration`；
+    /// - `Expr` 段：predicate 分析成**局部时间区间集**（`Lt/Gt/Le/Ge/Eq/Ne` +
+    ///   `And/Or/Not`），取最大有限右端，再按时钟仿射 `local = rate·t + shift`
+    ///   反解成全局时间；
+    /// - **恒生效**（无 predicate）或区间延伸到 `+∞` ⇒ `None`（永远不会静止）；
+    /// - **不可分析**的 predicate（事件 / 组件状态 / 非字面量边界）**逐条跳过**
+    ///   （AH-05：可分析计入、不可分析跳过；全部不可分析才 `None`）。
     pub fn still_time(&self) -> Option<f64> {
         let mut cursor = 0.0f64;
         let mut end = 0.0f64;
+        let mut has_play = false;
+        let mut analyzable = false;
+        let mut unknown = false;
         for step in &self.steps {
             match step {
                 Step::Wait(d) => cursor += d,
                 Step::Play { duration, .. } => {
+                    has_play = true;
                     end = end.max(cursor + duration);
                     cursor += duration;
                 }
                 Step::Expr {
-                    duration, ..
-                } if duration.is_some() => {
+                    duration: Some(duration),
+                    ..
+                } => {
                     // 历史产物：段节点 span + Hold 决定静止时刻。
-                    let d = duration.unwrap_or(0.0);
-                    end = end.max(cursor + d);
-                    cursor += d;
+                    end = end.max(cursor + *duration);
+                    cursor += *duration;
+                }
+                Step::Expr { predicate: None, .. } => {
+                    // 恒生效 ⇒ 画面永远在变，没有静止时刻。
+                    return None;
                 }
                 Step::Expr {
-                    predicate, clock, ..
-                } => {
-                    let window = predicate.as_ref().and_then(time_window)?;
-                    let (rate, shift) = clock_affine(clock)?;
-                    end = end.max((window - shift) / rate);
-                }
+                    predicate: Some(predicate),
+                    clock,
+                    ..
+                } => match crate::animation::predicate::analyze(predicate) {
+                    None => unknown = true,
+                    Some(active) => match active.finite_max_end() {
+                        // 延伸到 +∞ ⇒ 永远生效。
+                        None => return None,
+                        Some(local_end) if local_end.is_finite() => {
+                            let (rate, shift) = clock_affine(clock)?;
+                            end = end.max((local_end - shift) / rate);
+                            analyzable = true;
+                        }
+                        // 从不生效（空集）⇒ 没有贡献。
+                        Some(_) => {}
+                    },
+                },
             }
         }
-        Some(end)
+        if has_play || analyzable {
+            return Some(end);
+        }
+        if unknown {
+            return None;
+        }
+        Some(0.0)
     }
 
     /// 把 `other` 的步骤**整体追加**到本编排之后（合并语义，§3.3）。
@@ -560,34 +595,6 @@ impl Timeline {
                 }
             }
         }
-    }
-}
-
-/// 只依赖 Time 的窗口：`Lt { Channel("", time), Pure(d) }` ⇒ `Some(d)`。
-///
-/// 其它形状（含 Event / 组件状态 / And / Or …）一律返回 `None` ——
-/// "不可分析时显式说明"，不给错的数（硬约束 4）。
-fn time_window(expr: &Expr) -> Option<f64> {
-    let Node::Call { op, args } = &expr.node else {
-        return None;
-    };
-    if op.namespace != "zela.math" || op.name != "lt" || args.len() != 2 {
-        return None;
-    }
-    let Node::Channel { channel } = &args[0].node else {
-        return None;
-    };
-    if !channel.is_builtin() || channel.name != "time" {
-        return None;
-    }
-    match &args[1].node {
-        Node::Pure {
-            value: Literal::F64(value),
-        } => Some(*value),
-        Node::Pure {
-            value: Literal::F32(value),
-        } => Some(f64::from(*value)),
-        _ => None,
     }
 }
 

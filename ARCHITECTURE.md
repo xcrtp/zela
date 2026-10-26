@@ -1977,3 +1977,25 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   `zela.math` 保持场景无关）。
 - **零产物代价**：推导结果不进 payload ⇒ `zela.math@6` 不变，23 条 demo payload 与
   `expr_demo` 哈希逐位不变。
+
+### 类型系统 C 批：区间代数与 Hold 反算（2026-10-26）
+
+> 一句话：**Hold 不需要历史**。predicate 先编译成**局部时间区间集**，
+> `f(last_active(t))` 是纯函数 —— seek 到任意一帧都能直接算。
+
+- **区间代数**（[`predicate.rs`](crates/scene/ze-scene-core/src/animation/predicate.rs)）：
+  `Lt/Gt/Le/Ge/Eq/Ne`（`time` 与字面量，两侧顺序都接受）→ 半无限区间 / 点集；
+  `And` = 交、`Or` = 并、`Not` = 补；端点开闭在规范化时保留（`Not (1,4)` 含 1 与 4）。
+  `IntervalSet` 提供 `contains` / `last_active` / `finite_max_end`。
+- **`last_active(t) = sup { x ≤ t : predicate(x) }`**：区间内取 `t`；空隙取**前一段右端**
+  （U3：`t < 2` 的意图是"到 2 为止"）；第一段之前 ⇒ `None`（还没生效过，不写）。
+- **运行期**：`Binding.active: Option<IntervalSet>`；可分析时生效判定不再逐帧求
+  predicate，`Hold` 求值在 `last_active` 上（`BindApplySystem`）。`predicate + Hold`
+  因此退回 `SeekKind::O1`；只有**不可分析**的 predicate 才保守保留 `Replay`。
+  `Replay` 仍为有记忆的 root（弹簧 / 积分）保留，**不得删除**。
+- **静止时刻**：`still_time` 复用同一份区间集 —— 有限右端按仿射时钟反解；
+  恒生效 / `+∞` ⇒ `None`（永远在动）；不可分析**逐条跳过**（AH-05 的粒度修正）。
+  `zela-playback` 的 `SceneAssembly.duration: f64` 改为 `record_hint: Option<f64>`
+  （`None` = 不可推导，由 `forest_duration` 兜底），`zela-app` 不再 `unwrap_or(0.0)`。
+- **零产物代价**：区间集不进 payload ⇒ 23 条 demo payload 逐位不变；
+  36 条像素基线 ok 36 / DIFF 0。

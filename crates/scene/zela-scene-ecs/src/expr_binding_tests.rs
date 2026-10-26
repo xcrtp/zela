@@ -76,6 +76,29 @@ fn time_lt(limit: f64) -> Expr {
     )
 }
 
+/// `predicate = time > start && time < end`（可分析成有限区间）。
+fn time_window(start: f64, end: f64) -> Expr {
+    Expr::call(
+        OpRef::new("zela.math", "and"),
+        [
+            Expr::call(
+                OpRef::new("zela.math", "gt"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(start),
+                ],
+            ),
+            Expr::call(
+                OpRef::new("zela.math", "lt"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(end),
+                ],
+            ),
+        ],
+    )
+}
+
 fn circle() -> ze_scene_contract::Components {
     vec![Box::new(Circle::new((0.0, 0.0), 0.25))]
 }
@@ -192,6 +215,9 @@ fn expression_binding_reads_its_own_clock_local_time() {
 }
 
 /// **C 批**：`duration` 的糖 = `predicate: t < d` + `reset: hold` ⇒ 失效后**保持**最后值。
+///
+/// AH-07：Hold 现在是纯函数 `f(last_active(t))` —— 保持的是**窗口右端**的函数值
+/// （`sin(2)`），不是"最后一个渲染帧恰好写下的值"。
 #[test]
 fn duration_sugar_holds_after_the_window() {
     let mut enc = SceneEncoder::new();
@@ -202,14 +228,43 @@ fn duration_sugar_holds_after_the_window() {
             rate: 1.0,
         }],
     };
-    // 局部时间 0..2 生效；t=10 时局部 9 ⇒ predicate 失效。
+    // 局部时间 0..2 生效；t=10 时局部 9 ⇒ predicate 失效，反算到最后生效时刻 2。
     enc.bind_expr(dot, "CircleRadius", sin_time(), library(), clock, 2.0)
         .expect("装配期校验通过");
-    let held = radius_over_frames(
-        enc.finish(),
-        &[1.0 + std::f32::consts::FRAC_PI_2, 10.0],
+    let held = radius_over_frames(enc.finish(), &[1.0 + std::f32::consts::FRAC_PI_2, 10.0]);
+    assert!(
+        (held - 2.0f32.sin()).abs() < 1e-5,
+        "hold = f(窗口右端) = sin(2)，实测 {held}"
     );
-    assert!((held - 1.0).abs() < 1e-5, "hold 保持最后的 sin(π/2)");
+}
+
+/// **C 批验收**：`And { Lt, Gt }` 可分析；Hold 在**单帧 seek** 下也正确
+/// （不需要先跑前面的帧 ⇒ 零状态 / O1）。
+#[test]
+fn hold_is_pure_when_the_predicate_is_an_interval_window() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    let predicate = time_window(1.0, 4.0);
+    enc.bind_expr_gated(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        Some(predicate),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("装配期校验通过");
+    let script = enc.finish();
+
+    // 窗口 (1, 4)：窗口内 = sin(t)；窗口后用 sin(4)；首次生效前不写（保持初值 0.25）。
+    assert!((radius_at(script.clone(), 2.0) - 2.0f32.sin()).abs() < 1e-5);
+    assert!(
+        (radius_at(script.clone(), 9.0) - 4.0f32.sin()).abs() < 1e-5,
+        "单帧 seek 到窗口之后也必须得到 f(4)"
+    );
+    assert!((radius_at(script, 0.5) - 0.25).abs() < 1e-5);
 }
 
 /// `reset = Reset`：失效时写回 **commit 时的初值**（0.25），而不是保持最后值。
@@ -329,7 +384,7 @@ fn still_time_is_none_when_not_analyzable() {
         .expect("装配成功");
     assert_eq!(always.finish().still_time(), None);
 
-    // predicate 是 `Gt`（不是可解的 `Lt` 形状）⇒ 显式不可推导。
+    // predicate 是 `Gt`：可分析，但区间延伸到 +∞ ⇒ 永远生效，没有静止时刻。
     let mut other = SceneEncoder::new();
     let dot = other.spawn(circle());
     let predicate = Expr::call(
@@ -352,6 +407,82 @@ fn still_time_is_none_when_not_analyzable() {
         )
         .expect("装配成功");
     assert_eq!(other.finish().still_time(), None);
+}
+
+/// **AH-06**：`And { Lt, Gt }` 的区间集也能给出静止时刻（不再"一用 And 就不可分析"）。
+#[test]
+fn still_time_understands_interval_windows() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    enc.bind_expr_gated(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        Some(time_window(1.0, 4.0)),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("装配成功");
+    assert_eq!(enc.finish().still_time(), Some(4.0));
+}
+
+/// **AH-05**：可分析计入、不可分析**跳过** —— 一条不可分析不再拖垮整部作品。
+#[test]
+fn still_time_skips_unanalyzable_bindings() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 2.0)
+        .expect("可分析绑定");
+
+    // `Eq { time, time }`：边界不是字面量 ⇒ 不可分析（被跳过，而不是让整体 None）。
+    let other = enc.spawn(circle());
+    let opaque = Expr::call(
+        OpRef::new("zela.math", "eq"),
+        [
+            Expr::channel(ChannelRef::builtin("time")),
+            Expr::channel(ChannelRef::builtin("time")),
+        ],
+    );
+    enc.bind_expr_gated(
+        other,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        Some(opaque),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("不可分析也可以装配");
+    assert_eq!(enc.finish().still_time(), Some(2.0));
+}
+
+/// **AH-05**：全部不可分析才 `None`。
+#[test]
+fn still_time_is_none_when_every_predicate_is_unanalyzable() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    let opaque = Expr::call(
+        OpRef::new("zela.math", "eq"),
+        [
+            Expr::channel(ChannelRef::builtin("time")),
+            Expr::channel(ChannelRef::builtin("time")),
+        ],
+    );
+    enc.bind_expr_gated(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        Some(opaque),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("装配成功");
+    assert_eq!(enc.finish().still_time(), None);
 }
 
 /// 嵌套时钟：`clock.nest(scale(0.5), shift(1))` ⇒ `local = t × 0.5 − 1`。

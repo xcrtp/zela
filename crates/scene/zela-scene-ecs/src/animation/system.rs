@@ -65,9 +65,11 @@ impl System for BindingApplySystem {
             }
             let lt = forest.eval_local(b.clock, t_global);
             // **C 批**：predicate 与 root **分开求值**（Bool 不经过 `anim_value`）。
-            let active = match &b.predicate {
-                None => true,
-                Some(predicate) => match predicate.eval(&SceneMono::new(lt, frame)) {
+            // 可分析（区间集）时生效判定是纯函数，不再逐帧求值 predicate。
+            let active = match (&b.active, &b.predicate) {
+                (Some(set), _) => set.contains(lt),
+                (None, None) => true,
+                (None, Some(predicate)) => match predicate.eval(&SceneMono::new(lt, frame)) {
                     Ok(Value::Bool(value)) => value,
                     Ok(other) => {
                         eprintln!(
@@ -85,22 +87,36 @@ impl System for BindingApplySystem {
                     }
                 },
             };
-            if !active {
-                // hold / skip：不写（字段保持原样）；reset：写回 commit 时的初值。
-                if b.reset == ResetBehavior::Reset {
-                    if let Some(initial) = &b.initial {
-                        if let Err(error) = b.target.apply(&mut scene, initial) {
-                            eprintln!("[anim] {error}");
+            // 本帧要**在哪个局部时间求值**：
+            // - 生效 ⇒ 当前局部时间；
+            // - `reset = Reset` ⇒ 写回初值（不评价 root）；
+            // - `reset = Hold` 且 predicate 可分析 ⇒ `last_active(t)`（AH-07：纯函数，
+            //   seek 到任意一帧都能直接算，与绑定顺序无关）；
+            // - 其余（Skip / 不可分析的 Hold）⇒ 不写。
+            let eval_at = if active {
+                Some(lt)
+            } else {
+                match b.reset {
+                    ResetBehavior::Reset => {
+                        if let Some(initial) = &b.initial {
+                            if let Err(error) = b.target.apply(&mut scene, initial) {
+                                eprintln!("[anim] {error}");
+                            }
                         }
+                        None
                     }
+                    ResetBehavior::Skip => None,
+                    ResetBehavior::Hold => b.active.as_ref().and_then(|set| set.last_active(lt)),
                 }
+            };
+            let Some(eval_at) = eval_at else {
                 continue;
-            }
+            };
             let value: AnimValue = match &b.driver {
-                BindingDriver::Curve(curve) => curve.sample(lt),
+                BindingDriver::Curve(curve) => curve.sample(eval_at),
                 // **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 同源），
                 // 不再用全局 elapsed —— G1（两条路径 t 不同源）由此消失。
-                BindingDriver::Expr(program) => match program.eval(&SceneMono::new(lt, frame)) {
+                BindingDriver::Expr(program) => match program.eval(&SceneMono::new(eval_at, frame)) {
                     Ok(value) => match anim_value(&value) {
                         Some(value) => value,
                         None => {
@@ -250,6 +266,7 @@ mod tests {
                 id: crate::contract::object_id_of(entity),
             }),
             predicate: None,
+            active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
             seek_kind: SeekKind::O1,
@@ -473,6 +490,7 @@ mod tests {
                 driver: BindingDriver::Curve(curve),
                 target,
                 predicate: None,
+                active: None,
                 reset: crate::animation::ResetBehavior::Hold,
                 initial: None,
                 seek_kind: SeekKind::O1,

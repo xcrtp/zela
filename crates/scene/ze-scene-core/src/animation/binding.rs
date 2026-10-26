@@ -15,6 +15,7 @@ use std::sync::Arc;
 use ze_func::CompiledExpr;
 use ze_time::{AnimValue, ClockId, Curve};
 
+use crate::animation::predicate::IntervalSet;
 use crate::animation::target::Target;
 
 /// predicate 失效时的行为（`Reset.hold` / `reset` / `skip`）。
@@ -96,6 +97,9 @@ pub struct Binding {
     pub target: Arc<dyn Target>,
     /// **生效条件**（Bool 程序；`None` = 恒真）。与 `driver` 分开求值（硬约束 3）。
     pub predicate: Option<CompiledExpr>,
+    /// predicate → **局部时间区间集**（AH-06）：`Some` 时生效判定与 Hold 反算都是
+    /// 纯函数（不再逐帧求值 predicate）；`None` = 不可分析，运行期回退。
+    pub active: Option<IntervalSet>,
     /// predicate 失效时的行为。
     pub reset: ResetBehavior,
     /// `reset = Reset` 的初值（`commit` 时从场景快照；`None` = 读不到 / 不需要）。
@@ -132,6 +136,7 @@ impl BindingTable {
             driver: BindingDriver::Curve(curve),
             target,
             predicate: None,
+            active: None,
             reset: ResetBehavior::Hold,
             initial: None,
             seek_kind: SeekKind::O1,
@@ -140,23 +145,28 @@ impl BindingTable {
 
     /// 添加一条**表达式绑定**（S3）：程序已在装配期编译。
     pub fn bind_expr(&mut self, clock: ClockId, program: CompiledExpr, target: Arc<dyn Target>) {
-        self.bind_expr_gated(clock, program, target, None, ResetBehavior::Hold);
+        self.bind_expr_gated(clock, program, target, None, None, ResetBehavior::Hold);
     }
 
     /// 带 **predicate / reset** 的表达式绑定。
     ///
-    /// `seek_kind` 由引擎**推导**（不进脚本）：`predicate + hold` 需要"最后一次生效"的
-    /// 历史 ⇒ 保守地记为 [`SeekKind::Replay`]；其余仍是 O1。
-    /// （predicate 单调性分析尚未实现 —— 保守方向是"宁可重放，不猜 O1"。）
+    /// `active` 是 predicate 在**局部时间**上的区间集（[`crate::animation::predicate`]）：
+    /// - `Some` ⇒ 生效判定与 `Hold` 都是纯函数 `f(last_active(t))` ⇒ `SeekKind::O1`；
+    /// - `None` ⇒ predicate 不可分析（事件 / 组件状态 / 非字面量边界）：运行期逐帧求值，
+    ///   `Hold` 仍有历史依赖，保守地记 [`SeekKind::Replay`]。
+    ///
+    /// `Replay` 本身只为"有记忆的 root"（弹簧 / 数值积分）保留 —— 本批不实现，
+    /// 但**不得删除**（AH-07）。
     pub fn bind_expr_gated(
         &mut self,
         clock: ClockId,
         program: CompiledExpr,
         target: Arc<dyn Target>,
         predicate: Option<CompiledExpr>,
+        active: Option<IntervalSet>,
         reset: ResetBehavior,
     ) {
-        let seek_kind = if predicate.is_some() && reset == ResetBehavior::Hold {
+        let seek_kind = if predicate.is_some() && reset == ResetBehavior::Hold && active.is_none() {
             SeekKind::Replay
         } else {
             SeekKind::O1
@@ -166,6 +176,7 @@ impl BindingTable {
             driver: BindingDriver::Expr(program),
             target,
             predicate,
+            active,
             reset,
             initial: None,
             seek_kind,

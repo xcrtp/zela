@@ -79,6 +79,7 @@ mod tests {
                 id: crate::contract::object_id_of(entity),
             }),
             predicate: None,
+            active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
             seek_kind: SeekKind::O1,

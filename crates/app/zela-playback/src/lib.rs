@@ -81,7 +81,7 @@ pub struct Runtime {
     pub driver: Arc<DriverPod>,
     /// 渲染上下文（由宿主创建后传入）。
     pub render_ctx: RenderContext,
-    /// 静止时刻提示（秒）。
+    /// 默认录制时长（秒）：静止时刻提示；不可推导时由时钟树兜底。
     pub duration: f64,
 }
 
@@ -95,8 +95,8 @@ pub struct SceneAssembly {
     /// 2D 相机（**可缺席**：纯 3D 场景不需要占位相机 —— PF Step 2）。
     pub camera2d: Option<Camera2DHandle>,
     pub group_visibility: GroupVisibility,
-    /// 静止时刻提示（`<= 0` = 不可推导 / 未提供；录多长由 frames 决定）。
-    pub duration: f64,
+    /// 静止时刻提示（`None` = 不可推导 / 未提供；录多长由 frames 决定）。
+    pub record_hint: Option<f64>,
     /// 可选 3D 相机（GUI demo 用）。
     pub camera3d: Option<Camera3DHandle>,
     /// 可选内容纹理规格（GUI demo 用；B3 Step 4c-2 起为多实例容器）。
@@ -134,7 +134,7 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
 
     let script = bundle.script()?;
     // 静止时刻是**派生量**（可能不可推导）；录多长仍由调用方的 frames 决定。
-    let duration = script.still_time().unwrap_or(0.0);
+    let record_hint = script.still_time();
 
     let mut scene = Scene::new();
     let recipe = script
@@ -156,7 +156,7 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
             bindings: recipe.bindings,
             camera2d,
             group_visibility: GroupVisibility::default(),
-            duration,
+            record_hint,
             camera3d: None,
             content_textures,
         },
@@ -193,7 +193,7 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         mut bindings,
         camera2d,
         group_visibility,
-        duration,
+        record_hint,
         camera3d,
         content_textures,
     } = assembly;
@@ -225,17 +225,16 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
             id: camera3d.map_or(ObjectId::DANGLING, |handle| handle.0),
         }),
         predicate: None,
+        active: None,
         reset: ResetBehavior::Hold,
         initial: None,
         seek_kind: SeekKind::O1,
     };
     bindings.add(orbit_binding.clone());
 
-    let duration = if duration > 0.0 {
-        duration
-    } else {
-        forest_duration(&forest, &bindings)
-    };
+    let duration = record_hint
+        .filter(|seconds| *seconds > 0.0)
+        .unwrap_or_else(|| forest_duration(&forest, &bindings));
 
     let mut resources = Resources::new();
     // 2D 相机可缺席：缺席 ⇒ `SceneRecordSystem` 等按"无相机"跳过 2D 录制

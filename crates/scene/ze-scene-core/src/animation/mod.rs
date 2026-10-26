@@ -10,10 +10,12 @@
 // `MorphApplySystem`，并通过 re-export 保持 `zela_scene_ecs::animation::*` 路径不变。
 
 pub mod binding;
+pub mod predicate;
 pub mod target;
 pub mod timeline;
 
 pub use binding::{Binding, BindingDriver, BindingTable, LibraryRef, ResetBehavior, SeekKind};
+pub use predicate::{Interval, IntervalSet, analyze as analyze_predicate};
 pub use target::{
     Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, MorphT, OpacityValue, Phase,
     RevealRange, TARGETS, Target, TargetCtor, TargetEntry, TargetError, TransformChannel,
