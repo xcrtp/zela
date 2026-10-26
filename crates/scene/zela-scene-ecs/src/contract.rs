@@ -286,6 +286,90 @@ impl ze_scene_core::scene_write::SceneWrite for crate::scene::Scene {
     }
 }
 
+// ─── 提案 #6：SceneRead（SceneWrite 的对称形态）──────────────────────────
+impl ze_scene_core::scene_write::SceneRead for WorldScene<'_> {
+    fn with_component_ref(
+        &self,
+        id: ObjectId,
+        type_id: std::any::TypeId,
+        f: &mut dyn FnMut(&dyn std::any::Any),
+    ) -> bool {
+        let Some(e) = entity_of(id) else {
+            return false;
+        };
+        macro_rules! ref_arms {
+            (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+                $(
+                    if type_id == std::any::TypeId::of::<$c>() {
+                        return match self.world.get::<&$c>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )+
+                $(
+                    if type_id == std::any::TypeId::of::<$m>() {
+                        return match self.world.get::<&$m>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )*
+            }};
+        }
+        ze_scene_core::known_component_table!(ref_arms);
+        false
+    }
+}
+
+impl ze_scene_core::scene_write::SceneRead for crate::scene::Scene {
+    fn with_component_ref(
+        &self,
+        id: ObjectId,
+        type_id: std::any::TypeId,
+        f: &mut dyn FnMut(&dyn std::any::Any),
+    ) -> bool {
+        let Some(e) = entity_of(id) else {
+            return false;
+        };
+        let world = self.world();
+        macro_rules! ref_arms {
+            (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+                $(
+                    if type_id == std::any::TypeId::of::<$c>() {
+                        return match world.get::<&$c>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )+
+                $(
+                    if type_id == std::any::TypeId::of::<$m>() {
+                        return match world.get::<&$m>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )*
+            }};
+        }
+        ze_scene_core::known_component_table!(ref_arms);
+        false
+    }
+}
+
 impl Scene for WorldScene<'_> {
     fn spawn_dyn(&mut self, components: Components) -> Option<ObjectId> {
         let mut builder = EntityBuilder::new();

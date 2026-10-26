@@ -9,7 +9,6 @@
 // `content.*` 表与 `Circle { ... }` / `Curve.Phase { ... }` 构造器由
 // `binding.rs` 按 `TypeSpec` **自动生成**。
 
-use ze_scene_core::animation::TargetKind;
 use crate::types::{
     Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, Curve, CurveWindow, Dash,
     Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathList,
@@ -33,9 +32,13 @@ use ze_pod_macro::capability;
 /// `gradient` / `dash` / `second_paint` / `background_stroke` / `curve_window`。
 /// 它们此前**后端有、脚本无入口**（不是"没人用"）；组件挂上即开启，缺席 = 当前行为
 /// ⇒ 既有作品像素逐位不变。
+///
+/// `@10 → @11`（提案 #6）：`clip` 的 `target` 从 `TargetKind` 枚举改为**地址字符串**。
+/// 旧名（`CircleRadius` / `RevealRange` / …）仍然接受，规范地址 `Circle.radius` /
+/// `Reveal.end` / … 同时可用；未知地址在装配期显式失败。
 #[capability(
     namespace = "zela.scene",
-    version = "10",
+    version = "11",
     description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
     bindings
 )]
@@ -103,8 +106,10 @@ pub struct SceneApi<'a> {
     /// 销毁对象（`commit` 时执行）。
     pub despawn: fn(&'a dyn Pod, object: Handle) -> (),
 
-    /// 构造动画动作：**目标枚举** + **曲线枚举**（拼错在绑定层即报错）。
-    pub clip: fn(&'a dyn Pod, target: TargetKind, curve: Curve) -> Handle,
+    /// 构造动画动作：**目标地址** + **曲线枚举**（未知地址在装配期即报错）。
+    ///
+    /// 地址可写旧名（`CircleRadius`）或规范形式（`Circle.radius`）。
+    pub clip: fn(&'a dyn Pod, target: String, curve: Curve) -> Handle,
 
     /// 构造 **Transform 通道**动作（S3：Position / Rotation / Scale）。
     ///
@@ -174,9 +179,9 @@ pub struct ContentApi<'a> {
 // 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
 
 /// `zela.scene` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
-pub const SCENE_API_VERSION: &str = "10";
+pub const SCENE_API_VERSION: &str = "11";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 83_729_276_200_230_347;
+pub const SCENE_API_FINGERPRINT: u64 = 16_274_693_131_949_166_351;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

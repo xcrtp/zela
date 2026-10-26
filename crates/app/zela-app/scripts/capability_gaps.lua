@@ -4,16 +4,16 @@
 --   ① Group            —— 纯组标签（不做父子变换累乘）
 --   ② scene.despawn    —— 生命周期闭环（commit 期销毁）
 --   ③ Curve.Const      —— 常量曲线（"保持不变"的显式表达）
---   ④ Target.Phase     —— 相位目标（写 PhaseAnim.phase）
---   ⑤ Target.MorphT    —— 形变目标（写 MorphShape.t）
---   ⑥ Target.CameraEye —— 相机运镜（写 Camera3D.eye）
+--   ④ "Phase"     —— 相位目标（写 PhaseAnim.phase）
+--   ⑤ "MorphT"    —— 形变目标（写 MorphShape.t）
+--   ⑥ "CameraEye" —— 相机运镜（写 Camera3D.eye）
 --
 -- 其中 ①④⑤ 的脚本入口是 B7 Step 4 新增的（`zela.scene@8 → @9`：
 -- `scene.group` / `scene.phase_anim` / `scene.morph`）—— 它们此前**没有入口**，
 -- 不是"没人用"。
 --
 -- 诚实边界（像素上看不出来的三项，已在 GAPS 记账，不是偷懒）：
---   · `Target.Phase` 写的 `phase` 只被**函数图像对象**消费，而脚本层还没有创建
+--   · `"Phase"` 写的 `phase` 只被**函数图像对象**消费，而脚本层还没有创建
 --     函数图像对象的入口 ⇒ phase 每帧被写入，但画面不变（W1-06）。
 --   · `Group` 是纯标签，不参与绘制 ⇒ 只证明"可声明、可持久化、可回放"（W1-05）。
 --   · `scene.despawn` 在 **commit 期**执行 ⇒ 语义是"创建后取消"，不是
@@ -33,7 +33,7 @@ scene.spawn({
 -- ① 组标签：把它挂到本作品的全部可见对象上（纯标签，无变换）。
 local layer = Group { id = 1 }
 
--- ⑤ Morph：方块（左）→ 菱形。`Target.MorphT` 由相位曲线线性推进到 0.9。
+-- ⑤ Morph：方块（左）→ 菱形。`"MorphT"` 由相位曲线线性推进到 0.9。
 local morph = scene.spawn({
     Morph {
         from = {
@@ -55,7 +55,7 @@ local morph = scene.spawn({
     Stroke { width = 6.0, color = rgba(120, 255, 160, 255) },
     layer,
 })
-scene.animate(morph, scene.clip(Target.MorphT, Curve.Phase { omega = 0.3 }), T)
+scene.animate(morph, scene.clip("MorphT", Curve.Phase { omega = 0.3 }), T)
 
 -- ④ 相位目标：挂在右侧圆上；`phase` 每帧被写（无消费者 ⇒ 画面不变，见文件头）。
 local phase_dot = scene.spawn({
@@ -64,7 +64,7 @@ local phase_dot = scene.spawn({
     PhaseAnim { phase = 0.0, omega = 0.0 },
     layer,
 })
-scene.parallel(phase_dot, scene.clip(Target.Phase, Curve.Phase { omega = 1.0 }))
+scene.parallel(phase_dot, scene.clip("Phase", Curve.Phase { omega = 1.0 }))
 
 -- ③ 常量曲线：整段保持 0.6（对照上面两条"随时间变化"的曲线）。
 local dim_dot = scene.spawn({
@@ -72,7 +72,7 @@ local dim_dot = scene.spawn({
     Fill { color = rgba(90, 190, 255, 255) },
     layer,
 })
-scene.parallel(dim_dot, scene.clip(Target.OpacityValue, Curve.Const { value = 0.6 }))
+scene.parallel(dim_dot, scene.clip("OpacityValue", Curve.Const { value = 0.6 }))
 
 -- ⑥ 相机运镜：3D 相机在 XY 平面绕原点公转。
 --    `up = +Z` 不能省 —— 视线落在 XY 平面内，`up = +Y` 在 eye 转到 ±Y 轴时与视线
@@ -85,7 +85,7 @@ local cam3 = scene.spawn({
         fov_y = 0.7,
     },
 })
-scene.parallel(cam3, scene.clip(Target.CameraEye, Curve.Orbit {
+scene.parallel(cam3, scene.clip("CameraEye", Curve.Orbit {
     radius = 9.0,
     speed = 0.5,
     initial_angle = 0.0,

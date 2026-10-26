@@ -63,7 +63,7 @@ local function hop(x, color)
     )
     scene.parallel(
         b,
-        scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 0.3 })
+        scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.3 })
     )
 
     -- 弹起 + 离地拉伸（并行）。
@@ -99,6 +99,6 @@ hop(1.2, rgba(140, 170, 255, 255))
 -- 收尾推近（最后一段）。
 scene.animate(
     camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp { from = 55.0, to = 74.0, dur = 1.3 }),
+    scene.clip("Camera2DFraming", Curve.Ramp { from = 55.0, to = 74.0, dur = 1.3 }),
     1.3
 )

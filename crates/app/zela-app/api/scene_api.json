@@ -3,7 +3,7 @@
   "api": "zela.script",
   "capabilities": {
     "scene": {
-      "version": "10",
+      "version": "11",
       "description": "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
       "functions": [
         {
@@ -175,11 +175,11 @@
           "returns": {"kind":"struct","name":"()"}
         },
         {
-          "qualified": "zela.scene::clip(zela.Target, zela.Curve) -> ze_pod_core.Handle",
+          "qualified": "zela.scene::clip(String, zela.Curve) -> ze_pod_core.Handle",
           "namespace": "zela.scene",
           "name": "clip",
-          "description": "构造动画动作：**目标枚举** + **曲线枚举**（拼错在绑定层即报错）。",
-          "params": [{"name":"target","type":{"kind":"enum","name":"zela.Target"}},{"name":"curve","type":{"kind":"enum","name":"zela.Curve"}}],
+          "description": "构造动画动作：**目标地址** + **曲线枚举**（未知地址在装配期即报错）。\n\n地址可写旧名（`CircleRadius`）或规范形式（`Circle.radius`）。",
+          "params": [{"name":"target","type":{"kind":"scalar","name":"String"}},{"name":"curve","type":{"kind":"enum","name":"zela.Curve"}}],
           "returns": {"kind":"opaque","name":"ze_pod_core.Handle"}
         },
         {
@@ -489,7 +489,6 @@
     {"kind":"struct","name":"zela.Surface","fields":[{"name":"min_x","type":{"kind":"scalar","name":"f32"}},{"name":"min_y","type":{"kind":"scalar","name":"f32"}},{"name":"max_x","type":{"kind":"scalar","name":"f32"}},{"name":"max_y","type":{"kind":"scalar","name":"f32"}},{"name":"mapping","type":{"kind":"enum","name":"zela.SurfaceMapping"}},{"name":"anchor_x","type":{"kind":"scalar","name":"f32"}},{"name":"anchor_y","type":{"kind":"scalar","name":"f32"}},{"name":"renderer","type":{"kind":"enum","name":"zela.SurfaceRenderer"}},{"name":"texel_width","type":{"kind":"scalar","name":"u32"}},{"name":"texel_height","type":{"kind":"scalar","name":"u32"}},{"name":"filter","type":{"kind":"enum","name":"zela.TextureFilter"}},{"name":"mipmap","type":{"kind":"scalar","name":"bool"}},{"name":"fit_margin","type":{"kind":"scalar","name":"f32"}},{"name":"composite","type":{"kind":"scalar","name":"bool"}}]},
     {"kind":"enum","name":"zela.SurfaceMapping","variants":[{"name":"World","fields":[]},{"name":"Screen","fields":[]}]},
     {"kind":"enum","name":"zela.SurfaceRenderer","variants":[{"name":"Renderer2D","fields":[]},{"name":"Renderer3D","fields":[]}]},
-    {"kind":"enum","name":"zela.Target","variants":[{"name":"CircleRadius","fields":[]},{"name":"Phase","fields":[]},{"name":"CameraEye","fields":[]},{"name":"MorphT","fields":[]},{"name":"Camera2DFraming","fields":[]},{"name":"RevealRange","fields":[]},{"name":"OpacityValue","fields":[]}]},
     {"kind":"struct","name":"zela.Text","fields":[{"name":"source","type":{"kind":"scalar","name":"String"}},{"name":"font_size","type":{"kind":"scalar","name":"f32"}},{"name":"x","type":{"kind":"scalar","name":"f32"}},{"name":"y","type":{"kind":"scalar","name":"f32"}}]},
     {"kind":"enum","name":"zela.Texture","variants":[{"name":"None","fields":[]},{"name":"Surface","fields":[{"name":"surface","type":{"kind":"opaque","name":"ze_pod_core.Handle"}}]}]},
     {"kind":"enum","name":"zela.TextureFilter","variants":[{"name":"Nearest","fields":[]},{"name":"Linear","fields":[]}]},

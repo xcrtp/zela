@@ -17,7 +17,7 @@ ze-notion = { path = "../../kernel/ze-notion" }
 # Pod（A 线）：内置数学函数以 `RegistryPod` 为唯一来源 —— zela-scene 是
 # `ze-pod-core` 的**第一个生产消费方**（`math_pod` 模块）。ze-notion 仍不依赖 ze-pod-core。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
-# `TargetKind` 的 schema：target 枚举是持久化表与脚本绑定的**唯一真源**。
+# `DriverCommand` / `DriverEvent` 的 schema（`#[pod_type]` 派生）。
 ze-pod-macro = { path = "../../ze/pod/ze-pod-macro" }
 # S3：表达式求值的宿主单子 M（通道来自 TimeState，算子语义来自 `zela.math` 函子库）。
 ze-func = { path = "../../kernel/ze-func" }

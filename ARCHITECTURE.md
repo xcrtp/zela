@@ -1778,5 +1778,22 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **wasm CI（W-1）**：本地无头 Edge 能拿到 adapter，但 CI 镜像未实测 ⇒ **维持手动**
   （结论见 `WASM_PORT_SURVEY.md` §10）。
 
+### 提案 #6 A 批：寻址数据化（2026-10-26）
 
+> 一句话：**target 从枚举变成数据**。`(组件名, 字段路径) + TypeSpec + 读写方向` 一张表说清；
+> 加一个字段只写一行，而不是改枚举 + 改 `name()` + 改构造器 + 改表。
 
+- **`FieldSpec` 是唯一真源**（[`target.rs`](crates/scene/ze-scene-core/src/animation/target.rs)）：
+  `name`（持久化名，旧 payload 逐字节不变）/ `address`（规范地址 `Component.field`）/
+  `component` / `field` / `ty` / `write` / `read`。`TARGETS` 是唯一地址表，
+  `target_entry` 同时匹配持久化名与规范地址。
+- **读写同源**：`SceneRead` 与 `SceneWrite` 对称（[`scene_write.rs`](crates/scene/ze-scene-core/src/scene_write.rs)），
+  read 不再是第二张表。
+- **类型不符显式报错**：`Target::apply` 返回 `Result<(), TargetError>`；
+  `BindingApplySystem` 打印错误而不是静默跳帧。
+- **coercion 独立成层**：`target::coerce`（`rotation_z` / `splat3` / `position3`）——值转换不混进地址。
+- **命名唯一真源**：`component` 必须等于组件登记表的 `known_type_name::<_>()`（测试钉住）；
+  `ze-scene-core` 不再依赖 `ze-pod-macro`。
+- **`zela.scene@10 → @11`**：`clip(target: String, curve: Curve)`；未知地址在装配期 `rec.fail`，
+  旧名与规范地址都接受 ⇒ 既有作品零改动。验收：36 条像素基线逐位不变、
+  23 条 demo payload 与 manifest 一致。

@@ -267,18 +267,6 @@ export declare namespace SurfaceRenderer {
   const Renderer3D: Value;
 }
 
-export type Target = Target.Value;
-export declare namespace Target {
-  interface Value { readonly __zela_enum: unique symbol }
-  const CircleRadius: Value;
-  const Phase: Value;
-  const CameraEye: Value;
-  const MorphT: Value;
-  const Camera2DFraming: Value;
-  const RevealRange: Value;
-  const OpacityValue: Value;
-}
-
 export interface Text {
   source: string;
   font_size: number;
@@ -407,7 +395,7 @@ export declare const scene: {
   path_shape(shape: PathShape): Handle;
   spawn(components: Handle[]): Handle;
   despawn(object: Handle): void;
-  clip(target: Target, curve: Curve): Handle;
+  clip(target: string, curve: Curve): Handle;
   clip_transform(channel: TransformChannel, curve: Curve): Handle;
   animate(object: Handle, clip: Handle, duration: number): void;
   parallel(object: Handle, clip: Handle): void;

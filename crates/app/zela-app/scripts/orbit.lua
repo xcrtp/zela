@@ -92,12 +92,12 @@ local comet = scene.spawn({
 -- ── 预演段（0–2.4s）：两条轨道环先后书写 ────────────────────────────
 scene.animate(
     ring1,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
+    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
     1.2
 )
 scene.animate(
     ring2,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
+    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
     1.2
 )
 
@@ -137,23 +137,23 @@ scene.parallel(
 )
 scene.parallel(
     ring1,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
 )
 scene.parallel(
     ring2,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
 )
 scene.parallel(
     planet1,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
 )
 scene.parallel(
     planet2,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
 )
 scene.parallel(
     moon,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
 )
 
 -- ── 段 3（10.4–11.9s）：流星划过并淡出 ──────────────────────────────
@@ -168,5 +168,5 @@ scene.animate(
 )
 scene.parallel(
     comet,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 1.0, to = 0.0, dur = COMET_DUR })
+    scene.clip("OpacityValue", Curve.Ramp { from = 1.0, to = 0.0, dur = COMET_DUR })
 )

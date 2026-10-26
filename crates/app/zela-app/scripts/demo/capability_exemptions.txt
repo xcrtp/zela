@@ -9,7 +9,13 @@
 #   <kind>:<name> -> <GAPS 编号>  # 理由与触发条件写在 GAPS 的对应行里
 #
 # · kind ∈ scene | content | Target | Curve | TransformChannel
-# · GAPS 编号必须是 GAPS.md 里**真实存在的表格行**（`| W1-xx |`），否则检查失败
+# · GAPS 编号必须是 GAPS.md 里**真实存在的表格行**（`| W1-01 |` / `| AG-02 |`），否则检查失败
 # · 该能力一旦被作品覆盖，这一行就会变成"豁免过期"⇒ 检查失败，必须删掉
 #
-# 目前为空：全部能力都被 manifest 作品覆盖。
+# 提案 #6（AG-02）：旧组合选择键（`Camera2DFraming` / `RevealRange`）写入的字段，
+# 新增了单字段规范地址选择键；字段写入已被旧键覆盖，但这 4 个**新键**本身
+# 还没有作品直接使用。B/C 批改用规范地址后逐条删除。
+Target:Framing2D.center -> AG-02  # Camera2DFraming 的 Vec2 分支已覆盖该字段写入
+Target:Framing2D.scale -> AG-02   # Camera2DFraming 的 Scalar 分支已覆盖该字段写入
+Target:Reveal.end -> AG-02        # RevealRange 的 Scalar 分支已覆盖该字段写入
+Target:Reveal.range -> AG-02      # RevealRange 的 Vec2 分支已覆盖该字段写入

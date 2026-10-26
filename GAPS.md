@@ -916,6 +916,22 @@
 
 ---
 
+## AG. 提案 #6 批次记账（寻址数据化与脚本 API 便捷化，2026-10-26）
+
+> 计划《寻址与构造器执行计划：提案 #6 落地 + 脚本 API 便捷化》（一批四次提交 A/B/C/D）。
+> 口径：**语义（A/B）与糖（C）分开**；`zela.scene@10 → @11` 一次付清。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AG-01 | **寻址数据化已落地（A 批）** | 场景 / 动画 | **已关闭（A）** | `TargetKind` 枚举删除，改为 [`FieldSpec`](crates/scene/ze-scene-core/src/animation/target.rs)：`name`（持久化名）/ `address`（规范地址 `Component.field`）/ `component`（组件登记表名字）/ `field` / `ty` / `write` / `read`。**读写同源**：read 不再是第二张表（[`SceneRead`](crates/scene/ze-scene-core/src/scene_write.rs) 与 `SceneWrite` 对称）。**类型不符显式报错**：`apply` 返回 `Result<(), TargetError>`，`TypeMismatch { target, expected, actual }`（用例 `type_mismatch_is_an_explicit_error`）。**coercion 独立成层**：`target::coerce`（`rotation_z` / `splat3` / `position3`）。**命名唯一真源**：`component` 必须等于 `known_type_name::<_>()`（用例 `component_names_come_from_the_registry`）。`SceneApi::clip` 的 target 改为地址字符串 ⇒ `@11`，指纹 `16274693131949166351` 已钉定。**验收**：36 条像素基线逐位不变；`cargo verify --step demo` 23 条 payload 与 manifest 一致 |
+| AG-02 | **规范地址与旧选择键并存（记账，非缺口）** | 脚本 API / 覆盖门禁 | **记账（A）** | 旧 payload 的 target 名沿用旧名（`CircleRadius` / `RevealRange` / …）⇒ 老产物逐字节不变；规范地址（`Circle.radius` / `Reveal.range` / …）作为**新选择键**同时可用，写同一字段。组合选择键（`Camera2DFraming` = `Framing2D.scale` ∪ `Framing2D.center`；`RevealRange` = `Reveal.end` ∪ `Reveal.range`）没有单一字段地址，`address` 与持久化名相同。**后果**：4 个单字段选择键当前没有作品直接使用（字段写入已被旧组合选择键覆盖）⇒ 在 [`capability_exemptions.txt`](crates/app/zela-app/scripts/demo/capability_exemptions.txt) 豁免并指向本行；B/C 批改用规范地址后应逐条删除（过期豁免会让门禁失败） |
+| AG-03 | **A 批偏差：字段访问器用声明宏而非 derive 宏** | `ze-scene-core` | **记账（A）** | 计划 §7 写「字段访问器（derive 宏）」。实际用 `scalar_spec!` / `vec2_spec!` / `vec3_spec!` 三个声明宏：**新增字段仍只写一行**（`scalar_spec!(CIRCLE_RADIUS, "CircleRadius", "Circle.radius", Circle, radius)`），且不必引入 proc-macro 依赖。`ze-scene-core` 已不依赖 `ze-pod-macro`。若将来字段路径需要嵌套（`a.b.c`），再评估 derive 形态 |
+| AG-04 | **B/C/D 三批未落地** | 脚本 API / 表达式层 | **记账（A）** | **B**：`expr.bind{ object = <handle> }`（`find_named` 退场）、`ChannelRef { namespace, name }`、`ze-func::SCHEMA_VERSION` 1→2。**C**：三语言 `__call`（Lua `__call` 元表 / JS 属性 / Python 类实例）、位置参数、`Color.a = 255` 默认值（默认值不进产物、进声明文件）、9 份声明基线重生成。**D**：`Node::Select` 序列化形状。⚠️ 计划 §5.3 硬约束「同一构造器只一种参数形态」与「位置参数通用」在 Lua 空表歧义下冲突 —— 落 C 批时须二选一并记账 |
+
+**AG 段小计（A 批）**：已关闭 1（AG-01）· 记账 3（AG-02、AG-03、AG-04）。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后

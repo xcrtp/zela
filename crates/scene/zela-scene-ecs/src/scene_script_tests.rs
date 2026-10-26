@@ -142,11 +142,22 @@ mod tests {
             id: ObjectId,
         }
         impl Target for TestOpacity {
-            fn apply(&self, scene: &mut dyn SceneWrite, v: &AnimValue) {
-                let Some(v) = v.try_scalar() else { return };
+            fn apply(
+                &self,
+                scene: &mut dyn SceneWrite,
+                v: &AnimValue,
+            ) -> Result<(), crate::animation::TargetError> {
+                let v = v.try_scalar().ok_or(
+                    crate::animation::TargetError::TypeMismatch {
+                        target: "TestOpacity",
+                        expected: "scalar",
+                        actual: "其它",
+                    },
+                )?;
                 ze_scene_core::scene_write::with_component::<Opacity, _>(scene, self.id, |o| {
                     o.0 = v
                 });
+                Ok(())
             }
             fn name(&self) -> &'static str {
                 "TestOpacity"

@@ -817,6 +817,9 @@ pub struct Capability {
     pub name: String,
     /// 组件构造器形态的别名：`scene.circle` ↔ `Circle { … }`（Lua）/ `Circle({ … })`（JS）。
     pub alias: Option<String>,
+    /// 同一能力的**其他选择键**（提案 #6：target 是数据表，一个字段有多种写法 ——
+    /// 持久化名 `CircleRadius`、规范地址 `Circle.radius`、通道 `TransformChannel.Position`）。
+    pub spellings: Vec<String>,
     /// 出处（`文件:行`）—— 报错时点名，省得读者再搜。
     pub location: String,
 }
@@ -843,9 +846,10 @@ pub struct CoverageReport {
     pub exempted: Vec<Exemption>,
 }
 
-/// 从源码抽能力清单：`SceneApi` / `ContentApi` 的方法 + 三个动画枚举的变体。
+/// 从源码抽能力清单：`SceneApi` / `ContentApi` 的方法 + 两个动画枚举的变体 +
+/// **目标寻址表**（提案 #6 后是 `FieldSpec` 数据，不再是 `TargetKind` 枚举）。
 ///
-/// 任何**整类抽不到**（例如 `TargetKind` 被挪走）都显式报错 —— 解析规则与源码结构
+/// 任何**整类抽不到**（例如寻址表被挪走）都显式报错 —— 解析规则与源码结构
 /// 脱节时最危险的失败是"安静地少检查"。
 pub fn collect_capabilities(
     api_rs: &str,
@@ -863,12 +867,7 @@ pub fn collect_capabilities(
         "TransformChannel",
         "TransformChannel",
     ));
-    out.extend(collect_variants(
-        target_rs,
-        "target.rs",
-        "TargetKind",
-        "Target",
-    ));
+    out.extend(collect_targets(target_rs));
     for kind in ["scene", "content", "Target", "Curve", "TransformChannel"] {
         if !out.iter().any(|capability| capability.kind == kind) {
             return Err(format!(
@@ -908,6 +907,7 @@ fn collect_methods(src: &str, file: &str, struct_name: &str, kind: &str) -> Vec<
             kind: kind.to_string(),
             name: name.trim().to_string(),
             alias: constructor_alias(sig),
+            spellings: Vec::new(),
             location: format!("{file}:{}", index + 1),
         });
     }
@@ -961,10 +961,153 @@ fn collect_variants(src: &str, file: &str, enum_name: &str, owner: &str) -> Vec<
             kind: owner.to_string(),
             name,
             alias: None,
+            spellings: Vec::new(),
             location: format!("{file}:{}", index + 1),
         });
     }
     out
+}
+
+/// 抽目标寻址表：两种写法都要认 ——
+///
+/// ```text
+/// scalar_spec!(CIRCLE_RADIUS, "CircleRadius", "Circle.radius", Circle, radius);
+/// pub static CAMERA2D_FRAMING: FieldSpec = FieldSpec { name: "…", address: "…", … };
+/// ```
+///
+/// 提案 #6 把 target 从枚举变成**数据**：一个字段可能有多个选择键
+/// （持久化名 / 规范地址 / `Transform` 通道）⇒ 全部收进 `spellings`，
+/// 任一被作品用到即算覆盖。
+fn collect_targets(src: &str) -> Vec<Capability> {
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    let (mut name, mut address, mut component, mut field) = (None, None, None, None);
+    let mut invocation: Option<(usize, String)> = None;
+    for (index, raw) in src.lines().enumerate() {
+        let line = raw.trim();
+        if let Some((line_number, mut text)) = invocation.take() {
+            text.push_str(line);
+            if !line.contains(");") {
+                invocation = Some((line_number, text));
+                continue;
+            }
+            if let Some(spec) = parse_spec_invocation(&text) {
+                out.push(target_capability(spec, line_number));
+            }
+            continue;
+        }
+        if is_spec_invocation(line) {
+            let line_number = index + 1;
+            if line.contains(");") {
+                if let Some(spec) = parse_spec_invocation(line) {
+                    out.push(target_capability(spec, line_number));
+                }
+            } else {
+                invocation = Some((line_number, line.to_string()));
+            }
+            continue;
+        }
+        match start {
+            None => {
+                if line.starts_with("pub static ") && line.contains(": FieldSpec = FieldSpec {") {
+                    start = Some(index + 1);
+                    name = None;
+                    address = None;
+                    component = None;
+                    field = None;
+                }
+            }
+            Some(line_number) => {
+                if line.starts_with("};") {
+                    if let (Some(name), Some(address), Some(component), Some(field)) = (
+                        name.clone(),
+                        address.clone(),
+                        component.clone(),
+                        field.clone(),
+                    ) {
+                        out.push(target_capability(
+                            SpecFields {
+                                name,
+                                address,
+                                component,
+                                field,
+                            },
+                            line_number,
+                        ));
+                    }
+                    start = None;
+                    continue;
+                }
+                name = name.or_else(|| literal_field(line, "name:"));
+                address = address.or_else(|| literal_field(line, "address:"));
+                component = component.or_else(|| literal_field(line, "component:"));
+                field = field.or_else(|| literal_field(line, "field:"));
+            }
+        }
+    }
+    out
+}
+
+struct SpecFields {
+    name: String,
+    address: String,
+    component: String,
+    field: String,
+}
+
+fn target_capability(spec: SpecFields, line_number: usize) -> Capability {
+    let mut spellings = vec![spec.name.clone()];
+    if spec.address != spec.name {
+        spellings.push(spec.address);
+    }
+    if spec.component == "Transform" {
+        spellings.push(format!(
+            "TransformChannel.{}{}",
+            spec.field[..1].to_ascii_uppercase(),
+            &spec.field[1..]
+        ));
+    }
+    Capability {
+        kind: "Target".to_string(),
+        name: spec.name,
+        alias: None,
+        spellings,
+        location: format!("target.rs:{line_number}"),
+    }
+}
+
+fn is_spec_invocation(line: &str) -> bool {
+    ["scalar_spec!(", "vec2_spec!(", "vec3_spec!("]
+        .iter()
+        .any(|prefix| line.starts_with(prefix))
+}
+
+/// `scalar_spec!(IDENT, "name", "address", Component, field);` ⇒ 四个字段。
+fn parse_spec_invocation(text: &str) -> Option<SpecFields> {
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    let args: Vec<&str> = text[open + 1..close]
+        .split(',')
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty())
+        .collect();
+    let [_, name, address, component, field] = args.as_slice() else {
+        return None;
+    };
+    Some(SpecFields {
+        name: name.trim_matches('"').to_string(),
+        address: address.trim_matches('"').to_string(),
+        component: component.to_string(),
+        field: field.to_string(),
+    })
+}
+
+/// `name: "CircleRadius",` ⇒ `Some("CircleRadius")`（只认整行前缀，避免命中嵌套结构）。
+fn literal_field(line: &str, prefix: &str) -> Option<String> {
+    let rest = line.strip_prefix(prefix)?.trim();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 /// 去掉脚本注释（Lua `--` / JS `//`，切到行尾）。
@@ -995,7 +1138,25 @@ pub fn capability_used(capability: &Capability, scripts: &str) -> bool {
                     .as_deref()
                     .is_some_and(|alias| contains_constructor(scripts, alias))
         }
+        // 目标选择键：字符串字面量（`scene.clip("MorphT", …)`）或通道路径
+        // （`TransformChannel.Position`）任一命中即算覆盖。
+        "Target" => capability.spellings.iter().any(|spelling| {
+            contains_literal(scripts, spelling) || contains_dotted_path(scripts, spelling)
+        }),
         owner => contains_path(scripts, owner, &capability.name),
+    }
+}
+
+/// `"MorphT"`（脚本里的目标选择键；三种语言都是字符串）。
+fn contains_literal(text: &str, value: &str) -> bool {
+    text.contains(&format!("\"{value}\""))
+}
+
+/// `TransformChannel.Position`（整个路径必须完整命中）。
+fn contains_dotted_path(text: &str, path: &str) -> bool {
+    match path.split_once('.') {
+        Some((owner, variant)) => contains_path(text, owner, variant),
+        None => false,
     }
 }
 
@@ -1060,7 +1221,7 @@ fn is_ident_byte(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-/// 解析豁免清单（`kind:name -> W1-xx`；`#` 起注释，空行跳过）。
+/// 解析豁免清单（`kind:name -> <批次>-<序号>`；`#` 起注释，空行跳过）。
 pub fn parse_exemptions(text: &str) -> Result<Vec<Exemption>, String> {
     let mut out = Vec::new();
     for (index, raw) in text.lines().enumerate() {
@@ -1070,7 +1231,7 @@ pub fn parse_exemptions(text: &str) -> Result<Vec<Exemption>, String> {
         }
         let Some((capability, gaps)) = line.split_once("->") else {
             return Err(format!(
-                "capability_exemptions:{} 缺 `->`（格式：`kind:name -> W1-xx  # 说明`）：{raw}",
+                "capability_exemptions:{} 缺 `->`（格式：`kind:name -> W1-01  # 说明`）：{raw}",
                 index + 1
             ));
         };
@@ -1082,9 +1243,9 @@ pub fn parse_exemptions(text: &str) -> Result<Vec<Exemption>, String> {
                 index + 1
             ));
         }
-        if !gaps.starts_with("W1-") {
+        if !is_gaps_id(gaps) {
             return Err(format!(
-                "capability_exemptions:{} 必须指向 GAPS 的 `W1-xx` 记账：{raw}",
+                "capability_exemptions:{} 必须指向 GAPS 的记账行（`W1-01` / `AG-02` …）：{raw}",
                 index + 1
             ));
         }
@@ -1094,6 +1255,21 @@ pub fn parse_exemptions(text: &str) -> Result<Vec<Exemption>, String> {
         });
     }
     Ok(out)
+}
+
+/// `W1-01` / `AG-02`：大写批次前缀（可含数字）+ 数字序号（与 GAPS 表格的编号形态一致）。
+fn is_gaps_id(id: &str) -> bool {
+    match id.split_once('-') {
+        Some((batch, number)) => {
+            batch.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && batch
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+                && !number.is_empty()
+                && number.chars().all(|c| c.is_ascii_digit())
+        }
+        None => false,
+    }
 }
 
 /// 覆盖检查：**未覆盖且未豁免 ⇒ 失败**；豁免过期 / 指向不存在的 GAPS 行 ⇒ 也失败。

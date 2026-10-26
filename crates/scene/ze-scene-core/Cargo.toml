@@ -26,8 +26,6 @@ ze-time = { path = "../../kernel/ze-time" }
 ze-func = { path = "../../kernel/ze-func" }
 # 内置数学函数由 Pod 提供（math_pod）；核心层不依赖任何 zela-*。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
-# `TargetKind` 的 schema（`#[pod_type]` 派生）。
-ze-pod-macro = { path = "../../ze/pod/ze-pod-macro" }
 # 内容编译的宿主侧适配（content.rs）：排版引擎 → IR → 世界坐标轮廓。
 ze-content = { path = "../../kernel/ze-content" }
 ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }

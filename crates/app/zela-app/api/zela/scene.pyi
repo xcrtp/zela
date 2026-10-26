@@ -1,7 +1,7 @@
 # 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。
 from typing import Any, List
 from zela import Handle
-from zela import Curve, Target, TransformChannel
+from zela import Curve, TransformChannel
 
 # 构造圆组件。
 def circle(shape: Any) -> Handle: ...
@@ -66,8 +66,10 @@ def spawn(components: List[Handle]) -> Handle: ...
 # 销毁对象（`commit` 时执行）。
 def despawn(object: Handle) -> None: ...
 
-# 构造动画动作：**目标枚举** + **曲线枚举**（拼错在绑定层即报错）。
-def clip(target: Target, curve: Curve) -> Handle: ...
+# 构造动画动作：**目标地址** + **曲线枚举**（未知地址在装配期即报错）。
+# 
+# 地址可写旧名（`CircleRadius`）或规范形式（`Circle.radius`）。
+def clip(target: str, curve: Curve) -> Handle: ...
 
 # 构造 **Transform 通道**动作（S3：Position / Rotation / Scale）。
 # 

@@ -84,8 +84,10 @@ impl System for BindingApplySystem {
                     }
                 },
             };
-            // 目标自己负责"类型匹配 + 写组件"（不符则跳过本帧，不 panic）。
-            b.target.apply(&mut scene, &value);
+            // 目标自己负责"类型匹配 + 写组件"；**类型不符显式报错**（不再静默跳过）。
+            if let Err(error) = b.target.apply(&mut scene, &value) {
+                eprintln!("[anim] {error}");
+            }
         }
     }
 }

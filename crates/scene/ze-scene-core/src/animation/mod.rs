@@ -15,7 +15,8 @@ pub mod timeline;
 
 pub use binding::{Binding, BindingDriver, BindingTable, LibraryRef, SeekKind};
 pub use target::{
-    Camera2DFraming, CameraEye, CircleRadius, MorphT, OpacityValue, Phase, RevealRange, Target,
-    TargetCtor, TargetKind, TransformChannel, TransformChannelValue,
+    Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, MorphT, OpacityValue, Phase,
+    RevealRange, TARGETS, Target, TargetCtor, TargetEntry, TargetError, TransformChannel,
+    TransformChannelValue, target_ctor_by_name, target_entry,
 };
 pub use timeline::Timeline;

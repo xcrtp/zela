@@ -85,7 +85,7 @@ scene.spawn({
 -- 0–2s：曲线书写（phase(0.5) × 2s = 1）
 scene.animate(
     curve,
-    scene.clip(Target.RevealRange, Curve.Phase { omega = 0.5 }),
+    scene.clip("RevealRange", Curve.Phase { omega = 0.5 }),
     2.0
 )
 -- 2–2.5s：停
@@ -93,12 +93,12 @@ scene.wait(0.5)
 -- 2.5–3.5s：镜头推进（scale 与 center 同区间并行）
 scene.animate(
     camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp { from = 40.0, to = 110.0, dur = 1.0 }),
+    scene.clip("Camera2DFraming", Curve.Ramp { from = 40.0, to = 110.0, dur = 1.0 }),
     1.0
 )
 scene.parallel(
     camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp2 {
+    scene.clip("Camera2DFraming", Curve.Ramp2 {
         from = Vec2 { x = 0.0, y = 0.0 },
         to = Vec2 { x = math.pi / 2, y = 1.0 },
         dur = 1.0,
@@ -110,7 +110,7 @@ if #formula_handles > 0 then
     for i = 1, #formula_handles do
         scene.animate(
             formula_handles[i],
-            scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = each }),
+            scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = each }),
             each
         )
     end

@@ -387,30 +387,6 @@ SurfaceRenderer.Renderer2D = {}
 ---@type SurfaceRenderer
 SurfaceRenderer.Renderer3D = {}
 
----@class Target
-Target = {}
-
----@type Target
-Target.CircleRadius = {}
-
----@type Target
-Target.Phase = {}
-
----@type Target
-Target.CameraEye = {}
-
----@type Target
-Target.MorphT = {}
-
----@type Target
-Target.Camera2DFraming = {}
-
----@type Target
-Target.RevealRange = {}
-
----@type Target
-Target.OpacityValue = {}
-
 ---@class Text
 ---@field source string
 ---@field font_size number
@@ -661,8 +637,10 @@ function scene.spawn(components) end
 ---@param object Handle
 function scene.despawn(object) end
 
----构造动画动作：**目标枚举** + **曲线枚举**（拼错在绑定层即报错）。
----@param target Target
+---构造动画动作：**目标地址** + **曲线枚举**（未知地址在装配期即报错）。
+---
+---地址可写旧名（`CircleRadius`）或规范形式（`Circle.radius`）。
+---@param target string
 ---@param curve Curve
 ---@return Handle
 function scene.clip(target, curve) end

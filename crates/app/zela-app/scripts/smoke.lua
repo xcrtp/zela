@@ -34,10 +34,10 @@ local curve = scene.spawn({
 
 scene.animate(
     dot,
-    scene.clip(Target.CircleRadius, Curve.Ramp { from = 0.8, to = 1.6, dur = T }),
+    scene.clip("CircleRadius", Curve.Ramp { from = 0.8, to = 1.6, dur = T }),
     T
 )
 scene.parallel(
     curve,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = T })
+    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = T })
 )

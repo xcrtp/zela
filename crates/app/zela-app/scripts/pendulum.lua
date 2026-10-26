@@ -89,23 +89,23 @@ scene.animate(
 )
 scene.parallel(
     trace,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = T1 })
+    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = T1 })
 )
 scene.parallel(
     ring,
-    scene.clip(Target.CircleRadius, Curve.Sin { base = 0.34, amp = 0.06, omega = 3.0 })
+    scene.clip("CircleRadius", Curve.Sin { base = 0.34, amp = 0.06, omega = 3.0 })
 )
 scene.parallel(
     trace,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
 )
 scene.parallel(
     bob,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
 )
 scene.parallel(
     ring,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
+    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
 )
 
 -- 段 2（6–10s）：摆幅收小（阻尼）+ 内环呼吸变慢。
@@ -120,5 +120,5 @@ scene.animate(
 )
 scene.parallel(
     ring,
-    scene.clip(Target.CircleRadius, Curve.Sin { base = 0.34, amp = 0.05, omega = 4.0 })
+    scene.clip("CircleRadius", Curve.Sin { base = 0.34, amp = 0.05, omega = 4.0 })
 )

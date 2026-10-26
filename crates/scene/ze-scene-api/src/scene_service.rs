@@ -1,6 +1,6 @@
 // service.rs — 宿主侧 **Scene Service Pod**（原生 Rust，注册 typed 函数）。
 //
-// 函数签名由**结构化类型**构成（`Circle` / `Stroke` / `Curve` / `TargetKind` …）：
+// 函数签名由**结构化类型**构成（`Circle` / `Stroke` / `Curve` / 目标地址 `String` …）：
 // 绑定层按 `TypeSpec` 转换参数，这里只做"结构化值 → 场景原语"的落点转换。
 //
 // # 组件组（W2）
@@ -12,7 +12,7 @@ use std::any::Any;
 use std::sync::{Mutex, MutexGuard};
 
 use ze_time::Curve as NativeCurve;
-use ze_scene_core::animation::TargetKind;
+use ze_scene_core::animation::target::{Target, target_ctor_by_name};
 use ze_scene_core::components::Reveal as NativeReveal;
 use ze_scene_core::scene_script::{
     Handle as ScriptHandle, SceneEncoder, SceneScript, handle_ref,
@@ -62,28 +62,20 @@ struct Clip {
     curve: NativeCurve,
 }
 
-/// 脚本侧动作目标的两种来源。
+/// 脚本侧动作目标：**地址 → 构造器**（提案 #6：不再有集中枚举）。
 #[derive(Clone, Copy)]
 enum ClipTarget {
-    /// 既有集中枚举（CircleRadius / Phase / CameraEye / MorphT / Camera2DFraming /
-    /// RevealRange / OpacityValue）。
-    Kind(TargetKind),
+    /// 地址表里查到的构造器（`CircleRadius` / `Circle.radius` 都落到这里）。
+    Ctor(fn(ze_scene_contract::ObjectId) -> std::sync::Arc<dyn Target>),
     /// S3：显式 Transform 通道（B7 起没有 `Auto`）。
     Transform(TransformChannel),
 }
 
 impl ClipTarget {
-    fn make(self) -> fn(ze_scene_contract::ObjectId) -> std::sync::Arc<dyn ze_scene_core::animation::Target> {
-        use ze_scene_core::animation::target::{
-            make_transform_position, make_transform_rotation, make_transform_scale,
-        };
+    fn make(self) -> fn(ze_scene_contract::ObjectId) -> std::sync::Arc<dyn Target> {
         match self {
-            ClipTarget::Kind(kind) => kind.ctor(),
-            ClipTarget::Transform(channel) => match channel {
-                TransformChannel::Position => make_transform_position,
-                TransformChannel::Rotation => make_transform_rotation,
-                TransformChannel::Scale => make_transform_scale,
-            },
+            ClipTarget::Ctor(make) => make,
+            ClipTarget::Transform(channel) => channel.to_native().make(),
         }
     }
 }
@@ -325,8 +317,8 @@ impl SceneServicePod {
         registry.register_fn1::<Vec<Handle>, Handle>("zela.scene::spawn", scene_spawn);
         registry.register_fn1::<Handle, ()>("zela.scene::despawn", scene_despawn);
 
-        // ── 动画：目标枚举 + 曲线枚举 ───────────────────────────────────
-        registry.register_fn2::<TargetKind, Curve, Handle>("zela.scene::clip", scene_clip);
+        // ── 动画：目标地址 + 曲线枚举 ───────────────────────────────────
+        registry.register_fn2::<String, Curve, Handle>("zela.scene::clip", scene_clip);
         registry.register_fn2::<TransformChannel, Curve, Handle>(
             "zela.scene::clip_transform",
             scene_clip_transform,
@@ -914,9 +906,20 @@ fn scene_despawn(pod: &dyn Pod, object: Handle) {
     }
 }
 
-fn scene_clip(pod: &dyn Pod, target: TargetKind, curve: Curve) -> Handle {
-    service(pod).rec.borrow_mut().clips.insert(Clip {
-        target: ClipTarget::Kind(target),
+fn scene_clip(pod: &dyn Pod, target: String, curve: Curve) -> Handle {
+    let mut rec = service(pod).rec.borrow_mut();
+    let make = match target_ctor_by_name(&target) {
+        Some((make, _)) => make,
+        None => {
+            rec.fail(format!(
+                "未知动画目标：`{target}`（可用：`Circle.radius` / `Reveal.end` / …）"
+            ));
+            // 装配已失败；这里放一个占位目标，保证句柄表形状一致。
+            ze_scene_core::animation::target::make_circle_radius
+        }
+    };
+    rec.clips.insert(Clip {
+        target: ClipTarget::Ctor(make),
         curve: curve.to_native(),
     })
 }

@@ -130,15 +130,6 @@ class SurfaceRenderer:
     Renderer2D: SurfaceRenderer
     Renderer3D: SurfaceRenderer
 
-class Target:
-    CircleRadius: Target
-    Phase: Target
-    CameraEye: Target
-    MorphT: Target
-    Camera2DFraming: Target
-    RevealRange: Target
-    OpacityValue: Target
-
 class Text:
     source: str
     font_size: float

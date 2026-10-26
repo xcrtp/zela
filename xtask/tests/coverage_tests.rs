@@ -37,10 +37,14 @@ pub enum TransformChannel {
 "#;
 
 const TARGET: &str = r#"
-pub enum TargetKind {
-    CircleRadius,
-    MorphT,
-}
+scalar_spec!(CIRCLE_RADIUS, "CircleRadius", "Circle.radius", Circle, radius);
+scalar_spec!(MORPH_T, "MorphT", "MorphShape.t", MorphShape, t);
+pub static TRANSFORM_POSITION: FieldSpec = FieldSpec {
+    name: "TransformPosition",
+    address: "Transform.position",
+    component: "Transform",
+    field: "position",
+};
 "#;
 
 const GAPS: &str = r#"
@@ -69,6 +73,7 @@ fn capabilities_come_from_source() {
             "TransformChannel:Rotation",
             "Target:CircleRadius",
             "Target:MorphT",
+            "Target:TransformPosition",
         ]
     );
     // 单结构体参数才有构造器别名；`Vec<Handle>` / 多参数没有。
@@ -89,8 +94,8 @@ fn usage_accepts_method_and_constructor_forms() {
         local c = Circle { x = 0.0, y = 0.0, r = 1.0 }
         scene.spawn({ c })
         content.text(Text { source = "AB" })
-        scene.animate(c, scene.clip(Target.MorphT, Curve.Phase { omega = 1.0 }), 1.0)
-        scene.parallel(c, scene.clip(Target.CircleRadius, Curve.Const { value = 1.0 }))
+        scene.animate(c, scene.clip("MorphT", Curve.Phase { omega = 1.0 }), 1.0)
+        scene.parallel(c, scene.clip("Circle.radius", Curve.Const { value = 1.0 }))
         scene.clip_transform(TransformChannel.Position, Curve.Const { value = 1.0 })
         scene.clip_transform(TransformChannel.Rotation, Curve.Const { value = 1.0 })
     "#;
@@ -107,12 +112,14 @@ fn two_caps() -> Vec<Capability> {
             kind: "scene".to_string(),
             name: "spawn".to_string(),
             alias: None,
+            spellings: Vec::new(),
             location: "api.rs:7".to_string(),
         },
         Capability {
             kind: "scene".to_string(),
             name: "circle".to_string(),
             alias: Some("Circle".to_string()),
+            spellings: Vec::new(),
             location: "api.rs:4".to_string(),
         },
     ]
@@ -152,21 +159,23 @@ fn stale_exemption_fails() {
     assert!(error.contains("豁免已过期"), "错误应说明：{error}");
 }
 
-/// 豁免格式错误（缺 `->` / 缺 `kind:` / 不指向 W1）都要显式报错。
+/// 豁免格式错误（缺 `->` / 缺 `kind:` / 编号不是 `<批次>-<序号>`）都要显式报错。
 #[test]
 fn exemption_format_is_enforced() {
-    for source in ["scene:circle", "circle -> W1-05", "scene:circle -> G-101"] {
+    for source in ["scene:circle", "circle -> W1-05", "scene:circle -> 101", "scene:circle -> w1-05"] {
         assert!(
             parse_exemptions(source).is_err(),
             "`{source}` 应被拒绝"
         );
     }
+    // 任何**批次**的记账都可引用（`W1` / `AG` …），只要编号形态正确。
+    assert!(parse_exemptions("Target:Reveal.end -> AG-02\n").is_ok());
 }
 
 /// 整类能力抽不到（源码结构变了）⇒ 抽取阶段就显式报错，不得安静地少检查。
 #[test]
 fn missing_capability_class_is_an_explicit_error() {
-    let error = collect_capabilities(API, TYPES, "// TargetKind 被挪走了\n")
+    let error = collect_capabilities(API, TYPES, "// 寻址表被挪走了\n")
         .expect_err("抽不到 Target ⇒ fail");
     assert!(error.contains("Target"), "错误应点名缺失类别：{error}");
 }

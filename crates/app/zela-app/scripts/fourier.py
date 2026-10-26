@@ -212,12 +212,12 @@ scene.spawn(
 # ── 3. 曲线淡入（S6 Opacity）─────────────────────────────────────────
 scene.animate(
     curve,
-    scene.clip(Target.OpacityValue, Curve.Ramp(0.0, 1.0, FADE)),
+    scene.clip("OpacityValue", Curve.Ramp(0.0, 1.0, FADE)),
     FADE,
 )
 scene.parallel(
     pulse,
-    scene.clip(Target.OpacityValue, Curve.Ramp(0.0, 1.0, FADE)),
+    scene.clip("OpacityValue", Curve.Ramp(0.0, 1.0, FADE)),
 )
 
 # ── 4. 主段：所有向量自转（S3 Rotation），相位点公转（S4 Orbit），脉冲书写
@@ -243,14 +243,14 @@ scene.parallel(
 )
 scene.parallel(
     pulse,
-    scene.clip(Target.RevealRange, Curve.Ramp(0.0, 1.0, T)),
+    scene.clip("RevealRange", Curve.Ramp(0.0, 1.0, T)),
 )
 
 # ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
 scene.animate(
     camera,
     scene.clip(
-        Target.Camera2DFraming,
+        "Camera2DFraming",
         Curve.Ramp(55.0, 90.0, ZOOM),
     ),
     ZOOM,
@@ -258,7 +258,7 @@ scene.animate(
 scene.parallel(
     camera,
     scene.clip(
-        Target.Camera2DFraming,
+        "Camera2DFraming",
         Curve.Ramp2(Vec2(x=0.5, y=0.0), Vec2(x=-1.5, y=0.0), ZOOM),
     ),
 )
@@ -268,7 +268,7 @@ scene.wait(HOLD)
 scene.animate(
     camera,
     scene.clip(
-        Target.Camera2DFraming,
+        "Camera2DFraming",
         Curve.Ramp(90.0, 55.0, ZOOM),
     ),
     ZOOM,
@@ -276,7 +276,7 @@ scene.animate(
 scene.parallel(
     camera,
     scene.clip(
-        Target.Camera2DFraming,
+        "Camera2DFraming",
         Curve.Ramp2(Vec2(x=-1.5, y=0.0), Vec2(x=0.5, y=0.0), ZOOM),
     ),
 )
