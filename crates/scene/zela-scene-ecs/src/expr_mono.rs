@@ -8,11 +8,14 @@
 //!
 //! # 当前通道
 //!
+//! 通道是 `(namespace, name)` 数据（[`ze_func::ChannelRef`]），不再是封闭枚举：
+//!
 //! | 通道 | 状态 |
 //! |---|---|
-//! | `Time` | ✅ 由 `TimeState.elapsed` 注入（S3 起由帧号派生） |
-//! | `Frame` | ✅ 由 `TimeState.frame` 注入 |
-//! | `Event` / `ComponentState` / `Env` | **显式缺失**（S3 后续：输入 / 读通道 / 运行环境） |
+//! | `("", "time")` | ✅ 由 `TimeState.elapsed` 注入（S3 起由帧号派生） |
+//! | `("", "frame")` | ✅ 由 `TimeState.frame` 注入 |
+//! | `("zela.scene", "Circle.radius")` 等组件字段 | **显式缺失**（读方向已具备 `SceneRead`，尚未接进 M） |
+//! | `("", "event")` / `env` | **显式缺失**（S3 后续：输入 / 运行环境） |
 //!
 //! 缺失通道返回 [`EvalError::MissingChannel`]，不静默给 0。
 //!
@@ -22,10 +25,14 @@
 //! 不引入新的量化。若将来需要 f64 时间轴，应把 `TimeState` 一起升级，而不是在
 //! 求值器里偷偷改精度。
 
-use ze_func::{Channel, EvalError, Mono, OpRef, Value};
+use ze_func::{ChannelRef, EvalError, Mono, OpRef, Value};
 use ze_time::AnimValue;
 
 use crate::TimeState;
+
+/// 宿主基础通道名（空 namespace）—— 与 `zela.math::time` / `frame` 是同一份词汇。
+pub const TIME_CHANNEL: &str = "time";
+pub const FRAME_CHANNEL: &str = "frame";
 
 /// 场景侧的 `M`：时间 / 帧号来自资源，算子来自 `zela.math`。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -49,11 +56,13 @@ impl SceneMono {
 }
 
 impl Mono for SceneMono {
-    fn read(&self, channel: Channel) -> Result<Value, EvalError> {
-        match channel {
-            Channel::Time => Ok(Value::F64(self.time)),
-            Channel::Frame => Ok(Value::F64(self.frame as f64)),
-            other => Err(EvalError::MissingChannel { channel: other }),
+    fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
+        match (channel.namespace.as_str(), channel.name.as_str()) {
+            ("", TIME_CHANNEL) => Ok(Value::F64(self.time)),
+            ("", FRAME_CHANNEL) => Ok(Value::F64(self.frame as f64)),
+            _ => Err(EvalError::MissingChannel {
+                channel: channel.clone(),
+            }),
         }
     }
 
@@ -83,14 +92,24 @@ mod tests {
     fn channels_come_from_time_state() {
         let state = TimeState::at_frame(1.5, 45);
         let mono = SceneMono::from_time_state(&state);
-        assert_eq!(mono.read(Channel::Time).unwrap(), Value::F64(1.5));
-        assert_eq!(mono.read(Channel::Frame).unwrap(), Value::F64(45.0));
         assert_eq!(
-            mono.read(Channel::Event).unwrap_err(),
+            mono.read(&ChannelRef::builtin(TIME_CHANNEL)).unwrap(),
+            Value::F64(1.5)
+        );
+        assert_eq!(
+            mono.read(&ChannelRef::builtin(FRAME_CHANNEL)).unwrap(),
+            Value::F64(45.0)
+        );
+        assert_eq!(
+            mono.read(&ChannelRef::builtin("event")).unwrap_err(),
             EvalError::MissingChannel {
-                channel: Channel::Event
+                channel: ChannelRef::builtin("event")
             }
         );
+        // 组件字段通道与基础通道同形，但当前 M 没有场景句柄 ⇒ 显式缺失。
+        assert!(mono
+            .read(&ChannelRef::new("zela.scene", "Circle.radius"))
+            .is_err());
     }
 
     /// 宿主 M + 函子库语义：`sin(t)` 在 `t = π/2` 处为 1。
@@ -98,7 +117,7 @@ mod tests {
     fn evaluation_uses_the_host_monad_and_functor_library() {
         let expr = Expr::call(
             ze_func::OpRef::new("zela.math", "sin"),
-            [Expr::channel(Channel::Time)],
+            [Expr::channel(ChannelRef::builtin(TIME_CHANNEL))],
         );
         let program = CompiledExpr::compile(&expr).unwrap();
         let mono = SceneMono::new(std::f64::consts::FRAC_PI_2, 0);
@@ -110,7 +129,7 @@ mod tests {
     fn frame_channel_is_independent_of_time() {
         let expr = Expr::call(
             ze_func::OpRef::new("zela.math", "sin"),
-            [Expr::channel(Channel::Frame)],
+            [Expr::channel(ChannelRef::builtin(FRAME_CHANNEL))],
         );
         let program = CompiledExpr::compile(&expr).unwrap();
         let mono = SceneMono::new(0.0, 30);

@@ -7,6 +7,25 @@ use crate::capability::{Capability, Resolved};
 use crate::error::PodError;
 use crate::handle::PodId;
 use crate::qualified::QualifiedName;
+use crate::typespec::TypeSpec;
+
+/// 一个可被脚本选择的**通道常量**（提案 #6）。
+///
+/// Pod 自述"我有哪些字段地址"，语言绑定据此在组件构造器上挂常量
+/// （`Circle.radius`）。与 [`Pod::functions`] 一样是**自述面**，不参与协商。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelSpec {
+    /// 命名词汇表的 namespace（如 `zela.scene`）。
+    pub namespace: &'static str,
+    /// 所属组件（`Circle`）。
+    pub component: &'static str,
+    /// 字段名（`radius`）。
+    pub name: &'static str,
+    /// 规范地址（`Circle.radius`）。
+    pub address: &'static str,
+    /// 字段类型（声明文件 / 类型检查用）。
+    pub ty: &'static TypeSpec,
+}
 
 /// per-Pod 局部的函数编号（函数集合属于某个状态机）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -64,6 +83,14 @@ pub trait Pod: 'static {
 
     /// 慢路径（保底）：按函数编号 + 类型擦除实参调用。
     fn call(&self, id: FunctionId, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError>;
+
+    /// 本 Pod 可被脚本选择的**通道常量**（默认空）。
+    ///
+    /// 语言绑定用它把 `Circle.radius` 挂到组件构造器上；端点（写方向）仍由
+    /// 各语言的地址表/宿主校验决定。
+    fn channels(&self) -> &'static [ChannelSpec] {
+        &[]
+    }
 
     /// 按完整函数名取函数编号（默认按 [`Pod::functions`] 的顺序）。
     fn function_id(&self, name: &QualifiedName) -> Option<FunctionId> {

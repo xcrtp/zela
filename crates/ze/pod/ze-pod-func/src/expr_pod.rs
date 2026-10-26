@@ -21,25 +21,30 @@
 use std::any::Any;
 use std::sync::Mutex;
 
-use ze_func::{Channel, CompiledExpr, Expr, Literal, Node, OpRef};
+use ze_func::{ChannelRef, CompiledExpr, Expr, Literal, Node, OpRef};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
-    AddSpec, BindSpec, CosSpec, MulSpec, ScaleSpec, SinSpec, SumSpec,
+    AddSpec, BindSpec, ChannelSpec, CosSpec, MulSpec, ScaleSpec, SinSpec, SumSpec,
 };
 
 /// 函子库 namespace（进产物）。
 pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// 函子库版本（进产物；加算子递增它，`zela.scene` 不受影响）。
-pub const LIBRARY_VERSION: &str = "3";
+pub const LIBRARY_VERSION: &str = "4";
+
+/// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
+pub const SCENE_NAMESPACE: &str = "zela.scene";
 
 const HANDLE: &str = "ze_pod_core.Handle";
 
 /// 一条待并入 `SceneScript` 的表达式动画（S3）。
 #[derive(Clone, Debug)]
 pub struct PendingBinding {
-    pub object: String,
-    pub target: String,
+    /// 场景对象**句柄**（pod 侧；装配期转成本脚本内的局部句柄）。
+    pub object: Handle,
+    /// 目标通道（`name` 是 `zela.scene` 的地址表键）。
+    pub target: ChannelSpec,
     pub expr: Expr,
     pub duration: f64,
 }
@@ -72,6 +77,12 @@ impl ExprPod {
         registry.register_fn0_named("zela.math::env", HANDLE, env);
 
         registry.register_fn1_named::<f64, Handle>("zela.math::pure", "f64", HANDLE, pure);
+        registry.register_fn1_named::<String, ChannelSpec>(
+            "zela.math::channel",
+            "String",
+            "zela.math.Channel",
+            channel_ctor,
+        );
         registry.register_fn1_named::<SinSpec, Handle>("zela.math::sin", "zela.math.Sin", HANDLE, sin_ctor);
         registry.register_fn1_named::<CosSpec, Handle>("zela.math::cos", "zela.math.Cos", HANDLE, cos_ctor);
         registry.register_fn1_named::<Handle, String>(
@@ -187,6 +198,7 @@ impl Pod for ExprPod {
             .ok_or_else(|| PodError::UnknownFunction(format!("函数编号 {id}")))?;
         Ok(match name.name() {
             "pure" => Box::new(pure(self, *arg::<f64>(args, 0)?)),
+            "channel" => Box::new(channel_ctor(self, arg::<String>(args, 0)?.clone())),
             "time" => Box::new(time(self)),
             "frame" => Box::new(frame(self)),
             "event" => Box::new(event(self)),
@@ -231,7 +243,7 @@ fn child(pod: &ExprPod, handle: Handle) -> Expr {
         .expect("表达式句柄必须由本 Pod 产出且未释放")
 }
 
-fn leaf_channel(pod: &dyn Pod, channel: Channel) -> Handle {
+fn leaf_channel(pod: &dyn Pod, channel: ChannelRef) -> Handle {
     expr_pod(pod).intern(Expr::channel(channel))
 }
 
@@ -253,23 +265,31 @@ fn pure(pod: &dyn Pod, value: f64) -> Handle {
 }
 
 fn time(pod: &dyn Pod) -> Handle {
-    leaf_channel(pod, Channel::Time)
+    leaf_channel(pod, ChannelRef::builtin("time"))
 }
 
 fn frame(pod: &dyn Pod) -> Handle {
-    leaf_channel(pod, Channel::Frame)
+    leaf_channel(pod, ChannelRef::builtin("frame"))
 }
 
 fn event(pod: &dyn Pod) -> Handle {
-    leaf_channel(pod, Channel::Event)
+    leaf_channel(pod, ChannelRef::builtin("event"))
 }
 
 fn component_state(pod: &dyn Pod) -> Handle {
-    leaf_channel(pod, Channel::ComponentState)
+    leaf_channel(pod, ChannelRef::builtin("component_state"))
 }
 
 fn env(pod: &dyn Pod) -> Handle {
-    leaf_channel(pod, Channel::Env)
+    leaf_channel(pod, ChannelRef::builtin("env"))
+}
+
+/// `expr.channel("Circle.radius")`：组件字段通道（场景地址表的键）。
+fn channel_ctor(_pod: &dyn Pod, address: String) -> ChannelSpec {
+    ChannelSpec {
+        namespace: SCENE_NAMESPACE.to_string(),
+        name: address,
+    }
 }
 
 fn sin(pod: &dyn Pod, of: Handle) -> Handle {
@@ -341,10 +361,13 @@ fn validate_binding(expr: &Expr) -> Result<(), String> {
     CompiledExpr::compile(expr).map_err(|error| error.to_string())?;
     fn walk(expr: &Expr) -> Result<(), String> {
         match &expr.node {
-            Node::Channel { channel } => match channel {
-                Channel::Time | Channel::Frame => {}
-                other => return Err(format!("通道 `{other:?}` 尚未由宿主注入")),
-            },
+            Node::Channel { channel } => {
+                let injected = channel.is_builtin()
+                    && matches!(channel.name.as_str(), "time" | "frame");
+                if !injected {
+                    return Err(format!("通道 `{channel}` 尚未由宿主注入"));
+                }
+            }
             Node::Call { op, .. } if !crate::ops::is_known(op) => {
                 return Err(format!("未知算子 `{op}`"));
             }
@@ -425,7 +448,7 @@ mod tests {
                 op: OpRef::new(LIBRARY_NAMESPACE, "sin"),
                 args: vec![Expr::call(
                     OpRef::new(LIBRARY_NAMESPACE, "mul"),
-                    [Expr::channel(Channel::Time), Expr::pure(Literal::F64(1.0))]
+                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(Literal::F64(1.0))]
                 )],
             }
         );
@@ -456,7 +479,7 @@ mod tests {
         assert_ne!(a, f);
         assert!(matches!(
             this.tree(f).unwrap().node,
-            Node::Channel { channel: Channel::Frame }
+            Node::Channel { channel } if channel == ChannelRef::builtin("frame")
         ));
     }
 

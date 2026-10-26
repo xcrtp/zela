@@ -26,9 +26,11 @@ pub mod expr_pod;
 pub mod ops;
 
 pub use api::{
-    AddSpec, BindSpec, CosSpec, MathApi, MulSpec, ScaleSpec, SinSpec, SumSpec,
+    AddSpec, BindSpec, ChannelSpec, CosSpec, MathApi, MulSpec, ScaleSpec, SinSpec, SumSpec,
 };
-pub use expr_pod::{ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding};
+pub use expr_pod::{
+    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding, SCENE_NAMESPACE,
+};
 pub use ops::eval as eval_op;
 
 /// 本函子库在 Broker 里的 Service 名（脚本侧全局表名也是它：`expr.*`）。

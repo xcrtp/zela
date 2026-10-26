@@ -1,7 +1,7 @@
 # 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。
 from typing import Any, List
 from zela import Handle
-from zela.math import Bind
+from zela.math import Bind, Channel
 
 # 数值字面量（装配期算术的结果落在这里）。
 def pure(value: float) -> Handle: ...
@@ -20,6 +20,12 @@ def component_state() -> Handle: ...
 
 # 运行环境通道（`RuntimeEval`）。
 def env() -> Handle: ...
+
+# **通道选择键**：地址 → 通道引用（组件字段 `Circle.radius` 与基础通道同形）。
+# 
+# C 批会把组件构造器变成可调用对象，把 `Circle.radius` 直接挂成常量；
+# 在那之前这是脚本侧唯一的显式入口。
+def channel(address: str) -> Channel: ...
 
 # `Sin { of = ... }`（表构造器；与 `spawn{}` 同构）。
 def sin(spec: Any) -> Handle: ...
@@ -42,9 +48,10 @@ def sum(spec: Any) -> Handle: ...
 # 把表达式导出为 JSON（**产物侧证据**：含库 namespace + version）。
 def expression(root: Handle) -> str: ...
 
-# 登记一条**表达式动画**（S3）：对象名 + 目标名 + 根句柄 + 时长。
+# 登记一条**表达式动画**（S3）：对象句柄 + 目标通道 + 根句柄 + 时长。
 # 
-# 这里只记录；宿主在脚本结束后把它并入 `SceneScript`（对象名在装配期解析）。
+# 这里只记录；宿主在脚本结束后把它并入 `SceneScript`（句柄在装配期转换，
+# 产物只存脚本内的局部句柄）。
 # 
 # ⚠️ 语义：表达式读**全局** `Time` / `Frame`；`duration` 只决定段区间（`Hold`）。
 # 需要段内局部时间时应新增通道，而不是改 `Time` 的含义。

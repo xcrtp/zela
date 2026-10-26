@@ -71,6 +71,7 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_background", "背景描边", "cap_background.lua"),
     lua!("cap_window", "曲线窗口", "cap_window.lua"),
     lua!("cap_mix", "2D/3D混排", "cap_mix.lua"),
+    lua!("expr_demo", "表达式驱动", "expr_demo.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。

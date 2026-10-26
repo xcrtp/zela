@@ -311,7 +311,7 @@
       ]
     },
     "expr": {
-      "version": "3",
+      "version": "4",
       "description": "表达式层叶子算子（组合子库；只做表达，不取数）",
       "functions": [
         {
@@ -361,6 +361,14 @@
           "description": "运行环境通道（`RuntimeEval`）。",
           "params": [],
           "returns": {"kind":"opaque","name":"ze_pod_core.Handle"}
+        },
+        {
+          "qualified": "zela.math::channel(String) -> zela.math.Channel",
+          "namespace": "zela.math",
+          "name": "channel",
+          "description": "**通道选择键**：地址 → 通道引用（组件字段 `Circle.radius` 与基础通道同形）。\n\nC 批会把组件构造器变成可调用对象，把 `Circle.radius` 直接挂成常量；\n在那之前这是脚本侧唯一的显式入口。",
+          "params": [{"name":"address","type":{"kind":"scalar","name":"String"}}],
+          "returns": {"kind":"struct","name":"zela.math.Channel"}
         },
         {
           "qualified": "zela.math::sin(zela.math.Sin) -> ze_pod_core.Handle",
@@ -422,7 +430,7 @@
           "qualified": "zela.math::bind(zela.math.Bind) -> ()",
           "namespace": "zela.math",
           "name": "bind",
-          "description": "登记一条**表达式动画**（S3）：对象名 + 目标名 + 根句柄 + 时长。\n\n这里只记录；宿主在脚本结束后把它并入 `SceneScript`（对象名在装配期解析）。\n\n⚠️ 语义：表达式读**全局** `Time` / `Frame`；`duration` 只决定段区间（`Hold`）。\n需要段内局部时间时应新增通道，而不是改 `Time` 的含义。",
+          "description": "登记一条**表达式动画**（S3）：对象句柄 + 目标通道 + 根句柄 + 时长。\n\n这里只记录；宿主在脚本结束后把它并入 `SceneScript`（句柄在装配期转换，\n产物只存脚本内的局部句柄）。\n\n⚠️ 语义：表达式读**全局** `Time` / `Frame`；`duration` 只决定段区间（`Hold`）。\n需要段内局部时间时应新增通道，而不是改 `Time` 的含义。",
           "params": [{"name":"spec","type":{"kind":"struct","name":"zela.math.Bind"}}],
           "returns": {"kind":"struct","name":"()"}
         }
@@ -499,7 +507,8 @@
     {"kind":"struct","name":"zela.Vec3","fields":[{"name":"x","type":{"kind":"scalar","name":"f32"}},{"name":"y","type":{"kind":"scalar","name":"f32"}},{"name":"z","type":{"kind":"scalar","name":"f32"}}]},
     {"kind":"struct","name":"zela.Vec4","fields":[{"name":"x","type":{"kind":"scalar","name":"f32"}},{"name":"y","type":{"kind":"scalar","name":"f32"}},{"name":"z","type":{"kind":"scalar","name":"f32"}},{"name":"w","type":{"kind":"scalar","name":"f32"}}]},
     {"kind":"struct","name":"zela.math.Add","fields":[{"name":"a","type":{"kind":"opaque","name":"ze_pod_core.Handle"}},{"name":"b","type":{"kind":"opaque","name":"ze_pod_core.Handle"}}]},
-    {"kind":"struct","name":"zela.math.Bind","fields":[{"name":"object","type":{"kind":"scalar","name":"String"}},{"name":"target","type":{"kind":"scalar","name":"String"}},{"name":"root","type":{"kind":"opaque","name":"ze_pod_core.Handle"}},{"name":"duration","type":{"kind":"scalar","name":"f64"}}]},
+    {"kind":"struct","name":"zela.math.Bind","fields":[{"name":"object","type":{"kind":"opaque","name":"ze_pod_core.Handle"}},{"name":"target","type":{"kind":"struct","name":"zela.math.Channel"}},{"name":"root","type":{"kind":"opaque","name":"ze_pod_core.Handle"}},{"name":"duration","type":{"kind":"scalar","name":"f64"}}]},
+    {"kind":"struct","name":"zela.math.Channel","fields":[{"name":"namespace","type":{"kind":"scalar","name":"String"}},{"name":"name","type":{"kind":"scalar","name":"String"}}]},
     {"kind":"struct","name":"zela.math.Cos","fields":[{"name":"of","type":{"kind":"opaque","name":"ze_pod_core.Handle"}}]},
     {"kind":"struct","name":"zela.math.Mul","fields":[{"name":"a","type":{"kind":"opaque","name":"ze_pod_core.Handle"}},{"name":"b","type":{"kind":"opaque","name":"ze_pod_core.Handle"}}]},
     {"kind":"struct","name":"zela.math.Scale","fields":[{"name":"k","type":{"kind":"scalar","name":"f64"}},{"name":"of","type":{"kind":"opaque","name":"ze_pod_core.Handle"}}]},

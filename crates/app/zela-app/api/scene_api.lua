@@ -484,14 +484,22 @@ function Vec4(spec) end
 function Add(spec) end
 
 ---@class Bind
----@field object string
----@field target string
+---@field object Handle
+---@field target Channel
 ---@field root Handle
 ---@field duration number
 
 ---@param spec Bind
 ---@return Bind
 function Bind(spec) end
+
+---@class Channel
+---@field namespace string
+---@field name string
+
+---@param spec Channel
+---@return Channel
+function Channel(spec) end
 
 ---@class Cos
 ---@field of Handle
@@ -755,6 +763,14 @@ function expr.component_state() end
 ---@return Handle
 function expr.env() end
 
+---**通道选择键**：地址 → 通道引用（组件字段 `Circle.radius` 与基础通道同形）。
+---
+---C 批会把组件构造器变成可调用对象，把 `Circle.radius` 直接挂成常量；
+---在那之前这是脚本侧唯一的显式入口。
+---@param address string
+---@return Channel
+function expr.channel(address) end
+
 ---`Sin { of = ... }`（表构造器；与 `spawn{}` 同构）。
 ---@param spec Sin
 ---@return Handle
@@ -790,9 +806,10 @@ function expr.sum(spec) end
 ---@return string
 function expr.expression(root) end
 
----登记一条**表达式动画**（S3）：对象名 + 目标名 + 根句柄 + 时长。
+---登记一条**表达式动画**（S3）：对象句柄 + 目标通道 + 根句柄 + 时长。
 ---
----这里只记录；宿主在脚本结束后把它并入 `SceneScript`（对象名在装配期解析）。
+---这里只记录；宿主在脚本结束后把它并入 `SceneScript`（句柄在装配期转换，
+---产物只存脚本内的局部句柄）。
 ---
 ---⚠️ 语义：表达式读**全局** `Time` / `Frame`；`duration` 只决定段区间（`Hold`）。
 ---需要段内局部时间时应新增通道，而不是改 `Time` 的含义。

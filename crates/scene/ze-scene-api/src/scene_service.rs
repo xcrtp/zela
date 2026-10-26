@@ -9,7 +9,7 @@
 // `spawn` 时展开 —— 内容路径的样式（颜色 / 线宽）不必在脚本里重述。
 
 use std::any::Any;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use ze_time::Curve as NativeCurve;
 use ze_scene_core::animation::target::{Target, target_ctor_by_name};
@@ -90,6 +90,9 @@ struct Recording {
     components: HandleTable<Components>,
     clips: HandleTable<Clip>,
     objects: HandleTable<ScriptHandle>,
+    /// 与 `objects` 同步的记录（`HandleTable` 不提供遍历）：`finish` 时快照，
+    /// 供表达式绑定把 pod 句柄转成脚本句柄（提案 #6 B）。
+    object_log: Vec<(Handle, ScriptHandle)>,
     encoder: SceneEncoder,
     /// 装配期错误（非法句柄等）：在 `finish` 时作为 `run` 的明确失败返回。
     error: Option<String>,
@@ -101,6 +104,7 @@ impl Recording {
             components: HandleTable::new(PodId::next()),
             clips: HandleTable::new(PodId::next()),
             objects: HandleTable::new(PodId::next()),
+            object_log: Vec::new(),
             encoder: SceneEncoder::new(),
             error: None,
         }
@@ -135,6 +139,11 @@ pub struct SceneServicePod {
     registry: RegistryPod,
     rec: RecordingCell,
     paths: PathStore,
+    /// 最近一次 `finish` 的对象句柄快照（pod Handle → 脚本句柄）。
+    ///
+    /// 表达式绑定在 `run` 之后合并，那时录制状态已清空 ⇒ 快照必须活过 `finish`。
+    /// 只含**装配期**数据，不进产物。
+    last_objects: Mutex<Vec<(Handle, ScriptHandle)>>,
 }
 
 impl Default for SceneServicePod {
@@ -357,7 +366,21 @@ impl SceneServicePod {
             registry,
             rec: RecordingCell::new(Recording::new()),
             paths,
+            last_objects: Mutex::new(Vec::new()),
         }
+    }
+
+    /// 表达式绑定用：把脚本拿到的**对象句柄**解析成本脚本内的句柄。
+    ///
+    /// 只在 `run` 之后、下一次 `reset` 之前有效；产物里存的是后者（`Handle(usize)`），
+    /// **不存 pod 句柄**（提案 #6 硬约束 4）。
+    pub fn object_handle(&self, handle: &Handle) -> Option<ScriptHandle> {
+        self.last_objects
+            .lock()
+            .expect("对象句柄快照锁中毒")
+            .iter()
+            .find(|(pod, _)| pod == handle)
+            .map(|(_, script)| *script)
     }
 
     /// 取走本轮的 `SceneScript`，并重置状态。
@@ -369,6 +392,9 @@ impl SceneServicePod {
         let error = rec.error.take();
         let encoder = std::mem::replace(&mut rec.encoder, SceneEncoder::new());
         let script = encoder.finish();
+        // 表达式绑定在 `run` 之后才合并 ⇒ 句柄映射要先快照再清空录制状态。
+        *self.last_objects.lock().expect("对象句柄快照锁中毒") =
+            std::mem::take(&mut rec.object_log);
         self.paths.reset();
         *rec = Recording::new();
         match error {
@@ -400,6 +426,31 @@ impl Pod for SceneServicePod {
 
     fn resolve(&self, name: &QualifiedName) -> Option<&(dyn Any + Send + Sync)> {
         self.registry.resolve(name)
+    }
+
+    /// 场景地址表 → 可挂到组件构造器上的**通道常量**（提案 #6 B）。
+    ///
+    /// 只导出**单字段**规格（`address == "组件.字段"`）：组合选择键
+    /// （`Camera2DFraming` / `RevealRange`）没有单一的 `(组件, 字段)`，不能当常量挂。
+    fn channels(&self) -> &'static [ze_pod_core::ChannelSpec] {
+        static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelSpec>> = OnceLock::new();
+        CHANNELS.get_or_init(|| {
+            use ze_scene_core::animation::TARGETS;
+            TARGETS
+                .iter()
+                .filter(|entry| {
+                    let spec = entry.spec;
+                    spec.address == format!("{}.{}", spec.component, spec.field)
+                })
+                .map(|entry| ze_pod_core::ChannelSpec {
+                    namespace: "zela.scene",
+                    component: entry.spec.component,
+                    name: entry.spec.field,
+                    address: entry.spec.address,
+                    ty: entry.spec.ty,
+                })
+                .collect()
+        })
     }
 
     fn call(&self, id: FunctionId, _args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
@@ -896,7 +947,9 @@ fn scene_spawn(pod: &dyn Pod, handles: Vec<Handle>) -> Handle {
         }
     }
     let object = rec.encoder.spawn(components);
-    rec.objects.insert(object)
+    let handle = rec.objects.insert(object);
+    rec.object_log.push((handle, object));
+    handle
 }
 
 fn scene_despawn(pod: &dyn Pod, object: Handle) {

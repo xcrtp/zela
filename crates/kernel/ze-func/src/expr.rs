@@ -29,7 +29,7 @@ pub enum Node {
     /// **零元组合子**：不是值，是「读取某通道」的表达式叶子。
     ///
     /// 脚本拿不到通道的数值：装配期它没值，运行期由宿主单子 `M` 注入（S3）。
-    Channel { channel: Channel },
+    Channel { channel: ChannelRef },
     /// 调用一个已注册的函子算子。
     Call { op: OpRef, args: Vec<Expr> },
     /// 引用本表达式内**已定义**的节点（非递归的 `let`）。
@@ -109,22 +109,58 @@ impl From<[f32; 3]> for Literal {
     }
 }
 
-/// **单子的六条通道**里可由表达式读取的那几条（§10）。
+/// **通道引用**：`namespace` + `name` 是**数据**（与 [`OpRef`] 同形）。
 ///
-/// `Dt` 不在此列：它由帧率决定（`dt = 1/fps`），是帧号的派生量。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Channel {
-    /// 全局时间（S3 起由帧号派生，不再累加）。
-    Time,
-    /// 帧号 —— **一等通道**（旧形态里不存在）。
-    Frame,
-    /// 输入事件（`ViewportClick` / `ViewportHover` 的第一个消费方）。
-    Event,
-    /// 组件状态（经 `SceneRead` 读通道）。
-    ComponentState,
-    /// 运行环境（`RuntimeEval`）。
-    Env,
+/// # 为什么不是封闭枚举
+///
+/// 旧形态是 `enum Channel { Time, Frame, Event, … }` —— 场景词汇被钉在通用层，
+/// 每加一个可读字段都要改 `ze-func`。提案 #6 后组件字段本身就是地址
+/// （`Circle.radius`），与 `time` / `frame` 是同一机制的两种写法：
+///
+/// - **空 namespace** = 宿主基础通道（`time` / `frame`）；
+/// - 组件字段通道 = `("zela.scene", "Circle.radius")`。
+///
+/// 领域无关层只定义**形状**，词汇由宿主单子 `M` 的实现决定。
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ChannelRef {
+    /// 命名词汇表的 namespace（空串 = 宿主基础通道）。
+    pub namespace: String,
+    /// 通道名（基础通道是 `time` / `frame`；组件字段是地址 `Circle.radius`）。
+    pub name: String,
+}
+
+impl ChannelRef {
+    pub fn new(namespace: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+            name: name.into(),
+        }
+    }
+
+    /// 宿主基础通道（`time` / `frame` …）—— 空 namespace。
+    pub fn builtin(name: impl Into<String>) -> Self {
+        Self::new("", name)
+    }
+
+    /// 是否宿主基础通道（由 `Mono::read` 直接提供）。
+    pub fn is_builtin(&self) -> bool {
+        self.namespace.is_empty()
+    }
+
+    /// `namespace::name`（基础通道只写 name）。
+    pub fn qualified(&self) -> String {
+        if self.is_builtin() {
+            self.name.clone()
+        } else {
+            format!("{}::{}", self.namespace, self.name)
+        }
+    }
+}
+
+impl fmt::Display for ChannelRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.qualified())
+    }
 }
 
 /// 算子引用：`namespace` + `name` 是**数据**，不是 Rust 类型名。
@@ -196,7 +232,7 @@ impl Expr {
         })
     }
 
-    pub fn channel(channel: Channel) -> Self {
+    pub fn channel(channel: ChannelRef) -> Self {
         Self::new(Node::Channel { channel })
     }
 
@@ -351,8 +387,8 @@ mod tests {
         OpRef::new("zela.math", name)
     }
 
-    /// 一个旧 payload：只用 `call` / `pure` / `channel`，没有 id / Ref。
-    fn old_payload() -> Value {
+    /// 一个 schema v2 payload：只用 `call` / `pure` / `channel`，没有 Ref。
+    fn v2_payload() -> Value {
         json!({
             "id": "h1",
             "node": {
@@ -369,7 +405,7 @@ mod tests {
                         {
                             "node": {
                                 "type": "channel",
-                                "data": { "channel": "time" }
+                                "data": { "channel": { "namespace": "", "name": "time" } }
                             }
                         }
                     ]
@@ -379,9 +415,9 @@ mod tests {
     }
 
     #[test]
-    fn old_payload_decodes_and_round_trips() {
-        let raw = old_payload();
-        let expr: Expr = serde_json::from_value(raw.clone()).expect("旧 payload 必须可解码");
+    fn v2_payload_round_trips() {
+        let raw = v2_payload();
+        let expr: Expr = serde_json::from_value(raw.clone()).expect("v2 payload 必须可解码");
         assert_eq!(expr.id.as_deref(), Some("h1"));
         let Node::Call { op, args } = &expr.node else {
             panic!("期望 call 节点");
@@ -392,7 +428,7 @@ mod tests {
         assert_eq!(
             args[1].node,
             Node::Channel {
-                channel: Channel::Time
+                channel: ChannelRef::builtin("time")
             }
         );
 
@@ -421,7 +457,7 @@ mod tests {
 
     #[test]
     fn ids_and_refs_round_trip() {
-        let shared = Expr::call(math("sin"), [Expr::channel(Channel::Time)]).with_id("h1");
+        let shared = Expr::call(math("sin"), [Expr::channel(ChannelRef::builtin("time"))]).with_id("h1");
         let root = Expr::call(
             math("sum"),
             [
@@ -447,11 +483,25 @@ mod tests {
 
     #[test]
     fn channels_are_zero_ary_leaves() {
-        let raw = serde_json::to_value(Expr::channel(Channel::Frame)).unwrap();
+        let raw = serde_json::to_value(Expr::channel(ChannelRef::builtin("frame"))).unwrap();
         assert_eq!(
             raw,
-            json!({ "node": { "type": "channel", "data": { "channel": "frame" } } })
+            json!({
+                "node": {
+                    "type": "channel",
+                    "data": { "channel": { "namespace": "", "name": "frame" } }
+                }
+            })
         );
+    }
+
+    /// 组件字段通道与基础通道是**同一形状**：只有 namespace / name 不同。
+    #[test]
+    fn component_channels_are_data_not_vocabulary() {
+        let component = ChannelRef::new("zela.scene", "Circle.radius");
+        assert_eq!(component.qualified(), "zela.scene::Circle.radius");
+        assert!(!component.is_builtin());
+        assert!(ChannelRef::builtin("time").is_builtin());
     }
 
     #[test]

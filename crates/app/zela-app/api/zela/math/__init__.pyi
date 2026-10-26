@@ -7,11 +7,16 @@ from zela import Handle
 def Add(a: Handle, b: Handle) -> Handle: ...
 
 class Bind:
-    object: str
-    target: str
+    object: Handle
+    target: Channel
     root: Handle
     duration: float
-    def __init__(self, object: str, target: str, root: Handle, duration: float) -> None: ...
+    def __init__(self, object: Handle, target: Channel, root: Handle, duration: float) -> None: ...
+
+class Channel:
+    namespace: str
+    name: str
+    def __init__(self, namespace: str, name: str) -> None: ...
 
 def Cos(of: Handle) -> Handle: ...
 

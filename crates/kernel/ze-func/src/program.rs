@@ -22,7 +22,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::expr::{Channel, Expr, ExprError, Literal, Node, OpRef};
+use crate::expr::{ChannelRef, Expr, ExprError, Literal, Node, OpRef};
 
 /// 运行时值（跨通道 / 算子的最小集）。
 #[derive(Clone, Debug, PartialEq)]
@@ -49,7 +49,7 @@ impl Value {
 /// 实现方必须可枚举（时间 / 帧 / 事件 / 组件 / 环境），且 `call` 只做纯函数。
 pub trait Mono {
     /// 读取一条通道。
-    fn read(&self, channel: Channel) -> Result<Value, EvalError>;
+    fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError>;
 
     /// 调用一个叶子算子。
     fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError>;
@@ -59,8 +59,8 @@ pub trait Mono {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum EvalError {
     /// 通道没有值 —— 说明宿主没有注入它（不是静默 0）。
-    #[error("通道 `{channel:?}` 未由宿主注入")]
-    MissingChannel { channel: Channel },
+    #[error("通道 `{channel}` 未由宿主注入")]
+    MissingChannel { channel: ChannelRef },
     /// 算子求值失败（类型 / 定义域 / 未知算子）。
     #[error("算子 `{op}` 求值失败：{message}")]
     Op { op: String, message: String },
@@ -80,7 +80,7 @@ impl EvalError {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
     Pure(Literal),
-    Channel(Channel),
+    Channel(ChannelRef),
     Call { op: OpRef, args: Vec<usize> },
 }
 
@@ -120,7 +120,7 @@ impl CompiledExpr {
         for step in &self.steps {
             let value = match step {
                 Step::Pure(literal) => literal_value(literal),
-                Step::Channel(channel) => mono.read(*channel)?,
+                Step::Channel(channel) => mono.read(channel)?,
                 Step::Call { op, args } => {
                     let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
                     mono.call(op, &args)?
@@ -162,7 +162,7 @@ fn compile_node<'a>(
             steps.len() - 1
         }
         Node::Channel { channel } => {
-            steps.push(Step::Channel(*channel));
+            steps.push(Step::Channel(channel.clone()));
             steps.len() - 1
         }
         Node::Call { op, args } => {
@@ -218,11 +218,13 @@ mod tests {
     }
 
     impl Mono for ScalarMono {
-        fn read(&self, channel: Channel) -> Result<Value, EvalError> {
-            match channel {
-                Channel::Time => Ok(Value::F64(self.time)),
-                Channel::Frame => Ok(Value::F64(self.frame as f64)),
-                other => Err(EvalError::MissingChannel { channel: other }),
+        fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
+            match (channel.namespace.as_str(), channel.name.as_str()) {
+                ("", "time") => Ok(Value::F64(self.time)),
+                ("", "frame") => Ok(Value::F64(self.frame as f64)),
+                _ => Err(EvalError::MissingChannel {
+                    channel: channel.clone(),
+                }),
             }
         }
 
@@ -254,7 +256,7 @@ mod tests {
     /// 共享节点：`h1 = sin(t × 1)`，根 = `h1 + 2 × h1`。
     fn shared_tree() -> Expr {
         let h1 = Expr::call(math("sin"), [Expr::call(math("mul"), [
-            Expr::channel(Channel::Time),
+            Expr::channel(ChannelRef::builtin("time")),
             Expr::pure(1.0),
         ])])
         .with_id("h1");
@@ -294,7 +296,7 @@ mod tests {
 
     #[test]
     fn frame_channel_comes_from_the_monad() {
-        let expr = Expr::call(math("sin"), [Expr::channel(Channel::Frame)]);
+        let expr = Expr::call(math("sin"), [Expr::channel(ChannelRef::builtin("frame"))]);
         let program = CompiledExpr::compile(&expr).unwrap();
         let mono = ScalarMono::new(0.0, 30);
         let value = program.eval(&mono).unwrap().as_f64().unwrap();
@@ -303,13 +305,13 @@ mod tests {
 
     #[test]
     fn missing_channel_is_explicit() {
-        let expr = Expr::channel(Channel::Event);
+        let expr = Expr::channel(ChannelRef::builtin("event"));
         let program = CompiledExpr::compile(&expr).unwrap();
         let err = program.eval(&ScalarMono::new(0.0, 0)).unwrap_err();
         assert_eq!(
             err,
             EvalError::MissingChannel {
-                channel: Channel::Event
+                channel: ChannelRef::builtin("event")
             }
         );
     }

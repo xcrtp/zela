@@ -1797,3 +1797,20 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **`zela.scene@10 → @11`**：`clip(target: String, curve: Curve)`；未知地址在装配期 `rec.fail`，
   旧名与规范地址都接受 ⇒ 既有作品零改动。验收：36 条像素基线逐位不变、
   23 条 demo payload 与 manifest 一致。
+
+
+### 提案 #6 B 批：handle 绑定与通道数据化（2026-10-26）
+
+> 一句话：**对象用句柄、通道用数据**。`expr.bind{ object = dot, target = expr.channel("Circle.radius") }`；
+> `find_named` 退场，`Channel` 枚举退场。
+
+- **通道是数据**：`ze_func::Channel`（封闭枚举）→ `ChannelRef { namespace, name }`（[`expr.rs`](crates/kernel/ze-func/src/expr.rs)）。
+  空 namespace = 宿主基础通道（`time` / `frame`）；组件字段 = `"zela.scene" + 地址`。
+  `SCHEMA_VERSION 1 → 2`，受影响作品只有 `expr_demo`。
+- **按句柄绑定**：`BindSpec.object` 从对象名改为 pod `Handle`；`SceneScript::bind_expr(handle, …)`
+  取代 `bind_expr_named`，`find_named` / 重名歧义错误删除。`SceneServicePod::finish` 快照
+  pod → 脚本句柄，`PodAssembly::merge_expr_bindings` 是**唯一转换点** ⇒ 产物不存 pod 句柄。
+- **通道常量面**：`Pod::channels()` + `ChannelSpec`（[`pod.rs`](crates/ze/pod/ze-pod-core/src/pod.rs)）
+  从场景地址表导出单字段规格；`expr.channel(addr)`（`zela.math@4`）是 C 批挂常量前的显式入口。
+- **验收**：`expr_demo` 去掉 `Name{}` 与 target 字符串，payload `2611dda9…`；23 条 demo payload
+  断言通过；`--script` / `--bundle` 各 80 帧序列哈希同为 `0f77479c…`。

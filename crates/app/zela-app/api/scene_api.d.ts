@@ -339,12 +339,18 @@ export interface Add {
 export declare function Add(spec: Add): Handle;
 
 export interface Bind {
-  object: string;
-  target: string;
+  object: Handle;
+  target: Channel;
   root: Handle;
   duration: number;
 }
 export declare function Bind(spec: Bind): Bind;
+
+export interface Channel {
+  namespace: string;
+  name: string;
+}
+export declare function Channel(spec: Channel): Channel;
 
 export interface Cos {
   of: Handle;
@@ -423,6 +429,7 @@ export declare const expr: {
   event(): Handle;
   component_state(): Handle;
   env(): Handle;
+  channel(address: string): Channel;
   sin(spec: Sin): Handle;
   cos(spec: Cos): Handle;
   add(spec: Add): Handle;

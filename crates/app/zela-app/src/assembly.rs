@@ -18,7 +18,9 @@ use ze_pod_core::{
     AssemblyPlan, Broker, BrokerError, Capability, FnSig, NodeSpec, Pod, PodError, PodNode,
     ServiceRequirement,
 };
-use ze_pod_func::{ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SERVICE as EXPR_SERVICE};
+use ze_pod_func::{
+    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SCENE_NAMESPACE, SERVICE as EXPR_SERVICE,
+};
 use ze_pod_lua::LuaPod;
 use ze_prerender::InMemoryEngine;
 use zela_scene_ecs::pod::{self, ContentApi, PathStore, SceneApi};
@@ -121,6 +123,8 @@ pub struct PodAssembly {
     pub lua: Arc<LuaPod>,
     /// 函子库 Pod 句柄：脚本结束后取走表达式绑定，并入 `SceneScript`。
     pub(crate) expr: Arc<ExprPod>,
+    /// 场景 Service 句柄：表达式绑定的 pod 句柄 → 脚本句柄（装配期转换）。
+    pub(crate) scene: Arc<pod::SceneServicePod>,
     /// 内容 Service 句柄：`compile_script` 用它读"内容能力是否被实际使用"。
     pub(crate) content: Arc<pod::ContentServicePod>,
     /// JS Pod 句柄（`js` feature）：只用于测试 / 排查。
@@ -175,10 +179,10 @@ impl PodAssembly {
         let _ = self.expr.take_bindings();
     }
 
-    /// 把脚本登记的表达式动画并入成品脚本（S3）。
+    /// 把脚本登记的表达式动画并入成品脚本（S3 / 提案 #6 B）。
     ///
-    /// 装配期错误（未知对象 / 重名 / 目标未知 / 未注入通道）在这里**显式失败**，
-    /// 不留给运行期静默跳过。
+    /// 对象是脚本拿到的 **pod 句柄**：这里（装配期）转成本脚本内的句柄，
+    /// 产物只存后者。装配期错误（未知目标 / 越界句柄 / 未注入通道）在这里**显式失败**。
     fn merge_expr_bindings(
         &self,
         mut script: SceneScript,
@@ -195,10 +199,28 @@ impl PodAssembly {
             version: LIBRARY_VERSION.to_string(),
         };
         for pending in bindings {
+            let namespace = pending.target.namespace.as_str();
+            if !namespace.is_empty() && namespace != SCENE_NAMESPACE {
+                return Err(BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "表达式绑定目标的命名空间未知：`{namespace}`（只接受 `{SCENE_NAMESPACE}`）"
+                    )),
+                });
+            }
+            let object = self.scene.object_handle(&pending.object).ok_or_else(|| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "表达式绑定的对象句柄无效：{}",
+                        pending.object
+                    )),
+                }
+            })?;
             script
-                .bind_expr_named(
-                    &pending.object,
-                    &pending.target,
+                .bind_expr(
+                    object,
+                    &pending.target.name,
                     pending.expr,
                     library.clone(),
                     pending.duration,
@@ -219,7 +241,7 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
         not(any(feature = "python", feature = "js")),
         allow(unused_mut)
     )]
-    let (lua, content, expr, mut nodes) = base_nodes(engine);
+    let (lua, scene, content, expr, mut nodes) = base_nodes(engine);
 
     #[cfg(feature = "python")]
     {
@@ -266,6 +288,7 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
         broker,
         lua,
         expr,
+        scene,
         content,
         #[cfg(feature = "js")]
         js,
@@ -277,6 +300,7 @@ fn base_nodes(
     engine: Arc<InMemoryEngine>,
 ) -> (
     Arc<LuaPod>,
+    Arc<pod::SceneServicePod>,
     Arc<pod::ContentServicePod>,
     Arc<ExprPod>,
     Vec<PodNode>,
@@ -295,13 +319,13 @@ fn base_nodes(
 
     let nodes = vec![
         // scene / content / expr 只含装配期状态（内部用锁），登记 SyncPod 徽章供 Python 闭包捕获。
-        PodNode::new_sync("scene", scene, &["scene"]),
+        PodNode::new_sync("scene", Arc::clone(&scene), &["scene"]),
         PodNode::new_sync("content", Arc::clone(&content), &["content"]),
         PodNode::new_sync(EXPR_SERVICE, Arc::clone(&expr), &[EXPR_SERVICE]),
         // LuaPod 持有 mlua 解释器（非 Send + Sync）⇒ 不登记徽章。
         PodNode::new("lua", Arc::clone(&lua) as Arc<dyn Pod>, &["script"]),
     ];
-    (lua, content, expr, nodes)
+    (lua, scene, content, expr, nodes)
 }
 
 fn run_broker(nodes: &[PodNode]) -> Result<Broker, AssemblyError> {

@@ -1,12 +1,13 @@
 //! S3 验收（ECS 侧）：表达式绑定从声明到**真实组件写入**的整条链路。
 //!
 //! 覆盖：
-//! 1. `SceneEncoder::bind_expr_named` → `commit` → `BindingApplySystem` 写到 `Circle.radius`；
+//! 1. `SceneEncoder::bind_expr` → `commit` → `BindingApplySystem` 写到 `Circle.radius`；
 //! 2. 表达式由宿主单子 `M` 求值（Time 通道来自 `TimeState`）；
-//! 3. 未注入通道 / 未知对象名 ⇒ **装配期显式错误**。
+//! 3. 未注入通道 / 越界句柄 ⇒ **装配期显式错误**。
+//!
+//! 提案 #6 B：对象用**句柄**（`spawn` 的返回值），不再依赖 `Name{}` 组件。
 
-use ze_func::{Channel, Expr, OpRef};
-use ze_scene_contract::Name;
+use ze_func::{ChannelRef, Expr, OpRef};
 use ze_scene_core::animation::LibraryRef;
 use ze_scene_core::object::Circle;
 use ze_scene_core::scene_script::{SceneEncoder, SceneScript};
@@ -20,21 +21,18 @@ use crate::scene::Scene;
 fn library() -> LibraryRef {
     LibraryRef {
         namespace: "zela.math".to_string(),
-        version: "2".to_string(),
+        version: "4".to_string(),
     }
 }
 
-fn circle_named(name: &str) -> ze_scene_contract::Components {
-    vec![
-        Box::new(Circle::new((0.0, 0.0), 0.25)),
-        Box::new(Name::new(name)),
-    ]
+fn circle() -> ze_scene_contract::Components {
+    vec![Box::new(Circle::new((0.0, 0.0), 0.25))]
 }
 
 fn sin_time() -> Expr {
     Expr::call(
         OpRef::new("zela.math", "sin"),
-        [Expr::channel(Channel::Time)],
+        [Expr::channel(ChannelRef::builtin("time"))],
     )
 }
 
@@ -65,8 +63,8 @@ fn radius_at(script: ze_scene_core::scene_script::SceneScript, time: f32) -> f32
 #[test]
 fn expression_binding_writes_the_component_through_the_host_monad() {
     let mut enc = SceneEncoder::new();
-    enc.spawn(circle_named("dot"));
-    enc.bind_expr_named("dot", "CircleRadius", sin_time(), library(), 10.0)
+    let dot = enc.spawn(circle());
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), 10.0)
         .expect("装配期校验通过");
     let script = enc.finish();
 
@@ -79,14 +77,14 @@ fn expression_binding_writes_the_component_through_the_host_monad() {
 #[test]
 fn expression_binding_survives_json_round_trip() {
     let mut enc = SceneEncoder::new();
-    enc.spawn(circle_named("dot"));
-    enc.bind_expr_named("dot", "CircleRadius", sin_time(), library(), 2.0)
+    let dot = enc.spawn(circle());
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), 2.0)
         .expect("装配期校验通过");
     let json = enc.finish().to_json().expect("序列化成功");
 
     // 库身份也在 JSON 里（产物自带 namespace + version）。
     assert!(json.contains("zela.math"), "payload 必须带函子库身份");
-    assert!(json.contains("\"version\":\"2\""), "payload 必须带库版本");
+    assert!(json.contains("\"version\":\"4\""), "payload 必须带库版本");
 
     let restored = SceneScript::from_json(&json).expect("反序列化成功");
     // 往返之后仍能求值并写组件（这就是 `--bundle` 路径的数据链）。
@@ -98,12 +96,12 @@ fn expression_binding_survives_json_round_trip() {
 #[test]
 fn append_shifts_expression_target_handles() {
     let mut a = SceneEncoder::new();
-    a.spawn(circle_named("a"));
-    a.bind_expr_named("a", "CircleRadius", sin_time(), library(), 1.0)
+    let first = a.spawn(circle());
+    a.bind_expr(first, "CircleRadius", sin_time(), library(), 1.0)
         .expect("a 绑定成功");
     let mut b = SceneEncoder::new();
-    b.spawn(circle_named("b"));
-    b.bind_expr_named("b", "CircleRadius", sin_time(), library(), 1.0)
+    let second = b.spawn(circle());
+    b.bind_expr(second, "CircleRadius", sin_time(), library(), 1.0)
         .expect("b 绑定成功");
 
     let mut script = a.finish();
@@ -124,26 +122,53 @@ fn append_shifts_expression_target_handles() {
 #[test]
 fn unimplemented_channels_fail_at_assembly() {
     let mut enc = SceneEncoder::new();
-    enc.spawn(circle_named("dot"));
-    let expr = Expr::channel(Channel::Event);
+    let dot = enc.spawn(circle());
+    let expr = Expr::channel(ChannelRef::builtin("event"));
     let error = enc
-        .bind_expr_named("dot", "CircleRadius", expr, library(), 1.0)
+        .bind_expr(dot, "CircleRadius", expr, library(), 1.0)
         .expect_err("Event 通道尚未注入 ⇒ 必须失败");
     assert_eq!(
         error,
-        ze_scene_core::scene_script::ExprBindError::UnsupportedChannel(Channel::Event)
+        ze_scene_core::scene_script::ExprBindError::UnsupportedChannel(ChannelRef::builtin("event"))
+    );
+}
+
+/// 组件字段通道与基础通道同形，但读方向还没接进宿主 M ⇒ 同样装配期显式失败。
+#[test]
+fn component_channels_are_not_injected_yet() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    let channel = ChannelRef::new("zela.scene", "Circle.radius");
+    let error = enc
+        .bind_expr(
+            dot,
+            "OpacityValue",
+            Expr::channel(channel.clone()),
+            library(),
+            1.0,
+        )
+        .expect_err("组件字段通道尚未注入 ⇒ 必须失败");
+    assert_eq!(
+        error,
+        ze_scene_core::scene_script::ExprBindError::UnsupportedChannel(channel)
     );
 }
 
 #[test]
 fn unknown_object_fails_at_assembly() {
     let mut enc = SceneEncoder::new();
-    enc.spawn(circle_named("dot"));
+    enc.spawn(circle());
     let error = enc
-        .bind_expr_named("missing", "CircleRadius", sin_time(), library(), 1.0)
-        .expect_err("对象名不存在 ⇒ 必须失败");
+        .bind_expr(
+            ze_scene_core::scene_script::Handle(7),
+            "CircleRadius",
+            sin_time(),
+            library(),
+            1.0,
+        )
+        .expect_err("句柄越界 ⇒ 必须失败");
     assert_eq!(
         error,
-        ze_scene_core::scene_script::ExprBindError::UnknownObject("missing".to_string())
+        ze_scene_core::scene_script::ExprBindError::UnknownObject(7)
     );
 }

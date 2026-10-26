@@ -22,17 +22,33 @@
 use ze_pod_core::Handle;
 use ze_pod_macro::{PodType, capability};
 
+/// 一条**通道引用**（提案 #6）：`namespace` + `name` 是数据。
+///
+/// - 基础通道：`{ namespace = "", name = "time" }`（宿主 M 直接注入）；
+/// - 组件字段：`{ namespace = "zela.scene", name = "Circle.radius" }`
+///   （B 批只提供选择键；读方向尚未接进宿主 M）。
+///
+/// 它与 `ze-func` 的 `ChannelRef` **同形**：Pod 边界上只是数据，跨层不需要转换规则。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Channel")]
+pub struct ChannelSpec {
+    /// 命名词汇表的 namespace（空串 = 宿主基础通道）。
+    pub namespace: String,
+    /// 通道名（基础通道 `time` / `frame`；组件字段是地址 `Circle.radius`）。
+    pub name: String,
+}
+
 /// 一条待绑定的表达式动画（S3）。
 ///
 /// 表构造器形态（与 `scene.spawn{...}` 同构）：
-/// `expr.bind{ object = "curve", target = "CircleRadius", root = y, duration = 2.0 }`。
+/// `expr.bind{ object = dot, target = expr.channel("Circle.radius"), root = y, duration = 2.0 }`。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Bind")]
 pub struct BindSpec {
-    /// 目标对象名（装配期由 scene 侧解析为句柄；缺失 / 重名都是显式错误）。
-    pub object: String,
-    /// 动画目标（`zela.scene` 的目标名字表）。
-    pub target: String,
+    /// 目标对象**句柄**（`scene.spawn` 的返回值；提案 #6 起不再按名字找对象）。
+    pub object: Handle,
+    /// 动画目标（通道引用；`name` 是 `zela.scene` 的地址表键）。
+    pub target: ChannelSpec,
     /// 表达式根句柄。
     pub root: Handle,
     /// 段时长（秒）。
@@ -92,7 +108,7 @@ pub struct SumSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "3",
+    version = "4",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -115,6 +131,12 @@ pub struct MathApi<'a> {
     /// 运行环境通道（`RuntimeEval`）。
     pub env: fn(&'a dyn Pod) -> Handle,
 
+    /// **通道选择键**：地址 → 通道引用（组件字段 `Circle.radius` 与基础通道同形）。
+    ///
+    /// C 批会把组件构造器变成可调用对象，把 `Circle.radius` 直接挂成常量；
+    /// 在那之前这是脚本侧唯一的显式入口。
+    pub channel: fn(&'a dyn Pod, address: String) -> ChannelSpec,
+
     /// `Sin { of = ... }`（表构造器；与 `spawn{}` 同构）。
     pub sin: fn(&'a dyn Pod, spec: SinSpec) -> Handle,
 
@@ -136,9 +158,10 @@ pub struct MathApi<'a> {
     /// 把表达式导出为 JSON（**产物侧证据**：含库 namespace + version）。
     pub expression: fn(&'a dyn Pod, root: Handle) -> String,
 
-    /// 登记一条**表达式动画**（S3）：对象名 + 目标名 + 根句柄 + 时长。
+    /// 登记一条**表达式动画**（S3）：对象句柄 + 目标通道 + 根句柄 + 时长。
     ///
-    /// 这里只记录；宿主在脚本结束后把它并入 `SceneScript`（对象名在装配期解析）。
+    /// 这里只记录；宿主在脚本结束后把它并入 `SceneScript`（句柄在装配期转换，
+    /// 产物只存脚本内的局部句柄）。
     ///
     /// ⚠️ 语义：表达式读**全局** `Time` / `Frame`；`duration` 只决定段区间（`Hold`）。
     /// 需要段内局部时间时应新增通道，而不是改 `Time` 的含义。

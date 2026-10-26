@@ -36,7 +36,12 @@
 //!     "data": {
 //!       "op": { "namespace": "zela.math", "name": "sin" },
 //!       "args": [
-//!         { "node": { "type": "channel", "data": { "channel": "time" } } }
+//!         {
+//!           "node": {
+//!             "type": "channel",
+//!             "data": { "channel": { "namespace": "", "name": "time" } }
+//!           }
+//!         }
 //!       ]
 //!     }
 //!   }
@@ -48,11 +53,15 @@ pub mod expr;
 pub mod program;
 
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
-pub use expr::{Channel, Expr, ExprError, Id, Literal, Node, OpRef};
+pub use expr::{ChannelRef, Expr, ExprError, Id, Literal, Node, OpRef};
 pub use program::{CompiledExpr, EvalError, Mono, Step, Value};
 
 /// 表达式 payload 的 schema 版本。
 ///
 /// 与 capability 的 `version` 分开：后者描述**函数集合**，本常量描述**表达式树的序列化格式**。
 /// 加算子不递增它；改变节点 / 字面量的**编码形态**才递增。
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// `1 → 2`（提案 #6 B 批）：通道从封闭枚举 `"channel": "time"` 改为**数据引用**
+/// `"channel": { "namespace": "", "name": "time" }` —— 组件字段通道与基础通道同形。
+/// 受影响的作品只有 `expr_demo`（唯一使用表达式层的作品）。
+pub const SCHEMA_VERSION: u32 = 2;

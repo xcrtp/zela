@@ -42,10 +42,9 @@
 
 use std::sync::Arc;
 
-use ze_func::{Channel, CompiledExpr, Expr, Node};
+use ze_func::{ChannelRef, CompiledExpr, Expr, Node};
 use ze_scene_contract::{
-    Components, Name as ComponentName, ObjectId, Parent, Scene as SceneContract, Visibility,
-    VisibilityTag,
+    Components, ObjectId, Parent, Scene as SceneContract, Visibility, VisibilityTag,
 };
 use ze_time::{ClockForest, Curve};
 
@@ -57,29 +56,31 @@ use crate::surface::SurfaceTextureRef;
 /// 表达式绑定的装配期错误（**显式**，不静默丢弃）。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExprBindError {
-    /// 按名字找不到对象。
-    #[error("表达式绑定的目标对象不存在：`{0}`")]
-    UnknownObject(String),
-    /// 同名对象不唯一（装配层策略：拒绝歧义，不猜第一个）。
-    #[error("表达式绑定的目标对象名不唯一：`{0}`")]
-    DuplicateObject(String),
+    /// 目标对象句柄越界（句柄只由 `spawn` 产出 ⇒ 正常不会发生，属内部不变量）。
+    #[error("表达式绑定的目标对象句柄不存在：{0}")]
+    UnknownObject(usize),
     /// 目标字段名不在构造器表里。
     #[error("未知的动画目标：`{0}`")]
     UnknownTarget(String),
     /// 表达式结构非法（悬空 Ref / 环 / 重名 id）。
     #[error("表达式非法：{0}")]
     BadExpression(String),
-    /// 该通道尚未由宿主注入（Event / ComponentState / Env 属 S3 后续）。
-    #[error("通道 `{0:?}` 尚未由宿主注入")]
-    UnsupportedChannel(Channel),
+    /// 该通道尚未由宿主注入（Event / 组件字段 / Env 属后续批次）。
+    #[error("通道 `{0}` 尚未由宿主注入")]
+    UnsupportedChannel(ChannelRef),
+}
+
+/// 宿主当前真正注入的通道（提案 #6 B：通道是数据，白名单也只有两条）。
+fn is_injected(channel: &ChannelRef) -> bool {
+    channel.is_builtin() && matches!(channel.name.as_str(), "time" | "frame")
 }
 
 fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
     CompiledExpr::compile(expr).map_err(|error| ExprBindError::BadExpression(error.to_string()))?;
-    fn first_unsupported(expr: &Expr) -> Option<Channel> {
+    fn first_unsupported(expr: &Expr) -> Option<ChannelRef> {
         if let Node::Channel { channel } = &expr.node {
-            if !matches!(channel, Channel::Time | Channel::Frame) {
-                return Some(*channel);
+            if !is_injected(channel) {
+                return Some(channel.clone());
             }
         }
         expr.node.children().iter().find_map(first_unsupported)
@@ -90,31 +91,14 @@ fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
     }
 }
 
-/// 在声明期对象里按 [`ComponentName`] 找唯一句柄。
-fn find_named(creates: &[Components], object: &str) -> Result<usize, ExprBindError> {
-    let mut found: Option<usize> = None;
-    for (index, components) in creates.iter().enumerate() {
-        for component in components.iter() {
-            let is_named = (**component)
-                .as_any()
-                .downcast_ref::<ComponentName>()
-                .is_some_and(|name| name.0 == object);
-            if is_named {
-                if found.is_some() {
-                    return Err(ExprBindError::DuplicateObject(object.to_string()));
-                }
-                found = Some(index);
-            }
-        }
-    }
-    found.ok_or_else(|| ExprBindError::UnknownObject(object.to_string()))
-}
-
 /// 录制一条**表达式绑定**（编码器与成品脚本共用）。
+///
+/// 对象用**脚本句柄**（提案 #6：`spawn` 已经返回句柄，按名字找对象的
+/// `find_named` / `Name{}` 依赖已删除）。
 fn record_expression(
     timeline: &mut Timeline,
-    creates: &[Components],
-    object: &str,
+    object_count: usize,
+    object: Handle,
     target: &str,
     expr: Expr,
     library: LibraryRef,
@@ -123,8 +107,10 @@ fn record_expression(
     validate_expression(&expr)?;
     let (make, _) = target_ctor_by_name(target)
         .ok_or_else(|| ExprBindError::UnknownTarget(target.to_string()))?;
-    let handle = find_named(creates, object)?;
-    timeline.bind_expr_pending(expr, library, make, handle, duration);
+    if object.0 >= object_count {
+        return Err(ExprBindError::UnknownObject(object.0));
+    }
+    timeline.bind_expr_pending(expr, library, make, object.0, duration);
     Ok(())
 }
 
@@ -298,13 +284,13 @@ impl SceneEncoder {
         self
     }
 
-    /// 声明一条**表达式驱动**的动画（S3）：对象按名字找，目标按名字查表。
+    /// 声明一条**表达式驱动**的动画（S3）：对象用本脚本内的句柄，目标按名字查表。
     ///
     /// 表达式在这里就完成结构校验（悬空 Ref / 环 / 尚未注入的通道），
     /// 错误是显式的 —— 不留给运行期静默跳过。
-    pub fn bind_expr_named(
+    pub fn bind_expr(
         &mut self,
-        object: &str,
+        object: Handle,
         target: &str,
         expr: Expr,
         library: LibraryRef,
@@ -312,7 +298,7 @@ impl SceneEncoder {
     ) -> Result<(), ExprBindError> {
         record_expression(
             &mut self.timeline,
-            &self.creates,
+            self.creates.len(),
             object,
             target,
             expr,
@@ -475,10 +461,11 @@ impl SceneScript {
 
     /// 向**成品脚本**追加一条表达式绑定（S3：宿主编排完成后合并）。
     ///
-    /// 对象按 [`ComponentName`] 解析；名字缺失 / 重名 / 目标未知都是显式错误。
-    pub fn bind_expr_named(
+    /// 对象用本脚本内的句柄（宿主把 pod 句柄在**装配期**转成它，产物不存 pod 句柄）；
+    /// 目标未知 / 句柄越界都是显式错误。
+    pub fn bind_expr(
         &mut self,
-        object: &str,
+        object: Handle,
         target: &str,
         expr: Expr,
         library: LibraryRef,
@@ -486,7 +473,7 @@ impl SceneScript {
     ) -> Result<(), ExprBindError> {
         record_expression(
             &mut self.timeline,
-            &self.creates,
+            self.creates.len(),
             object,
             target,
             expr,
