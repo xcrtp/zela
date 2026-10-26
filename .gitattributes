@@ -1,5 +1,1 @@
 * text=auto
-
-# 声明文件基线：`cargo verify --step docs` 要求**逐字节**一致 ⇒ 禁止 EOL 转换
-# （否则 Windows 检出会写 CRLF，而生成器写 LF，门禁在干净检出上必红）。
-crates/app/zela-app/api/** -text

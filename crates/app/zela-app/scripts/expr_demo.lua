@@ -3,12 +3,12 @@
 -- 与其它作品的区别：**脚本不手算采样**。半径与光晕透明度都是组合子表达式，
 -- 由宿主单子 M 每帧注入 Time；脚本只提交结构。
 --
--- 用到的表达式 API（zela.math@4）：
+-- 用到的表达式 API（zela.math@5）：
 --   - 零元通道：expr.time()
 --   - 表构造器：Add / Scale / Mul / Sin（与 scene.spawn{} 同构）
 --   - 字面量：expr.pure(k)（自动提升尚未落地，见 GAPS AF-06）
---   - 通道选择键：expr.channel("Circle.radius")（C 批起可直接写 Circle.radius）
---   - 绑定：expr.bind{ object = <句柄>, target = <通道>, root, duration }
+--   - 通道选择键：组件常量 `Circle.radius` / `Opacity.value`（不用裸地址字符串）
+--   - 绑定：expr.bind{ object = <句柄>, target = <组件常量>, root, duration }
 --     （提案 #6：对象用 scene.spawn 的返回值，不再需要 Name{}）
 
 scene.spawn({
@@ -29,7 +29,7 @@ local radius = Add {
         of = Sin { of = Mul { a = expr.time(), b = expr.pure(1.6) } },
     },
 }
-expr.bind { object = dot, target = expr.channel("Circle.radius"), root = radius, duration = 4.0 }
+expr.bind { object = dot, target = Circle.radius, root = radius, duration = 4.0 }
 
 -- 光晕：透明度 = 0.30 + 0.20 * sin(0.8 t + π/2)（用 cos 相位差）
 local halo = scene.spawn({
@@ -45,4 +45,4 @@ local fade = Add {
         of = Cos { of = Mul { a = expr.time(), b = expr.pure(0.8) } },
     },
 }
-expr.bind { object = halo, target = expr.channel("Opacity.value"), root = fade, duration = 4.0 }
+expr.bind { object = halo, target = Opacity.value, root = fade, duration = 4.0 }

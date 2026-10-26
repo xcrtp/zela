@@ -453,31 +453,72 @@ fn git_short_head(root: &Path) -> Result<String, String> {
     Ok(head)
 }
 
-// ─── step: docs（声明文件防腐烂）─────────────────────────────────────────
+// ─── step: docs（声明文件生成门禁）───────────────────────────────────────
 
-/// **表达式层 §7.5**：生成 LuaLS / `.d.ts` / JSON，与仓库内基线**逐字节**比对。
+/// **提案 #6 收口**：声明文件是**生成物**，不进仓库（用户决定）。
 ///
-/// 为什么需要：声明文件是导出物，`cargo verify` 不跑它就会腐烂（函数加了、
-/// 声明没更新，直到有人手跑 example 才发现）。与锚点 / 指纹同形态：
-/// 有差异即 fail，报错给出重新生成的命令。
+/// 门禁不再比对仓库内基线，改为「生成器可用 + 输出确定」：
+///
+/// 1. 连续生成到两个目录（`target/declarations/a`、`b`，属构建产物区）；
+/// 2. 两次输出**逐字节相同** —— 生成器若把时间戳 / 哈希表顺序写进文件，
+///    这里就会红（同一实现、同一输入必须得到同一文档）；
+/// 3. 文件集合非空、每个文件非空（避免"生成成功但什么也没写"）。
+///
+/// 为什么去掉基线：基线本身也是生成物，留在仓库里等于让构建产物参与版本控制；
+/// 而声明文件由 capability **自动派生**，不存在"手写声明忘更新"的腐烂路径。
 fn step_docs(root: &Path) -> Result<(), String> {
-    let baseline = root.join("crates").join("app").join("zela-app").join("api");
-    if !baseline.is_dir() {
+    let base = root.join("target").join("declarations");
+    if base.exists() {
+        fs::remove_dir_all(&base)
+            .map_err(|error| format!("清理 {} 失败：{error}", base.display()))?;
+    }
+    let first = base.join("a");
+    let second = base.join("b");
+    for dir in [&first, &second] {
+        fs::create_dir_all(dir)
+            .map_err(|error| format!("创建 {} 失败：{error}", dir.display()))?;
+        export_scene_api(root, dir)?;
+    }
+
+    let expected = collect_files(&first)?;
+    let actual = collect_files(&second)?;
+    if expected.is_empty() {
+        return Err("声明文件生成为空（生成器没有写出任何文件）".to_string());
+    }
+    let mut problems = Vec::new();
+    for (path, bytes) in &expected {
+        match actual.get(path) {
+            None => problems.push(format!("第二次生成缺少：{path}")),
+            Some(other) if other != bytes => problems.push(format!("两次生成不一致：{path}")),
+            Some(_) => {}
+        }
+    }
+    for path in actual.keys() {
+        if !expected.contains_key(path) {
+            problems.push(format!("第二次生成多出：{path}"));
+        }
+    }
+    for (path, bytes) in &expected {
+        if bytes.is_empty() {
+            problems.push(format!("空文件：{path}"));
+        }
+    }
+    if !problems.is_empty() {
         return Err(format!(
-            "缺少声明文件基线目录：{}\n  ⇒ 先生成并提交：\n     \
-             cargo run -p zela-app --example export_scene_api --no-default-features --features typst,js -- crates/app/zela-app/api",
-            baseline.display()
+            "声明文件生成不确定（{} 项）：\n  {}",
+            problems.len(),
+            problems.join("\n  ")
         ));
     }
+    println!(
+        "[xtask] 声明文件：{} 个文件，两次生成逐字节一致（生成物，未入库）",
+        expected.len()
+    );
+    Ok(())
+}
 
-    let out = root.join("target").join("xtask").join("scene_api");
-    if out.exists() {
-        fs::remove_dir_all(&out)
-            .map_err(|error| format!("清理 {} 失败：{error}", out.display()))?;
-    }
-    fs::create_dir_all(&out)
-        .map_err(|error| format!("创建 {} 失败：{error}", out.display()))?;
-
+/// 跑一次 `export_scene_api`（输出到给定目录）。
+fn export_scene_api(root: &Path, out: &Path) -> Result<(), String> {
     let args = [
         strings(&[
             "run",
@@ -496,37 +537,7 @@ fn step_docs(root: &Path) -> Result<(), String> {
         vec![out.to_string_lossy().into_owned()],
     ]
     .concat();
-    cargo(root, &args)?;
-
-    let expected = collect_files(&baseline)?;
-    let actual = collect_files(&out)?;
-    let mut problems = Vec::new();
-    for (path, bytes) in &expected {
-        match actual.get(path) {
-            None => problems.push(format!("缺少：{path}")),
-            Some(other) if other != bytes => problems.push(format!("不一致：{path}")),
-            Some(_) => {}
-        }
-    }
-    for path in actual.keys() {
-        if !expected.contains_key(path) {
-            problems.push(format!("多出：{path}（基线未收录）"));
-        }
-    }
-    if !problems.is_empty() {
-        return Err(format!(
-            "声明文件与基线不一致（{} 项）：\n  {}\n  \
-             ⇒ 确认变更后重跑并提交 api/：\n     \
-             cargo run -p zela-app --example export_scene_api --no-default-features --features typst,js -- crates/app/zela-app/api",
-            problems.len(),
-            problems.join("\n  ")
-        ));
-    }
-    println!(
-        "[xtask] 声明文件：{} 个文件与 api/ 基线逐字节一致",
-        expected.len()
-    );
-    Ok(())
+    cargo(root, &args)
 }
 
 /// 递归收集目录下的文件（相对路径用 `/` 分隔，值 = 原始字节）。

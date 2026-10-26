@@ -10,8 +10,8 @@
 //! - `zela/__init__.pyi` / `zela/scene.pyi` / `zela/content.pyi` / `zela/python.pyi`
 //!   （`ze-pod-py`，路径与 capability 命名空间一致）。
 //!
-//! `cargo verify --step docs` 用它生成到 `target/` 并与
-//! `crates/app/zela-app/api/` 的基线逐字节比对。
+//! `cargo verify --step docs` 连续生成两次到 `target/declarations/`，断言输出
+//! 逐字节一致 —— 声明文件是**生成物**，不进仓库（提案 #6 收口）。
 
 use std::path::PathBuf;
 

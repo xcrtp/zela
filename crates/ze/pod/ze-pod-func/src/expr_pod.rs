@@ -31,7 +31,7 @@ use crate::api::{
 /// 函子库 namespace（进产物）。
 pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// 函子库版本（进产物；加算子递增它，`zela.scene` 不受影响）。
-pub const LIBRARY_VERSION: &str = "4";
+pub const LIBRARY_VERSION: &str = "5";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -77,12 +77,6 @@ impl ExprPod {
         registry.register_fn0_named("zela.math::env", HANDLE, env);
 
         registry.register_fn1_named::<f64, Handle>("zela.math::pure", "f64", HANDLE, pure);
-        registry.register_fn1_named::<String, ChannelSpec>(
-            "zela.math::channel",
-            "String",
-            "zela.math.Channel",
-            channel_ctor,
-        );
         registry.register_fn1_named::<SinSpec, Handle>("zela.math::sin", "zela.math.Sin", HANDLE, sin_ctor);
         registry.register_fn1_named::<CosSpec, Handle>("zela.math::cos", "zela.math.Cos", HANDLE, cos_ctor);
         registry.register_fn1_named::<Handle, String>(
@@ -198,7 +192,6 @@ impl Pod for ExprPod {
             .ok_or_else(|| PodError::UnknownFunction(format!("函数编号 {id}")))?;
         Ok(match name.name() {
             "pure" => Box::new(pure(self, *arg::<f64>(args, 0)?)),
-            "channel" => Box::new(channel_ctor(self, arg::<String>(args, 0)?.clone())),
             "time" => Box::new(time(self)),
             "frame" => Box::new(frame(self)),
             "event" => Box::new(event(self)),
@@ -282,14 +275,6 @@ fn component_state(pod: &dyn Pod) -> Handle {
 
 fn env(pod: &dyn Pod) -> Handle {
     leaf_channel(pod, ChannelRef::builtin("env"))
-}
-
-/// `expr.channel("Circle.radius")`：组件字段通道（场景地址表的键）。
-fn channel_ctor(_pod: &dyn Pod, address: String) -> ChannelSpec {
-    ChannelSpec {
-        namespace: SCENE_NAMESPACE.to_string(),
-        name: address,
-    }
 }
 
 fn sin(pod: &dyn Pod, of: Handle) -> Handle {

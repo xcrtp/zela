@@ -1843,3 +1843,18 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - `Node::children()` 覆盖三个分支 ⇒ 悬空 `Ref` / 环 / 通道校验对 `Select` 同样生效。
 - **不实现**：求值遇到 `Select` 是 `ExprError::UnsupportedNode("select")`，不静默算错。
 - **未落地**：`Reveal.current_pos` 的读通道还没接进宿主 `M`，值分支暂时没有真实条件可用（GAPS AG-04）。
+
+
+### 提案 #6 收口：声明文件出仓库 + 通道常量唯一入口（2026-10-26）
+
+> 一句话：**生成物不进仓库，地址不写成字符串**。
+
+- **声明文件是生成物**：删除 `crates/app/zela-app/api/**` 与 `.gitattributes` 里的 `-text` 规则。
+  `cargo verify --step docs` 改为连续生成两次到 `target/declarations/{a,b}`，断言文件集合非空、
+  每个文件非空、两次输出**逐字节相同**（生成器必须是确定性的）。基线比对不再存在 ——
+  声明由 capability 自动派生，没有"手写声明忘更新"的腐烂路径。
+- **通道地址去掉裸字符串**：删除 `zela.math::channel(address: String)`（`zela.math@4 → @5`）。
+  作者侧只剩**组件常量**：`Circle.radius` / `Opacity.value`（`Pod::channels()` 从场景地址表导出，
+  挂在可调用构造器上）；写错常量名在绑定层立即暴露。
+  `BindSpec.target` 仍是 `ChannelSpec { namespace, name }` 数据，但字符串只活在内部。
+- **影响**：`expr_demo` 改用常量；产物里的库版本 `4 → 5` ⇒ payload 重录为 `94d731b4…`，像素不变。

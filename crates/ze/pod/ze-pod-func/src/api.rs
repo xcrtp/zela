@@ -41,13 +41,16 @@ pub struct ChannelSpec {
 /// 一条待绑定的表达式动画（S3）。
 ///
 /// 表构造器形态（与 `scene.spawn{...}` 同构）：
-/// `expr.bind{ object = dot, target = expr.channel("Circle.radius"), root = y, duration = 2.0 }`。
+/// `expr.bind{ object = dot, target = Circle.radius, root = y, duration = 2.0 }`。
+///
+/// `target` 用**组件常量**（`Circle.radius`，由 `Pod::channels()` 挂在构造器上），
+/// 不接受裸地址字符串 —— 写错常量名在绑定层立刻暴露。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Bind")]
 pub struct BindSpec {
     /// 目标对象**句柄**（`scene.spawn` 的返回值；提案 #6 起不再按名字找对象）。
     pub object: Handle,
-    /// 动画目标（通道引用；`name` 是 `zela.scene` 的地址表键）。
+    /// 动画目标（通道选择键；`name` 是 `zela.scene` 的地址表键）。
     pub target: ChannelSpec,
     /// 表达式根句柄。
     pub root: Handle,
@@ -108,7 +111,7 @@ pub struct SumSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "4",
+    version = "5",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -130,12 +133,6 @@ pub struct MathApi<'a> {
 
     /// 运行环境通道（`RuntimeEval`）。
     pub env: fn(&'a dyn Pod) -> Handle,
-
-    /// **通道选择键**：地址 → 通道引用（组件字段 `Circle.radius` 与基础通道同形）。
-    ///
-    /// C 批会把组件构造器变成可调用对象，把 `Circle.radius` 直接挂成常量；
-    /// 在那之前这是脚本侧唯一的显式入口。
-    pub channel: fn(&'a dyn Pod, address: String) -> ChannelSpec,
 
     /// `Sin { of = ... }`（表构造器；与 `spawn{}` 同构）。
     pub sin: fn(&'a dyn Pod, spec: SinSpec) -> Handle,
