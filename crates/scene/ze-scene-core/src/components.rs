@@ -142,6 +142,40 @@ impl Reveal {
             end: 1.0,
         }
     }
+
+    /// 书写**笔尖**位置：归一化弧长 `end` 处的点（派生量，不落字段）。
+    ///
+    /// 口径与渲染侧裁剪（`clip_reveal`）一致：路径先 `flatten`，再按**累计弦长**
+    /// 定位；`end ≤ 0` ⇒ 起点，`end ≥ 1` ⇒ 终点。这是 `Reveal.current_pos`
+    /// 只读通道的实现，也是"小球跟随笔尖"能走读端管道的前提。
+    pub fn current_pos(&self) -> ze_notion::Vec2 {
+        let flat = self.path.flatten(0.25);
+        if flat.is_empty() {
+            return ze_notion::Vec2::ZERO;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+        let mut cumulative = Vec::with_capacity(flat.len());
+        let mut total = 0.0f32;
+        cumulative.push(0.0);
+        for pair in flat.windows(2) {
+            total += (pair[1] - pair[0]).length();
+            cumulative.push(total);
+        }
+        if total <= f32::EPSILON {
+            return flat[0];
+        }
+        let target = self.end.clamp(0.0, 1.0) * total;
+        for index in 0..flat.len() - 1 {
+            if cumulative[index + 1] >= target {
+                let span = (cumulative[index + 1] - cumulative[index]).max(f32::EPSILON);
+                let t = ((target - cumulative[index]) / span).clamp(0.0, 1.0);
+                return flat[index] + (flat[index + 1] - flat[index]) * t;
+            }
+        }
+        *flat.last().expect("flat 非空")
+    }
 }
 
 // M3-4：`Transform`（摆放组件）与 `Parent`（关系）已迁出本层 ——

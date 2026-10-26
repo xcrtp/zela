@@ -345,16 +345,21 @@ fn service(pod: &dyn Pod) -> &SceneServicePod {
 pub fn channels() -> &'static [ze_pod_core::ChannelSpec] {
     static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelSpec>> = OnceLock::new();
     CHANNELS.get_or_init(|| {
-        use ze_scene_core::animation::TARGETS;
-        TARGETS
+        use ze_scene_core::animation::{READ_ONLY_SPECS, TARGETS};
+        // 可写目标（单字段） + 只读派生量（`Reveal.current_pos`）：两者都挂成常量，
+        // 但只有前者能被 `scene.clip` / `expr.bind` 选中（写端只查 `TARGETS`）。
+        let writable = TARGETS
             .iter()
-            .filter(|entry| !entry.spec.is_composite)
-            .map(|entry| ze_pod_core::ChannelSpec {
+            .map(|entry| entry.spec)
+            .filter(|spec| !spec.is_composite);
+        writable
+            .chain(READ_ONLY_SPECS.iter().copied())
+            .map(|spec| ze_pod_core::ChannelSpec {
                 namespace: "zela.scene",
-                component: entry.spec.component,
-                name: entry.spec.field,
-                address: entry.spec.address,
-                ty: entry.spec.ty,
+                component: spec.component,
+                name: spec.field,
+                address: spec.address,
+                ty: spec.ty,
                 // 常量的值是 `{ namespace, name }`：与 `zela.math.Bind.target`
                 // 同一个 PodType（声明文件据此标注 `Circle.channel.radius: Channel`）。
                 value_type: "zela.math.Channel",

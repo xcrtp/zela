@@ -18,7 +18,8 @@ pub use binding::{Binding, BindingDriver, BindingTable, LibraryRef, ResetBehavio
 pub use predicate::{Interval, IntervalSet, analyze as analyze_predicate};
 pub use target::{
     Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, MorphT, OpacityValue, Phase,
-    RevealRange, TARGETS, Target, TargetCtor, TargetEntry, TargetError, TransformChannel,
-    TransformChannelValue, target_ctor_by_name, target_entry,
+    READ_ONLY_SPECS, REVEAL_CURRENT_POS, RevealRange, TARGETS, Target, TargetCtor, TargetEntry,
+    TargetError, TransformChannel, TransformChannelValue, read_only_entry, target_ctor_by_name,
+    target_entry,
 };
 pub use timeline::Timeline;

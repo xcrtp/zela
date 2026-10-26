@@ -53,6 +53,8 @@ pub enum TargetError {
         expected: &'static str,
         actual: &'static str,
     },
+    /// 目标是**只读派生量**（如 `Reveal.current_pos`）：可以读，不能写。
+    ReadOnly { target: &'static str },
 }
 
 impl TargetError {
@@ -84,6 +86,9 @@ impl std::fmt::Display for TargetError {
                 expected,
                 actual,
             } => write!(f, "目标 `{target}` 期望 {expected}，实际 {actual}"),
+            Self::ReadOnly { target } => {
+                write!(f, "目标 `{target}` 是只读派生量（只能读，不能写）")
+            }
         }
     }
 }
@@ -334,6 +339,46 @@ pub static REVEAL_RANGE_ADDR: FieldSpec = FieldSpec {
         AnimValue::Vec2(ze_notion::Vec2::new(r.start, r.end))
     }),
 };
+
+/// **只读派生通道**：`Reveal.current_pos`（书写笔尖位置）。
+///
+/// 它不是存储字段，而是 `Reveal { path, end }` 的派生量（计划 §5 / W2 的倾向）：
+/// 读端按 `end` 在路径上取点（[`Reveal::current_pos`]），写端**恒失败**
+/// （[`TargetError::ReadOnly`]）。
+///
+/// 它**不在 [`TARGETS`] 里** ⇒ `scene.clip` / `expr.bind` 的 target 解析查不到它
+/// （装配期 `UnknownTarget`，不可能写出一个假值）；读端走 [`read_only_entry`]。
+/// 这是"小球跟随笔尖"能全走读端管道的前提。
+pub static REVEAL_CURRENT_POS: FieldSpec = FieldSpec {
+    name: "Reveal.current_pos",
+    address: "Reveal.current_pos",
+    component: "Reveal",
+    field: "current_pos",
+    ty: &TypeSpec::Struct {
+        name: "zela.Vec2",
+        fields: &[],
+    },
+    is_composite: false,
+    write: |_, _, _| {
+        Err(TargetError::ReadOnly {
+            target: "Reveal.current_pos",
+        })
+    },
+    read: |scene, id| read_component::<Reveal, _>(scene, id, |r| AnimValue::Vec2(r.current_pos())),
+};
+
+/// 全部**只读**派生规格（有 read、无 write；**不进** `TARGETS`）。
+pub const READ_ONLY_SPECS: &[&FieldSpec] = &[&REVEAL_CURRENT_POS];
+
+/// 按名字（持久化名或规范地址）查**只读**派生规格 —— 读端专用。
+///
+/// 写端只查 [`target_entry`]，因此只读通道天然不可被 `clip` / `bind` 选中。
+pub fn read_only_entry(name: &str) -> Option<&'static FieldSpec> {
+    READ_ONLY_SPECS
+        .iter()
+        .copied()
+        .find(|spec| spec.name == name || spec.address == name)
+}
 
 /// 写 `Transform.position`（`Vec2 → xy`，`Vec3` 整体）。
 pub static TRANSFORM_POSITION: FieldSpec = FieldSpec {
@@ -915,6 +960,41 @@ mod tests {
             .apply(&mut scene, &AnimValue::Vec2(ze_notion::Vec2::new(1.0, 2.0)))
             .unwrap_err();
         assert!(err.to_string().contains("期望 scalar"));
+    }
+
+    /// G 批（管道）：`Reveal.current_pos` 是**只读派生量** —— 笔尖位置按归一化
+    /// 弧长取点；它不在写表里（`scene.clip` / `expr.bind` 选不中），写恒失败。
+    #[test]
+    fn reveal_current_pos_is_a_read_only_derived_channel() {
+        let path = ze_notion::Path2D::from_polyline(
+            &[
+                ze_notion::Vec2::new(0.0, 0.0),
+                ze_notion::Vec2::new(4.0, 0.0),
+            ],
+            false,
+        );
+        let mut reveal = Reveal::new(path);
+        reveal.end = 0.5;
+        let tip = reveal.current_pos();
+        assert!(
+            (tip.x - 2.0).abs() < 1e-4 && tip.y.abs() < 1e-4,
+            "end = 0.5 ⇒ 直线中点，实际 {tip:?}"
+        );
+        reveal.end = 0.0;
+        assert!(reveal.current_pos().x.abs() < 1e-4, "end = 0 ⇒ 起点");
+
+        assert!(
+            target_entry("Reveal.current_pos").is_none(),
+            "只读派生量不得进写表（否则 clip / bind 会写出一个假值）"
+        );
+        assert!(read_only_entry("Reveal.current_pos").is_some());
+        let err = (REVEAL_CURRENT_POS.write)(
+            &mut MockScene::default(),
+            ObjectId::new(1, 1),
+            &AnimValue::Scalar(0.0),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("只读"), "写只读通道 ⇒ 显式错误：{err}");
     }
 
     /// F 批：复合目标（多字段 / 多值型）标记 `is_composite`；其余规格为 `false`。

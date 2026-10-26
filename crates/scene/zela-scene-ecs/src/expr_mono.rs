@@ -28,7 +28,7 @@
 
 use ze_func::{ChannelRef, EvalError, Mono, OpRef, Value};
 use ze_scene_contract::ObjectId;
-use ze_scene_core::animation::target::target_entry;
+use ze_scene_core::animation::target::{read_only_entry, target_entry};
 use ze_scene_core::scene_write::SceneRead;
 use ze_time::AnimValue;
 
@@ -78,18 +78,22 @@ impl Mono for SceneMono<'_> {
     /// `object` 是 `ObjectId` 打包值（`index:u32<<32 | generation:u32`）；按
     /// `channel.name`（规范地址，如 `Circle.radius`）查 [`TARGETS`] 注册表。
     fn read_object(&self, channel: &ChannelRef, object: u64) -> Result<Value, EvalError> {
-        let Some(entry) = target_entry(&channel.name) else {
+        // 可写目标走 `TARGETS`；只读派生量（`Reveal.current_pos`）走第二张表 ——
+        // 两张表在写端是分开的（只读项不可能被 clip / bind 选中）。
+        let Some(spec) = target_entry(&channel.name)
+            .map(|entry| entry.spec)
+            .or_else(|| read_only_entry(&channel.name))
+        else {
             // 地址未注册 ⇒ 与 `Mono::read` 的缺失通道同一口径（显式失败）。
             return Err(EvalError::MissingChannel {
                 channel: channel.clone(),
             });
         };
         let id = ObjectId::from_packed(object);
-        let value = (entry.spec.read)(self.scene, id)
-            .ok_or_else(|| EvalError::MissingComponent {
-                object,
-                channel: channel.clone(),
-            })?;
+        let value = (spec.read)(self.scene, id).ok_or_else(|| EvalError::MissingComponent {
+            object,
+            channel: channel.clone(),
+        })?;
         anim_to_value(&value).ok_or_else(|| EvalError::MissingComponent {
             object,
             channel: channel.clone(),
@@ -232,6 +236,38 @@ mod tests {
         let channel = ChannelRef::new("zela.scene", "Circle.radius");
         let value = mono.read_object(&channel, id.to_packed()).unwrap();
         assert_eq!(value, Value::F64(2.5));
+    }
+
+    /// **管道验收**：`Reveal.current_pos` 是只读派生量 —— 读端经 `SceneRead`
+    /// 按 `end` 取笔尖点；整条链路不需要任何"位置字段"。
+    #[test]
+    fn read_reveal_current_pos_through_the_pipeline() {
+        let mut world = World::new();
+        let id = {
+            let mut ws = WorldScene::new(&mut world);
+            let path = ze_notion::Path2D::from_polyline(
+                &[
+                    ze_notion::Vec2::new(-1.0, 0.0),
+                    ze_notion::Vec2::new(1.0, 0.0),
+                ],
+                false,
+            );
+            let mut reveal = ze_scene_core::components::Reveal::new(path);
+            reveal.end = 0.5;
+            ws.spawn_dyn(vec![Box::new(reveal)]).expect("Reveal 已登记")
+        };
+        let ws = WorldScene::new(&mut world);
+        let mono = SceneMono::new(0.0, 0, &ws);
+        let value = mono
+            .read_object(
+                &ChannelRef::new("zela.scene", "Reveal.current_pos"),
+                id.to_packed(),
+            )
+            .expect("只读派生通道可读");
+        let Value::Vec2([x, y]) = value else {
+            panic!("Reveal.current_pos 必须是 Vec2，实际 {value:?}");
+        };
+        assert!(x.abs() < 1e-4 && y.abs() < 1e-4, "end = 0.5 ⇒ 线段中点");
     }
 
     /// **G 批**：地址未注册 ⇒ `MissingChannel`；对象上无该组件 ⇒ `MissingComponent`

@@ -104,7 +104,8 @@ fn is_injected(channel: &ChannelRef) -> bool {
         return matches!(channel.name.as_str(), "time" | "frame");
     }
     channel.namespace == "zela.scene"
-        && crate::animation::target::target_entry(&channel.name).is_some()
+        && (crate::animation::target::target_entry(&channel.name).is_some()
+            || crate::animation::target::read_only_entry(&channel.name).is_some())
 }
 
 fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
