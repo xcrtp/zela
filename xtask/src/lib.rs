@@ -855,6 +855,7 @@ pub fn collect_capabilities(
     api_rs: &str,
     types_rs: &str,
     target_rs: &str,
+    channel_sources: &[(&str, &str)],
 ) -> Result<Vec<Capability>, String> {
     let mut out = Vec::new();
     for (struct_name, kind) in [("SceneApi", "scene"), ("ContentApi", "content")] {
@@ -868,6 +869,7 @@ pub fn collect_capabilities(
         "TransformChannel",
     ));
     out.extend(collect_targets(target_rs));
+    out.extend(collect_channel_capabilities(channel_sources));
     for kind in ["scene", "content", "Target", "Curve", "TransformChannel"] {
         if !out.iter().any(|capability| capability.kind == kind) {
             return Err(format!(
@@ -878,6 +880,90 @@ pub fn collect_capabilities(
     }
     Ok(out)
 }
+
+/// 抽 `#[channel(...)]` 属性（F 批：字段通道由 derive 生成，不再以 `FieldSpec`
+/// 字面量出现在 `target.rs`）。
+///
+/// 属性写在结构体前面（中间可夹注释 / `#[derive]`）；遇到 `pub struct X` 时把
+/// 缓冲的通道归给它 ⇒ 组件名 = 结构体名，地址 = `X.field`，`name` 缺省 = 地址。
+///
+/// 若解析规则与源码结构脱节，这里会**安静地少检查** —— 与 `collect_targets`
+/// 同样的风险，因此 `collect_capabilities` 的 `Target` 守卫也覆盖本函数。
+pub fn collect_channel_capabilities(sources: &[(&str, &str)]) -> Vec<Capability> {
+    let mut out = Vec::new();
+    for (file, src) in sources {
+        // (显式 name, 字段名, 行号)——归给下一个 `pub struct`。
+        let mut pending: Vec<(Option<String>, String, usize)> = Vec::new();
+        for (index, raw) in src.lines().enumerate() {
+            let line = raw.trim();
+            if let Some(body) = line
+                .strip_prefix("#[channel(")
+                .and_then(|rest| rest.strip_suffix(")]"))
+            {
+                if let Some((name, field)) = parse_channel_attr(body) {
+                    pending.push((name, field, index + 1));
+                }
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("pub struct ") {
+                let struct_name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                for (explicit, field, line_number) in pending.drain(..) {
+                    let address = format!("{struct_name}.{field}");
+                    let name = explicit.unwrap_or_else(|| address.clone());
+                    let mut spellings = vec![name.clone()];
+                    if address != name {
+                        spellings.push(address);
+                    }
+                    out.push(Capability {
+                        kind: "Target".to_string(),
+                        name,
+                        alias: None,
+                        spellings,
+                        location: format!("{file}:{line_number}"),
+                    });
+                }
+                continue;
+            }
+            // 其它项（非属性 / 注释）⇒ 缓冲作废，避免把通道错挂到后面的结构体。
+            let is_item = line.starts_with("pub enum ")
+                || line.starts_with("pub fn ")
+                || line.starts_with("pub type ")
+                || line.starts_with("pub const ")
+                || line.starts_with("pub trait ")
+                || line.starts_with("impl ")
+                || line.starts_with("mod ");
+            if is_item {
+                pending.clear();
+            }
+        }
+    }
+    out
+}
+
+/// `name = "CircleRadius", radius: f32` ⇒ `(Some("CircleRadius"), "radius")`；
+/// `center: Vec2` ⇒ `(None, "center")`。
+fn parse_channel_attr(body: &str) -> Option<(Option<String>, String)> {
+    let mut name = None;
+    let mut field = None;
+    for part in body.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(rest) = part.strip_prefix("name") {
+            let rest = rest.trim_start().strip_prefix('=')?.trim();
+            name = Some(rest.trim_matches('"').to_string());
+            continue;
+        }
+        let (key, _ty) = part.split_once(':')?;
+        field = Some(key.trim().to_string());
+    }
+    Some((name, field?))
+}
+
 
 /// 抽 `pub struct X<'a> { … }` 里的 `pub name: fn(&'a dyn Pod, …) -> …` 方法。
 fn collect_methods(src: &str, file: &str, struct_name: &str, kind: &str) -> Vec<Capability> {

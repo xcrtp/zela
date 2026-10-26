@@ -466,10 +466,58 @@ fn git_short_head(root: &Path) -> Result<String, String> {
 ///
 /// 为什么去掉基线：基线本身也是生成物，留在仓库里等于让构建产物参与版本控制；
 /// 而声明文件由 capability **自动派生**，不存在"手写声明忘更新"的腐烂路径。
+
+/// 删除目录：Windows 上 `remove_dir_all` 偶发 `ERROR_DIR_NOT_EMPTY`
+/// （杀毒 / 索引 / 上一轮宿主进程短暂持有句柄）。逐层清只读属性 + 有限次重试，
+/// 最终仍失败就显式返回错误（不静默当作已清理）。
+fn remove_dir_all_robust(path: &Path) -> std::io::Result<()> {
+    let mut last = None;
+    for attempt in 0..10u32 {
+        match remove_tree(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                last = Some(error);
+                std::thread::sleep(std::time::Duration::from_millis(50 * u64::from(attempt + 1)));
+            }
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("清理目录失败")))
+}
+
+fn remove_tree(path: &Path) -> std::io::Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut permissions = metadata.permissions();
+    if permissions.readonly() {
+        permissions.set_readonly(false);
+        let _ = fs::set_permissions(path, permissions);
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)? {
+            remove_tree(&entry?.path())?;
+        }
+        match fs::remove_dir(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    } else {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 fn step_docs(root: &Path) -> Result<(), String> {
     let base = root.join("target").join("declarations");
     if base.exists() {
-        fs::remove_dir_all(&base)
+        remove_dir_all_robust(&base)
             .map_err(|error| format!("清理 {} 失败：{error}", base.display()))?;
     }
     let first = base.join("a");
@@ -1259,6 +1307,22 @@ fn step_coverage(root: &Path) -> Result<(), String> {
     let api = read("crates/scene/ze-scene-api/src/api.rs")?;
     let types = read("crates/scene/ze-scene-api/src/types.rs")?;
     let target = read("crates/scene/ze-scene-core/src/animation/target.rs")?;
+    // F 批：字段通道改由 `#[derive(Channels)]` 生成 ⇒ 也要从组件源码的
+    // `#[channel(...)]` 属性里抽（否则 derive 掉的那些通道会从门禁里安静消失）。
+    let channel_files = [
+        "crates/scene/ze-scene-core/src/object/primitives.rs",
+        "crates/scene/ze-scene-core/src/object/camera.rs",
+        "crates/scene/ze-scene-core/src/components.rs",
+        "crates/scene/ze-scene-core/src/components/3d.rs",
+    ];
+    let mut channel_sources = Vec::new();
+    for relative in channel_files {
+        channel_sources.push((relative, read(relative)?));
+    }
+    let channel_sources: Vec<(&str, &str)> = channel_sources
+        .iter()
+        .map(|(relative, source)| (*relative, source.as_str()))
+        .collect();
     let manifest = read("crates/app/zela-app/scripts/demo/manifest.txt")?;
     let gaps = read("GAPS.md")?;
 
@@ -1272,7 +1336,7 @@ fn step_coverage(root: &Path) -> Result<(), String> {
         Vec::new()
     };
 
-    let capabilities = xtask::collect_capabilities(&api, &types, &target)?;
+    let capabilities = xtask::collect_capabilities(&api, &types, &target, &channel_sources)?;
     let scripts_root = scripts_dir(root);
     let mut scripts = String::new();
     for relative in xtask::manifest_scripts(&manifest) {
@@ -2052,7 +2116,7 @@ fn render(
     // 清掉上一轮的帧，避免目录里残留过期 PNG。
     let frames_path = root.join(frames);
     if frames_path.exists() {
-        fs::remove_dir_all(&frames_path)
+        remove_dir_all_robust(&frames_path)
             .map_err(|error| format!("清理 {} 失败：{error}", frames_path.display()))?;
     }
 
