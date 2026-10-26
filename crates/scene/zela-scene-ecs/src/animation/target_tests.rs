@@ -38,18 +38,18 @@ mod tests {
     #[test]
     fn component_names_come_from_the_registry() {
         use crate::contract::known_type_name;
-        assert_eq!(CIRCLE_RADIUS.component, known_type_name::<Circle>().unwrap());
-        assert_eq!(PHASE.component, known_type_name::<PhaseAnim>().unwrap());
-        assert_eq!(CAMERA_EYE.component, known_type_name::<Camera3D>().unwrap());
+        assert_eq!(ze_scene_core::object::primitives::CIRCLE_RADIUS.component, known_type_name::<Circle>().unwrap());
+        assert_eq!(ze_scene_core::components::PHASE_ANIM_PHASE.component, known_type_name::<PhaseAnim>().unwrap());
+        assert_eq!(ze_scene_core::object::camera::CAMERA3D_EYE.component, known_type_name::<Camera3D>().unwrap());
         assert_eq!(
-            MORPH_T.component,
+            ze_scene_core::components::MORPH_SHAPE_T.component,
             known_type_name::<ze_scene_core::components::MorphShape>().unwrap()
         );
         assert_eq!(
-            FRAMING2D_SCALE.component,
+            ze_scene_core::object::camera::FRAMING2D_SCALE.component,
             known_type_name::<Framing2D>().unwrap()
         );
-        assert_eq!(REVEAL_END.component, known_type_name::<Reveal>().unwrap());
+        assert_eq!(ze_scene_core::components::REVEAL_END.component, known_type_name::<Reveal>().unwrap());
         assert_eq!(
             TRANSFORM_POSITION.component,
             known_type_name::<Transform>().unwrap()

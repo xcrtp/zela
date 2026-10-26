@@ -439,4 +439,74 @@ mod tests {
         m.insert(Handle(0), 7);
         assert_eq!(m.get(&Handle(0)), Some(&7));
     }
+
+    /// **G 批帧内定序**：装配期（`commit`）显式拒绝"读先于写"。
+    ///
+    /// 正确顺序（写者时钟起点 ≤ 读者）静默通过 —— 同一帧内读者先读到写者的新值；
+    /// 颠倒时钟顺序（写者在读者之后启动）⇒ [`ScriptError::OrderConflict`]
+    /// （`ExprBindError::ReadOrderConflict`），不留给运行期读到旧值。
+    #[test]
+    fn read_after_write_passes_but_write_after_read_is_rejected() {
+        use ze_func::{ChannelRef, ChannelType, Expr, OpRef};
+        use ze_scene_core::animation::LibraryRef;
+        use ze_time::ClockProgram;
+
+        let lib = LibraryRef {
+            namespace: "zela.math".to_string(),
+            version: "7".to_string(),
+        };
+        // `sin(read(Circle.radius, 对象0))`：对象 0 = 第一个 spawn 的圆。
+        let read_radius = Expr::call(
+            OpRef::new("zela.math", "sin"),
+            [Expr::read(
+                ChannelRef::new("zela.scene", "Circle.radius").with_type(ChannelType::Number),
+                0,
+            )],
+        );
+
+        // ── 正确顺序：写者（root，start=0）写 Circle.radius；读者（root+1，start=1）读它 ──
+        let mut good = SceneEncoder::new();
+        let circle = good.spawn(circle_components(0.0));
+        assert!(good.animate_named(circle, "CircleRadius", ramp(1.0), 1.0));
+        good.bind_expr_gated(
+            circle,
+            "PhaseAnim.phase",
+            read_radius.clone(),
+            lib.clone(),
+            ClockProgram::nested(&ClockProgram::new(), 1.0, 1.0),
+            None,
+            crate::animation::ResetBehavior::Hold,
+            1.0,
+        )
+        .expect("读者绑定装配成功");
+        let mut scene = SceneStruct::new();
+        let recipe = good.finish().commit(&mut scene).expect("写者先于读者 ⇒ 无冲突");
+        assert_eq!(recipe.bindings.bindings.len(), 2);
+
+        // ── 颠倒顺序：读者（root，start=0）在前；写者（root+1，start=1）在后 ⇒ 冲突 ──
+        let mut bad = SceneEncoder::new();
+        let circle = bad.spawn(circle_components(0.0));
+        bad.bind_expr_gated(
+            circle,
+            "PhaseAnim.phase",
+            read_radius,
+            lib,
+            ClockProgram::new(), // 读者 start=0
+            None,
+            crate::animation::ResetBehavior::Hold,
+            1.0,
+        )
+        .expect("读者绑定装配成功");
+        bad.wait(1.0); // 游标前进到 1.0
+        assert!(bad.animate_named(circle, "CircleRadius", ramp(1.0), 1.0)); // 写者 start=1.0
+        let mut scene2 = SceneStruct::new();
+        let err = bad.finish().commit(&mut scene2).expect_err("读先于写 ⇒ 装配期显式报错");
+        assert!(
+            matches!(
+                err,
+                ScriptError::OrderConflict(ExprBindError::ReadOrderConflict { .. })
+            ),
+            "颠倒时钟顺序必须被装配期拒绝：{err}"
+        );
+    }
 }

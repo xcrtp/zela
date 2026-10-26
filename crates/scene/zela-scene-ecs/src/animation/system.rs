@@ -69,7 +69,7 @@ impl System for BindingApplySystem {
             let active = match (&b.active, &b.predicate) {
                 (Some(set), _) => set.contains(lt),
                 (None, None) => true,
-                (None, Some(predicate)) => match predicate.eval(&SceneMono::new(lt, frame)) {
+                (None, Some(predicate)) => match predicate.eval(&SceneMono::new(lt, frame, &scene)) {
                     Ok(Value::Bool(value)) => value,
                     Ok(other) => {
                         eprintln!(
@@ -116,7 +116,7 @@ impl System for BindingApplySystem {
                 BindingDriver::Curve(curve) => curve.sample(eval_at),
                 // **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 同源），
                 // 不再用全局 elapsed —— G1（两条路径 t 不同源）由此消失。
-                BindingDriver::Expr(program) => match program.eval(&SceneMono::new(eval_at, frame)) {
+                BindingDriver::Expr(program) => match program.eval(&SceneMono::new(eval_at, frame, &scene)) {
                     Ok(value) => match anim_value(&value) {
                         Some(value) => value,
                         None => {
@@ -605,5 +605,91 @@ mod tests {
             assert_eq!(t.position, Vec3::new(1.0, 2.0, 0.0));
             assert_eq!(t.scale, Vec3::ONE);
         }
+    }
+
+    /// **G 批集成**：写者（时钟起点靠前）写 `Circle.radius`，读者表达式绑定
+    /// （时钟起点靠后）`sin(read(Circle.radius))` 写 `PhaseAnim.phase`
+    /// ⇒ 一帧后 phase == 半径**本帧值**的 sin（读端看到写者的新值，不是旧值）。
+    ///
+    /// 注：集成测试绕过 `commit`（直接构造绑定表），`read` 的 object 用打包值；
+    /// 正常路径由 `SceneScript::commit` 的 `rewrite_read_objects` 重写。
+    #[test]
+    fn expression_reads_component_written_earlier_in_frame() {
+        use crate::animation::target::{FieldTarget, target_entry};
+        use std::sync::Arc;
+        use ze_func::{CompiledExpr, Expr};
+        use ze_scene_core::components::PhaseAnim;
+        use ze_time::AnimValue;
+
+        let mut world = World::new();
+        let circle = world.spawn((Circle::new(vec2(0.0, 0.0), 1.0),));
+        let phase_obj = world.spawn((PhaseAnim::new(0.0, 1.0),));
+        let circle_id = crate::contract::object_id_of(circle);
+        let phase_id = crate::contract::object_id_of(phase_obj);
+
+        let mut forest = XcClockForest::new();
+        // 写者起点 0；读者起点 = 写者起点 + 1.0（帧内定序：写者先于读者）。
+        let writer = forest.insert(ClockNode::new(None)).unwrap();
+        let mut reader_node = ClockNode::new(Some(writer));
+        reader_node.local_offset = 1.0;
+        let reader = forest.insert(reader_node).unwrap();
+
+        let mut table = BindingTable::new();
+        table.add(Binding {
+            clock: writer,
+            driver: BindingDriver::Curve(Curve::Const(AnimValue::Scalar(0.5))),
+            target: Arc::new(FieldTarget {
+                id: circle_id,
+                spec: target_entry("Circle.radius").unwrap().spec,
+            }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            seek_kind: SeekKind::O1,
+        });
+        let read_expr = Expr::read(
+            ze_func::ChannelRef::new("zela.scene", "Circle.radius")
+                .with_type(ze_func::ChannelType::Number),
+            circle_id.to_packed(),
+        );
+        let program = CompiledExpr::compile(&Expr::call(
+            ze_func::OpRef::new("zela.math", "sin"),
+            [read_expr],
+        ))
+        .expect("Read 是叶子，必然可编译");
+        table.add(Binding {
+            clock: reader,
+            driver: BindingDriver::Expr(program),
+            target: Arc::new(FieldTarget {
+                id: phase_id,
+                spec: target_entry("PhaseAnim.phase").unwrap().spec,
+            }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            seek_kind: SeekKind::O1,
+        });
+
+        let mut resources = Resources::new();
+        resources.insert(TimeState::at(1.5));
+        resources.insert(forest);
+        resources.insert(table);
+
+        let mut sched = Scheduler::new(world, resources);
+        sched.add_system(Phase::SceneSync, BindingApplySystem);
+        sched.init_resources();
+        sched.run_frame(0.0);
+
+        let w = sched.world();
+        // 写者（start=0）先应用：t=1.5 ⇒ lt=1.5 ⇒ radius=0.5。
+        assert!((w.get::<&Circle>(circle).unwrap().radius - 0.5).abs() < 1e-6);
+        // 读者（start=1）后应用：lt=0.5 ⇒ sin(0.5)，读的是本帧已写入的 0.5。
+        let expected = (0.5f64).sin() as f32;
+        assert!(
+            (w.get::<&PhaseAnim>(phase_obj).unwrap().phase - expected).abs() < 1e-5,
+            "phase 应等于 sin(0.5)"
+        );
     }
 }

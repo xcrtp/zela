@@ -80,25 +80,72 @@ pub enum ExprBindError {
          当前形状含非时间依赖或非字面量边界 —— 请改成 reset = skip，或把窗口写成可分析形状"
     )]
     UnanalyzableHold,
+    /// **G 批帧内定序**：装配期能静态看到的"读先于写"冲突 —— 表达式 `reader` 读
+    /// `address`（某对象），而 `writer` 写同一对象的同一字段，且写者的时钟起点
+    /// **晚于**读者 ⇒ 同一帧内读者会读到旧值 / 未定义值。显式报错，不静默。
+    #[error(
+        "帧内定序冲突：`{reader}` 读取 `{address}`，但 `{writer}` 在同一帧更晚处写入它 —— \
+         读先于写 ⇒ 该帧读到的是旧值。请把写者放到读者之前（更早的时钟起点）"
+    )]
+    ReadOrderConflict {
+        reader: String,
+        writer: String,
+        address: String,
+    },
 }
 
 /// 宿主当前真正注入的通道（提案 #6 B：通道是数据，白名单也只有两条）。
+///
+/// **G 批**：组件字段通道（`zela.scene`）改查注册表 —— 地址在 [`TARGETS`] 里
+/// 已登记（如 `Circle.radius`）⇒ 读端可访问，放行；未登记的 `zela.scene` 地址
+/// 与其它 namespace 一律拒绝（与旧行为一致：显式 `UnsupportedChannel`）。
 fn is_injected(channel: &ChannelRef) -> bool {
-    channel.is_builtin() && matches!(channel.name.as_str(), "time" | "frame")
+    if channel.is_builtin() {
+        return matches!(channel.name.as_str(), "time" | "frame");
+    }
+    channel.namespace == "zela.scene"
+        && crate::animation::target::target_entry(&channel.name).is_some()
 }
 
 fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
     CompiledExpr::compile(expr).map_err(|error| ExprBindError::BadExpression(error.to_string()))?;
     fn first_unsupported(expr: &Expr) -> Option<ChannelRef> {
-        if let Node::Channel { channel } = &expr.node {
-            if !is_injected(channel) {
-                return Some(channel.clone());
+        match &expr.node {
+            // `Read` 是叶子（children() 为空）：它的 channel 也要过注入检查，
+            // 否则未注册地址会在运行期才炸 —— 装配期就该显式拒绝。
+            Node::Channel { channel } | Node::Read { channel, .. } => {
+                if !is_injected(channel) {
+                    return Some(channel.clone());
+                }
             }
+            _ => {}
         }
         expr.node.children().into_iter().find_map(first_unsupported)
     }
     match first_unsupported(expr) {
         Some(channel) => Err(ExprBindError::UnsupportedChannel(channel)),
+        None => Ok(()),
+    }
+}
+
+/// **G 批**：`Node::Read.object`（脚本局部句柄下标）必须落在已创建对象的范围内。
+///
+/// 越界说明脚本引用了不存在的句柄 —— 与绑定目标的 [`ExprBindError::UnknownObject`]
+/// 同一口径，装配期显式报错。
+fn check_read_objects(expr: &Expr, object_count: usize) -> Result<(), ExprBindError> {
+    fn first_bad(expr: &Expr, object_count: usize) -> Option<usize> {
+        if let Node::Read { object, .. } = &expr.node {
+            if *object >= object_count as u64 {
+                return Some(*object as usize);
+            }
+        }
+        expr.node
+            .children()
+            .into_iter()
+            .find_map(|child| first_bad(child, object_count))
+    }
+    match first_bad(expr, object_count) {
+        Some(index) => Err(ExprBindError::UnknownObject(index)),
         None => Ok(()),
     }
 }
@@ -125,6 +172,10 @@ fn record_expression(
     validate_expression(&expr)?;
     if let Some(predicate) = &predicate {
         validate_expression(predicate)?;
+    }
+    check_read_objects(&expr, object_count)?;
+    if let Some(predicate) = &predicate {
+        check_read_objects(predicate, object_count)?;
     }
     let (predicate, reset) = match (predicate, duration) {
         (Some(_), duration) if duration > 0.0 => {
@@ -427,10 +478,12 @@ impl SceneRecipe {
 
 /// `commit` 的失败语义（§7.1.7）：`Create` 失败 ⇒ **中止整个 commit**，与
 /// `spawn_dyn` 既有的"不造半成品"口径一致。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptError {
     /// 第 `handle` 条创建命令被 Scene 拒绝（组件未登记 / 句柄非法）。
     CreateFailed { handle: Handle },
+    /// **G 批帧内定序**：装配期发现"读先于写"（见 [`ExprBindError::ReadOrderConflict`]）。
+    OrderConflict(ExprBindError),
 }
 
 impl std::fmt::Display for ScriptError {
@@ -439,6 +492,7 @@ impl std::fmt::Display for ScriptError {
             ScriptError::CreateFailed { handle } => {
                 write!(f, "场景脚本 commit 失败：第 {} 条创建命令被拒绝", handle.0)
             }
+            ScriptError::OrderConflict(error) => write!(f, "{error}"),
         }
     }
 }
@@ -638,7 +692,7 @@ impl SceneScript {
     ///   与 `Scene` 自身的提交粒度一致 —— Scene 无事务）；
     /// - 成功 ⇒ 产出 [`SceneRecipe`]（时钟树 + 绑定表 + 句柄映射），由调用方插入调度器。
     pub fn commit<S: SceneContract + crate::scene_write::SceneRead>(
-        self,
+        mut self,
         scene: &mut S,
     ) -> Result<SceneRecipe, ScriptError> {
         let mut handles: Vec<ObjectId> = Vec::with_capacity(self.creates.len());
@@ -675,11 +729,26 @@ impl SceneScript {
 
         let mut forest = ClockForest::new();
         let mut bindings = BindingTable::new();
+        // **G 批**：把 Expr 树里 `Node::Read.object`（脚本局部句柄下标）重写为
+        // `ObjectId` 打包值，再编译 ⇒ 运行期 `Mono::read_object` 解包读组件。
+        // 产物序列化发生在 commit **之前**（persist 走未编译的 `Timeline`），
+        // payload 里 `Read.object` 仍是脚本句柄下标。
+        self.timeline.rewrite_read_objects(&|object| {
+            handles
+                .get(object as usize)
+                .copied()
+                .unwrap_or(ObjectId::DANGLING)
+                .to_packed()
+        });
         self.timeline.compile_with(
             &|idx| handles.get(idx).copied().unwrap_or(ObjectId::DANGLING),
             &mut forest,
             &mut bindings,
         );
+
+        // **G 批帧内定序**：完整表 + 时钟森林都在手 ⇒ 装配期检查"读先于写"，
+        // 冲突显式报错（不留给运行期读到旧值 / 未定义值）。
+        check_read_order(&bindings, &forest).map_err(ScriptError::OrderConflict)?;
 
         // `reset = Reset` 的**初值**：此刻场景刚建好、绑定还没写过任何字段
         // ⇒ 直接读就是"绑定生效前的值"（之后每帧不再需要历史）。
@@ -701,4 +770,37 @@ impl From<SceneEncoder> for SceneScript {
     fn from(enc: SceneEncoder) -> Self {
         enc.finish()
     }
+}
+
+/// **G 批帧内定序**（装配期，显式报错）：对每条表达式绑定收集其读集
+/// `(规范地址, ObjectId)`（从 `Step::Read`）；对每个读，找同表内所有写
+/// **同一地址 + 同一对象**的绑定（曲线绑定也是写者）；若某写者的时钟起点
+/// **晚于**读者 ⇒ 同一帧内读者会读到旧值 ⇒ [`ExprBindError::ReadOrderConflict`]。
+/// 正确顺序（写者 start ≤ 读者 start）静默通过。
+fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(), ExprBindError> {
+    use crate::animation::binding::BindingDriver;
+    use ze_func::Step;
+    for binding in &bindings.bindings {
+        let BindingDriver::Expr(program) = &binding.driver else {
+            continue; // 曲线绑定没有读集
+        };
+        let reader_start = forest.start_offset(binding.clock);
+        for step in program.steps() {
+            if let Step::Read { channel, object } = step {
+                for writer in &bindings.bindings {
+                    if writer.target.address() == channel.name.as_str()
+                        && writer.target.target_id() == ObjectId::from_packed(*object)
+                        && forest.start_offset(writer.clock) > reader_start
+                    {
+                        return Err(ExprBindError::ReadOrderConflict {
+                            reader: binding.target.name().to_string(),
+                            writer: writer.target.name().to_string(),
+                            address: channel.name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }

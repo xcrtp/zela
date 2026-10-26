@@ -356,6 +356,12 @@ impl<'a> Infer<'a> {
                 ))),
                 ty => Ok(ty),
             },
+            Node::Read { channel, .. } => match channel.ty {
+                ChannelType::Unknown => Err(TypeError::new(format!(
+                    "读通道 `{channel}` 缺少类型信息（装配期无法推导；组件字段通道应带 `ty`）"
+                ))),
+                ty => Ok(ty),
+            },
             Node::Call { op, args } => {
                 let arg_types = args
                     .iter()
@@ -490,6 +496,21 @@ mod tests {
     fn unknown_channel_type_is_rejected() {
         let expr = Expr::channel(ChannelRef::new("zela.scene", "Circle.radius"));
         assert!(infer(&expr).is_err(), "未知通道类型必须显式失败");
+    }
+
+    /// **G 批**：`Read` 与 `Channel` 同形 —— 带 `ty` 可推导，`Unknown` 显式失败。
+    #[test]
+    fn read_infers_from_channel_type() {
+        let typed = ChannelRef::new("zela.scene", "Circle.radius").with_type(ChannelType::Number);
+        assert_eq!(
+            infer(&Expr::read(typed.clone(), 3)).expect("带 ty 的 Read 可推导"),
+            ChannelType::Number
+        );
+        assert!(infer(&Expr::read(typed, 3)).is_ok());
+        assert!(
+            infer(&Expr::read(ChannelRef::new("zela.scene", "Foo.bar"), 3)).is_err(),
+            "Unknown 类型的 Read 必须显式失败"
+        );
     }
 
     #[test]

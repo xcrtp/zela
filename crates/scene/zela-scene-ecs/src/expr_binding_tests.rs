@@ -553,22 +553,38 @@ fn unimplemented_channels_fail_at_assembly() {
     );
 }
 
-/// 组件字段通道与基础通道同形，但读方向还没接进宿主 M ⇒ 同样装配期显式失败。
+/// **G 批**：已注册的组件字段通道（地址在 `TARGETS` 里）是注入通道 ⇒ 装配期放行；
+/// 未注册的 `zela.scene` 地址仍显式拒绝（`UnsupportedChannel`，行为不变）。
 #[test]
-fn component_channels_are_not_injected_yet() {
+fn registered_component_channels_are_allowed_but_unregistered_rejected() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
-    let channel = ChannelRef::new("zela.scene", "Circle.radius");
+    // `Circle.radius` 已注册（F 批 FieldSpec address）⇒ 放行。
+    enc.bind_expr(
+        dot,
+        "CircleRadius",
+        Expr::channel(
+            ChannelRef::new("zela.scene", "Circle.radius")
+                .with_type(ze_func::ChannelType::Number),
+        ),
+        library(),
+        global_clock(),
+        1.0,
+    )
+    .expect("已注册的 zela.scene 地址 ⇒ 放行");
+
+    // 未注册地址 ⇒ 仍是显式 UnsupportedChannel（与旧行为一致）。
+    let channel = ChannelRef::new("zela.scene", "Foo.bar");
     let error = enc
         .bind_expr(
             dot,
-            "OpacityValue",
+            "CircleRadius",
             Expr::channel(channel.clone()),
             library(),
             global_clock(),
             1.0,
         )
-        .expect_err("组件字段通道尚未注入 ⇒ 必须失败");
+        .expect_err("未注册地址 ⇒ 必须失败");
     assert_eq!(
         error,
         ze_scene_core::scene_script::ExprBindError::UnsupportedChannel(channel)
@@ -589,6 +605,25 @@ fn unknown_object_fails_at_assembly() {
             1.0,
         )
         .expect_err("句柄越界 ⇒ 必须失败");
+    assert_eq!(
+        error,
+        ze_scene_core::scene_script::ExprBindError::UnknownObject(7)
+    );
+}
+
+/// **G 批**：`Node::Read.object`（脚本局部句柄下标）越界 ⇒ 装配期 `UnknownObject`。
+#[test]
+fn read_with_out_of_bounds_object_fails_at_assembly() {
+    use ze_func::ChannelType;
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle()); // 只有句柄 0
+    let expr = Expr::read(
+        ChannelRef::new("zela.scene", "Circle.radius").with_type(ChannelType::Number),
+        7, // 越界：对象数 = 1
+    );
+    let error = enc
+        .bind_expr(dot, "CircleRadius", expr, library(), global_clock(), 1.0)
+        .expect_err("Read 引用不存在的句柄 ⇒ 必须失败");
     assert_eq!(
         error,
         ze_scene_core::scene_script::ExprBindError::UnknownObject(7)

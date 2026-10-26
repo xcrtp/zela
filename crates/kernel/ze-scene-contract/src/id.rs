@@ -38,6 +38,17 @@ impl ObjectId {
     pub fn is_stale(&self, current: ObjectId) -> bool {
         self.index != current.index || self.generation != current.generation
     }
+
+    /// 打包成 `u64`（`index:u32<<32 | generation:u32`），供 kernel 层
+    /// （ze-func `Step::Read` / `Mono::read_object`，不依赖本 crate）传递对象身份。
+    pub const fn to_packed(self) -> u64 {
+        ((self.index as u64) << 32) | self.generation as u64
+    }
+
+    /// 从 [`Self::to_packed`] 的打包值解包。
+    pub const fn from_packed(packed: u64) -> Self {
+        Self::new((packed >> 32) as u32, packed as u32)
+    }
 }
 
 impl Default for ObjectId {

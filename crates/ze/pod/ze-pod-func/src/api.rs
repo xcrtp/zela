@@ -26,7 +26,7 @@ use ze_pod_macro::{PodType, capability};
 ///
 /// - 基础通道：`{ namespace = "", name = "time" }`（宿主 M 直接注入）；
 /// - 组件字段：`{ namespace = "zela.scene", name = "Circle.radius" }`
-///   （B 批只提供选择键；读方向尚未接进宿主 M）。
+///   （B 批只提供选择键；G 批起 `Read` 用它读回组件字段）。
 ///
 /// 它与 `ze-func` 的 `ChannelRef` **同形**：Pod 边界上只是数据，跨层不需要转换规则。
 #[derive(Clone, Debug, PartialEq, PodType)]
@@ -36,6 +36,24 @@ pub struct ChannelSpec {
     pub namespace: String,
     /// 通道名（基础通道 `time` / `frame`；组件字段是地址 `Circle.radius`）。
     pub name: String,
+}
+
+/// `Read { channel = ..., ty = ..., object = ... }`：读**某对象**上的组件字段
+/// （**G 批通道读端**；运行期由宿主 `Mono::read_object` 经 `SceneRead` 读回）。
+///
+/// `channel` 用组件的 `channel` 常量（`Circle.channel.radius`，`name` 是规范地址
+/// `Circle.radius`）；`ty` 是 F 批 `FieldSpec.ty` 的映射（`Number` / `Vec2` / `Vec3`，
+/// 脚本侧语言绑定在生成通道常量时填充 —— 本批的 Rust 侧构造直接填写）；
+/// `object` 是目标对象句柄（`scene.spawn` 的返回值）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Read")]
+pub struct ReadSpec {
+    /// 通道选择键（`namespace = "zela.scene"`，`name` 是规范地址如 `Circle.radius`）。
+    pub channel: ChannelSpec,
+    /// 字段值类型名（F 批 `FieldSpec.ty` 的映射：`Number` / `Vec2` / `Vec3`）。
+    pub ty: String,
+    /// 目标对象**句柄**（`scene.spawn` 的返回值）。
+    pub object: Handle,
 }
 
 /// 一层**时钟链接**：`local = (parent_local − shift) × rate`。
@@ -244,7 +262,7 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "6",
+    version = "7",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -266,6 +284,10 @@ pub struct MathApi<'a> {
 
     /// 运行环境通道（`RuntimeEval`）。
     pub env: fn(&'a dyn Pod) -> Handle,
+
+    /// `Read { channel = ..., object = ... }`：读**某对象**上的组件字段
+    /// （**G 批通道读端**；运行期由宿主 `Mono::read_object` 经 `SceneRead` 读回）。
+    pub read: fn(&'a dyn Pod, spec: ReadSpec) -> Handle,
 
     /// `Sin { of = ... }`（表构造器；与 `spawn{}` 同构）。
     pub sin: fn(&'a dyn Pod, spec: SinSpec) -> Handle,
@@ -344,4 +366,36 @@ pub struct MathApi<'a> {
     /// ⚠️ 语义：表达式读**全局** `Time` / `Frame`；`duration` 只决定段区间（`Hold`）。
     /// 需要段内局部时间时应新增通道，而不是改 `Time` 的含义。
     pub bind: fn(&'a dyn Pod, spec: BindSpec) -> (),
+}
+
+// ─── G 批（D14）：能力指纹与版本的配对基线 ─────────────────────────────────
+//
+// 规则（硬，失败不是警告）：`signatures()` 变了而 `version` 没递增 ⇒ 测试红。
+// 改 API 的正确流程：**递增 `version`** → 更新对应版本常量 → 更新指纹常量。
+// 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
+
+/// `zela.math` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
+pub const MATH_API_VERSION: &str = "7";
+/// `zela.math` 的 `hash(signatures())` 基线（G 批 `expr.read` 后更新）。
+pub const MATH_API_FINGERPRINT: u64 = 6_414_786_024_451_512_435;
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+    use ze_pod_core::{Capability, capability_fingerprint};
+
+    /// D14：签名变化而未递增 version ⇒ 本用例失败（先修常量，再补基线）。
+    #[test]
+    fn math_api_fingerprint_is_pinned_to_version() {
+        assert_eq!(
+            MathApi::<'static>::meta().version,
+            Some(MATH_API_VERSION),
+            "版本常量与 capability 声明不一致（以代码为准，先修常量）"
+        );
+        assert_eq!(
+            capability_fingerprint(MathApi::<'static>::signatures()),
+            MATH_API_FINGERPRINT,
+            "signatures 变了 ⇒ 必须递增 version **并**更新指纹常量（D14：变而未递增即 fail）"
+        );
+    }
 }

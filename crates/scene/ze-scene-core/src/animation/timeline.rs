@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use ze_func::{CompiledExpr, Expr};
+use ze_func::{CompiledExpr, Expr, Node};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, ClockProgram, Curve, PlayMode};
 
@@ -354,6 +354,23 @@ impl Timeline {
         self
     }
 
+    /// **G 批**：把 Expr 树里 `Node::Read.object`（脚本局部句柄下标）重写为
+    /// `ObjectId` 打包值（`index:u32<<32 | generation:u32`），供 `commit` 编译后
+    /// 运行期 [`ze_func::Mono::read_object`] 解包读组件。
+    ///
+    /// 产物序列化发生在重写**之前**（persist 走未编译的 `Timeline`），
+    /// 故 payload 里 `Read.object` 仍是脚本句柄下标（与 `handle_ref` 惯例一致）。
+    pub(crate) fn rewrite_read_objects(&mut self, resolve: &impl Fn(u64) -> u64) {
+        for step in &mut self.steps {
+            if let Step::Expr { expr, predicate, .. } = step {
+                *expr = rewrite_reads(expr, resolve);
+                if let Some(predicate) = predicate {
+                    *predicate = rewrite_reads(predicate, resolve);
+                }
+            }
+        }
+    }
+
     /// 编译进时钟树 + 绑定表：每段 `play` 一个 `Hold` 节点；段内的并行动作
     /// **共享同一节点**（同一 `span` ⇒ 精确同区间）。
     ///
@@ -632,6 +649,35 @@ fn clock_affine(clock: &ClockProgram) -> Option<(f64, f64)> {
         rate *= link.rate;
     }
     (rate > 0.0).then_some((rate, shift))
+}
+
+/// 递归重写 Expr 树里的 `Node::Read.object`（G 批）。
+///
+/// `resolve` 把**脚本局部句柄下标**映射成 `ObjectId` 打包值；非 `Read` 节点原样
+/// 复制（`Ref` 复用不展开，改写仍逐节点进行，`Ref` 指向的子树是另一份 Expr）。
+fn rewrite_reads(expr: &Expr, resolve: &impl Fn(u64) -> u64) -> Expr {
+    let node = match &expr.node {
+        Node::Read { channel, object } => Node::Read {
+            channel: channel.clone(),
+            object: resolve(*object),
+        },
+        Node::Pure { value } => Node::Pure { value: value.clone() },
+        Node::Channel { channel } => Node::Channel { channel: channel.clone() },
+        Node::Ref { to } => Node::Ref { to: to.clone() },
+        Node::Call { op, args } => Node::Call {
+            op: op.clone(),
+            args: args.iter().map(|arg| rewrite_reads(arg, resolve)).collect(),
+        },
+        Node::Select { cond, then, r#else } => Node::Select {
+            cond: Box::new(rewrite_reads(cond, resolve)),
+            then: Box::new(rewrite_reads(then, resolve)),
+            r#else: Box::new(rewrite_reads(r#else, resolve)),
+        },
+    };
+    Expr {
+        id: expr.id.clone(),
+        node,
+    }
 }
 
 #[cfg(test)]

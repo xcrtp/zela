@@ -47,17 +47,27 @@ pub enum Node {
         then: Box<Expr>,
         r#else: Box<Expr>,
     },
+    /// **读组件字段**（G 批通道读端）：`object` 是脚本局部句柄下标
+    /// （产物只存局部句柄 —— 与 `handle_ref` 惯例一致）。
+    ///
+    /// `object` 取 `u64` 是刻意的：声明期 / 产物里它是脚本句柄下标（小数字）；
+    /// `commit` 时被场景层重写为 `ObjectId` 的**打包值**（`index:u32<<32 | generation:u32`，
+    /// 见 `ze_scene_contract::ObjectId`），`u32` 装不下打包结果。
+    Read { channel: ChannelRef, object: u64 },
 }
 
 impl Node {
-    /// 直接子表达式（`Pure` / `Channel` / `Ref` 是叶子）。
+    /// 直接子表达式（`Pure` / `Channel` / `Ref` / `Read` 是叶子）。
     pub fn children(&self) -> Vec<&Expr> {
         match self {
             Node::Call { args, .. } => args.iter().collect(),
             Node::Select {
                 cond, then, r#else,
             } => vec![cond, then, r#else],
-            Node::Pure { .. } | Node::Channel { .. } | Node::Ref { .. } => Vec::new(),
+            Node::Pure { .. }
+            | Node::Channel { .. }
+            | Node::Ref { .. }
+            | Node::Read { .. } => Vec::new(),
         }
     }
 }
@@ -313,6 +323,14 @@ impl Expr {
 
     pub fn channel(channel: ChannelRef) -> Self {
         Self::new(Node::Channel { channel })
+    }
+
+    /// 读**某对象的组件字段**（G 批通道读端）。
+    ///
+    /// `object` 是脚本局部句柄下标；`commit` 时场景层把它重写为
+    /// `ObjectId` 打包值（见 [`Node::Read`]）。便捷构造与 [`Expr::channel`] 同层。
+    pub fn read(channel: ChannelRef, object: u64) -> Self {
+        Self::new(Node::Read { channel, object })
     }
 
     pub fn call(op: OpRef, args: impl IntoIterator<Item = Expr>) -> Self {
@@ -705,5 +723,30 @@ mod tests {
         assert_eq!(OpRef::parse(""), None);
         assert_eq!(OpRef::parse("zela.math::"), None);
         assert_eq!(OpRef::new("zela.math", "sin").to_string(), "zela.math::sin");
+    }
+
+    /// **G 批**：`Read` 的形状钉死 —— 叶子、无 id、channel 进 payload、object 是下标。
+    #[test]
+    fn read_format_is_pinned() {
+        let expr = Expr::read(
+            ChannelRef::new("zela.scene", "Circle.radius").with_type(ChannelType::Number),
+            3,
+        );
+        let raw = serde_json::to_value(&expr).expect("必须可序列化");
+        assert_eq!(
+            raw,
+            json!({
+                "node": {
+                    "type": "read",
+                    "data": {
+                        "channel": { "namespace": "zela.scene", "name": "Circle.radius" },
+                        "object": 3
+                    }
+                }
+            })
+        );
+        let decoded: Expr = serde_json::from_value(raw).expect("格式必须可解码");
+        assert_eq!(decoded, expr, "round-trip 必须逐字段一致");
+        assert_eq!(decoded.node.children().len(), 0, "Read 是叶子");
     }
 }

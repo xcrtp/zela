@@ -53,6 +53,18 @@ pub trait Mono {
 
     /// 调用一个叶子算子。
     fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError>;
+
+    /// 读**某对象**上的组件字段（G 批通道读端）。
+    ///
+    /// `object` 是 `ObjectId` 的打包值（`index:u32<<32 | generation:u32`；
+    /// ze-func 是 kernel 层，不依赖 `ze-scene-contract`）。默认实现**显式失败**
+    /// （`MissingChannel`）：宿主没实现读端就不该静默返回 0 ——
+    /// 既有 `Mono` 实现（如测试里的 `ScalarMono`）保持默认，不破。
+    fn read_object(&self, channel: &ChannelRef, _object: u64) -> Result<Value, EvalError> {
+        Err(EvalError::MissingChannel {
+            channel: channel.clone(),
+        })
+    }
 }
 
 /// 求值错误：显式、带算子来源（§7.6 的运行时对应物）。
@@ -61,6 +73,9 @@ pub enum EvalError {
     /// 通道没有值 —— 说明宿主没有注入它（不是静默 0）。
     #[error("通道 `{channel}` 未由宿主注入")]
     MissingChannel { channel: ChannelRef },
+    /// 对象上不存在通道对应的组件（地址已注册但该对象没挂这个组件）。
+    #[error("对象 {object} 上没有通道 `{channel}` 对应的组件")]
+    MissingComponent { object: u64, channel: ChannelRef },
     /// 算子求值失败（类型 / 定义域 / 未知算子）。
     #[error("算子 `{op}` 求值失败：{message}")]
     Op { op: String, message: String },
@@ -81,6 +96,12 @@ impl EvalError {
 pub enum Step {
     Pure(Literal),
     Channel(ChannelRef),
+    /// 读**某对象**的组件字段（G 批通道读端）。
+    ///
+    /// `object` 是 `ObjectId` 打包值：`commit` 时场景层把 `Node::Read.object`
+    /// （脚本局部句柄下标）重写为 `index:u32<<32 | generation:u32` 再编译，
+    /// 运行期经 [`Mono::read_object`] 解包读组件。
+    Read { channel: ChannelRef, object: u64 },
     Call { op: OpRef, args: Vec<usize> },
 }
 
@@ -124,6 +145,7 @@ impl CompiledExpr {
             let value = match step {
                 Step::Pure(literal) => literal_value(literal),
                 Step::Channel(channel) => mono.read(channel)?,
+                Step::Read { channel, object } => mono.read_object(channel, *object)?,
                 Step::Call { op, args } => {
                     let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
                     mono.call(op, &args)?
@@ -174,6 +196,16 @@ fn compile_node<'a>(
         }
         Node::Channel { channel } => {
             steps.push(Step::Channel(channel.clone()));
+            steps.len() - 1
+        }
+        Node::Read { channel, object } => {
+            // 把 `object` 原样放入 Step（声明期 = 脚本局部句柄下标；commit 时
+            // 场景层已把 Expr 树里的 `Node::Read.object` 重写为 ObjectId 打包值，
+            // 见 `Timeline::rewrite_read_objects` —— 两种语义对 `u64` 都成立）。
+            steps.push(Step::Read {
+                channel: channel.clone(),
+                object: *object,
+            });
             steps.len() - 1
         }
         Node::Call { op, args } => {
@@ -360,5 +392,75 @@ mod tests {
             CompiledExpr::compile(&expr).unwrap_err(),
             ExprError::UnsupportedNode("select")
         );
+    }
+
+    /// **G 批**：`Read` 编译成 `Step::Read`；宿主未实现 `read_object` 时
+    /// 默认行为是**显式失败**（`MissingChannel`），不是静默 0。
+    #[test]
+    fn read_without_host_impl_fails_explicitly() {
+        let expr = Expr::read(
+            ChannelRef::new("zela.scene", "Circle.radius").with_type(crate::expr::ChannelType::Number),
+            7,
+        );
+        let program = CompiledExpr::compile(&expr).expect("Read 是叶子，编译必然成功");
+        assert_eq!(
+            program.steps(),
+            &[Step::Read {
+                channel: ChannelRef::new("zela.scene", "Circle.radius"),
+                object: 7,
+            }]
+        );
+
+        let err = program.eval(&ScalarMono::new(0.0, 0)).unwrap_err();
+        assert_eq!(
+            err,
+            EvalError::MissingChannel {
+                channel: ChannelRef::new("zela.scene", "Circle.radius"),
+            },
+            "默认 read_object ⇒ 显式 MissingChannel"
+        );
+    }
+
+    /// **G 批**：宿主覆写 `read_object` 后，`Read` 返回注入值。
+    #[test]
+    fn read_returns_injected_value_when_host_overrides() {
+        struct InjectedRead {
+            radius: f64,
+        }
+        impl Mono for InjectedRead {
+            fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
+                Err(EvalError::MissingChannel {
+                    channel: channel.clone(),
+                })
+            }
+            fn call(&self, op: &OpRef, _args: &[Value]) -> Result<Value, EvalError> {
+                // 本测试只求值 Read 叶子，算子不会被调用；显式失败兜底。
+                Err(EvalError::op(op, "测试单子不实现 call".to_string()))
+            }
+            fn read_object(&self, channel: &ChannelRef, object: u64) -> Result<Value, EvalError> {
+                if channel.name == "Circle.radius" {
+                    Ok(Value::F64(self.radius))
+                } else {
+                    Err(EvalError::MissingComponent {
+                        object,
+                        channel: channel.clone(),
+                    })
+                }
+            }
+        }
+
+        let expr = Expr::read(ChannelRef::new("zela.scene", "Circle.radius"), 7);
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let value = program.eval(&InjectedRead { radius: 2.5 }).unwrap();
+        assert!((value.as_f64().unwrap() - 2.5).abs() < 1e-12);
+
+        // 地址匹配但对象上无组件 ⇒ `MissingComponent` 变体存在且显式。
+        let missing = Expr::read(ChannelRef::new("zela.scene", "Dash.period"), 7);
+        let program = CompiledExpr::compile(&missing).unwrap();
+        let err = program.eval(&InjectedRead { radius: 0.0 }).unwrap_err();
+        assert!(matches!(
+            err,
+            EvalError::MissingComponent { object, .. } if object == 7
+        ));
     }
 }

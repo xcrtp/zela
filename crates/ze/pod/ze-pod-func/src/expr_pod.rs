@@ -26,8 +26,8 @@ use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, Qualifi
 
 use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec, EqSpec, GeSpec,
-    GtSpec, LeSpec, LtSpec, MulSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec,
-    SinSpec, SumSpec,
+    GtSpec, LeSpec, LtSpec, MulSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec,
+    ScaleSpec, SinSpec, SumSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
 
@@ -35,8 +35,8 @@ use crate::infer::{infer_predicate, infer_root};
 pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// 函子库版本（进产物；加算子递增它，`zela.scene` 不受影响）。
 ///
-/// `6`：绑定带时钟（`Bind.clock`），产物里的 `Step::Expr` 可携带非全局时钟。
-pub const LIBRARY_VERSION: &str = "6";
+/// `7`：**G 批**新增 `read`（读某对象的组件字段；`zela.math::read`）。
+pub const LIBRARY_VERSION: &str = "7";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -139,6 +139,12 @@ impl ExprPod {
             clock_nest,
         );
         registry.register_fn0_named("zela.math::clock_time", HANDLE, clock_time);
+        registry.register_fn1_named::<ReadSpec, Handle>(
+            "zela.math::read",
+            "zela.math.Read",
+            HANDLE,
+            read_ctor,
+        );
         registry.register_fn1_named::<BindSpec, ()>(
             "zela.math::bind",
             "zela.math.Bind",
@@ -265,6 +271,7 @@ impl Pod for ExprPod {
                 arg::<ClockSpec>(args, 1)?.clone(),
             )),
             "clock_time" => Box::new(clock_time(self)),
+            "read" => Box::new(read_ctor(self, arg::<ReadSpec>(args, 0)?.clone())),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
             other => {
@@ -462,6 +469,32 @@ fn clock_time(pod: &dyn Pod) -> Handle {
     time(pod)
 }
 
+/// **G 批通道读端**：`Read { channel, ty, object }` → `Expr::read`（叶子）。
+///
+/// `ChannelSpec` → `ChannelRef`（namespace / name 原样；`name` 是规范地址
+/// `Circle.radius`）；`ty` 按 F 批 `FieldSpec.ty` 的映射（`infer::spec_concrete`
+/// 同款约定：`Vec2`→Vec2、`Vec3`→Vec3、`Bool`→Bool、其余标量→Number）；
+/// `object` 取句柄的 `slot`（脚本局部句柄下标，产物只存它）。
+fn read_ctor(pod: &dyn Pod, spec: ReadSpec) -> Handle {
+    let this = expr_pod(pod);
+    let channel = ChannelRef::new(spec.channel.namespace, spec.channel.name)
+        .with_type(channel_type_of(&spec.ty));
+    this.intern(Expr::read(channel, spec.object.slot() as u64))
+}
+
+/// `ty` 字符串（F 批 `FieldSpec.ty` 的映射）→ 通道类型（与 [`crate::infer`] 同款约定：
+/// `zela.` 前缀剥掉后按短名映射）。
+fn channel_type_of(ty: &str) -> ChannelType {
+    match ty.strip_prefix("zela.").unwrap_or(ty) {
+        "Vec2" => ChannelType::Vec2,
+        "Vec3" => ChannelType::Vec3,
+        "Bool" => ChannelType::Bool,
+        // 标量（F32 / F64 / I32 / U32 / U8）与未知都按 Number ——
+        // 组件字段通道只有 Scalar / Vec2 / Vec3（F 批 `FieldSpec.ty`）。
+        _ => ChannelType::Number,
+    }
+}
+
 fn expression(pod: &dyn Pod, root: Handle) -> String {
     expr_pod(pod)
         .export(root)
@@ -649,6 +682,58 @@ mod tests {
             this.tree(f).unwrap().node,
             Node::Channel { channel } if channel == ChannelRef::builtin("frame")
         ));
+    }
+
+    /// **G 批**：`read` 构造器生成 `Node::Read` 叶子，channel / ty / object 字段正确。
+    #[test]
+    fn read_builds_a_read_leaf() {
+        let this = pod();
+        let object = Handle::new(PodId::next(), 3, 1);
+        let h = read_ctor(
+            &this,
+            ReadSpec {
+                channel: ChannelSpec {
+                    namespace: SCENE_NAMESPACE.to_string(),
+                    name: "Circle.radius".to_string(),
+                },
+                ty: "Number".to_string(),
+                object,
+            },
+        );
+        let Node::Read { channel, object: read_object } = &this.tree(h).unwrap().node else {
+            panic!("期望 Read 节点");
+        };
+        assert_eq!(channel.namespace, SCENE_NAMESPACE);
+        assert_eq!(channel.name, "Circle.radius", "name 是规范地址");
+        assert_eq!(channel.ty, ChannelType::Number);
+        assert_eq!(*read_object, 3, "object 取句柄 slot（脚本局部句柄下标）");
+
+        // 快路径与慢路径同一组 helper：`Vec2` 类型映射也一致。
+        let pod_any: &dyn Pod = &this;
+        let read_spec = ReadSpec {
+            channel: ChannelSpec {
+                namespace: SCENE_NAMESPACE.to_string(),
+                name: "Circle.radius".to_string(),
+            },
+            ty: "zela.Vec2".to_string(),
+            object,
+        };
+        let slow: Box<dyn Any> = pod_any
+            .call(
+                FunctionId::new(
+                    this.functions()
+                        .iter()
+                        .position(|f| f.name() == "read")
+                        .expect("read 已注册") as u64,
+                ),
+                &[&read_spec],
+            )
+            .expect("慢路径调用成功");
+        let slow_handle = slow.downcast::<Handle>().unwrap();
+        let Node::Read { channel, .. } = &this.tree(*slow_handle).unwrap().node else {
+            panic!("期望 Read 节点");
+        };
+        assert_eq!(channel.ty, ChannelType::Vec2, "Vec2 类型映射生效（含 zela. 前缀）");
     }
 
     #[test]

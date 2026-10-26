@@ -101,6 +101,15 @@ pub trait Target: Send + Sync + std::fmt::Debug + 'static {
     /// 目标**持久化名**（旧名优先，见文件头「兼容」）。
     fn name(&self) -> &'static str;
 
+    /// 目标**规范地址**（`Component.field`；缺省 = 持久化名）。
+    ///
+    /// G 批帧内定序用它匹配表达式读端的 `channel.name`（如 `Circle.radius`）。
+    /// 单字段目标（[`FieldTarget`]）覆写为 `spec.address`；组合目标没有
+    /// 单一字段地址，保持缺省（`name` 即 `address`，不会被读端匹配）。
+    fn address(&self) -> &'static str {
+        self.name()
+    }
+
     /// 目标作用的**对象句柄**。
     fn target_id(&self) -> ObjectId;
 
@@ -154,6 +163,10 @@ impl Target for FieldTarget {
 
     fn name(&self) -> &'static str {
         self.spec.name
+    }
+
+    fn address(&self) -> &'static str {
+        self.spec.address
     }
 
     fn target_id(&self) -> ObjectId {
@@ -681,6 +694,9 @@ macro_rules! delegating_target {
             fn name(&self) -> &'static str {
                 $spec.name
             }
+            fn address(&self) -> &'static str {
+                $spec.address
+            }
             fn target_id(&self) -> ObjectId {
                 self.id
             }
@@ -725,6 +741,14 @@ impl Target for TransformChannelValue {
             TransformChannel::Position => TRANSFORM_POSITION.name,
             TransformChannel::Rotation => TRANSFORM_ROTATION.name,
             TransformChannel::Scale => TRANSFORM_SCALE.name,
+        }
+    }
+
+    fn address(&self) -> &'static str {
+        match self.channel {
+            TransformChannel::Position => TRANSFORM_POSITION.address,
+            TransformChannel::Rotation => TRANSFORM_ROTATION.address,
+            TransformChannel::Scale => TRANSFORM_SCALE.address,
         }
     }
 

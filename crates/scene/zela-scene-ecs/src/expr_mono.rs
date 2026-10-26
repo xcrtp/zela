@@ -3,8 +3,9 @@
 //! # 它是唯一的不纯入口
 //!
 //! `ze-func` 的组合子树只描述结构；值必须由宿主注入。本模块把
-//! `TimeState`（时间 + 帧号）包成 [`Mono`]，算子语义委托给函子库
-//! `zela.math`（[`ze_pod_func::eval_op`]）—— **同一份算子身份与语义**。
+//! `TimeState`（时间 + 帧号）+ [`SceneRead`]（组件字段读端）包成 [`Mono`]，
+//! 算子语义委托给函子库 `zela.math`（[`ze_pod_func::eval_op`]）——
+//! **同一份算子身份与语义**。
 //!
 //! # 当前通道
 //!
@@ -14,7 +15,7 @@
 //! |---|---|
 //! | `("", "time")` | ✅ 由 `TimeState.elapsed` 注入（S3 起由帧号派生） |
 //! | `("", "frame")` | ✅ 由 `TimeState.frame` 注入 |
-//! | `("zela.scene", "Circle.radius")` 等组件字段 | **显式缺失**（读方向已具备 `SceneRead`，尚未接进 M） |
+//! | `("zela.scene", "Circle.radius")` 等组件字段 | ✅ **G 批**：经 [`Mono::read_object`] 读回 |
 //! | `("", "event")` / `env` | **显式缺失**（S3 后续：输入 / 运行环境） |
 //!
 //! 缺失通道返回 [`EvalError::MissingChannel`]，不静默给 0。
@@ -26,6 +27,9 @@
 //! 求值器里偷偷改精度。
 
 use ze_func::{ChannelRef, EvalError, Mono, OpRef, Value};
+use ze_scene_contract::ObjectId;
+use ze_scene_core::animation::target::target_entry;
+use ze_scene_core::scene_write::SceneRead;
 use ze_time::AnimValue;
 
 use crate::TimeState;
@@ -34,28 +38,31 @@ use crate::TimeState;
 pub const TIME_CHANNEL: &str = "time";
 pub const FRAME_CHANNEL: &str = "frame";
 
-/// 场景侧的 `M`：时间 / 帧号来自资源，算子来自 `zela.math`。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SceneMono {
+/// 场景侧的 `M`：时间 / 帧号来自资源，组件字段读端来自 [`SceneRead`]，算子来自 `zela.math`。
+///
+/// 持 `&dyn SceneRead`（每帧构造一次，按值使用 ⇒ 不需要 `Clone` / `Copy`）。
+pub struct SceneMono<'a> {
     pub time: f64,
     pub frame: u64,
+    scene: &'a dyn SceneRead,
 }
 
-impl SceneMono {
-    pub fn new(time: f64, frame: u64) -> Self {
-        Self { time, frame }
+impl<'a> SceneMono<'a> {
+    pub fn new(time: f64, frame: u64, scene: &'a dyn SceneRead) -> Self {
+        Self { time, frame, scene }
     }
 
     /// 从 [`TimeState`] 取通道值（每帧构造一次，无状态）。
-    pub fn from_time_state(state: &TimeState) -> Self {
+    pub fn from_time_state(state: &TimeState, scene: &'a dyn SceneRead) -> Self {
         Self {
             time: state.elapsed as f64,
             frame: state.frame,
+            scene,
         }
     }
 }
 
-impl Mono for SceneMono {
+impl Mono for SceneMono<'_> {
     fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
         match (channel.namespace.as_str(), channel.name.as_str()) {
             ("", TIME_CHANNEL) => Ok(Value::F64(self.time)),
@@ -66,8 +73,42 @@ impl Mono for SceneMono {
         }
     }
 
+    /// **G 批通道读端**：`zela.scene::<address>` 的组件字段经 [`SceneRead`] 读回。
+    ///
+    /// `object` 是 `ObjectId` 打包值（`index:u32<<32 | generation:u32`）；按
+    /// `channel.name`（规范地址，如 `Circle.radius`）查 [`TARGETS`] 注册表。
+    fn read_object(&self, channel: &ChannelRef, object: u64) -> Result<Value, EvalError> {
+        let Some(entry) = target_entry(&channel.name) else {
+            // 地址未注册 ⇒ 与 `Mono::read` 的缺失通道同一口径（显式失败）。
+            return Err(EvalError::MissingChannel {
+                channel: channel.clone(),
+            });
+        };
+        let id = ObjectId::from_packed(object);
+        let value = (entry.spec.read)(self.scene, id)
+            .ok_or_else(|| EvalError::MissingComponent {
+                object,
+                channel: channel.clone(),
+            })?;
+        anim_to_value(&value).ok_or_else(|| EvalError::MissingComponent {
+            object,
+            channel: channel.clone(),
+        })
+    }
+
     fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
         ze_pod_func::eval_op(op, args)
+    }
+}
+
+/// `AnimValue` → 表达式值（Scalar→F64、Vec2→[f32;2]、Vec3→[f32;3]；Color/Path
+/// 没有 `Value` 表示 —— 组件字段通道不会有它们，理论不可达）。
+fn anim_to_value(value: &AnimValue) -> Option<Value> {
+    match value {
+        AnimValue::Scalar(value) => Some(Value::F64(*value as f64)),
+        AnimValue::Vec2(value) => Some(Value::Vec2([value.x, value.y])),
+        AnimValue::Vec3(value) => Some(Value::Vec3([value.x, value.y, value.z])),
+        AnimValue::Color(_) | AnimValue::Path(_) => None,
     }
 }
 
@@ -86,12 +127,29 @@ pub fn anim_value(value: &Value) -> Option<AnimValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::contract::WorldScene;
+    use hecs::World;
     use ze_func::{CompiledExpr, Expr};
+    use ze_scene_contract::Scene as _;
+    use ze_scene_core::Circle;
+
+    /// 没有任何组件的场景 —— 读端测试的空宿主（`with_component_ref` 恒 `false`）。
+    struct NoScene;
+    impl SceneRead for NoScene {
+        fn with_component_ref(
+            &self,
+            _id: ObjectId,
+            _type_id: std::any::TypeId,
+            _f: &mut dyn FnMut(&dyn std::any::Any),
+        ) -> bool {
+            false
+        }
+    }
 
     #[test]
     fn channels_come_from_time_state() {
         let state = TimeState::at_frame(1.5, 45);
-        let mono = SceneMono::from_time_state(&state);
+        let mono = SceneMono::from_time_state(&state, &NoScene);
         assert_eq!(
             mono.read(&ChannelRef::builtin(TIME_CHANNEL)).unwrap(),
             Value::F64(1.5)
@@ -106,7 +164,7 @@ mod tests {
                 channel: ChannelRef::builtin("event")
             }
         );
-        // 组件字段通道与基础通道同形，但当前 M 没有场景句柄 ⇒ 显式缺失。
+        // 组件字段通道与基础通道同形：`read`（无对象）对它仍是显式缺失。
         assert!(mono
             .read(&ChannelRef::new("zela.scene", "Circle.radius"))
             .is_err());
@@ -120,7 +178,7 @@ mod tests {
             [Expr::channel(ChannelRef::builtin(TIME_CHANNEL))],
         );
         let program = CompiledExpr::compile(&expr).unwrap();
-        let mono = SceneMono::new(std::f64::consts::FRAC_PI_2, 0);
+        let mono = SceneMono::new(std::f64::consts::FRAC_PI_2, 0, &NoScene);
         assert_eq!(program.eval(&mono).unwrap(), Value::F64(1.0));
     }
 
@@ -132,7 +190,7 @@ mod tests {
             [Expr::channel(ChannelRef::builtin(FRAME_CHANNEL))],
         );
         let program = CompiledExpr::compile(&expr).unwrap();
-        let mono = SceneMono::new(0.0, 30);
+        let mono = SceneMono::new(0.0, 30, &NoScene);
         assert_eq!(program.eval(&mono).unwrap(), Value::F64(30.0_f64.sin()));
     }
 
@@ -148,11 +206,64 @@ mod tests {
             ],
         );
         let program = CompiledExpr::compile(&expr).unwrap();
-        let value = program.eval(&SceneMono::new(1.0, 0)).unwrap();
+        let value = program.eval(&SceneMono::new(1.0, 0, &NoScene)).unwrap();
         assert_eq!(value, Value::Bool(true));
         assert_eq!(anim_value(&value), None);
 
-        let value = program.eval(&SceneMono::new(3.0, 0)).unwrap();
+        let value = program.eval(&SceneMono::new(3.0, 0, &NoScene)).unwrap();
         assert_eq!(value, Value::Bool(false));
+    }
+
+    /// **G 批通道读端**：`zela.scene::Circle.radius` 经 `SceneRead` 读回组件当前值。
+    #[test]
+    fn read_object_reads_component_field_through_scene() {
+        let mut world = World::new();
+        let id = {
+            let mut ws = WorldScene::new(&mut world);
+            ws.spawn_dyn(vec![Box::new(Circle::new((0.0, 0.0), 1.0))])
+                .expect("Circle 已登记")
+        };
+        {
+            let mut ws = WorldScene::new(&mut world);
+            ws.set(id, Circle::new((0.0, 0.0), 2.5));
+        }
+        let ws = WorldScene::new(&mut world);
+        let mono = SceneMono::new(0.0, 0, &ws);
+        let channel = ChannelRef::new("zela.scene", "Circle.radius");
+        let value = mono.read_object(&channel, id.to_packed()).unwrap();
+        assert_eq!(value, Value::F64(2.5));
+    }
+
+    /// **G 批**：地址未注册 ⇒ `MissingChannel`；对象上无该组件 ⇒ `MissingComponent`
+    /// （两个"显式失败"都钉住，不静默给 0）。
+    #[test]
+    fn read_object_fails_explicitly_for_unregistered_and_missing_component() {
+        let mut world = World::new();
+        let id = {
+            let mut ws = WorldScene::new(&mut world);
+            ws.spawn_dyn(vec![Box::new(Circle::new((0.0, 0.0), 1.0))])
+                .expect("Circle 已登记")
+        };
+        let ws = WorldScene::new(&mut world);
+        let mono = SceneMono::new(0.0, 0, &ws);
+
+        let err = mono
+            .read_object(&ChannelRef::new("zela.scene", "Foo.bar"), id.to_packed())
+            .unwrap_err();
+        assert_eq!(
+            err,
+            EvalError::MissingChannel {
+                channel: ChannelRef::new("zela.scene", "Foo.bar")
+            }
+        );
+
+        let ghost = ObjectId::new(999, 1);
+        let err = mono
+            .read_object(&ChannelRef::new("zela.scene", "Circle.radius"), ghost.to_packed())
+            .unwrap_err();
+        assert!(
+            matches!(err, EvalError::MissingComponent { .. }),
+            "对象上无组件 ⇒ 显式 MissingComponent"
+        );
     }
 }
