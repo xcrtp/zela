@@ -39,7 +39,6 @@ from zela import (
     Reveal,
     RevealPath,
     Stroke,
-    Target,
     Text,
     Transform,
     Vec2,

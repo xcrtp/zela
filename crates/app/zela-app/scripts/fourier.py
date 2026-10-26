@@ -38,7 +38,6 @@ from zela import (
     Polyline,
     Reveal,
     Stroke,
-    Target,
     Text,
     Transform,
     TransformChannel,
