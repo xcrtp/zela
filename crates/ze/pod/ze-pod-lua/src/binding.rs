@@ -87,7 +87,7 @@ fn register_function(
 /// # 提案 #6 C：构造器是**可调用表**
 ///
 /// - `Circle { ... }`（具名）与 `Circle(0.0, 0.0, 0.55)`（位置）都走同一个 `__call`；
-/// - 组件 / 值类型的表上挂**通道常量**（`Circle.radius`，来自 `Pod::channels()`）；
+/// - 组件 / 值类型的表上挂**通道常量**（`Circle.channel.radius`，来自 `Pod::channels()`）；
 /// - 缺字段时读默认值白名单（`Color.a = 255`），默认值不进产物。
 fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua::Result<()> {
     for (&full_name, &spec) in &plan.types {
@@ -147,10 +147,14 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
     Ok(())
 }
 
-/// 把 `Pod::channels()` 的常量挂到**可调用表**上（`Circle.radius`）。
+/// 把 `Pod::channels()` 的常量挂到组件的 **`channel` 字段**上
+/// （`Circle.channel.radius`）。
 ///
 /// 常量就是普通表 `{ namespace = ..., name = ... }` —— 与 `expr.bind` 的
 /// `ChannelSpec` 同形，三种语言不需要专用令牌。
+///
+/// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
+/// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
 fn attach_channels(
     lua: &Lua,
     channels: &'static [ze_pod_core::ChannelSpec],
@@ -159,10 +163,19 @@ fn attach_channels(
         let Value::Table(ctor) = lua.globals().get::<Value>(channel.component)? else {
             continue;
         };
+        // 组件首次出现时建 `channel` 表；后续常量往里塞。
+        let channel_table = match ctor.get::<Value>("channel")? {
+            Value::Table(table) => table,
+            _ => {
+                let table = lua.create_table()?;
+                ctor.set("channel", table.clone())?;
+                table
+            }
+        };
         let value = lua.create_table()?;
         value.set("namespace", channel.namespace)?;
         value.set("name", channel.address)?;
-        ctor.set(channel.name, value)?;
+        channel_table.set(channel.name, value)?;
     }
     Ok(())
 }

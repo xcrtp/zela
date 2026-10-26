@@ -101,22 +101,26 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                     "export declare function {name}({}): {returns};\n",
                     positional.join(", ")
                 ));
-                // 通道常量是函数对象上的属性（TS：function + namespace 合并）。
+                // 通道常量收在 `X.channel.*` 下（TS：function + namespace 合并）；
+                // 多一层是因为组件字段可能与地址同名（`Opacity.value`）。
                 let channels: Vec<&ze_pod_core::ChannelSpec> = capabilities
                     .iter()
                     .flat_map(|capability| capability.channels)
                     .filter(|channel| channel.component == name)
                     .collect();
                 if !channels.is_empty() {
-                    out.push_str(&format!("export declare namespace {name} {{\n"));
-                    for channel in channels {
+                    out.push_str(&format!("export interface {name}Channel {{\n"));
+                    for channel in &channels {
                         out.push_str(&format!(
-                            "  const {}: {};\n",
+                            "  {}: {};\n",
                             channel.name,
                             short_name(channel.value_type)
                         ));
                     }
                     out.push_str("}\n");
+                    out.push_str(&format!(
+                        "export declare namespace {name} {{\n  const channel: {name}Channel;\n}}\n"
+                    ));
                 }
                 out.push('\n');
             }

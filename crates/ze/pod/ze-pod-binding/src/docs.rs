@@ -26,7 +26,7 @@ pub struct CapabilityDocs {
     pub calls: &'static [ErasedFn],
     pub docs: &'static [FnDoc],
     pub meta: CapabilityMeta,
-    /// 该能力挂到组件构造器上的**通道常量**（`Circle.radius` …；默认空）。
+    /// 该能力挂到组件构造器上的**通道常量**（`Circle.channel.radius` …；默认空）。
     pub channels: &'static [ze_pod_core::ChannelSpec],
 }
 

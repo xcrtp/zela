@@ -2092,7 +2092,7 @@ scene.animate(dot, scene.clip("CircleRadius", Curve.Ramp({ from: 0.8, to: 1.6, d
         );
     }
 
-    /// **提案 #6 C 验收**：位置参数 + `Color.a` 默认值 + 通道常量（`Circle.radius`）
+    /// **提案 #6 C 验收**：位置参数 + `Color.a` 默认值 + 通道常量（`Circle.channel.radius`）
     /// 在 Lua / JS 两侧产出的装配产物**逐字节相同**。
     ///
     /// Lua 用位置参数 + 常量；JS 用具名对象 + 常量（`Color` 故意省 `a`）。
@@ -2105,7 +2105,7 @@ scene.animate(dot, scene.clip("CircleRadius", Curve.Ramp({ from: 0.8, to: 1.6, d
 scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
 local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
 local y = Add { a = expr.pure(0.5), b = Sin { of = expr.time() } }
-expr.bind { object = dot, target = Circle.radius, root = y, duration = 2.0 }
+expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
 "#;
         let js_source = r#"
 scene.spawn([Camera2D({ center: Vec2(0.0, 0.0), scale: 40.0 })]);
@@ -2114,7 +2114,7 @@ const dot = scene.spawn([
   Fill({ color: Color({ r: 96, g: 196, b: 255 }) }),
 ]);
 const y = Add({ a: expr.pure(0.5), b: Sin({ of: expr.time() }) });
-expr.bind({ object: dot, target: Circle.radius, root: y, duration: 2.0 });
+expr.bind({ object: dot, target: Circle.channel.radius, root: y, duration: 2.0 });
 "#;
 
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
@@ -2139,13 +2139,13 @@ expr.bind({ object: dot, target: Circle.radius, root: y, duration: 2.0 });
 scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
 local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
 local y = Add { a = expr.pure(0.5), b = Sin { of = expr.time() } }
-expr.bind { object = dot, target = Circle.radius, root = y, duration = 2.0 }
+expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
 "#;
         let python_source = r#"
 scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)])
 dot = scene.spawn([Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255))])
 y = Add(a=expr.pure(0.5), b=Sin(of=expr.time()))
-expr.bind(Bind(object=dot, target=Circle.radius, root=y, duration=2.0))
+expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
 "#;
 
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
@@ -2191,7 +2191,7 @@ expr.bind(Bind(object=dot, target=Circle.radius, root=y, duration=2.0))
         assert!(!assembly.lua.registered_global_names("python").is_empty());
     }
 
-    /// S3 / 提案 #6 B：Lua 用 `expr.bind{ object = <句柄>, target = Circle.radius, ... }`
+    /// S3 / 提案 #6 B：Lua 用 `expr.bind{ object = <句柄>, target = Circle.channel.radius, ... }`
     /// 提交表达式动画，宿主把它并入 `SceneScript` —— 产物里是一条 `BindingDriver::Expr`。
     #[test]
     fn expression_binding_reaches_the_recipe_through_lua() {
@@ -2208,7 +2208,7 @@ expr.bind(Bind(object=dot, target=Circle.radius, root=y, duration=2.0))
                     Circle { x = 0.0, y = 0.0, r = 0.25 },
                 })
                 local y = Sin { of = expr.time() }
-                expr.bind { object = dot, target = Circle.radius, root = y, duration = 2.0 }
+                expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
                 "#,
             )
             .expect("脚本执行成功");

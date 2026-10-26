@@ -233,9 +233,9 @@ fn table_constructors_are_generated_for_expression_ops() {
     }];
     let lua = ze_pod_lua::lua_ls(&capabilities);
     assert!(lua.contains("---@class Sin"), "Sin 类型声明缺失");
-    assert!(lua.contains("Sin = {}"), "Sin 构造器缺失");
-    assert!(lua.contains("Mul = {}"), "Mul 构造器缺失");
-    assert!(lua.contains("Scale = {}"), "Scale 构造器缺失");
+    assert!(lua.contains("function Sin(spec) end"), "Sin 构造器缺失");
+    assert!(lua.contains("function Mul(spec) end"), "Mul 构造器缺失");
+    assert!(lua.contains("function Scale(spec) end"), "Scale 构造器缺失");
 
     let json = ze_pod_binding::capabilities_json(&capabilities);
     assert!(json.contains("zela.math.Sin"), "JSON 应含 Sin 的类型名");

@@ -228,7 +228,7 @@ fn make_function<'py>(
 /// 构造器：**可调用对象**（`functools.partial` 包一层 C 函数）。
 ///
 /// 提案 #6 C：`PyCFunction` 不能挂属性，而组件构造器要带通道常量
-/// （`Circle.radius`）⇒ 必须换成支持 `setattr` 的可调用对象。`partial`
+/// （`Circle.channel.radius`）⇒ 必须换成支持 `setattr` 的可调用对象。`partial`
 /// 保留 C 函数的调用语义，又带 `__dict__`。
 ///
 /// 参数形态：位置参数（按字段顺序，可省略有默认值的尾部字段）或 kwargs；
@@ -425,10 +425,14 @@ fn register_types(
     Ok(())
 }
 
-/// 把 `Pod::channels()` 的常量挂到**构造器对象**上（`Circle.radius`）。
+/// 把 `Pod::channels()` 的常量挂到**构造器对象的 `channel` 字段**上
+/// （`Circle.channel.radius`）。
 ///
 /// 常量是普通 dict `{ "namespace": ..., "name": ... }` —— 与 `expr.bind` 的
 /// `ChannelSpec` 同形；三种语言不需要专用令牌。
+///
+/// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
+/// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
 fn attach_channels(
     py: Python<'_>,
     this: &PyPod,
@@ -443,7 +447,16 @@ fn attach_channels(
             let Ok(ctor) = module.getattr(channel.component) else {
                 continue;
             };
-            ctor.setattr(channel.name, &value)?;
+            // 组件首次出现时建 `channel`（SimpleNamespace）；后续常量往里塞。
+            let holder = match ctor.getattr("channel") {
+                Ok(holder) => holder,
+                Err(_) => {
+                    let holder = py.import("types")?.getattr("SimpleNamespace")?.call0()?;
+                    ctor.setattr("channel", &holder)?;
+                    holder
+                }
+            };
+            holder.setattr(channel.name, &value)?;
         }
     }
     Ok(())

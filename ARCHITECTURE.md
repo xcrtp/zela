@@ -1827,7 +1827,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   ⚠️ 与计划硬约束 5「同一构造器只一种形态」有偏差（既有 251 处脚本全具名），见 GAPS AG-06。
 - **默认值白名单**（[`defaults.rs`](crates/ze/pod/ze-pod-binding/src/defaults.rs)）：`Color.a = 255`。
   **不进产物**（构造完即完整值），但进 LuaLS / `.d.ts` / `.pyi`（可选字段 / `a = 255`）。
-- **通道常量**：`Circle.radius` 挂在构造器上，值是 `{ namespace, name }` 数据 —— 与
+- **通道常量**：`Circle.channel.radius` 挂在构造器上，值是 `{ namespace, name }` 数据 —— 与
   `expr.bind` 的 `ChannelSpec` 同形，三语言不需要专用令牌。
 - **验收**：Lua / JS 等价脚本（位置 / 具名 / 省 `a` / 常量）产出逐字节相同的 `SceneScript`；
   23 条 demo payload 与 36 条像素基线全部不变；声明基线 9 文件重生成后逐字节一致。
@@ -1854,11 +1854,17 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   每个文件非空、两次输出**逐字节相同**（生成器必须是确定性的）。基线比对不再存在 ——
   声明由 capability 自动派生，没有"手写声明忘更新"的腐烂路径。
 - **通道地址去掉裸字符串**：删除 `zela.math::channel(address: String)`（`zela.math@4 → @5`）。
-  作者侧只剩**组件常量**：`Circle.radius` / `Opacity.value`（`Pod::channels()` 从场景地址表导出，
-  挂在可调用构造器上）；写错常量名在绑定层立即暴露。
+  作者侧只剩**组件的 `channel` 字段**：`Circle.channel.radius` / `Opacity.channel.value`
+  （`Pod::channels()` 从场景地址表导出）；写错常量名在绑定层立即暴露。
   `BindSpec.target` 仍是 `ChannelSpec { namespace, name }` 数据，但字符串只活在内部。
-- **常量要进声明文件**：`ChannelSpec` 带 `value_type`；LuaLS 把构造器声明成**可调用表**
-  （`---@operator call(...)` + `---@field radius Channel`），`.d.ts` 用 `function` + `namespace`
-  合并，`.pyi` 用 `Protocol` 建模可调用对象。否则编辑器会把 `Circle.radius` 诊断成
-  undefined-field。与组件字段同名的常量（`Opacity.value`）只保留常量那一条声明。
+- **为什么多一层 `channel`**：组件字段可能与地址同名（`Opacity.value`），平铺会把常量与构造参数
+  混成一件事；嵌套后 `Opacity.channel.value` 与 `Opacity(value=…)` 互不干扰。
+- **声明文件要能看见常量**：`ChannelSpec` 带 `value_type`。LuaLS 输出
+  `---@field channel XChannel` + `X = {}` + `---@class XChannel`，`.d.ts` 输出 `interface XChannel` +
+  `namespace X { const channel: XChannel }`，`.pyi` 输出 `class _XChannel` 并在构造器 Protocol
+  上声明 `channel: _XChannel`。否则编辑器会把 `Opacity.channel.value` 诊断成 undefined-field。
+  ⚠️ LuaLS 只把**紧邻赋值语句的最后一个 doc 块**绑给该全局：`X = {}` 必须紧跟 `---@class X`
+  的字段块，`---@class XChannel` 放在它后面（否则 `X` 会被当成 `XChannel`，`X.channel` 仍 unknown）。
+  构造器本身仍是函数 / 可调用对象；LuaLS 的 `---@operator call(...)` 方案已撤销（对
+  `@class` + `@operator` 的组合不稳定，且与函数形态只能二选一）。
 - **影响**：`expr_demo` 改用常量；产物里的库版本 `4 → 5` ⇒ payload 重录为 `94d731b4…`，像素不变。

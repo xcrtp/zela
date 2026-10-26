@@ -181,7 +181,7 @@ fn push_imports(out: &mut String, imports: &BTreeMap<String, BTreeSet<String>>) 
     }
 }
 
-/// 组件短名 → 通道常量（`Circle.radius`）。
+/// 组件短名 → 通道常量（`Circle.channel.radius`）。
 fn channels_by_component(
     capabilities: &[CapabilityDocs],
 ) -> BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelSpec>> {
@@ -212,8 +212,9 @@ fn render_type(
                     ));
                 } else {
                     // 带通道常量的组件在运行期是"可调用对象"⇒ 用 Protocol 建模，
-                    // 这样 `Circle.radius` 与 `Circle(...)` 都是合法表达式。
-                    out.push_str(&format!("class _{name}Ctor(Protocol):\n"));
+                    // 这样 `Circle(channel=...)` 与 `Circle(...)` 都是合法表达式。
+                    // 常量收在 `channel` 命名空间下（与组件字段不撞名）。
+                    out.push_str(&format!("class _{name}Channel:\n"));
                     for channel in channels {
                         out.push_str(&format!(
                             "    {}: {}\n",
@@ -221,6 +222,8 @@ fn render_type(
                             short_name(channel.value_type)
                         ));
                     }
+                    out.push_str(&format!("class _{name}Ctor(Protocol):\n"));
+                    out.push_str(&format!("    channel: _{name}Channel\n"));
                     out.push_str(&format!(
                         "    def __call__(self, {}) -> Handle: ...\n",
                         params(fields, components, type_name)

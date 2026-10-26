@@ -12,7 +12,7 @@ use crate::typespec::TypeSpec;
 /// 一个可被脚本选择的**通道常量**（提案 #6）。
 ///
 /// Pod 自述"我有哪些字段地址"，语言绑定据此在组件构造器上挂常量
-/// （`Circle.radius`）。与 [`Pod::functions`] 一样是**自述面**，不参与协商。
+/// （`Circle.channel.radius`）。与 [`Pod::functions`] 一样是**自述面**，不参与协商。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChannelSpec {
     /// 命名词汇表的 namespace（如 `zela.scene`）。
@@ -88,7 +88,7 @@ pub trait Pod: 'static {
 
     /// 本 Pod 可被脚本选择的**通道常量**（默认空）。
     ///
-    /// 语言绑定用它把 `Circle.radius` 挂到组件构造器上；端点（写方向）仍由
+    /// 语言绑定用它把 `Circle.channel.radius` 挂到组件构造器上；端点（写方向）仍由
     /// 各语言的地址表/宿主校验决定。
     fn channels(&self) -> &'static [ChannelSpec] {
         &[]

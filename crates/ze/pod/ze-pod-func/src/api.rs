@@ -41,10 +41,10 @@ pub struct ChannelSpec {
 /// 一条待绑定的表达式动画（S3）。
 ///
 /// 表构造器形态（与 `scene.spawn{...}` 同构）：
-/// `expr.bind{ object = dot, target = Circle.radius, root = y, duration = 2.0 }`。
+/// `expr.bind{ object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }`。
 ///
-/// `target` 用**组件常量**（`Circle.radius`，由 `Pod::channels()` 挂在构造器上），
-/// 不接受裸地址字符串 —— 写错常量名在绑定层立刻暴露。
+/// `target` 用**组件的 `channel` 常量**（`Circle.channel.radius`，由 `Pod::channels()`
+/// 挂在构造器上），不接受裸地址字符串 —— 写错常量名在绑定层立刻暴露。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Bind")]
 pub struct BindSpec {

@@ -264,9 +264,13 @@ fn register_types(
     Ok(())
 }
 
-/// 把 `Pod::channels()` 的常量挂到构造器函数对象上（`Circle.radius`）。
+/// 把 `Pod::channels()` 的常量挂到构造器函数对象的 `channel` 字段上
+/// （`Circle.channel.radius`）。
 ///
 /// 常量是普通对象 `{ namespace, name }` —— 与 `expr.bind` 的 `ChannelSpec` 同形。
+///
+/// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
+/// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
 fn attach_channels(ctx: &mut Context, service_index: usize) -> Result<(), PodError> {
     let Some(service) = host_state(ctx).service(service_index) else {
         return Ok(());
@@ -278,6 +282,19 @@ fn attach_channels(ctx: &mut Context, service_index: usize) -> Result<(), PodErr
             .map_err(js_err_to_pod)?;
         let Some(ctor) = ctor.as_object() else {
             continue;
+        };
+        // 常量收在 `Circle.channel.*` 下（与组件字段不撞名）。
+        let existing = ctor
+            .get(JsString::from("channel"), ctx)
+            .map_err(js_err_to_pod)?;
+        let channel_ns = match existing.as_object() {
+            Some(object) => object,
+            None => {
+                let object = ObjectInitializer::new(ctx).build();
+                ctor.set(JsString::from("channel"), object.clone(), false, ctx)
+                    .map_err(js_err_to_pod)?;
+                object
+            }
         };
         let value: JsValue = ObjectInitializer::new(ctx)
             .property(
@@ -292,7 +309,8 @@ fn attach_channels(ctx: &mut Context, service_index: usize) -> Result<(), PodErr
             )
             .build()
             .into();
-        ctor.set(JsString::from(channel.name), value, false, ctx)
+        channel_ns
+            .set(JsString::from(channel.name), value, false, ctx)
             .map_err(js_err_to_pod)?;
     }
     Ok(())

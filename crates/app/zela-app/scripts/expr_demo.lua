@@ -7,8 +7,9 @@
 --   - 零元通道：expr.time()
 --   - 表构造器：Add / Scale / Mul / Sin（与 scene.spawn{} 同构）
 --   - 字面量：expr.pure(k)（自动提升尚未落地，见 GAPS AF-06）
---   - 通道选择键：组件常量 `Circle.radius` / `Opacity.value`（不用裸地址字符串）
---   - 绑定：expr.bind{ object = <句柄>, target = <组件常量>, root, duration }
+--   - 通道选择键：组件的 `channel` 常量 `Circle.channel.radius` / `Opacity.channel.value`
+--     （不用裸地址字符串）
+--   - 绑定：expr.bind{ object = <句柄>, target = <组件的 channel 常量>, root, duration }
 --     （提案 #6：对象用 scene.spawn 的返回值，不再需要 Name{}）
 
 scene.spawn({
@@ -29,7 +30,7 @@ local radius = Add {
         of = Sin { of = Mul { a = expr.time(), b = expr.pure(1.6) } },
     },
 }
-expr.bind { object = dot, target = Circle.radius, root = radius, duration = 4.0 }
+expr.bind { object = dot, target = Circle.channel.radius, root = radius, duration = 4.0 }
 
 -- 光晕：透明度 = 0.30 + 0.20 * sin(0.8 t + π/2)（用 cos 相位差）
 local halo = scene.spawn({
@@ -45,4 +46,4 @@ local fade = Add {
         of = Cos { of = Mul { a = expr.time(), b = expr.pure(0.8) } },
     },
 }
-expr.bind { object = halo, target = Opacity.value, root = fade, duration = 4.0 }
+expr.bind { object = halo, target = Opacity.channel.value, root = fade, duration = 4.0 }
