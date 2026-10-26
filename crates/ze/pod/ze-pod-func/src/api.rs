@@ -38,6 +38,61 @@ pub struct ChannelSpec {
     pub name: String,
 }
 
+/// 一层**时钟链接**：`local = (parent_local − shift) × rate`。
+///
+/// 这是脚本侧 `Clock` 的扁平化形态：`clock.nest(parent, child)` 只是把链拼起来，
+/// 产物里没有"父指针"需要解析。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.ClockLink")]
+pub struct ClockLinkSpec {
+    /// 零点偏移（父级本地时间里的 shift）。
+    pub shift: f64,
+    /// 线性速率缩放。
+    pub rate: f64,
+}
+
+/// 一条**时钟**（脚本侧）：从根到本时钟的线性链（空链 = 全局时钟）。
+///
+/// 每条绑定自带时钟：表达式里的 `time` 读的是**该绑定的时钟局部时间**，
+/// 与 `Curve` 路径的 `eval_local` 同源（G1 由此消失，而不是被修）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Clock")]
+pub struct ClockSpec {
+    /// 从根到本时钟逐层链接（空 = 全局）。
+    pub links: Vec<ClockLinkSpec>,
+}
+
+/// predicate：绑定的**生效条件**（Bool 表达式）。
+///
+/// 缺省 = `Always`；显式写 `Predicate.Of { expr = … }` 才算门槛。
+/// Bool 走独立求值路径（不经过 `anim_value`）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Predicate")]
+pub enum PredicateSpec {
+    /// 恒真（缺省）。
+    Always,
+    /// 由一条 Bool 表达式决定。
+    Of {
+        /// Bool 表达式根句柄（`Lt` / `And` / `Not` …）。
+        expr: Handle,
+    },
+}
+
+/// reset：predicate 失效时的行为。
+///
+/// ⚠️ 计划里的 `none` 在这里叫 `Skip`（`None` 在 Python 里是字面量，不能作枚举成员）：
+/// 语义相同 —— **不写**，字段保持原样，可被其它绑定接管。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Reset")]
+pub enum ResetSpec {
+    /// 保持**最后一次生效**时写入的值（有历史依赖 ⇒ 引擎推导为 Replay）。
+    Hold,
+    /// 写回绑定生效前的**初值**（`commit` 时从场景快照，无历史依赖）。
+    Reset,
+    /// 不写（字段保持原样，可被其它绑定接管）。
+    Skip,
+}
+
 /// 一条待绑定的表达式动画（S3）。
 ///
 /// 表构造器形态（与 `scene.spawn{...}` 同构）：
@@ -54,7 +109,14 @@ pub struct BindSpec {
     pub target: ChannelSpec,
     /// 表达式根句柄。
     pub root: Handle,
-    /// 段时长（秒）。
+    /// 时间源（`clock.shift` / `clock.scale` / `clock.nest`；缺省 = 全局时钟）。
+    pub clock: ClockSpec,
+    /// 生效条件（缺省 `Predicate.Always`）。
+    pub predicate: PredicateSpec,
+    /// 失效时行为（缺省 `Reset.Hold`）。
+    pub reset: ResetSpec,
+    /// **语法糖**：`> 0` 时等价于 `predicate = Predicate.Of { expr = Lt { t, duration } }`
+    /// + `reset = Reset.Hold`；与显式 predicate 同时出现是装配期错误。
     pub duration: f64,
 }
 
@@ -182,7 +244,7 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "5",
+    version = "6",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -255,6 +317,24 @@ pub struct MathApi<'a> {
 
     /// 把表达式导出为 JSON（**产物侧证据**：含库 namespace + version）。
     pub expression: fn(&'a dyn Pod, root: Handle) -> String,
+
+    /// 时钟：在全局时钟之上加一层 `shift`（零点偏移）。
+    ///
+    /// 脚本侧也挂在 `clock.shift(s)`（见 binding 的 `clock_` 前缀别名表）。
+    pub clock_shift: fn(&'a dyn Pod, shift: f64) -> ClockSpec,
+
+    /// 时钟：在全局时钟之上加一层 `rate`（线性速率缩放）。
+    pub clock_scale: fn(&'a dyn Pod, rate: f64) -> ClockSpec,
+
+    /// 时钟：把 `child` 接在 `parent` 之后（嵌套）。
+    ///
+    /// `clock.nest(clock.scale(0.5), clock.shift(2.0))` = "半速时钟，内部再偏移 2s"。
+    pub clock_nest: fn(&'a dyn Pod, parent: ClockSpec, child: ClockSpec) -> ClockSpec,
+
+    /// 时钟局部时间叶子（与 `expr.time()` 是**同一个**通道）。
+    ///
+    /// 绑定求值时宿主用该绑定自己的时钟注入 `time` ⇒ 不需要把时钟身份写进表达式。
+    pub clock_time: fn(&'a dyn Pod) -> Handle,
 
     /// 登记一条**表达式动画**（S3）：对象句柄 + 目标通道 + 根句柄 + 时长。
     ///

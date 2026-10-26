@@ -39,8 +39,34 @@ pub(crate) fn bind<C: Capability<'static>>(
     for item in plan.calls {
         register_function(lua, &table, *item, Arc::clone(&service))?;
     }
-    lua.globals().set(global_name, table)?;
+    lua.globals().set(global_name, table.clone())?;
+    install_clock_alias(lua, &table, plan.calls)?;
     register_types(lua, &plan, service)?;
+    Ok(())
+}
+
+/// `clock_*` 前缀的函数同时挂到 **`clock` 表**（`clock.shift` / `clock.scale` /
+/// `clock.nest` / `clock.time`）。
+///
+/// 剧本里 `clock.time()` 与 `expr.time()` 是**同一个**通道叶子：时钟身份属于绑定，
+/// 不属于表达式（见 `BindSpec.clock`）。前缀约定让同一份 capability 暴露两个表，
+/// 不必新增 Service。
+fn install_clock_alias(
+    lua: &Lua,
+    table: &Table,
+    calls: &'static [ErasedFn],
+) -> mlua::Result<()> {
+    let clock = lua.create_table()?;
+    let mut any = false;
+    for item in calls {
+        if let Some(short) = item.signature.name.strip_prefix("clock_") {
+            clock.set(short, table.get::<Value>(item.signature.name)?)?;
+            any = true;
+        }
+    }
+    if any {
+        lua.globals().set("clock", clock)?;
+    }
     Ok(())
 }
 

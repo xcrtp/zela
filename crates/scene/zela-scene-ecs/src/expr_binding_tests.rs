@@ -16,6 +16,7 @@ use zela_schedule::scheduler::{Phase, Scheduler};
 
 use crate::TimeState;
 use crate::animation::BindingApplySystem;
+use crate::animation::ResetBehavior;
 use crate::scene::Scene;
 
 fn library() -> LibraryRef {
@@ -23,6 +24,56 @@ fn library() -> LibraryRef {
         namespace: "zela.math".to_string(),
         version: "4".to_string(),
     }
+}
+
+/// 全局时钟（空链）：这些用例只关心表达式本身，不需要额外的时钟层。
+fn global_clock() -> crate::ClockProgram {
+    crate::ClockProgram::new()
+}
+
+/// 同一调度器上按 `times` 顺序推帧，返回最后一帧结束后圆的半径。
+///
+/// predicate / reset 是**有状态**的行为（hold 依赖"最后一次生效值"），
+/// 单帧断言覆盖不到 ⇒ 用多帧推进。
+fn radius_over_frames(script: SceneScript, times: &[f32]) -> f32 {
+    let mut scene = Scene::new();
+    let recipe = script.commit(&mut scene).expect("commit 成功");
+    let world = scene.into_world();
+
+    let mut resources = Resources::new();
+    resources.insert(TimeState::at(0.0));
+    resources.insert(recipe.forest);
+    resources.insert(recipe.bindings);
+
+    let mut sched = Scheduler::new(world, resources);
+    sched.add_system(Phase::SceneSync, BindingApplySystem);
+    sched.init_resources();
+    for time in times {
+        sched
+            .resources_mut()
+            .get_mut::<TimeState>()
+            .unwrap()
+            .elapsed = *time;
+        sched.run_frame(0.0);
+    }
+    sched
+        .world()
+        .query::<&Circle>()
+        .iter()
+        .next()
+        .map(|circle| circle.radius)
+        .expect("场景里有一个圆")
+}
+
+/// `predicate = Lt { time, 1.0 }`（Bool 表达式；`time` 是绑定时钟的局部时间）。
+fn time_lt(limit: f64) -> Expr {
+    Expr::call(
+        OpRef::new("zela.math", "lt"),
+        [
+            Expr::channel(ChannelRef::builtin("time")),
+            Expr::pure(limit),
+        ],
+    )
 }
 
 fn circle() -> ze_scene_contract::Components {
@@ -64,7 +115,7 @@ fn radius_at(script: ze_scene_core::scene_script::SceneScript, time: f32) -> f32
 fn expression_binding_writes_the_component_through_the_host_monad() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
-    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), 10.0)
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 10.0)
         .expect("装配期校验通过");
     let script = enc.finish();
 
@@ -78,7 +129,7 @@ fn expression_binding_writes_the_component_through_the_host_monad() {
 fn expression_binding_survives_json_round_trip() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
-    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), 2.0)
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 2.0)
         .expect("装配期校验通过");
     let json = enc.finish().to_json().expect("序列化成功");
 
@@ -97,11 +148,11 @@ fn expression_binding_survives_json_round_trip() {
 fn append_shifts_expression_target_handles() {
     let mut a = SceneEncoder::new();
     let first = a.spawn(circle());
-    a.bind_expr(first, "CircleRadius", sin_time(), library(), 1.0)
+    a.bind_expr(first, "CircleRadius", sin_time(), library(), global_clock(), 1.0)
         .expect("a 绑定成功");
     let mut b = SceneEncoder::new();
     let second = b.spawn(circle());
-    b.bind_expr(second, "CircleRadius", sin_time(), library(), 1.0)
+    b.bind_expr(second, "CircleRadius", sin_time(), library(), global_clock(), 1.0)
         .expect("b 绑定成功");
 
     let mut script = a.finish();
@@ -119,13 +170,155 @@ fn append_shifts_expression_target_handles() {
     assert_eq!(targets[1], recipe.handles[1], "偏移后第二条指向 b");
 }
 
+/// **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 路径同源）。
+///
+/// 时钟链 `[shift 1]` ⇒ `local = t − 1`。
+#[test]
+fn expression_binding_reads_its_own_clock_local_time() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    let clock = crate::ClockProgram {
+        links: vec![crate::ClockLink {
+            shift: 1.0,
+            rate: 1.0,
+        }],
+    };
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), clock, 2.0)
+        .expect("装配期校验通过");
+
+    // 全局 t = 1 + π/2 ⇒ 局部 π/2 ⇒ sin = 1（用的是局部时间，不是全局）。
+    let shifted = 1.0 + std::f32::consts::FRAC_PI_2;
+    assert!((radius_at(enc.finish(), shifted) - 1.0).abs() < 1e-5);
+}
+
+/// **C 批**：`duration` 的糖 = `predicate: t < d` + `reset: hold` ⇒ 失效后**保持**最后值。
+#[test]
+fn duration_sugar_holds_after_the_window() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    let clock = crate::ClockProgram {
+        links: vec![crate::ClockLink {
+            shift: 1.0,
+            rate: 1.0,
+        }],
+    };
+    // 局部时间 0..2 生效；t=10 时局部 9 ⇒ predicate 失效。
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), clock, 2.0)
+        .expect("装配期校验通过");
+    let held = radius_over_frames(
+        enc.finish(),
+        &[1.0 + std::f32::consts::FRAC_PI_2, 10.0],
+    );
+    assert!((held - 1.0).abs() < 1e-5, "hold 保持最后的 sin(π/2)");
+}
+
+/// `reset = Reset`：失效时写回 **commit 时的初值**（0.25），而不是保持最后值。
+#[test]
+fn reset_restores_the_initial_value() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    enc.bind_expr_gated(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        Some(time_lt(1.0)),
+        ResetBehavior::Reset,
+        0.0,
+    )
+    .expect("装配期校验通过");
+    let radius = radius_over_frames(enc.finish(), &[0.5, 2.0]);
+    assert!(
+        (radius - 0.25).abs() < 1e-5,
+        "失效后应写回初值 0.25，实测 {radius}"
+    );
+}
+
+/// `reset = Skip`：失效时不写 ⇒ 字段保持最后值（与 hold 可观察结果相同，但**不需要历史**）。
+#[test]
+fn skip_leaves_the_field_untouched() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    enc.bind_expr_gated(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        Some(time_lt(1.0)),
+        ResetBehavior::Skip,
+        0.0,
+    )
+    .expect("装配期校验通过");
+    let radius = radius_over_frames(enc.finish(), &[0.5, 2.0]);
+    assert!((radius - 0.5f32.sin()).abs() < 1e-5);
+}
+
+/// 糖层展开后的 payload 与手写 predicate + hold **逐字节相同**。
+#[test]
+fn duration_sugar_equals_predicate_and_hold() {
+    let mut sugar = SceneEncoder::new();
+    let dot = sugar.spawn(circle());
+    sugar
+        .bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 2.0)
+        .expect("糖写法装配成功");
+
+    let mut explicit = SceneEncoder::new();
+    let dot = explicit.spawn(circle());
+    explicit
+        .bind_expr_gated(
+            dot,
+            "CircleRadius",
+            sin_time(),
+            library(),
+            global_clock(),
+            Some(time_lt(2.0)),
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("显式写法装配成功");
+
+    assert_eq!(
+        sugar.finish().to_json().expect("serialize sugar"),
+        explicit.finish().to_json().expect("serialize explicit"),
+        "duration ≡ predicate t<d + reset hold"
+    );
+}
+
+/// 嵌套时钟：`clock.nest(scale(0.5), shift(1))` ⇒ `local = t × 0.5 − 1`。
+#[test]
+fn nested_clocks_compose_linearly() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    let clock = crate::ClockProgram {
+        links: vec![
+            crate::ClockLink {
+                shift: 0.0,
+                rate: 0.5,
+            },
+            crate::ClockLink {
+                shift: 1.0,
+                rate: 1.0,
+            },
+        ],
+    };
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), clock, 100.0)
+        .expect("装配期校验通过");
+    let script = enc.finish();
+
+    // local = t × 0.5 − 1；取 t = 2 + π ⇒ local = π/2 ⇒ sin = 1。
+    let t = 2.0 + std::f32::consts::PI;
+    assert!((radius_at(script, t) - 1.0).abs() < 1e-5);
+}
+
 #[test]
 fn unimplemented_channels_fail_at_assembly() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
     let expr = Expr::channel(ChannelRef::builtin("event"));
     let error = enc
-        .bind_expr(dot, "CircleRadius", expr, library(), 1.0)
+        .bind_expr(dot, "CircleRadius", expr, library(), global_clock(), 1.0)
         .expect_err("Event 通道尚未注入 ⇒ 必须失败");
     assert_eq!(
         error,
@@ -145,6 +338,7 @@ fn component_channels_are_not_injected_yet() {
             "OpacityValue",
             Expr::channel(channel.clone()),
             library(),
+            global_clock(),
             1.0,
         )
         .expect_err("组件字段通道尚未注入 ⇒ 必须失败");
@@ -164,6 +358,7 @@ fn unknown_object_fails_at_assembly() {
             "CircleRadius",
             sin_time(),
             library(),
+            global_clock(),
             1.0,
         )
         .expect_err("句柄越界 ⇒ 必须失败");

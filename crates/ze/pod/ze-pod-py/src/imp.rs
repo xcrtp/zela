@@ -344,12 +344,40 @@ fn bind_capability<C: Capability<'static>>(
         parent.bind(py).setattr(name, &service_module)?;
     }
     this.module.bind(py).setattr(service_name, &service_module)?;
+    install_clock_alias(py, this, &service_module, plan.calls)?;
 
     register_types(py, this, &service_module, &plan, service)?;
     this.modules
         .lock()
         .expect("Python 模块表锁中毒")
         .insert(namespace.to_string(), service_module.unbind());
+    Ok(())
+}
+
+/// `clock_*` 前缀的函数同时挂到 **`clock` 命名空间**（`clock.shift` / `clock.scale` /
+/// `clock.nest` / `clock.time`）。
+///
+/// 与 Lua / JS 同一约定：同一份 capability 暴露两个名字，不需要新增 Service。
+fn install_clock_alias(
+    py: Python<'_>,
+    this: &PyPod,
+    service_module: &Bound<'_, PyModule>,
+    calls: &'static [ErasedFn],
+) -> PyResult<()> {
+    if !calls
+        .iter()
+        .any(|item| item.signature.name.starts_with("clock_"))
+    {
+        return Ok(());
+    }
+    let clock = py.import("types")?.getattr("SimpleNamespace")?.call0()?;
+    for item in calls {
+        let Some(short) = item.signature.name.strip_prefix("clock_") else {
+            continue;
+        };
+        clock.setattr(short, service_module.getattr(item.signature.name)?)?;
+    }
+    this.module.bind(py).setattr("clock", clock)?;
     Ok(())
 }
 

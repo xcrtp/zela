@@ -29,9 +29,9 @@ use std::sync::Arc;
 
 use ze_func::{CompiledExpr, Expr};
 use ze_scene_contract::ObjectId;
-use ze_time::{ClockForest, ClockNode, Curve, PlayMode};
+use ze_time::{ClockForest, ClockNode, ClockProgram, Curve, PlayMode};
 
-use crate::animation::binding::{BindingTable, LibraryRef};
+use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
 use crate::animation::target::Target;
 
 /// 一段已声明动画在**全局时间轴**上的区间（秒）。
@@ -138,9 +138,20 @@ enum Step {
         actions: Vec<Action>,
     },
     Expr {
-        duration: f64,
+        /// 旧 payload 的段时长（**只用于解码历史产物**；新产物的糖已展开成 predicate）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration: Option<f64>,
         target: ActionTarget,
         expr: Expr,
+        /// 生效条件（Bool 表达式；`None` = 恒真）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        predicate: Option<Expr>,
+        /// predicate 失效时的行为。
+        #[serde(default)]
+        reset: ResetBehavior,
+        /// 该绑定的**时钟程序**（空链 = 全局时钟；不进 payload，见 `skip_serializing_if`）。
+        #[serde(default, skip_serializing_if = "ClockProgram::is_global")]
+        clock: ClockProgram,
         /// 函子库身份（namespace + version）—— 随产物走。
         library: LibraryRef,
     },
@@ -227,20 +238,27 @@ impl Timeline {
 
     /// 录一段**表达式驱动**的动画（S3；`SceneEncoder` 专用入口）。
     ///
-    /// `expr` 在 `commit` 时编译成后序程序；`library` 随产物进 payload。
+    /// `clock` 决定表达式里的 `time` 读哪条时间轴（空链 = 全局时钟）；
+    /// `predicate` / `reset` 决定生效区间与失效行为（`duration` 的糖在
+    /// [`crate::scene_script::record_expression`] 已展开，这里只收结果）。
     pub(crate) fn bind_expr_pending(
         &mut self,
         expr: Expr,
         library: LibraryRef,
+        clock: ClockProgram,
+        predicate: Option<Expr>,
+        reset: ResetBehavior,
         make: fn(ObjectId) -> Arc<dyn Target>,
         handle: usize,
-        dur: f64,
     ) -> &mut Self {
         let name = make(ObjectId::DANGLING).name();
         self.steps.push(Step::Expr {
-            duration: dur,
+            duration: None,
             target: ActionTarget::Pending { make, name, handle },
             expr,
+            predicate,
+            reset,
+            clock,
             library,
         });
         self
@@ -273,19 +291,33 @@ impl Timeline {
     }
 
     /// 每段 `play` 的时间区间（**由步骤顺序算出**；并行动作同属一个区间）。
+    ///
+    /// 新的表达式绑定**没有**固定区间（时间由它自己的 clock + predicate 决定）⇒ 不出现在这里；
+    /// 只有历史产物里带 `duration` 的表达式步骤仍按旧口径占一段。
     pub fn schedule(&self) -> Vec<Segment> {
         let mut cursor = 0.0f64;
         let mut out = Vec::new();
         for step in &self.steps {
             match step {
                 Step::Wait(d) => cursor += d,
-                Step::Play { duration, .. } | Step::Expr { duration, .. } => {
+                Step::Play { duration, .. } => {
                     out.push(Segment {
                         start: cursor,
                         duration: *duration,
                     });
                     cursor += duration;
                 }
+                Step::Expr {
+                    duration: Some(duration),
+                    ..
+                } => {
+                    out.push(Segment {
+                        start: cursor,
+                        duration: *duration,
+                    });
+                    cursor += duration;
+                }
+                Step::Expr { duration: None, .. } => {}
             }
         }
         out
@@ -298,14 +330,25 @@ impl Timeline {
         let mut seen = 0usize;
         for step in &mut self.steps {
             match step {
-                Step::Play { duration, .. } | Step::Expr { duration, .. } => {
+                Step::Play { duration, .. } => {
                     if seen == play_index {
                         *duration = dur;
                         break;
                     }
                     seen += 1;
                 }
-                Step::Wait(_) => {}
+                // 历史产物里的表达式段仍有 duration；新产物（`None`）没有可改的区间。
+                Step::Expr {
+                    duration: Some(duration),
+                    ..
+                } => {
+                    if seen == play_index {
+                        *duration = dur;
+                        break;
+                    }
+                    seen += 1;
+                }
+                Step::Expr { duration: None, .. } | Step::Wait(_) => {}
             }
         }
         self
@@ -354,38 +397,82 @@ impl Timeline {
                     cursor += duration;
                 }
                 Step::Expr {
-                    duration, target, expr, ..
+                    duration,
+                    target,
+                    expr,
+                    predicate,
+                    reset,
+                    clock,
+                    ..
                 } => {
-                    let mut node = ClockNode::new(None);
-                    node.local_offset = cursor;
-                    node.span = Some((0.0, *duration));
-                    node.mode = PlayMode::Hold;
-                    if let Ok(id) = forest.insert(node) {
-                        let target: Arc<dyn Target> = match target {
-                            ActionTarget::Ready(t) => Arc::clone(t),
-                            ActionTarget::Pending { make, handle, .. } => make(resolve(*handle)),
-                        };
-                        // `bind` 时已用同一个 `Expr` 校验/编译过一次；此处失败说明内部不变量被破坏。
-                        match CompiledExpr::compile(expr) {
-                            Ok(program) => bindings.bind_expr(id, program, target),
-                            Err(error) => {
-                                debug_assert!(false, "表达式绑定在 commit 时编译失败：{error}");
-                            }
+                    // **B 批**：表达式绑定的时间轴由它自己的时钟决定（空链 = 全局）。
+                    // 链在编译期展开成 `ClockNode` 链 ⇒ 运行期仍是同一套 `eval_local`
+                    // （与 `Curve` 路径同源，G1 由此消失）。
+                    let mut parent = None;
+                    for link in &clock.links {
+                        let mut node = ClockNode::new(parent);
+                        node.local_offset = link.shift;
+                        node.rate = link.rate;
+                        match forest.insert(node) {
+                            Ok(id) => parent = Some(id),
+                            Err(_) => break, // insert 天然不成环；失败即放弃本段
                         }
                     }
-                    cursor += duration;
+                    // 新语义：局部时间**不钳**（predicate / reset 决定区间）；
+                    // 历史产物还带着 duration ⇒ 用旧口径的段节点（span + Hold）。
+                    let clock_id = match (*duration, parent) {
+                        (Some(dur), _) => {
+                            let mut node = ClockNode::new(parent);
+                            node.span = Some((0.0, dur));
+                            node.mode = PlayMode::Hold;
+                            forest.insert(node).ok()
+                        }
+                        (None, Some(id)) => Some(id),
+                        (None, None) => forest.insert(ClockNode::new(None)).ok(),
+                    };
+                    let Some(id) = clock_id else { continue };
+                    let target: Arc<dyn Target> = match target {
+                        ActionTarget::Ready(t) => Arc::clone(t),
+                        ActionTarget::Pending { make, handle, .. } => make(resolve(*handle)),
+                    };
+                    // `bind` 时已用同一个 `Expr` 校验/编译过一次；此处失败说明内部不变量被破坏。
+                    let program = match CompiledExpr::compile(expr) {
+                        Ok(program) => program,
+                        Err(error) => {
+                            debug_assert!(false, "表达式绑定在 commit 时编译失败：{error}");
+                            continue;
+                        }
+                    };
+                    let predicate = match predicate {
+                        Some(expr) => match CompiledExpr::compile(expr) {
+                            Ok(program) => Some(program),
+                            Err(error) => {
+                                debug_assert!(false, "predicate 在 commit 时编译失败：{error}");
+                                continue;
+                            }
+                        },
+                        None => None,
+                    };
+                    bindings.bind_expr_gated(id, program, target, predicate, *reset);
                 }
             }
         }
     }
 
     /// 编排总时长（所有 `wait` + 所有段时长之和）—— 合并（append）的时间游标依据。
+    ///
+    /// 新的表达式绑定没有固定区间（`duration = None`）⇒ 不贡献时长。
     pub fn total_duration(&self) -> f64 {
         let mut cursor = 0.0f64;
         for step in &self.steps {
             match step {
                 Step::Wait(d) => cursor += d,
-                Step::Play { duration, .. } | Step::Expr { duration, .. } => cursor += duration,
+                Step::Play { duration, .. } => cursor += duration,
+                Step::Expr {
+                    duration: Some(duration),
+                    ..
+                } => cursor += duration,
+                Step::Expr { duration: None, .. } => {}
             }
         }
         cursor
@@ -427,6 +514,9 @@ impl Timeline {
                     duration,
                     target,
                     expr,
+                    predicate,
+                    reset,
+                    clock,
                     library,
                 } => {
                     let target = match target {
@@ -441,6 +531,9 @@ impl Timeline {
                         duration: *duration,
                         target,
                         expr: expr.clone(),
+                        predicate: predicate.clone(),
+                        reset: *reset,
+                        clock: clock.clone(),
                         library: library.clone(),
                     });
                 }

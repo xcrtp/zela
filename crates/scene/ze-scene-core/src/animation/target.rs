@@ -96,6 +96,13 @@ pub trait Target: Send + Sync + std::fmt::Debug + 'static {
 
     /// 目标作用的**对象句柄**。
     fn target_id(&self) -> ObjectId;
+
+    /// 读取当前值（`reset = Reset` 的**初值**快照；不支持的实现返回 `None`）。
+    ///
+    /// 默认实现返回 `None`：只有字段目标（[`FieldTarget`]）知道如何读回自己。
+    fn read(&self, _scene: &dyn SceneRead) -> Option<AnimValue> {
+        None
+    }
 }
 
 /// 声明期可引用的目标构造器（`commit` 时按真实 id 生成 trait object）。
@@ -140,6 +147,10 @@ impl Target for FieldTarget {
 
     fn target_id(&self) -> ObjectId {
         self.id
+    }
+
+    fn read(&self, scene: &dyn SceneRead) -> Option<AnimValue> {
+        (self.spec.read)(scene, self.id)
     }
 }
 

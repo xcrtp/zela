@@ -217,12 +217,39 @@ impl PodAssembly {
                     )),
                 }
             })?;
+            // 时钟是**数据**：Pod 侧的扁平链在这里转成产物类型（与通道同一套路）。
+            let clock = zela_scene_ecs::ClockProgram {
+                links: pending
+                    .clock
+                    .links
+                    .iter()
+                    .map(|link| zela_scene_ecs::ClockLink {
+                        shift: link.shift,
+                        rate: link.rate,
+                    })
+                    .collect(),
+            };
+            // predicate / reset 也是数据：Pod 侧的枚举在这里映射成产物侧的策略。
+            let reset = match pending.reset {
+                ze_pod_func::ResetSpec::Hold => {
+                    zela_scene_ecs::animation::ResetBehavior::Hold
+                }
+                ze_pod_func::ResetSpec::Reset => {
+                    zela_scene_ecs::animation::ResetBehavior::Reset
+                }
+                ze_pod_func::ResetSpec::Skip => {
+                    zela_scene_ecs::animation::ResetBehavior::Skip
+                }
+            };
             script
-                .bind_expr(
+                .bind_expr_gated(
                     object,
                     &pending.target.name,
                     pending.expr,
                     library.clone(),
+                    clock,
+                    pending.predicate,
+                    reset,
                     pending.duration,
                 )
                 .map_err(|error| BrokerError::Injection {

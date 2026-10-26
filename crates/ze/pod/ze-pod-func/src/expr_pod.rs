@@ -25,14 +25,17 @@ use ze_func::{ChannelRef, CompiledExpr, Expr, Literal, Node, OpRef};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
-    AddSpec, AndSpec, BindSpec, ChannelSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LtSpec,
-    MulSpec, NeSpec, NotSpec, OrSpec, ScaleSpec, SinSpec, SumSpec,
+    AddSpec, AndSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec, EqSpec, GeSpec,
+    GtSpec, LeSpec, LtSpec, MulSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec,
+    SinSpec, SumSpec,
 };
 
 /// 函子库 namespace（进产物）。
 pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// 函子库版本（进产物；加算子递增它，`zela.scene` 不受影响）。
-pub const LIBRARY_VERSION: &str = "5";
+///
+/// `6`：绑定带时钟（`Bind.clock`），产物里的 `Step::Expr` 可携带非全局时钟。
+pub const LIBRARY_VERSION: &str = "6";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -47,6 +50,13 @@ pub struct PendingBinding {
     /// 目标通道（`name` 是 `zela.scene` 的地址表键）。
     pub target: ChannelSpec,
     pub expr: Expr,
+    /// 该绑定的时钟（空链 = 全局时钟）。
+    pub clock: ClockSpec,
+    /// 生效条件（`None` = 恒真）。
+    pub predicate: Option<Expr>,
+    /// 失效时行为。
+    pub reset: ResetSpec,
+    /// 语法糖：`> 0` ⇒ 先生成 predicate 后由场景层展开（`predicate` 必须为 None）。
     pub duration: f64,
 }
 
@@ -105,6 +115,27 @@ impl ExprPod {
         registry.register_fn1_named::<AndSpec, Handle>("zela.math::and", "zela.math.And", HANDLE, and_ctor);
         registry.register_fn1_named::<OrSpec, Handle>("zela.math::or", "zela.math.Or", HANDLE, or_ctor);
         registry.register_fn1_named::<NotSpec, Handle>("zela.math::not", "zela.math.Not", HANDLE, not_ctor);
+        // 时钟（B 批）：脚本侧构造纯线性时间源；`bind` 收它，取代隐式 cursor。
+        registry.register_fn1_named::<f64, ClockSpec>(
+            "zela.math::clock_shift",
+            "f64",
+            "zela.math.Clock",
+            clock_shift,
+        );
+        registry.register_fn1_named::<f64, ClockSpec>(
+            "zela.math::clock_scale",
+            "f64",
+            "zela.math.Clock",
+            clock_scale,
+        );
+        registry.register_fn2_named::<ClockSpec, ClockSpec, ClockSpec>(
+            "zela.math::clock_nest",
+            "zela.math.Clock",
+            "zela.math.Clock",
+            "zela.math.Clock",
+            clock_nest,
+        );
+        registry.register_fn0_named("zela.math::clock_time", HANDLE, clock_time);
         registry.register_fn1_named::<BindSpec, ()>(
             "zela.math::bind",
             "zela.math.Bind",
@@ -223,6 +254,14 @@ impl Pod for ExprPod {
             "and" => Box::new(and_ctor(self, arg::<AndSpec>(args, 0)?.clone())),
             "or" => Box::new(or_ctor(self, arg::<OrSpec>(args, 0)?.clone())),
             "not" => Box::new(not_ctor(self, arg::<NotSpec>(args, 0)?.clone())),
+            "clock_shift" => Box::new(clock_shift(self, *arg::<f64>(args, 0)?)),
+            "clock_scale" => Box::new(clock_scale(self, *arg::<f64>(args, 0)?)),
+            "clock_nest" => Box::new(clock_nest(
+                self,
+                arg::<ClockSpec>(args, 0)?.clone(),
+                arg::<ClockSpec>(args, 1)?.clone(),
+            )),
+            "clock_time" => Box::new(clock_time(self)),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
             other => {
@@ -391,6 +430,35 @@ fn not_ctor(pod: &dyn Pod, spec: NotSpec) -> Handle {
     call1(pod, "not", spec.of)
 }
 
+// ─── 时钟（B 批）───────────────────────────────────────────────────────
+
+/// 全局时钟之上加一层 `shift`（`local = (parent_local − shift) × 1`）。
+fn clock_shift(_pod: &dyn Pod, shift: f64) -> ClockSpec {
+    ClockSpec {
+        links: vec![ClockLinkSpec { shift, rate: 1.0 }],
+    }
+}
+
+/// 全局时钟之上加一层 `rate`（`local = parent_local × rate`）。
+fn clock_scale(_pod: &dyn Pod, rate: f64) -> ClockSpec {
+    ClockSpec {
+        links: vec![ClockLinkSpec { shift: 0.0, rate }],
+    }
+}
+
+/// 嵌套：`child` 的链接接在 `parent` 之后（扁平链，无父指针）。
+fn clock_nest(_pod: &dyn Pod, parent: ClockSpec, child: ClockSpec) -> ClockSpec {
+    let mut links = Vec::with_capacity(parent.links.len() + child.links.len());
+    links.extend(parent.links);
+    links.extend(child.links);
+    ClockSpec { links }
+}
+
+/// 时钟局部时间叶子 —— 与 `expr.time()` 是**同一个**通道。
+fn clock_time(pod: &dyn Pod) -> Handle {
+    time(pod)
+}
+
 fn expression(pod: &dyn Pod, root: Handle) -> String {
     expr_pod(pod)
         .export(root)
@@ -427,18 +495,45 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
     let expr = match this.tree(spec.root) {
         Ok(expr) => expr,
         Err(error) => {
-            this.errors
-                .lock()
-                .expect("表达式错误表未被毒化")
-                .push(format!("表达式句柄无效：{error}"));
+            push_binding_error(this, format!("表达式句柄无效：{error}"));
             return;
         }
     };
     if let Err(message) = validate_binding(&expr) {
-        this.errors
-            .lock()
-            .expect("表达式错误表未被毒化")
-            .push(format!("表达式绑定 `{}` 非法：{message}", spec.object));
+        push_binding_error(
+            this,
+            format!("表达式绑定 `{}` 非法：{message}", spec.object),
+        );
+        return;
+    }
+    // predicate 是**独立的** Bool 表达式：单独校验（Bool 不经过 `anim_value`）。
+    let predicate = match spec.predicate {
+        PredicateSpec::Always => None,
+        PredicateSpec::Of { expr: root } => match this.tree(root) {
+            Ok(tree) => {
+                if let Err(message) = validate_binding(&tree) {
+                    push_binding_error(
+                        this,
+                        format!("predicate 绑定 `{}` 非法：{message}", spec.object),
+                    );
+                    return;
+                }
+                Some(tree)
+            }
+            Err(error) => {
+                push_binding_error(this, format!("predicate 句柄无效：{error}"));
+                return;
+            }
+        },
+    };
+    if predicate.is_some() && spec.duration > 0.0 {
+        push_binding_error(
+            this,
+            format!(
+                "表达式绑定 `{}` 同时给了 predicate 与 duration（后者是 `t < d` 的糖）",
+                spec.object
+            ),
+        );
         return;
     }
     this.bindings
@@ -448,8 +543,18 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
             object: spec.object,
             target: spec.target,
             expr,
+            clock: spec.clock,
+            predicate,
+            reset: spec.reset,
             duration: spec.duration,
         });
+}
+
+fn push_binding_error(this: &ExprPod, message: String) {
+    this.errors
+        .lock()
+        .expect("表达式错误表未被毒化")
+        .push(message);
 }
 
 #[cfg(test)]
@@ -562,6 +667,43 @@ mod tests {
         assert!(matches!(
             this.tree(not).unwrap().node,
             Node::Call { ref op, .. } if op.name == "not"
+        ));
+    }
+
+    /// **B 批**：脚本侧时钟是**数据**（扁平链），`clock.time()` 与 `expr.time()` 同源。
+    #[test]
+    fn clock_builders_produce_flat_links() {
+        let this = pod();
+        assert_eq!(
+            clock_shift(&this, 2.0),
+            ClockSpec {
+                links: vec![ClockLinkSpec {
+                    shift: 2.0,
+                    rate: 1.0
+                }]
+            }
+        );
+        assert_eq!(
+            clock_scale(&this, 0.5),
+            ClockSpec {
+                links: vec![ClockLinkSpec {
+                    shift: 0.0,
+                    rate: 0.5
+                }]
+            }
+        );
+        let nested = clock_nest(&this, clock_scale(&this, 0.5), clock_shift(&this, 1.0));
+        assert_eq!(nested.links.len(), 2, "嵌套 = 两条链拼接");
+        assert_eq!(nested.links[0].rate, 0.5);
+        assert_eq!(nested.links[1].shift, 1.0);
+
+        // `clock.time()` 与 `expr.time()` 是同一个通道叶子（时钟身份属于绑定）。
+        let a = clock_time(&this);
+        let b = time(&this);
+        assert_eq!(this.tree(a).unwrap(), this.tree(b).unwrap());
+        assert!(matches!(
+            this.tree(a).unwrap().node,
+            Node::Channel { channel } if channel == ChannelRef::builtin("time")
         ));
     }
 

@@ -3,14 +3,17 @@
 -- 与其它作品的区别：**脚本不手算采样**。半径与光晕透明度都是组合子表达式，
 -- 由宿主单子 M 每帧注入 Time；脚本只提交结构。
 --
--- 用到的表达式 API（zela.math@5）：
---   - 零元通道：expr.time()
---   - 表构造器：Add / Scale / Mul / Sin（与 scene.spawn{} 同构）
+-- 用到的表达式 API（zela.math@6）：
+--   - 零元通道：expr.time() / clock.time()（后者 = 绑定时钟的局部时间）
+--   - 表构造器：Add / Scale / Mul / Sin / Cos（与 scene.spawn{} 同构）
 --   - 字面量：expr.pure(k)（自动提升尚未落地，见 GAPS AF-06）
 --   - 通道选择键：组件的 `channel` 常量 `Circle.channel.radius` / `Opacity.channel.value`
 --     （不用裸地址字符串）
---   - 绑定：expr.bind{ object = <句柄>, target = <组件的 channel 常量>, root, duration }
---     （提案 #6：对象用 scene.spawn 的返回值，不再需要 Name{}）
+--   - 绑定：expr.bind{ object = <句柄>, target = <组件的 channel 常量>, root,
+--                       clock, predicate, reset, duration }
+--     - `duration` 是 `predicate = t < d + reset = hold` 的糖（半径绑定用糖）；
+--     - 光晕绑定显式写 `Predicate.Of { expr = Lt { … } }` + `Reset.Hold`，
+--       演示 predicate 与 root 是**两次独立求值**（Bool 不经过 anim_value）。
 
 scene.spawn({
     Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 150.0 },
@@ -46,4 +49,10 @@ local fade = Add {
         of = Cos { of = Mul { a = expr.time(), b = expr.pure(0.8) } },
     },
 }
-expr.bind { object = halo, target = Opacity.channel.value, root = fade, duration = 4.0 }
+expr.bind {
+    object = halo,
+    target = Opacity.channel.value,
+    root = fade,
+    predicate = Predicate.Of { expr = Lt { a = clock.time(), b = expr.pure(4.0) } },
+    reset = Reset.Hold,
+}

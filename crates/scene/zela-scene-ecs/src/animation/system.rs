@@ -7,6 +7,7 @@
 // P0：目标由 `BindingTarget` 枚举改为 `Arc<dyn Target>` —— 本 System 只做
 // "遍历 + 求值 + 派发"，**不认识任何具体目标**（新增目标零 System 改动）。
 
+use ze_func::Value;
 use ze_time::{AnimValue, ClockForest};
 use zela_scene_ecs::TimeState;
 use zela_schedule::context::ExecutorContext;
@@ -14,6 +15,7 @@ use zela_schedule::system::System;
 
 use crate::animation::binding::BindingDriver;
 use crate::animation::binding::BindingTable;
+use crate::animation::binding::ResetBehavior;
 use crate::contract::WorldScene;
 use crate::expr_mono::{SceneMono, anim_value};
 
@@ -29,8 +31,7 @@ impl System for BindingApplySystem {
         // 再独立用 ctx.world 做 &mut query。
         let time_state = ctx.get::<TimeState>().copied().unwrap_or_default();
         let t_global = time_state.elapsed as f64;
-        // 表达式绑定用的 M：Time / Frame 同源，算子语义来自 `zela.math`。
-        let mono = SceneMono::from_time_state(&time_state);
+        let frame = time_state.frame;
         let forest = match ctx.get::<ClockForest>().cloned() {
             Some(f) => f,
             None => return,
@@ -63,9 +64,43 @@ impl System for BindingApplySystem {
                 continue;
             }
             let lt = forest.eval_local(b.clock, t_global);
+            // **C 批**：predicate 与 root **分开求值**（Bool 不经过 `anim_value`）。
+            let active = match &b.predicate {
+                None => true,
+                Some(predicate) => match predicate.eval(&SceneMono::new(lt, frame)) {
+                    Ok(Value::Bool(value)) => value,
+                    Ok(other) => {
+                        eprintln!(
+                            "[expr] 绑定目标 {} 的 predicate 必须返回 Bool，实际 {other:?}（本帧按不生效处理）",
+                            b.target.name()
+                        );
+                        false
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "[expr] 绑定目标 {} 的 predicate 求值失败：{error}",
+                            b.target.name()
+                        );
+                        false
+                    }
+                },
+            };
+            if !active {
+                // hold / skip：不写（字段保持原样）；reset：写回 commit 时的初值。
+                if b.reset == ResetBehavior::Reset {
+                    if let Some(initial) = &b.initial {
+                        if let Err(error) = b.target.apply(&mut scene, initial) {
+                            eprintln!("[anim] {error}");
+                        }
+                    }
+                }
+                continue;
+            }
             let value: AnimValue = match &b.driver {
                 BindingDriver::Curve(curve) => curve.sample(lt),
-                BindingDriver::Expr(program) => match program.eval(&mono) {
+                // **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 同源），
+                // 不再用全局 elapsed —— G1（两条路径 t 不同源）由此消失。
+                BindingDriver::Expr(program) => match program.eval(&SceneMono::new(lt, frame)) {
                     Ok(value) => match anim_value(&value) {
                         Some(value) => value,
                         None => {
@@ -214,6 +249,9 @@ mod tests {
             target: std::sync::Arc::new(CircleRadius {
                 id: crate::contract::object_id_of(entity),
             }),
+            predicate: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         });
 
@@ -434,6 +472,9 @@ mod tests {
                 clock: root,
                 driver: BindingDriver::Curve(curve),
                 target,
+                predicate: None,
+                reset: crate::animation::ResetBehavior::Hold,
+                initial: None,
                 seek_kind: SeekKind::O1,
             });
         };

@@ -41,7 +41,9 @@ use zela_render_backends::{
 };
 #[cfg(feature = "blocking")]
 use zela_render_backends::render_frame_headless;
-use zela_scene_ecs::animation::{Binding, BindingDriver, BindingTable, CameraEye};
+use zela_scene_ecs::animation::{
+    Binding, BindingDriver, BindingTable, CameraEye, ResetBehavior,
+};
 use zela_scene_ecs::contract::{GroupVisibility, ObjectId, SceneRead, WorldView};
 use zela_scene_ecs::director_state::DirectorState;
 use zela_scene_ecs::domain::{ContentTextureSpecs, InputEvents, UiConfig};
@@ -221,6 +223,9 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         target: Arc::new(CameraEye {
             id: camera3d.map_or(ObjectId::DANGLING, |handle| handle.0),
         }),
+        predicate: None,
+        reset: ResetBehavior::Hold,
+        initial: None,
         seek_kind: SeekKind::O1,
     };
     bindings.add(orbit_binding.clone());

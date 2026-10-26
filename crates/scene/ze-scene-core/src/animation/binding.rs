@@ -13,9 +13,23 @@
 use std::sync::Arc;
 
 use ze_func::CompiledExpr;
-use ze_time::{ClockId, Curve};
+use ze_time::{AnimValue, ClockId, Curve};
 
 use crate::animation::target::Target;
+
+/// predicate 失效时的行为（`Reset.hold` / `reset` / `skip`）。
+///
+/// - `Hold`：保持最后一次生效时写入的值（**需要历史** ⇒ 引擎推导 `SeekKind::Replay`）；
+/// - `Reset`：写回绑定生效前的**初值**（`commit` 时快照，无历史依赖）；
+/// - `Skip`：不写（字段保持原样，可被其它绑定接管）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResetBehavior {
+    #[default]
+    Hold,
+    Reset,
+    Skip,
+}
 
 /// seek 语义：当前全为 O1（纯函数、无记忆），弹簧等有记忆演化器需要 Replay 模式。
 ///
@@ -80,6 +94,12 @@ pub struct Binding {
     pub driver: BindingDriver,
     /// 驱动目标（类型擦除：`BindingTable` 要装异构的所有 target）。
     pub target: Arc<dyn Target>,
+    /// **生效条件**（Bool 程序；`None` = 恒真）。与 `driver` 分开求值（硬约束 3）。
+    pub predicate: Option<CompiledExpr>,
+    /// predicate 失效时的行为。
+    pub reset: ResetBehavior,
+    /// `reset = Reset` 的初值（`commit` 时从场景快照；`None` = 读不到 / 不需要）。
+    pub initial: Option<AnimValue>,
     pub seek_kind: SeekKind,
 }
 
@@ -111,17 +131,44 @@ impl BindingTable {
             clock,
             driver: BindingDriver::Curve(curve),
             target,
+            predicate: None,
+            reset: ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         });
     }
 
     /// 添加一条**表达式绑定**（S3）：程序已在装配期编译。
     pub fn bind_expr(&mut self, clock: ClockId, program: CompiledExpr, target: Arc<dyn Target>) {
+        self.bind_expr_gated(clock, program, target, None, ResetBehavior::Hold);
+    }
+
+    /// 带 **predicate / reset** 的表达式绑定。
+    ///
+    /// `seek_kind` 由引擎**推导**（不进脚本）：`predicate + hold` 需要"最后一次生效"的
+    /// 历史 ⇒ 保守地记为 [`SeekKind::Replay`]；其余仍是 O1。
+    /// （predicate 单调性分析尚未实现 —— 保守方向是"宁可重放，不猜 O1"。）
+    pub fn bind_expr_gated(
+        &mut self,
+        clock: ClockId,
+        program: CompiledExpr,
+        target: Arc<dyn Target>,
+        predicate: Option<CompiledExpr>,
+        reset: ResetBehavior,
+    ) {
+        let seek_kind = if predicate.is_some() && reset == ResetBehavior::Hold {
+            SeekKind::Replay
+        } else {
+            SeekKind::O1
+        };
         self.add(Binding {
             clock,
             driver: BindingDriver::Expr(program),
             target,
-            seek_kind: SeekKind::O1,
+            predicate,
+            reset,
+            initial: None,
+            seek_kind,
         });
     }
 

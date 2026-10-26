@@ -406,6 +406,21 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
         }
         out.push('\n');
 
+        // `clock_*` 的别名表挂在根模块上（与 Lua / JS 一致；`clock.time()` 与
+        // `expr.time()` 是同一个通道叶子）。
+        if package == root
+            && capabilities
+                .iter()
+                .any(|capability| {
+                    capability
+                        .calls
+                        .iter()
+                        .any(|item| item.signature.name.starts_with("clock_"))
+                })
+        {
+            out.push_str("clock: Any\n\n");
+        }
+
         for (full_name, spec) in package_types {
             let own = component_channels
                 .get(short_name(full_name))

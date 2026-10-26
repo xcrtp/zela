@@ -11,7 +11,7 @@ pub mod director;
 pub mod easing;
 pub mod error;
 
-pub use clock::{ClockForest, ClockId, ClockNode, PlayMode};
+pub use clock::{ClockForest, ClockId, ClockLink, ClockNode, ClockProgram, PlayMode};
 pub use curve::{AnimValue, Curve, Interp};
 pub use director::Director;
 pub use easing::Easing;

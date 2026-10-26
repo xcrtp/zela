@@ -229,6 +229,9 @@ mod tests {
             target: Arc::new(CircleRadius {
                 id: ObjectId::DANGLING,
             }),
+            predicate: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         });
         table.add(Binding {
@@ -242,6 +245,9 @@ mod tests {
             target: Arc::new(CameraEye {
                 id: ObjectId::DANGLING,
             }),
+            predicate: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         });
 

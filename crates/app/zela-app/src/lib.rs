@@ -701,6 +701,9 @@ mod tests {
             target: Arc::new(CameraEye {
                 id: object_id_of(camera3d),
             }),
+            predicate: None,
+            reset: zela_scene_ecs::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         };
         // 分镜的 2D 相机绑定（`free_2d_camera` 会托管让位/复位）。
@@ -717,6 +720,9 @@ mod tests {
             target: Arc::new(Camera2DFraming {
                 id: object_id_of(camera2d),
             }),
+            predicate: None,
+            reset: zela_scene_ecs::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         };
         let mut bindings = BindingTable::new();
@@ -2130,6 +2136,90 @@ expr.bind({ object: dot, target: Circle.channel.radius, root: y, duration: 2.0 }
         );
     }
 
+    /// **B 批验收**：`clock.nest(clock.scale, clock.shift)` 在 Lua / JS 两侧产出**逐字节
+    /// 相同**的装配产物；`clock.time()` 与 `expr.time()` 是同一个通道叶子。
+    #[cfg(feature = "js")]
+    #[test]
+    fn clock_constructors_agree_across_languages() {
+        use ze_prerender::placeholder_engine;
+
+        let lua_source = r#"
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5) })
+local y = Sin { of = clock.time() }
+expr.bind {
+    object = dot,
+    target = Circle.channel.radius,
+    root = y,
+    clock = clock.nest(clock.scale(0.5), clock.shift(1.0)),
+    duration = 2.0,
+}
+"#;
+        let js_source = r#"
+scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)]);
+const dot = scene.spawn([Circle(0.0, 0.0, 0.5)]);
+const y = Sin({ of: clock.time() });
+expr.bind({
+  object: dot,
+  target: Circle.channel.radius,
+  root: y,
+  clock: clock.nest(clock.scale(0.5), clock.shift(1.0)),
+  duration: 2.0,
+});
+"#;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功（含 js）");
+        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
+        let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
+
+        let lua_json = lua.to_json().expect("serialize lua");
+        let js_json = js.to_json().expect("serialize js");
+        assert_eq!(lua_json, js_json, "时钟链必须产出同一份 payload");
+        assert!(lua_json.contains("\"clock\""), "非全局时钟必须进 payload");
+        assert!(
+            lua_json.contains("\"rate\":0.5") && lua_json.contains("\"shift\":1.0"),
+            "两层链接都必须在产物里：{lua_json}"
+        );
+    }
+
+    /// B 批（Python 侧）：与 Lua 的时钟写法逐字节一致；解释器不可用时跳过。
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_clock_matches_lua() {
+        use ze_prerender::placeholder_engine;
+
+        let lua_source = r#"
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5) })
+local y = Sin { of = clock.time() }
+expr.bind { object = dot, target = Circle.channel.radius, root = y,
+            clock = clock.nest(clock.scale(0.5), clock.shift(1.0)), duration = 2.0 }
+"#;
+        let python_source = r#"
+scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)])
+dot = scene.spawn([Circle(0.0, 0.0, 0.5)])
+y = Sin(of=clock.time())
+expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y,
+               clock=clock.nest(clock.scale(0.5), clock.shift(1.0)), duration=2.0))
+"#;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功（含 python）");
+        if !python_ready(&assembly) {
+            return;
+        }
+        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
+        let py = assembly
+            .run_python_script(python_source)
+            .expect("Python 脚本执行成功");
+        assert_eq!(
+            lua.to_json().expect("serialize lua"),
+            py.to_json().expect("serialize python"),
+            "Python 的时钟链必须与 Lua 等价"
+        );
+    }
+
     #[cfg(feature = "python")]
     #[test]
     fn python_positional_constructors_match_lua() {
@@ -2219,8 +2309,16 @@ expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
         let binding = &recipe.bindings.bindings[0];
         assert!(matches!(binding.driver, BindingDriver::Expr(_)));
         assert_eq!(binding.target.name(), "CircleRadius");
+        // **C 批**：`duration` 是糖 ⇒ 产物里是 predicate `t < 2` + reset hold，
+        // 时钟节点本身**不再**带 span（区间由 predicate 决定）。
+        assert!(binding.predicate.is_some(), "duration 应展开成 predicate");
+        assert_eq!(
+            binding.reset,
+            zela_scene_ecs::animation::ResetBehavior::Hold
+        );
         let node = recipe.forest.get(binding.clock).expect("时钟节点");
-        assert_eq!(node.span, Some((0.0, 2.0)));
+        assert_eq!(node.span, None, "新语义下时钟不钳区间");
+        assert_eq!(binding.seek_kind, zela_scene_ecs::animation::SeekKind::Replay);
     }
 }
 

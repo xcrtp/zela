@@ -171,6 +171,35 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
             ));
         }
         out.push_str("};\n\n");
+
+        // `clock_*` 的别名表（与绑定层一致）：`clock.time()` / `clock.shift(…)` …
+        let clock_calls: Vec<&ze_pod_core::ErasedFn> = capability
+            .calls
+            .iter()
+            .filter(|item| item.signature.name.starts_with("clock_"))
+            .collect();
+        if !clock_calls.is_empty() {
+            out.push_str("export declare const clock: {\n");
+            for item in clock_calls {
+                let short = item
+                    .signature
+                    .name
+                    .strip_prefix("clock_")
+                    .unwrap_or(item.signature.name);
+                let params: Vec<String> = item
+                    .io
+                    .params
+                    .iter()
+                    .map(|param| format!("{}: {}", param.name, ts_type_name(param.ty)))
+                    .collect();
+                let returns = match item.io.ret {
+                    TypeSpec::Struct { name: "()", .. } => "void".to_string(),
+                    other => ts_type_name(other),
+                };
+                out.push_str(&format!("  {short}({}): {returns};\n", params.join(", ")));
+            }
+            out.push_str("};\n\n");
+        }
     }
     out
 }

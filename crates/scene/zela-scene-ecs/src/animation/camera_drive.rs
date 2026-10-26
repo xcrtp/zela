@@ -227,6 +227,9 @@ mod tests {
                     target: Arc::new(Camera2DFraming {
                         id: crate::contract::object_id_of(cam2d),
                     }),
+                    predicate: None,
+                    reset: crate::animation::ResetBehavior::Hold,
+                    initial: None,
                     seek_kind: SeekKind::O1,
                 },
                 Binding {
@@ -241,6 +244,9 @@ mod tests {
                     target: Arc::new(Camera2DFraming {
                         id: crate::contract::object_id_of(cam2d),
                     }),
+                    predicate: None,
+                    reset: crate::animation::ResetBehavior::Hold,
+                    initial: None,
                     seek_kind: SeekKind::O1,
                 },
             ];
@@ -255,6 +261,9 @@ mod tests {
                 target: Arc::new(CameraEye {
                     id: crate::contract::object_id_of(cam3d),
                 }),
+                predicate: None,
+                reset: crate::animation::ResetBehavior::Hold,
+                initial: None,
                 seek_kind: SeekKind::O1,
             };
 
@@ -410,6 +419,9 @@ mod tests {
             target: Arc::new(CameraEye {
                 id: crate::contract::object_id_of(f.cam3d),
             }),
+            predicate: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         };
         f.sched
@@ -448,6 +460,9 @@ mod tests {
             target: Arc::new(CameraEye {
                 id: crate::contract::ObjectId::DANGLING,
             }),
+            predicate: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         };
         let mut table = BindingTable::new();

@@ -20,6 +20,23 @@ use ze_pod_core::{PodValue, ScalarValue};
 pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
     match (type_name, field_name) {
         ("zela.Color", "a") => Some(PodValue::Scalar(ScalarValue::U8(255))),
+        // 绑定的默认时钟 = 空链（全局时钟）；显式写 `clock = clock.shift(…)` 才生效。
+        ("zela.math.Bind", "clock") => Some(PodValue::Struct(
+            "zela.math.Clock",
+            vec![("links", PodValue::Array(Vec::new()))],
+        )),
+        // 空时钟（`Clock {}`）等价于全局时钟。
+        ("zela.math.Clock", "links") => Some(PodValue::Array(Vec::new())),
+        // 绑定缺省：恒真 predicate + hold + 无 duration 糖。
+        ("zela.math.Bind", "predicate") => Some(PodValue::Enum(
+            "zela.math.Predicate",
+            "Always",
+            Vec::new(),
+        )),
+        ("zela.math.Bind", "reset") => {
+            Some(PodValue::Enum("zela.math.Reset", "Hold", Vec::new()))
+        }
+        ("zela.math.Bind", "duration") => Some(PodValue::Scalar(ScalarValue::F64(0.0))),
         _ => None,
     }
 }
@@ -28,6 +45,12 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
 pub fn field_default_literal(type_name: &str, field_name: &str) -> Option<&'static str> {
     match (type_name, field_name) {
         ("zela.Color", "a") => Some("255"),
+        // 结构体默认值：三种语言都能解析的构造表达式（`.pyi` 里是合法的默认值写法）。
+        ("zela.math.Bind", "clock") => Some("Clock()"),
+        ("zela.math.Clock", "links") => Some("[]"),
+        ("zela.math.Bind", "predicate") => Some("Predicate.Always"),
+        ("zela.math.Bind", "reset") => Some("Reset.Hold"),
+        ("zela.math.Bind", "duration") => Some("0"),
         _ => None,
     }
 }

@@ -49,6 +49,54 @@ impl ClockNode {
     }
 }
 
+/// 一层时钟链接：`local = (parent_local - shift) × rate`。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ClockLink {
+    /// 零点偏移（父级本地时间里的 `shift`）。
+    pub shift: f64,
+    /// 线性速率缩放。
+    pub rate: f64,
+}
+
+/// 脚本侧的**时钟程序**：从根到本时钟的一条线性链（空 = 全局时钟）。
+///
+/// 为什么是扁平链而不是树：脚本侧的 `clock.nest(parent, child)` 只是把两条链
+/// 拼起来，产物里因此没有"父指针"需要解析；`compile` 再把它展开成 `ClockNode`
+/// 链。运行期仍是同一套 `eval_local`（零新增求值路径）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClockProgram {
+    /// 从根到本时钟逐层链接（空 = 全局时钟）。
+    pub links: Vec<ClockLink>,
+}
+
+impl ClockProgram {
+    /// 新的全局时钟（`local = global_t`）。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 是否全局时钟（无任何链接）。
+    pub fn is_global(&self) -> bool {
+        self.links.is_empty()
+    }
+
+    /// 在父时钟之上接一层链接。
+    pub fn nested(parent: &Self, shift: f64, rate: f64) -> Self {
+        let mut links = Vec::with_capacity(parent.links.len() + 1);
+        links.extend_from_slice(&parent.links);
+        links.push(ClockLink { shift, rate });
+        Self { links }
+    }
+
+    /// 把两条链拼成一条：`parent` 的层在前，`child` 的层在后。
+    pub fn concat(parent: &Self, child: &Self) -> Self {
+        let mut links = Vec::with_capacity(parent.links.len() + child.links.len());
+        links.extend_from_slice(&parent.links);
+        links.extend_from_slice(&child.links);
+        Self { links }
+    }
+}
+
 /// 时钟森林（可多个根节点）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClockForest {

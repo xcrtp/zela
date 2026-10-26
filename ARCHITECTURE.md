@@ -1885,3 +1885,46 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **命名**：`and` / `or` / `not` 在 Rust 里是合法标识符，但在 Lua / Python 里是关键字
   ⇒ 作者侧统一用表构造器 `And {}` / `Or {}` / `Not {}`；JS 可以写 `expr.and(...)`。
 - **零格式代价**：`LIBRARY_VERSION` 不变（既有表达式语义不动）⇒ 23 条 demo payload 逐位不变。
+
+
+### 时钟显式化 B 批：clock 显式化（2026-10-26）
+
+> 一句话：**时间不再是全局单例**。每条绑定自带一条纯线性时钟链，表达式的 `time`
+> 读该绑定的局部时间 —— 于是 `Curve` 与表达式**同源**，G1 消失。
+
+- **时钟是数据**：`Clock { links: [{shift, rate}] }`（[`api.rs`](crates/ze/pod/ze-pod-func/src/api.rs)），
+  从根到本时钟的**扁平链**。脚本侧 `clock.shift(s)` / `clock.scale(r)` /
+  `clock.nest(parent, child)` 只是往链上接一层 / 把两条链拼起来，没有父指针要解析。
+- **两个名字，一份能力**：`clock_*` 前缀的函数由三种绑定额外挂到 `clock` 表
+  （[Lua](crates/ze/pod/ze-pod-lua/src/binding.rs) / [JS](crates/ze/pod/ze-pod-js/src/binding.rs) /
+  [Python](crates/ze/pod/ze-pod-py/src/imp.rs)），声明文件同步输出 `clock`。不新增 Service。
+- **`clock.time()` 与 `expr.time()` 是同一个叶子**：时钟身份属于**绑定**（`Bind.clock`），
+  不属于表达式 —— 求值时宿主用 `forest.eval_local(clock, t)` 构造 `SceneMono`
+  （[`system.rs`](crates/scene/zela-scene-ecs/src/animation/system.rs)）。这是 G1 的根治：
+  两条路径读同一个 `eval_local`。
+- **产物**：`ClockProgram`（`ze-time`）随 `Step::Expr` 走；空链用
+  `skip_serializing_if = "ClockProgram::is_global"` ⇒ **全局时钟的 payload 逐字节不变**。
+  `LIBRARY_VERSION 5 → 6`（绑定签名变了）⇒ `expr_demo` 的 payload 重录一次。
+- **`ClockNode` 不动**：`span` / `mode` 仍服务 `Curve` 路径的段内冻结；表达式段的
+  `Hold` 也由同一个段节点表达。删字段留给 predicate / reset 落地后再说。
+
+
+### 时钟显式化 C 批：predicate / reset（2026-10-26）
+
+> 一句话：**区间不是时长，是 Bool 表达式**。`duration` 降为糖，
+> 失效行为由 `reset` 三态显式选择；引擎按结构推导 seek 策略。
+
+- **`predicate`**：`Predicate.Always`（缺省）或 `Predicate.Of { expr }`（Bool 表达式）。
+  运行期与 root **分开求值**：predicate 只求 Bool，root 只在生效时求值 ——
+  Bool 不经过 `anim_value`（硬约束 3）。
+- **`reset` 三态**：`Hold`（保持最后一次生效值，有历史依赖）/ `Reset`（写回 `commit`
+  时的初值，经 `Target::read` 快照）/ `Skip`（不写；计划里的 `none`，因 Python
+  字面量冲突改名）。
+- **`duration` 是糖**：`> 0` ⇒ `predicate = Lt { time, d }` + `reset = hold`，
+  在 [`scene_script.rs`](crates/scene/ze-scene-core/src/scene_script.rs) 展开；
+  产物里只剩 predicate / reset（`Step::Expr.duration` 仅用于解码历史 payload）。
+  与显式 predicate 同时出现 ⇒ `ExprBindError::ConflictingGate`。
+- **`SeekKind` 是推导结果**：`predicate + Hold` ⇒ `Replay`（保守；单调性分析未实现），
+  其余 `O1`。不进脚本（硬约束 2）。
+- **新语义不钳局部时间**：时钟只做线性映射；区间由 predicate 决定。
+  历史 payload（带 `duration`）仍走旧的 `span + Hold` 段节点 —— 老 ZSB 语义不变。

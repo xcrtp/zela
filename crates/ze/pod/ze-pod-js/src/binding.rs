@@ -105,10 +105,41 @@ pub(crate) fn bind<C: Capability<'static>>(
             .map_err(js_err_to_pod)?;
     }
     ctx.global_object()
-        .set(JsString::from(global_name), namespace, false, ctx)
+        .set(JsString::from(global_name), namespace.clone(), false, ctx)
         .map_err(js_err_to_pod)?;
+    install_clock_alias(ctx, &namespace, plan.calls)?;
 
     register_types(ctx, &plan, index)?;
+    Ok(())
+}
+
+/// `clock_*` 前缀的函数同时挂到 **`clock` 对象**（`clock.shift` / `clock.scale` /
+/// `clock.nest` / `clock.time`）。
+///
+/// 与 Lua 侧同一约定：同一份 capability 暴露两个表，不需要新增 Service。
+fn install_clock_alias(
+    ctx: &mut Context,
+    namespace: &JsObject,
+    calls: &'static [ErasedFn],
+) -> Result<(), PodError> {
+    if !calls.iter().any(|item| item.signature.name.starts_with("clock_")) {
+        return Ok(());
+    }
+    let clock = ObjectInitializer::new(ctx).build();
+    for item in calls {
+        let Some(short) = item.signature.name.strip_prefix("clock_") else {
+            continue;
+        };
+        let function = namespace
+            .get(JsString::from(item.signature.name), ctx)
+            .map_err(js_err_to_pod)?;
+        clock
+            .set(JsString::from(short), function, false, ctx)
+            .map_err(js_err_to_pod)?;
+    }
+    ctx.global_object()
+        .set(JsString::from("clock"), clock, false, ctx)
+        .map_err(js_err_to_pod)?;
     Ok(())
 }
 

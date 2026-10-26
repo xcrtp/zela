@@ -13,7 +13,7 @@ pub mod binding;
 pub mod target;
 pub mod timeline;
 
-pub use binding::{Binding, BindingDriver, BindingTable, LibraryRef, SeekKind};
+pub use binding::{Binding, BindingDriver, BindingTable, LibraryRef, ResetBehavior, SeekKind};
 pub use target::{
     Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, MorphT, OpacityValue, Phase,
     RevealRange, TARGETS, Target, TargetCtor, TargetEntry, TargetError, TransformChannel,

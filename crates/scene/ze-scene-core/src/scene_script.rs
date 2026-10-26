@@ -42,13 +42,13 @@
 
 use std::sync::Arc;
 
-use ze_func::{ChannelRef, CompiledExpr, Expr, Node};
+use ze_func::{ChannelRef, CompiledExpr, Expr, Node, OpRef};
 use ze_scene_contract::{
     Components, ObjectId, Parent, Scene as SceneContract, Visibility, VisibilityTag,
 };
-use ze_time::{ClockForest, Curve};
+use ze_time::{ClockForest, ClockProgram, Curve};
 
-use crate::animation::binding::{BindingTable, LibraryRef};
+use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
 use crate::animation::target::{TargetCtor, target_ctor_by_name};
 use crate::animation::timeline::Timeline;
 use crate::surface::SurfaceTextureRef;
@@ -68,6 +68,9 @@ pub enum ExprBindError {
     /// 该通道尚未由宿主注入（Event / 组件字段 / Env 属后续批次）。
     #[error("通道 `{0}` 尚未由宿主注入")]
     UnsupportedChannel(ChannelRef),
+    /// `predicate` 与 `duration` 同时给出（后者是 `t < d` 的糖）。
+    #[error("predicate 与 duration 不能同时指定（duration ≡ predicate `t < d` + reset hold）")]
+    ConflictingGate,
 }
 
 /// 宿主当前真正注入的通道（提案 #6 B：通道是数据，白名单也只有两条）。
@@ -95,6 +98,9 @@ fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
 ///
 /// 对象用**脚本句柄**（提案 #6：`spawn` 已经返回句柄，按名字找对象的
 /// `find_named` / `Name{}` 依赖已删除）。
+///
+/// `duration > 0` 是**糖**：展开成 `predicate = t < duration` + `reset = hold`
+/// （产物里只留 predicate / reset；`duration` 不进新 payload）。
 fn record_expression(
     timeline: &mut Timeline,
     object_count: usize,
@@ -102,16 +108,44 @@ fn record_expression(
     target: &str,
     expr: Expr,
     library: LibraryRef,
+    clock: ClockProgram,
+    predicate: Option<Expr>,
+    reset: ResetBehavior,
     duration: f64,
 ) -> Result<(), ExprBindError> {
     validate_expression(&expr)?;
+    if let Some(predicate) = &predicate {
+        validate_expression(predicate)?;
+    }
+    let (predicate, reset) = match (predicate, duration) {
+        (Some(_), duration) if duration > 0.0 => {
+            return Err(ExprBindError::ConflictingGate);
+        }
+        (Some(predicate), _) => (Some(predicate), reset),
+        (None, duration) if duration > 0.0 => (
+            Some(duration_predicate(duration)),
+            ResetBehavior::Hold,
+        ),
+        (None, _) => (None, reset),
+    };
     let (make, _) = target_ctor_by_name(target)
         .ok_or_else(|| ExprBindError::UnknownTarget(target.to_string()))?;
     if object.0 >= object_count {
         return Err(ExprBindError::UnknownObject(object.0));
     }
-    timeline.bind_expr_pending(expr, library, make, object.0, duration);
+    timeline.bind_expr_pending(expr, library, clock, predicate, reset, make, object.0);
     Ok(())
+}
+
+/// `duration` 的糖：`predicate = Lt { time, duration }`（`time` 是绑定时钟的局部时间）。
+fn duration_predicate(duration: f64) -> Expr {
+    Expr::call(
+        OpRef::new("zela.math", "lt"),
+        [
+            Expr::channel(ChannelRef::builtin("time")),
+            Expr::pure(duration),
+        ],
+    )
 }
 
 /// **Encoder 内的局部句柄**：声明期索引，`commit` 时才映射到 [`ObjectId`]。
@@ -288,12 +322,30 @@ impl SceneEncoder {
     ///
     /// 表达式在这里就完成结构校验（悬空 Ref / 环 / 尚未注入的通道），
     /// 错误是显式的 —— 不留给运行期静默跳过。
+    ///
+    /// `duration > 0` 是糖（`predicate = t < duration` + `reset = hold`）。
     pub fn bind_expr(
         &mut self,
         object: Handle,
         target: &str,
         expr: Expr,
         library: LibraryRef,
+        clock: ClockProgram,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        self.bind_expr_gated(object, target, expr, library, clock, None, ResetBehavior::Hold, duration)
+    }
+
+    /// 带 **predicate / reset** 的表达式绑定（C 批入口）。
+    pub fn bind_expr_gated(
+        &mut self,
+        object: Handle,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        clock: ClockProgram,
+        predicate: Option<Expr>,
+        reset: ResetBehavior,
         duration: f64,
     ) -> Result<(), ExprBindError> {
         record_expression(
@@ -303,6 +355,9 @@ impl SceneEncoder {
             target,
             expr,
             library,
+            clock,
+            predicate,
+            reset,
             duration,
         )
     }
@@ -462,13 +517,30 @@ impl SceneScript {
     /// 向**成品脚本**追加一条表达式绑定（S3：宿主编排完成后合并）。
     ///
     /// 对象用本脚本内的句柄（宿主把 pod 句柄在**装配期**转成它，产物不存 pod 句柄）；
-    /// 目标未知 / 句柄越界都是显式错误。
+    /// `clock` 是这条绑定自己的时间源（空链 = 全局）；目标未知 / 句柄越界都是显式错误。
     pub fn bind_expr(
         &mut self,
         object: Handle,
         target: &str,
         expr: Expr,
         library: LibraryRef,
+        clock: ClockProgram,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        self.bind_expr_gated(object, target, expr, library, clock, None, ResetBehavior::Hold, duration)
+    }
+
+    /// 带 **predicate / reset** 的成品脚本入口（C 批）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn bind_expr_gated(
+        &mut self,
+        object: Handle,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        clock: ClockProgram,
+        predicate: Option<Expr>,
+        reset: ResetBehavior,
         duration: f64,
     ) -> Result<(), ExprBindError> {
         record_expression(
@@ -478,6 +550,9 @@ impl SceneScript {
             target,
             expr,
             library,
+            clock,
+            predicate,
+            reset,
             duration,
         )
     }
@@ -537,7 +612,10 @@ impl SceneScript {
     /// - `Create` 失败 ⇒ 中止并返回 [`ScriptError`]（前面已创建的对象**保留**，
     ///   与 `Scene` 自身的提交粒度一致 —— Scene 无事务）；
     /// - 成功 ⇒ 产出 [`SceneRecipe`]（时钟树 + 绑定表 + 句柄映射），由调用方插入调度器。
-    pub fn commit<S: SceneContract>(self, scene: &mut S) -> Result<SceneRecipe, ScriptError> {
+    pub fn commit<S: SceneContract + crate::scene_write::SceneRead>(
+        self,
+        scene: &mut S,
+    ) -> Result<SceneRecipe, ScriptError> {
         let mut handles: Vec<ObjectId> = Vec::with_capacity(self.creates.len());
 
         for (i, mut components) in self.creates.into_iter().enumerate() {
@@ -577,6 +655,14 @@ impl SceneScript {
             &mut forest,
             &mut bindings,
         );
+
+        // `reset = Reset` 的**初值**：此刻场景刚建好、绑定还没写过任何字段
+        // ⇒ 直接读就是"绑定生效前的值"（之后每帧不再需要历史）。
+        for binding in &mut bindings.bindings {
+            if binding.reset == ResetBehavior::Reset && binding.initial.is_none() {
+                binding.initial = binding.target.read(scene);
+            }
+        }
 
         Ok(SceneRecipe {
             forest,

@@ -78,6 +78,9 @@ mod tests {
             target: std::sync::Arc::new(MorphT {
                 id: crate::contract::object_id_of(entity),
             }),
+            predicate: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
             seek_kind: SeekKind::O1,
         });
 

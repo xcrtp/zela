@@ -80,7 +80,10 @@ pub use transform_hierarchy::{
 };
 // `Transform2D` 的模块路径（`ze_scene_core::transform`；本层转发以便下游少一个依赖）。
 pub use ze_scene_core::transform;
-pub use ze_time::{AnimValue, ClockForest, ClockId, ClockNode, Curve, Director, Interp, PlayMode};
+pub use ze_time::{
+    AnimValue, ClockForest, ClockId, ClockLink, ClockNode, ClockProgram, Curve, Director, Interp,
+    PlayMode,
+};
 // 相机与摆放组件归核心层对象模块：本层**不转发**具体类型，
 // 消费方直接 `use ze_scene_core::{Camera2D, Camera3D, Projection, Transform}`。
 // `#[macro_export]` 已经把 auto_into 宏导出到 crate 根（与模块无关），

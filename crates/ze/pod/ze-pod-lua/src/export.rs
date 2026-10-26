@@ -176,6 +176,34 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                 names.join(", ")
             ));
         }
+        // `clock_*` 的别名表（与绑定层一致）：`clock.time()` / `clock.shift(…)` …
+        let clock_calls: Vec<_> = capability
+            .calls
+            .iter()
+            .filter(|item| item.signature.name.starts_with("clock_"))
+            .collect();
+        if !clock_calls.is_empty() {
+            out.push_str("---@class ClockApi\nclock = {}\n\n");
+            for item in clock_calls {
+                let short = item
+                    .signature
+                    .name
+                    .strip_prefix("clock_")
+                    .unwrap_or(item.signature.name);
+                for param in item.io.params {
+                    out.push_str(&format!(
+                        "---@param {} {}\n",
+                        param.name,
+                        lua_type_name(param.ty)
+                    ));
+                }
+                if !matches!(item.io.ret, TypeSpec::Struct { name: "()", .. }) {
+                    out.push_str(&format!("---@return {}\n", lua_type_name(item.io.ret)));
+                }
+                let names: Vec<&str> = item.io.params.iter().map(|param| param.name).collect();
+                out.push_str(&format!("function clock.{short}({}) end\n\n", names.join(", ")));
+            }
+        }
     }
     out
 }
