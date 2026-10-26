@@ -56,6 +56,25 @@ pub struct ReadSpec {
     pub object: Handle,
 }
 
+/// `Select { cond = ..., then = ..., otherwise = ... }`：**值分支**（H 批求值已实现）。
+///
+/// 脚本侧第三个字段叫 `otherwise` 而不是 `else` —— Python / Lua / TS 里 `else` 是
+/// 关键字（与 `Reset.none → Skip` 同一处理）。产物里的节点形状仍是 `cond / then / else`，
+/// 两套命名在 `select_ctor` 一处转换。
+///
+/// 语义：`cond` 必须是 Bool（装配期 L2 推导 + 运行期 `EvalError::SelectCondition`
+/// 双重把关）；两个分支**惰性求值** —— 只算被选中那一支。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Select")]
+pub struct SelectSpec {
+    /// 条件（Bool 表达式，通常是 `Gt { a = expr.read{…}, b = … }`）。
+    pub cond: Handle,
+    /// `cond == true` 时求值的分支。
+    pub then: Handle,
+    /// `cond == false` 时求值的分支（产物字段名是 `else`）。
+    pub otherwise: Handle,
+}
+
 /// 一层**时钟链接**：`local = (parent_local − shift) × rate`。
 ///
 /// 这是脚本侧 `Clock` 的扁平化形态：`clock.nest(parent, child)` 只是把链拼起来，
@@ -262,7 +281,7 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "7",
+    version = "8",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -288,6 +307,11 @@ pub struct MathApi<'a> {
     /// `Read { channel = ..., object = ... }`：读**某对象**上的组件字段
     /// （**G 批通道读端**；运行期由宿主 `Mono::read_object` 经 `SceneRead` 读回）。
     pub read: fn(&'a dyn Pod, spec: ReadSpec) -> Handle,
+
+    /// `Select { cond, then, otherwise }`：**值分支**（H 批）。
+    ///
+    /// `cond` 必须 Bool；两个分支惰性求值（只算被选中那一支）。
+    pub select: fn(&'a dyn Pod, spec: SelectSpec) -> Handle,
 
     /// `Sin { of = ... }`（表构造器；与 `spawn{}` 同构）。
     pub sin: fn(&'a dyn Pod, spec: SinSpec) -> Handle,
@@ -375,9 +399,9 @@ pub struct MathApi<'a> {
 // 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
 
 /// `zela.math` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
-pub const MATH_API_VERSION: &str = "7";
-/// `zela.math` 的 `hash(signatures())` 基线（G 批 `expr.read` 后更新）。
-pub const MATH_API_FINGERPRINT: u64 = 6_414_786_024_451_512_435;
+pub const MATH_API_VERSION: &str = "8";
+/// `zela.math` 的 `hash(signatures())` 基线（H 批 `expr.select` 后更新）。
+pub const MATH_API_FINGERPRINT: u64 = 8_308_800_684_048_990_846;
 
 #[cfg(test)]
 mod fingerprint_tests {

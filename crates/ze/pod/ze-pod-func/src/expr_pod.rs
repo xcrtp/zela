@@ -27,7 +27,7 @@ use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, Qualifi
 use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec, EqSpec, GeSpec,
     GtSpec, LeSpec, LtSpec, MulSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec,
-    ScaleSpec, SinSpec, SumSpec,
+    ScaleSpec, SelectSpec, SinSpec, SumSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
 
@@ -36,7 +36,8 @@ pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// 函子库版本（进产物；加算子递增它，`zela.scene` 不受影响）。
 ///
 /// `7`：**G 批**新增 `read`（读某对象的组件字段；`zela.math::read`）。
-pub const LIBRARY_VERSION: &str = "7";
+/// `8`：**H 批**新增 `select`（值分支；`zela.math::select`）。
+pub const LIBRARY_VERSION: &str = "8";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -144,6 +145,12 @@ impl ExprPod {
             "zela.math.Read",
             HANDLE,
             read_ctor,
+        );
+        registry.register_fn1_named::<SelectSpec, Handle>(
+            "zela.math::select",
+            "zela.math.Select",
+            HANDLE,
+            select_ctor,
         );
         registry.register_fn1_named::<BindSpec, ()>(
             "zela.math::bind",
@@ -272,6 +279,7 @@ impl Pod for ExprPod {
             )),
             "clock_time" => Box::new(clock_time(self)),
             "read" => Box::new(read_ctor(self, arg::<ReadSpec>(args, 0)?.clone())),
+            "select" => Box::new(select_ctor(self, arg::<SelectSpec>(args, 0)?.clone())),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
             other => {
@@ -482,6 +490,19 @@ fn read_ctor(pod: &dyn Pod, spec: ReadSpec) -> Handle {
     this.intern(Expr::read(channel, spec.object.slot() as u64))
 }
 
+/// **H 批**：`Select { cond, then, otherwise }` → `Expr::select`（值分支）。
+///
+/// 脚本侧第三个字段叫 `otherwise`（`else` 是三种宿主语言的关键字）；产物节点
+/// 仍是 `cond / then / else` —— 转换只在这一行发生。
+fn select_ctor(pod: &dyn Pod, spec: SelectSpec) -> Handle {
+    let this = expr_pod(pod);
+    this.intern(Expr::select(
+        child(this, spec.cond),
+        child(this, spec.then),
+        child(this, spec.otherwise),
+    ))
+}
+
 /// `ty` 字符串（F 批 `FieldSpec.ty` 的映射）→ 通道类型（与 [`crate::infer`] 同款约定：
 /// `zela.` 前缀剥掉后按短名映射）。
 fn channel_type_of(ty: &str) -> ChannelType {
@@ -668,6 +689,37 @@ mod tests {
         assert_eq!(json["library"]["namespace"], LIBRARY_NAMESPACE);
         assert_eq!(json["library"]["version"], LIBRARY_VERSION);
         assert_eq!(json["expr"]["node"]["type"], "call");
+    }
+
+    /// **H 批**：`select` 构造器生成 `Node::Select`；脚本侧 `otherwise`
+    /// 映射到产物字段 `else`（节点形状不随脚本命名变化）。
+    #[test]
+    fn select_builds_a_value_branch() {
+        let this = pod();
+        let cond = gt_ctor(
+            &this,
+            GtSpec {
+                a: time(&this),
+                b: pure(&this, 0.5),
+            },
+        );
+        let h = select_ctor(
+            &this,
+            SelectSpec {
+                cond,
+                then: pure(&this, 1.0),
+                otherwise: pure(&this, 0.0),
+            },
+        );
+        let Node::Select { cond, then, r#else } = &this.tree(h).unwrap().node else {
+            panic!("期望 Select 节点");
+        };
+        assert!(matches!(cond.node, Node::Call { ref op, .. } if op.name == "gt"));
+        assert!(matches!(then.node, Node::Pure { value: Literal::F64(1.0) }));
+        assert!(
+            matches!(r#else.node, Node::Pure { value: Literal::F64(0.0) }),
+            "otherwise → 产物字段 else"
+        );
     }
 
     #[test]
