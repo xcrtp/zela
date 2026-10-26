@@ -917,6 +917,9 @@ pub fn collect_channel_capabilities(sources: &[(&str, &str)]) -> Vec<Capability>
                     if address != name {
                         spellings.push(address);
                     }
+                    // 作者侧的常量路径（`Gradient.channel.from`）也算使用：
+                    // 表达式 API 只能经常量引用通道（没有裸地址字符串入口）。
+                    spellings.push(format!("{struct_name}.channel.{field}"));
                     out.push(Capability {
                         kind: "Target".to_string(),
                         name,
@@ -1146,6 +1149,12 @@ fn target_capability(spec: SpecFields, line_number: usize) -> Capability {
     if spec.address != spec.name {
         spellings.push(spec.address);
     }
+    // 作者侧的常量路径（`Gradient.channel.from`）：表达式 API 只能经常量引用
+    // 通道（没有裸地址字符串入口），所以常量路径命中同样算"作品用到了它"。
+    spellings.push(format!(
+        "{}.channel.{}",
+        spec.component, spec.field
+    ));
     if spec.component == "Transform" {
         spellings.push(format!(
             "TransformChannel.{}{}",

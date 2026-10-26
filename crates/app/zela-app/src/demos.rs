@@ -72,6 +72,9 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_window", "曲线窗口", "cap_window.lua"),
     lua!("cap_mix", "2D/3D混排", "cap_mix.lua"),
     lua!("expr_demo", "表达式驱动", "expr_demo.lua"),
+    lua!("cap_channels2d", "2D字段通道", "cap_channels2d.lua"),
+    lua!("cap_channels3d", "3D字段通道", "cap_channels3d.lua"),
+    lua!("expr_read", "通道读端与值分支", "expr_read.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。
