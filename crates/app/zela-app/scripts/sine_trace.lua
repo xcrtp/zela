@@ -1,10 +1,11 @@
--- sine_trace.lua — 小球随 Reveal 画出正弦曲线（**读端管道**驱动）。
+-- sine_trace.lua — 小球随 Reveal 画出正弦曲线（**读端管道 + 显式时钟**驱动）。
 --
--- 数据流是一条管道，没有任何逐段动画循环：
+-- 数据流是一条管道，没有任何逐段动画循环，也不依赖隐式游标（`scene.animate`）：
 --
---   Curve.Ramp ──写──> Reveal.end ──读──> Reveal.current_pos ──写──> 小球 Circle.center
+--   clock.time ──Scale(1/T)──写──> Reveal.end ──读──> Reveal.current_pos ──写──> 小球 Circle.center
 --
---   · `Reveal.end` 由一条 Ramp 常速推进（时间管道）；
+--   · 书写进度 `Reveal.end = t / T`：**显式时钟**（`clock = clock.scale(1.0)`）
+--     的局部时间经表达式算出，没有"当前游标"这种隐式状态；
 --   · 小球不自己算曲线：它通过 `expr.read` 读曲线对象的 **`Reveal.current_pos`**
 --     （只读派生通道 = 归一化弧长 `end` 处的笔尖位置，渲染裁剪同一口径）；
 --   · 因此"小球在笔尖上"是**结构上成立**的，不依赖采样密度或插值巧合。
@@ -12,17 +13,17 @@
 -- 脚本里唯一的循环是**几何采样**（生成正弦折线本身），与动画无关。
 --
 -- 能力使用：Reveal（S2 书写）+ `Reveal.end` / `Reveal.current_pos` /
--- `Circle.center` 通道 + `expr.read`（G 批读端）+ `Polyline`（静态坐标轴）。
--- 数值量化到 1e-4，保证跨平台逐位一致。
+-- `Circle.center` 通道 + `expr.read`（G 批读端）+ `clock`（B 批显式时钟）+
+-- `Polyline`（静态坐标轴）。数值量化到 1e-4，保证跨平台逐位一致。
 
 local TAU = 2.0 * math.pi
 
-local PERIODS = 2.0     -- 画几个正弦周期
-local AMP = 1.2         -- 振幅（世界单位）
+local PERIODS = 2.0 -- 画几个正弦周期
+local AMP = 1.2     -- 振幅（世界单位）
 local X0, X1 = -4.2, 4.2
-local BASE_Y = 0.0      -- 中轴高度
-local SAMPLES = 240     -- 折线点数（只需足够平滑；同步与密度无关）
-local TOTAL_T = 6.0     -- 总时长（秒）
+local BASE_Y = 0.0  -- 中轴高度
+local SAMPLES = 240 -- 折线点数（只需足够平滑；同步与密度无关）
+local TOTAL_T = 6.0 -- 总时长（秒）
 
 local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
@@ -76,11 +77,15 @@ local curve = scene.spawn({
     Reveal { points = curve_points, closed = false },
     Stroke { width = 3.0, color = rgba(120, 220, 255, 255) },
 })
-scene.animate(curve, scene.clip("Reveal.end", Curve.Ramp {
-    from = 0.0,
-    to = 1.0,
-    dur = TOTAL_T,
-}), TOTAL_T)
+-- 书写进度：`end = t / T`。`t` 是**显式时钟**的局部时间（不再是隐式游标）。
+-- `t > T` 后 `end` 继续增长，但渲染裁剪与 `Reveal::current_pos` 都会把 `end` 钳到 1
+-- ⇒ 画面停在"整条曲线 + 球在终点"，不会越界。
+expr.bind {
+    object = curve,
+    target = Reveal.channel["end"],
+    root = Scale { k = 1.0 / TOTAL_T, of = Mul(clock.time(), clock.time()) },
+    clock = clock.scale(1.0),
+}
 
 -- ── 小球：读端管道 —— 位置完全由 `Reveal.current_pos` 决定 ────────────
 local ball = scene.spawn({
