@@ -20,6 +20,8 @@ ze-render-ir = { path = "../../kernel/ze-render-ir" }
 ze-scene-contract = { path = "../../kernel/ze-scene-contract" }
 # `#[derive(Describable)]` 派生宏（生成 Deref + impl Describable）。
 ze-macro = { path = "../../kernel/ze-macro" }
+# `#[derive(Channels)]` 派生宏（字段通道显式注册 → FieldSpec / 通道表）。
+ze-scene-macros = { path = "../ze-scene-macros" }
 # 动画曲线 / 时钟（Binding / Timeline 的纯数据来源）。
 ze-time = { path = "../../kernel/ze-time" }
 # S3：表达式绑定（只做结构 + 求值程序；效果值经宿主 M 注入）。

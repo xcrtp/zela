@@ -31,10 +31,14 @@ use crate::affine::{map_path_affine, uniform_scale};
     PartialEq,
     Default,
     ze_macro::Describable,
+    ze_scene_macros::Channels,
     serde::Serialize,
     serde::Deserialize,
 )]
 #[describable(Stroke, Fill)]
+// F 批：radius 用持久化名覆盖（既有 payload 兼容）；center 缺省名 = 规范地址。
+#[channel(name = "CircleRadius", radius: f32)]
+#[channel(center: Vec2)]
 pub struct Circle(pub Circle2D);
 
 impl Circle {
@@ -171,10 +175,16 @@ impl ToShape2D for Line {
     PartialEq,
     Default,
     ze_macro::Describable,
+    ze_scene_macros::Channels,
     serde::Serialize,
     serde::Deserialize,
 )]
 #[describable(Stroke, Fill)]
+// F 批：四个字段全量注册（缺省名 = 规范地址 "Arrow.from" 等）。
+#[channel(from: Vec2)]
+#[channel(to: Vec2)]
+#[channel(head_length: f32)]
+#[channel(head_width: f32)]
 pub struct Arrow(pub Arrow2D);
 
 impl Arrow {

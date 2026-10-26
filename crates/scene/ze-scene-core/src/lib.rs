@@ -19,6 +19,9 @@
 // `object/*.rs` 内部的 `crate::camera` / `crate::primitives` 等路径是搬迁前
 // （`ze-object` 根）的写法；根级 `pub use` 让这些路径继续成立，搬迁零改写。
 
+// `#[derive(Channels)]` 生成的全限定路径引用 `::ze_scene_core::...`（F 批）。
+extern crate self as ze_scene_core;
+
 pub mod object;
 
 // 组件 / 图元 / 纯数据（B3-1b 从 `zela-scene` 下沉）。

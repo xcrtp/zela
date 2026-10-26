@@ -50,8 +50,16 @@ pub use three_d::*;
 /// 由 `SceneRecordSystem` 采样时取 `x + phase` 实现曲线水平平移。
 /// `omega` 为常量；`phase` 由 `BindingApplySystem` 每帧覆盖。
 #[derive(
-    Debug, Clone, derive_builder::Builder, derive_new::new, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    derive_builder::Builder,
+    derive_new::new,
+    ze_scene_macros::Channels,
+    serde::Serialize,
+    serde::Deserialize,
 )]
+// F 批：phase 用持久化名覆盖（既有 payload 兼容）；omega 是常量不注册。
+#[channel(name = "Phase", phase: f32)]
 pub struct PhaseAnim {
     pub phase: f32,
     pub omega: f32,
@@ -63,7 +71,9 @@ pub struct PhaseAnim {
 /// 设计（S1 计划 §3.3）：**只写 `t`**（一个 f32），不每帧重建 `from`/`to` —— 为 S3
 /// 上 GPU 预留（from/to 上传一次，t 每帧一个 float）。描边样式（`StrokeSolid`）
 /// 由 zela-render 提供，作为同一实体上的独立组件，本组件只管几何。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+// F 批：只注册 `t`（设计上唯一每帧变量，见类型文档）；from/to/samples 不是通道。
+#[channel(name = "MorphT", t: f32)]
 pub struct MorphShape {
     pub from: ze_notion::Path2D,
     pub to: ze_notion::Path2D,
@@ -102,7 +112,10 @@ pub struct ContentTextureItem;
 /// 本组件不在 `record_scene` 的组件组合枚举里 ⇒ 天然互斥。
 ///
 /// 默认 `start = 0` / `end = 1` = **完整可见**（与不带 reveal 的绘制等价）。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+// F 批：start / end 全量注册（end 缺省名 = 规范地址 "Reveal.end"）；path 不是通道。
+#[channel(start: f32)]
+#[channel(end: f32)]
 pub struct Reveal {
     pub path: ze_notion::Path2D,
     /// 可见区间起点（归一化弧长 ∈ [0,1]），由 `RevealRange` 写入。

@@ -156,7 +156,10 @@ impl MeshGeometry {
 /// assert_eq!(m.roughness, 0.5);
 /// assert!(m.normal_map.is_none());
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+// F 批：metallic / roughness 全量注册（缺省名 = 规范地址 "Material3D.metallic" 等）。
+#[channel(metallic: f32)]
+#[channel(roughness: f32)]
 pub struct Material3D {
     /// 整体颜色（无纹理时的着色来源，有纹理时作为调制色）。
     pub color: Color32,
@@ -224,7 +227,9 @@ impl Material3D {
 ///
 /// 光照计算在渲染层统一消费：`SceneRecord3DSystem` 每帧把它录进
 /// `LightQueue`，后端据此上传**场景级** light uniform buffer。
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+// F 批：intensity 全量注册（缺省名 = 规范地址 "Light.intensity"）。
+#[channel(intensity: f32)]
 pub struct Light {
     /// 光源类型（方向光 / 点光）。
     pub kind: LightKind,

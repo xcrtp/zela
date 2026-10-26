@@ -338,7 +338,7 @@ fn service(pod: &dyn Pod) -> &SceneServicePod {
 
 /// 场景地址表 → **通道常量**（`Circle.channel.radius` …），与 [`Pod::channels`] 同一份。
 ///
-/// 只导出**单字段**规格（`address == "组件.字段"`）：组合选择键
+/// 只导出**单字段**规格（`is_composite == false`）：组合选择键
 /// （`Camera2DFraming` / `RevealRange`）没有单一的 `(组件, 字段)`，不能当常量挂。
 ///
 /// 声明文件生成器也调它（不需要构造 Pod 实例）。
@@ -348,10 +348,7 @@ pub fn channels() -> &'static [ze_pod_core::ChannelSpec] {
         use ze_scene_core::animation::TARGETS;
         TARGETS
             .iter()
-            .filter(|entry| {
-                let spec = entry.spec;
-                spec.address == format!("{}.{}", spec.component, spec.field)
-            })
+            .filter(|entry| !entry.spec.is_composite)
             .map(|entry| ze_pod_core::ChannelSpec {
                 namespace: "zela.scene",
                 component: entry.spec.component,

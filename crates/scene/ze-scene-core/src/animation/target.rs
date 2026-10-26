@@ -33,10 +33,16 @@ use ze_pod_core::{ScalarKind, TypeSpec};
 use ze_scene_contract::ObjectId;
 use ze_time::AnimValue;
 
-use crate::components::{MorphShape, PhaseAnim, Reveal};
-use crate::object::{Camera3D, Circle, Framing2D, Transform};
+use crate::components::{MORPH_SHAPE_T, PHASE_ANIM_PHASE, Reveal};
+use crate::object::camera::CAMERA3D_EYE;
+use crate::object::primitives::CIRCLE_RADIUS;
+use crate::object::{Framing2D, Transform};
 use crate::scene_write::{read_component, with_component, SceneRead, SceneWrite};
 use ze_render_ir::Opacity;
+
+/// `scene_clip` 装配失败时的占位回退（F 批：make 构造器随 `#[derive(Channels)]`
+/// 生成在 `object::primitives`，这里重导出保持 `animation::target::make_circle_radius` 路径）。
+pub use crate::object::primitives::make_circle_radius;
 
 /// 目标写入失败（**显式**，不静默跳过）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,7 +56,8 @@ pub enum TargetError {
 }
 
 impl TargetError {
-    fn mismatch(target: &'static str, expected: &'static str, value: &AnimValue) -> Self {
+    /// 类型不符（`pub(crate)`：`#[derive(Channels)]` 生成的 write fn 也要调用）。
+    pub(crate) fn mismatch(target: &'static str, expected: &'static str, value: &AnimValue) -> Self {
         Self::TypeMismatch {
             target,
             expected,
@@ -123,6 +130,10 @@ pub struct FieldSpec {
     pub field: &'static str,
     /// 字段类型（声明文件 / 通道常量用）。
     pub ty: &'static TypeSpec,
+    /// **复合目标**标记（F 批）：一个 spec 写多个字段 / 多种值型
+    /// （`Camera2DFraming` / `RevealRange`）⇒ 没有单一的 `(组件, 字段)`，
+    /// `channels()` 据此排除，不能当通道常量挂。
+    pub is_composite: bool,
     /// 写入；**类型不符必须报错**。
     pub write: fn(&mut dyn SceneWrite, ObjectId, &AnimValue) -> Result<(), TargetError>,
     /// 读取（read 与 write 同源）。
@@ -185,13 +196,14 @@ mod coerce {
 // ─── 字段规格（新增字段只写这里一行）─────────────────────────────────
 
 macro_rules! scalar_spec {
-    ($ident:ident, $name:literal, $address:literal, $component:ty, $field:ident) => {
+    ($ident:ident, $name:literal, $address:literal, $component_name:literal, $component:ty, $field:ident) => {
         pub static $ident: FieldSpec = FieldSpec {
             name: $name,
             address: $address,
-            component: stringify!($component),
+            component: $component_name,
             field: stringify!($field),
             ty: &TypeSpec::Scalar(ScalarKind::F32),
+            is_composite: false,
             write: |scene, id, value| {
                 let value = value
                     .try_scalar()
@@ -206,75 +218,27 @@ macro_rules! scalar_spec {
     };
 }
 
-macro_rules! vec2_spec {
-    ($ident:ident, $name:literal, $address:literal, $component:ty, $field:ident) => {
-        pub static $ident: FieldSpec = FieldSpec {
-            name: $name,
-            address: $address,
-            component: stringify!($component),
-            field: stringify!($field),
-            ty: &TypeSpec::Struct {
-                name: "zela.Vec2",
-                fields: &[],
-            },
-            write: |scene, id, value| {
-                let value = value
-                    .try_vec2()
-                    .ok_or_else(|| TargetError::mismatch($name, "vec2", value))?;
-                with_component::<$component, _>(scene, id, |c| c.$field = value);
-                Ok(())
-            },
-            read: |scene, id| {
-                read_component::<$component, _>(scene, id, |c| AnimValue::Vec2(c.$field))
-            },
-        };
-    };
-}
-
-macro_rules! vec3_spec {
-    ($ident:ident, $name:literal, $address:literal, $component:ty, $field:ident) => {
-        pub static $ident: FieldSpec = FieldSpec {
-            name: $name,
-            address: $address,
-            component: stringify!($component),
-            field: stringify!($field),
-            ty: &TypeSpec::Struct {
-                name: "zela.Vec3",
-                fields: &[],
-            },
-            write: |scene, id, value| {
-                let value = value
-                    .try_vec3()
-                    .ok_or_else(|| TargetError::mismatch($name, "vec3", value))?;
-                with_component::<$component, _>(scene, id, |c| c.$field = value);
-                Ok(())
-            },
-            read: |scene, id| {
-                read_component::<$component, _>(scene, id, |c| AnimValue::Vec3(c.$field))
-            },
-        };
-    };
-}
-
-scalar_spec!(CIRCLE_RADIUS, "CircleRadius", "Circle.radius", Circle, radius);
-scalar_spec!(PHASE, "Phase", "PhaseAnim.phase", PhaseAnim, phase);
-scalar_spec!(MORPH_T, "MorphT", "MorphShape.t", MorphShape, t);
-vec3_spec!(CAMERA_EYE, "CameraEye", "Camera3D.eye", Camera3D, eye);
-vec2_spec!(
-    FRAMING2D_CENTER,
-    "Framing2D.center",
-    "Framing2D.center",
-    Framing2D,
-    center
+// 类型在 ze-render-ir 的组件（ze-scene-core 依赖 ze-render-ir，方向不可逆，
+// derive 无法用于它们 ⇒ 保持手写规格）。`name` 缺省 = 规范地址。
+scalar_spec!(DASH_PERIOD, "Dash.period", "Dash.period", "Dash", ze_render_ir::Dash, period);
+scalar_spec!(DASH_DUTY, "Dash.duty", "Dash.duty", "Dash", ze_render_ir::Dash, duty);
+scalar_spec!(DASH_PHASE, "Dash.phase", "Dash.phase", "Dash", ze_render_ir::Dash, phase);
+scalar_spec!(
+    CURVE_WINDOW_LO,
+    "CurveWindow.lo",
+    "CurveWindow.lo",
+    "CurveWindow",
+    ze_render_ir::CurveWindow,
+    lo
 );
 scalar_spec!(
-    FRAMING2D_SCALE,
-    "Framing2D.scale",
-    "Framing2D.scale",
-    Framing2D,
-    scale
+    CURVE_WINDOW_HI,
+    "CurveWindow.hi",
+    "CurveWindow.hi",
+    "CurveWindow",
+    ze_render_ir::CurveWindow,
+    hi
 );
-scalar_spec!(REVEAL_END, "Reveal.end", "Reveal.end", Reveal, end);
 
 /// 旧名 `Camera2DFraming`：`Scalar → scale`、`Vec2 → center`（一个 target 两种值型）。
 ///
@@ -286,6 +250,7 @@ pub static CAMERA2D_FRAMING: FieldSpec = FieldSpec {
     component: "Framing2D",
     field: "scale",
     ty: &TypeSpec::Scalar(ScalarKind::F32),
+    is_composite: true,
     write: |scene, id, value| {
         if let Some(scale) = value.try_scalar() {
             with_component::<Framing2D, _>(scene, id, |f| f.scale = scale);
@@ -311,6 +276,7 @@ pub static REVEAL_RANGE: FieldSpec = FieldSpec {
     component: "Reveal",
     field: "end",
     ty: &TypeSpec::Scalar(ScalarKind::F32),
+    is_composite: true,
     write: |scene, id, value| {
         if let Some(end) = value.try_scalar() {
             with_component::<Reveal, _>(scene, id, |r| r.end = end);
@@ -340,6 +306,7 @@ pub static REVEAL_RANGE_ADDR: FieldSpec = FieldSpec {
         name: "zela.Vec2",
         fields: &[],
     },
+    is_composite: false,
     write: |scene, id, value| {
         let range = value
             .try_vec2()
@@ -365,6 +332,7 @@ pub static TRANSFORM_POSITION: FieldSpec = FieldSpec {
         name: "zela.Vec3",
         fields: &[],
     },
+    is_composite: false,
     write: |scene, id, value| {
         if value.try_vec2().is_none() && value.try_vec3().is_none() {
             return Err(TargetError::mismatch(
@@ -392,6 +360,7 @@ pub static TRANSFORM_ROTATION: FieldSpec = FieldSpec {
     component: "Transform",
     field: "rotation",
     ty: &TypeSpec::Scalar(ScalarKind::F32),
+    is_composite: false,
     write: |scene, id, value| {
         let rotation = coerce::rotation_z(value)
             .ok_or_else(|| TargetError::mismatch("TransformRotation", "scalar", value))?;
@@ -413,6 +382,7 @@ pub static TRANSFORM_SCALE: FieldSpec = FieldSpec {
     component: "Transform",
     field: "scale",
     ty: &TypeSpec::Scalar(ScalarKind::F32),
+    is_composite: false,
     write: |scene, id, value| {
         let scale = coerce::splat3(value)
             .ok_or_else(|| TargetError::mismatch("TransformScale", "scalar", value))?;
@@ -431,6 +401,7 @@ pub static OPACITY_VALUE: FieldSpec = FieldSpec {
     component: "Opacity",
     field: "value",
     ty: &TypeSpec::Scalar(ScalarKind::F32),
+    is_composite: false,
     write: |scene, id, value| {
         let value = value
             .try_scalar()
@@ -439,6 +410,59 @@ pub static OPACITY_VALUE: FieldSpec = FieldSpec {
         Ok(())
     },
     read: |scene, id| read_component::<Opacity, _>(scene, id, |o| AnimValue::Scalar(o.0)),
+};
+
+/// 写 `Gradient.from`（`AnimValue::Vec3` ↔ IR 的 `[f32; 3]`；`Gradient.stops`
+/// 是 `Vec<[f32; 4]>`，**没有 AnimValue 表示，不注册**）。
+pub static GRADIENT_FROM: FieldSpec = FieldSpec {
+    name: "Gradient.from",
+    address: "Gradient.from",
+    component: "Gradient",
+    field: "from",
+    ty: &TypeSpec::Struct {
+        name: "zela.Vec3",
+        fields: &[],
+    },
+    is_composite: false,
+    write: |scene, id, value| {
+        let v = value
+            .try_vec3()
+            .ok_or_else(|| TargetError::mismatch("Gradient.from", "vec3", value))?;
+        with_component::<ze_render_ir::Gradient, _>(scene, id, |g| {
+            g.from = [v.x, v.y, v.z];
+        });
+        Ok(())
+    },
+    read: |scene, id| {
+        read_component::<ze_render_ir::Gradient, _>(scene, id, |g| {
+            AnimValue::Vec3(ze_notion::Vec3::new(g.from[0], g.from[1], g.from[2]))
+        })
+    },
+};
+
+/// 写 `Gradient.to`（与 [`GRADIENT_FROM`] 对称）。
+pub static GRADIENT_TO: FieldSpec = FieldSpec {
+    name: "Gradient.to",
+    address: "Gradient.to",
+    component: "Gradient",
+    field: "to",
+    ty: &TypeSpec::Struct {
+        name: "zela.Vec3",
+        fields: &[],
+    },
+    is_composite: false,
+    write: |scene, id, value| {
+        let v = value
+            .try_vec3()
+            .ok_or_else(|| TargetError::mismatch("Gradient.to", "vec3", value))?;
+        with_component::<ze_render_ir::Gradient, _>(scene, id, |g| g.to = [v.x, v.y, v.z]);
+        Ok(())
+    },
+    read: |scene, id| {
+        read_component::<ze_render_ir::Gradient, _>(scene, id, |g| {
+            AnimValue::Vec3(ze_notion::Vec3::new(g.to[0], g.to[1], g.to[2]))
+        })
+    },
 };
 
 // ─── 构造器表：`name/address → fn(ObjectId) -> Arc<dyn Target>` ─────────
@@ -451,20 +475,20 @@ macro_rules! make_target {
     };
 }
 
-make_target!(make_circle_radius, CIRCLE_RADIUS);
-make_target!(make_phase, PHASE);
-make_target!(make_camera_eye, CAMERA_EYE);
-make_target!(make_morph_t, MORPH_T);
 make_target!(make_camera2d_framing, CAMERA2D_FRAMING);
-make_target!(make_camera2d_center, FRAMING2D_CENTER);
-make_target!(make_framing2d_scale, FRAMING2D_SCALE);
 make_target!(make_reveal_range, REVEAL_RANGE);
 make_target!(make_reveal_range_addr, REVEAL_RANGE_ADDR);
-make_target!(make_reveal_end, REVEAL_END);
 make_target!(make_transform_position, TRANSFORM_POSITION);
 make_target!(make_transform_rotation, TRANSFORM_ROTATION);
 make_target!(make_transform_scale, TRANSFORM_SCALE);
 make_target!(make_opacity_value, OPACITY_VALUE);
+make_target!(make_dash_period, DASH_PERIOD);
+make_target!(make_dash_duty, DASH_DUTY);
+make_target!(make_dash_phase, DASH_PHASE);
+make_target!(make_curve_window_lo, CURVE_WINDOW_LO);
+make_target!(make_curve_window_hi, CURVE_WINDOW_HI);
+make_target!(make_gradient_from, GRADIENT_FROM);
+make_target!(make_gradient_to, GRADIENT_TO);
 
 /// 表项：一个字段规格 + 它的构造器。
 #[derive(Clone, Copy)]
@@ -475,33 +499,10 @@ pub struct TargetEntry {
 
 /// **唯一的地址表**（`Target::name()` / 规范地址都能查）。
 pub const TARGETS: &[TargetEntry] = &[
-    TargetEntry {
-        spec: &CIRCLE_RADIUS,
-        make: make_circle_radius,
-    },
-    TargetEntry {
-        spec: &PHASE,
-        make: make_phase,
-    },
-    TargetEntry {
-        spec: &CAMERA_EYE,
-        make: make_camera_eye,
-    },
-    TargetEntry {
-        spec: &MORPH_T,
-        make: make_morph_t,
-    },
+    // 手写规格：组合目标（多字段 / 多值型）与类型在 ze-render-ir 的组件。
     TargetEntry {
         spec: &CAMERA2D_FRAMING,
         make: make_camera2d_framing,
-    },
-    TargetEntry {
-        spec: &FRAMING2D_CENTER,
-        make: make_camera2d_center,
-    },
-    TargetEntry {
-        spec: &FRAMING2D_SCALE,
-        make: make_framing2d_scale,
     },
     TargetEntry {
         spec: &REVEAL_RANGE,
@@ -510,10 +511,6 @@ pub const TARGETS: &[TargetEntry] = &[
     TargetEntry {
         spec: &REVEAL_RANGE_ADDR,
         make: make_reveal_range_addr,
-    },
-    TargetEntry {
-        spec: &REVEAL_END,
-        make: make_reveal_end,
     },
     TargetEntry {
         spec: &TRANSFORM_POSITION,
@@ -530,6 +527,109 @@ pub const TARGETS: &[TargetEntry] = &[
     TargetEntry {
         spec: &OPACITY_VALUE,
         make: make_opacity_value,
+    },
+    TargetEntry {
+        spec: &DASH_PERIOD,
+        make: make_dash_period,
+    },
+    TargetEntry {
+        spec: &DASH_DUTY,
+        make: make_dash_duty,
+    },
+    TargetEntry {
+        spec: &DASH_PHASE,
+        make: make_dash_phase,
+    },
+    TargetEntry {
+        spec: &CURVE_WINDOW_LO,
+        make: make_curve_window_lo,
+    },
+    TargetEntry {
+        spec: &CURVE_WINDOW_HI,
+        make: make_curve_window_hi,
+    },
+    TargetEntry {
+        spec: &GRADIENT_FROM,
+        make: make_gradient_from,
+    },
+    TargetEntry {
+        spec: &GRADIENT_TO,
+        make: make_gradient_to,
+    },
+    // 派生组件通道（F 批）：`#[derive(Channels)]` 生成的 const / make fn 逐个登记。
+    // （stable Rust 尚无 `[..const_array]` 数组展开语法，逐项与 `..CHANNELS` spread 等价；
+    // `{STRUCT}_CHANNELS` 数组仍由宏生成，作为同批 const 的汇总。）
+    TargetEntry {
+        spec: &CIRCLE_RADIUS,
+        make: crate::object::primitives::make_circle_radius,
+    },
+    TargetEntry {
+        spec: &crate::object::primitives::CIRCLE_CENTER,
+        make: crate::object::primitives::make_circle_center,
+    },
+    TargetEntry {
+        spec: &crate::object::primitives::ARROW_FROM,
+        make: crate::object::primitives::make_arrow_from,
+    },
+    TargetEntry {
+        spec: &crate::object::primitives::ARROW_TO,
+        make: crate::object::primitives::make_arrow_to,
+    },
+    TargetEntry {
+        spec: &crate::object::primitives::ARROW_HEAD_LENGTH,
+        make: crate::object::primitives::make_arrow_head_length,
+    },
+    TargetEntry {
+        spec: &crate::object::primitives::ARROW_HEAD_WIDTH,
+        make: crate::object::primitives::make_arrow_head_width,
+    },
+    TargetEntry {
+        spec: &crate::object::camera::CAMERA2D_CENTER,
+        make: crate::object::camera::make_camera2d_center,
+    },
+    TargetEntry {
+        spec: &crate::object::camera::CAMERA2D_SCALE,
+        make: crate::object::camera::make_camera2d_scale,
+    },
+    TargetEntry {
+        spec: &CAMERA3D_EYE,
+        make: crate::object::camera::make_camera3d_eye,
+    },
+    TargetEntry {
+        spec: &crate::object::camera::FRAMING2D_CENTER,
+        make: crate::object::camera::make_framing2d_center,
+    },
+    TargetEntry {
+        spec: &crate::object::camera::FRAMING2D_SCALE,
+        make: crate::object::camera::make_framing2d_scale,
+    },
+    TargetEntry {
+        spec: &PHASE_ANIM_PHASE,
+        make: crate::components::make_phase_anim_phase,
+    },
+    TargetEntry {
+        spec: &MORPH_SHAPE_T,
+        make: crate::components::make_morph_shape_t,
+    },
+    TargetEntry {
+        spec: &crate::components::REVEAL_START,
+        make: crate::components::make_reveal_start,
+    },
+    TargetEntry {
+        spec: &crate::components::REVEAL_END,
+        make: crate::components::make_reveal_end,
+    },
+    TargetEntry {
+        spec: &crate::components::three_d::LIGHT_INTENSITY,
+        make: crate::components::three_d::make_light_intensity,
+    },
+    TargetEntry {
+        spec: &crate::components::three_d::MATERIAL3D_METALLIC,
+        make: crate::components::three_d::make_material3d_metallic,
+    },
+    TargetEntry {
+        spec: &crate::components::three_d::MATERIAL3D_ROUGHNESS,
+        make: crate::components::three_d::make_material3d_roughness,
     },
 ];
 
@@ -593,10 +693,12 @@ macro_rules! delegating_target {
     };
 }
 
+// 单字段规格现由 `#[derive(Channels)]` 生成（`Circle.radius` 等），这里引用生成
+// 的 const（`CIRCLE_RADIUS` 等从对应模块引入），保留旧的具体目标类型构造形态。
 delegating_target!(CircleRadius, CIRCLE_RADIUS);
-delegating_target!(Phase, PHASE);
-delegating_target!(CameraEye, CAMERA_EYE);
-delegating_target!(MorphT, MORPH_T);
+delegating_target!(Phase, PHASE_ANIM_PHASE);
+delegating_target!(CameraEye, CAMERA3D_EYE);
+delegating_target!(MorphT, MORPH_SHAPE_T);
 delegating_target!(Camera2DFraming, CAMERA2D_FRAMING);
 delegating_target!(RevealRange, REVEAL_RANGE);
 delegating_target!(OpacityValue, OPACITY_VALUE);
@@ -628,5 +730,189 @@ impl Target for TransformChannelValue {
 
     fn target_id(&self) -> ObjectId {
         self.id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::any::Any;
+    use std::collections::HashMap;
+
+    use crate::Circle;
+
+    /// 迷你场景：只挂 `Circle`（roundtrip 测试够用）。
+    #[derive(Default)]
+    struct MockScene {
+        circles: HashMap<ObjectId, Circle>,
+    }
+
+    impl SceneWrite for MockScene {
+        fn with_component_mut(
+            &mut self,
+            id: ObjectId,
+            type_id: std::any::TypeId,
+            f: &mut dyn FnMut(&mut dyn Any),
+        ) -> bool {
+            if type_id == std::any::TypeId::of::<Circle>() {
+                if let Some(c) = self.circles.get_mut(&id) {
+                    f(c);
+                    return true;
+                }
+            }
+            false
+        }
+    }
+
+    impl SceneRead for MockScene {
+        fn with_component_ref(
+            &self,
+            id: ObjectId,
+            type_id: std::any::TypeId,
+            f: &mut dyn FnMut(&dyn Any),
+        ) -> bool {
+            if type_id == std::any::TypeId::of::<Circle>() {
+                if let Some(c) = self.circles.get(&id) {
+                    f(c);
+                    return true;
+                }
+            }
+            false
+        }
+    }
+
+    /// F 批：`TARGETS` 覆盖全部期望地址（12 旧地址 + 派生/手写新增），
+    /// 持久化名正确，且**无重复 address**（组合目标 `Camera2DFraming` /
+    /// `RevealRange` 是例外：它们的 address 就是持久化名，不进通道导出集）。
+    #[test]
+    fn derived_channels_in_targets() {
+        let addresses: Vec<&str> = TARGETS.iter().map(|e| e.spec.address).collect();
+        let names: Vec<&str> = TARGETS.iter().map(|e| e.spec.name).collect();
+        let assert_has = |a: &str| {
+            assert!(addresses.contains(&a), "TARGETS 缺地址 {a}");
+        };
+
+        // 12 个旧导出地址（channels() 改前的 filter 口径）。
+        for a in [
+            "Circle.radius",
+            "PhaseAnim.phase",
+            "Camera3D.eye",
+            "MorphShape.t",
+            "Framing2D.center",
+            "Framing2D.scale",
+            "Reveal.range",
+            "Reveal.end",
+            "Transform.position",
+            "Transform.rotation",
+            "Transform.scale",
+            "Opacity.value",
+        ] {
+            assert_has(a);
+        }
+        // 派生新增（F 批）。
+        for a in [
+            "Circle.center",
+            "Camera2D.center",
+            "Camera2D.scale",
+            "Reveal.start",
+            "Arrow.from",
+            "Arrow.to",
+            "Arrow.head_length",
+            "Arrow.head_width",
+        ] {
+            assert_has(a);
+        }
+        // 手写新增（ze-render-ir 组件，derive 无法用于它们）。
+        for a in [
+            "Dash.period",
+            "Dash.duty",
+            "Dash.phase",
+            "CurveWindow.lo",
+            "CurveWindow.hi",
+            "Gradient.from",
+            "Gradient.to",
+            "Light.intensity",
+            "Material3D.metallic",
+            "Material3D.roughness",
+        ] {
+            assert_has(a);
+        }
+
+        // 持久化名（旧名必须保留：既有 payload 不变）。
+        for n in [
+            "CircleRadius",
+            "Phase",
+            "MorphT",
+            "CameraEye",
+            "Framing2D.center",
+            "Framing2D.scale",
+            "Reveal.end",
+            "Reveal.range",
+            "TransformPosition",
+            "TransformRotation",
+            "TransformScale",
+            "OpacityValue",
+        ] {
+            assert!(names.contains(&n), "TARGETS 缺持久化名 {n}");
+        }
+
+        // 无重复 address（组合目标另计：address 就是名字，只有一条）。
+        let mut seen = std::collections::HashSet::new();
+        for a in addresses {
+            assert!(seen.insert(a), "重复 address：{a}");
+        }
+    }
+
+    /// F 批：派生规格的 write → read 往返，值一致（Circle.radius / Circle.center）。
+    #[test]
+    fn derived_write_read_roundtrip() {
+        let id = ObjectId::new(3, 1);
+        let mut scene = MockScene::default();
+        scene.circles.insert(id, Circle::new((1.0, 2.0), 3.0));
+
+        // radius（f32）：Scalar 写入 → 读回（FieldTarget 实现 read；
+        // delegating 类型 `CircleRadius` 走 Target::read 默认实现 ⇒ 恒 None）。
+        let radius = FieldTarget {
+            id,
+            spec: &crate::object::primitives::CIRCLE_RADIUS,
+        };
+        radius
+            .apply(&mut scene, &AnimValue::Scalar(7.5))
+            .expect("radius 写入不应失败");
+        assert_eq!(radius.read(&scene), Some(AnimValue::Scalar(7.5)));
+
+        // center（Vec2）：Vec2 写入 → 读回（经 Deref 写内层 Circle2D.center）。
+        let center = FieldTarget {
+            id,
+            spec: &crate::object::primitives::CIRCLE_CENTER,
+        };
+        center
+            .apply(&mut scene, &AnimValue::Vec2(ze_notion::Vec2::new(-4.0, 6.0)))
+            .expect("center 写入不应失败");
+        assert_eq!(
+            center.read(&scene),
+            Some(AnimValue::Vec2(ze_notion::Vec2::new(-4.0, 6.0)))
+        );
+
+        // 类型不符必须报错（显式，不静默）。
+        let err = radius
+            .apply(&mut scene, &AnimValue::Vec2(ze_notion::Vec2::new(1.0, 2.0)))
+            .unwrap_err();
+        assert!(err.to_string().contains("期望 scalar"));
+    }
+
+    /// F 批：复合目标（多字段 / 多值型）标记 `is_composite`；其余规格为 `false`。
+    #[test]
+    fn composite_specs_flagged() {
+        assert!(CAMERA2D_FRAMING.is_composite);
+        assert!(REVEAL_RANGE.is_composite);
+        for entry in TARGETS {
+            let composite = matches!(entry.spec.address, "Camera2DFraming" | "RevealRange");
+            assert_eq!(
+                entry.spec.is_composite, composite,
+                "{} 的 is_composite 应为 {composite}",
+                entry.spec.address
+            );
+        }
     }
 }

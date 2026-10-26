@@ -6752,6 +6752,7 @@ dependencies = [
  "ze-prerender",
  "ze-render-ir",
  "ze-scene-contract",
+ "ze-scene-macros",
  "ze-time",
 ]
 

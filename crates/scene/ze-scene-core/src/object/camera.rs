@@ -29,7 +29,18 @@ const FIT_MIN_EXTENT: f32 = 1e-3;
 /// 方向**相反**——薄壳层（Camera2D = Camera3D + Orthographic）负责两者换算。
 /// 屏幕 Y-down ↔ 世界 Y-up 的翻转只在 [`Camera2D::to_transform2d`] 的矩阵里
 /// 存在一份，其它地方不得再写翻转。
-#[derive(Debug, Clone, Copy, derive_new::new, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    derive_new::new,
+    ze_scene_macros::Channels,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+// F 批：center / scale 全量注册（缺省名 = 规范地址 "Camera2D.center" / "Camera2D.scale"）。
+#[channel(center: Vec2)]
+#[channel(scale: f32)]
 pub struct Camera2D {
     /// 逻辑坐标系中相机中心位置
     pub center: Vec2,
@@ -140,7 +151,19 @@ impl Camera2D {
 /// 矩形）⇒ "同一个相机渲染到 800×600 与 1920×1080"会变成"改相机"，句柄就不是纯引用。
 /// 取景（`center` / `scale`）属于**场景对象**，视口矩形属于**渲染目标**：
 /// 前者进 scene（可被 handle 引用、可被动画驱动），后者在录制时由渲染层绑定。
-#[derive(Debug, Clone, Copy, PartialEq, derive_new::new, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    derive_new::new,
+    ze_scene_macros::Channels,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+// F 批：center / scale 全量注册（缺省名 = 规范地址，与既有持久化名一致）。
+#[channel(center: Vec2)]
+#[channel(scale: f32)]
 pub struct Framing2D {
     /// 逻辑坐标系中的取景中心。
     pub center: Vec2,
@@ -414,7 +437,17 @@ impl Projection {
 }
 
 /// 3D 相机：视点位置、注视目标、上方向 + 投影参数。
-#[derive(Debug, Clone, Copy, derive_new::new, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    derive_new::new,
+    ze_scene_macros::Channels,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+// F 批：eye 用持久化名覆盖（既有 payload 兼容）。
+#[channel(name = "CameraEye", eye: Vec3)]
 pub struct Camera3D {
     /// 相机位置（世界空间）。
     pub eye: Vec3,
