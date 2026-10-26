@@ -445,3 +445,8 @@ export declare const expr: {
   bind(spec: Bind): void;
 };
 
+export declare const python: {
+  linspace(from: number, to: number, samples: number): number[];
+  make_dot(x: number, y: number, r: number): void;
+};
+

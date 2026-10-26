@@ -427,6 +427,28 @@
           "returns": {"kind":"struct","name":"()"}
         }
       ]
+    },
+    "python": {
+      "version": "1",
+      "description": "Python 适配器的装配期批量能力",
+      "functions": [
+        {
+          "qualified": "zela.python::linspace(f32, f32, u32) -> Array<f32>",
+          "namespace": "zela.python",
+          "name": "linspace",
+          "description": "在 `[from, to]` 上均匀取 `samples` 个点（Python 执行）。",
+          "params": [{"name":"from","type":{"kind":"scalar","name":"f32"}},{"name":"to","type":{"kind":"scalar","name":"f32"}},{"name":"samples","type":{"kind":"scalar","name":"u32"}}],
+          "returns": {"kind":"array","elem":{"kind":"scalar","name":"f32"}}
+        },
+        {
+          "qualified": "zela.python::make_dot(f32, f32, f32) -> ()",
+          "namespace": "zela.python",
+          "name": "make_dot",
+          "description": "Python 侧调用注入的 `scene.*` 建一个圆（**真实 Pod → 宿主调用**）。",
+          "params": [{"name":"x","type":{"kind":"scalar","name":"f32"}},{"name":"y","type":{"kind":"scalar","name":"f32"}},{"name":"r","type":{"kind":"scalar","name":"f32"}}],
+          "returns": {"kind":"struct","name":"()"}
+        }
+      ]
     }
   },
   "types": [

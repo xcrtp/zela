@@ -821,3 +821,19 @@ function expr.expression(root) end
 ---@param spec Bind
 function expr.bind(spec) end
 
+---@class PythonApi
+python = {}
+
+---在 `[from, to]` 上均匀取 `samples` 个点（Python 执行）。
+---@param from number
+---@param to number
+---@param samples integer
+---@return table
+function python.linspace(from, to, samples) end
+
+---Python 侧调用注入的 `scene.*` 建一个圆（**真实 Pod → 宿主调用**）。
+---@param x number
+---@param y number
+---@param r number
+function python.make_dot(x, y, r) end
+

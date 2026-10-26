@@ -51,14 +51,13 @@ fn main() {
             docs: MathApi::docs(),
             meta: MathApi::meta(),
         },
+        CapabilityDocs {
+            name: "python",
+            calls: ze_pod_py::PythonApi::calls(),
+            docs: ze_pod_py::PythonApi::docs(),
+            meta: ze_pod_py::PythonApi::meta(),
+        },
     ];
-    #[cfg(feature = "python")]
-    capabilities.push(CapabilityDocs {
-        name: "python",
-        calls: ze_pod_py::PythonApi::calls(),
-        docs: ze_pod_py::PythonApi::docs(),
-        meta: ze_pod_py::PythonApi::meta(),
-    });
 
     let [json, lua] = ze_pod_lua::export_docs(&dir, &capabilities).expect("写导出文件");
     println!("JSON  : {}", json.display());
@@ -71,12 +70,10 @@ fn main() {
             println!("DTS   : {}", path.display());
         }
     }
-    #[cfg(feature = "python")]
-    {
-        let paths = ze_pod_py::export_docs(&dir, &capabilities).expect("写 Python 类型存根");
-        for path in paths {
-            println!("PYI   : {}", path.display());
-        }
+    // `.pyi` 生成器是纯 Rust（不启用 pyo3）⇒ 文档基线在所有机器上都能生成。
+    let paths = ze_pod_py::export_docs(&dir, &capabilities).expect("写 Python 类型存根");
+    for path in paths {
+        println!("PYI   : {}", path.display());
     }
 
     println!(
