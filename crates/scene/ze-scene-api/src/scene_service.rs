@@ -27,6 +27,7 @@ use ze_render_ir::{FillSolid, MeasureSpace, Opacity as NativeOpacity, StrokeSoli
 use ze_scene_contract::{Components, Group as NativeGroup, GroupId as NativeGroupId, Name as NativeName, Parent as NativeParent};
 
 use crate::content_service::PathStore;
+use crate::RegisterSceneComponent;
 use crate::types::{
     Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, Curve, CurveWindow, Dash,
     Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
@@ -164,163 +165,39 @@ impl SceneServicePod {
         let mut registry = RegistryPod::new();
 
         // ── 组件构造（单结构体参数 ⇒ 自动生成 `Circle { ... }` 等构造器）────
-        registry.register_fn1_named::<Circle, Handle>(
-            "zela.scene::circle",
-            "zela.Circle",
-            "ze_pod_core.Handle",
-            scene_circle,
-        );
-        registry.register_fn1_named::<Stroke, Handle>(
-            "zela.scene::stroke",
-            "zela.Stroke",
-            "ze_pod_core.Handle",
-            scene_stroke,
-        );
-        registry.register_fn1_named::<Camera2D, Handle>(
-            "zela.scene::camera2d",
-            "zela.Camera2D",
-            "ze_pod_core.Handle",
-            scene_camera2d,
-        );
+        // 路径 / Pod 类型名由 `SceneComponent` 同源提供（E 批）。
+        registry.register_component::<Circle>(scene_circle);
+        registry.register_component::<Stroke>(scene_stroke);
+        registry.register_component::<Camera2D>(scene_camera2d);
         // ── 3D（B1-D）──────────────────────────────────────────────────
-        registry.register_fn1_named::<Camera3D, Handle>(
-            "zela.scene::camera3d",
-            "zela.Camera3D",
-            "ze_pod_core.Handle",
-            scene_camera3d,
-        );
-        registry.register_fn1_named::<Cube, Handle>(
-            "zela.scene::cube",
-            "zela.Cube",
-            "ze_pod_core.Handle",
-            scene_cube,
-        );
-        registry.register_fn1_named::<Material3D, Handle>(
-            "zela.scene::material3d",
-            "zela.Material3D",
-            "ze_pod_core.Handle",
-            scene_material3d,
-        );
-        registry.register_fn1_named::<Light, Handle>(
-            "zela.scene::light",
-            "zela.Light",
-            "ze_pod_core.Handle",
-            scene_light,
-        );
+        registry.register_component::<Camera3D>(scene_camera3d);
+        registry.register_component::<Cube>(scene_cube);
+        registry.register_component::<Material3D>(scene_material3d);
+        registry.register_component::<Light>(scene_light);
         // B3 Step 0：Surface 组件组（Surface + Renderer + Texture）。
-        registry.register_fn1_named::<Surface, Handle>(
-            "zela.scene::surface",
-            "zela.Surface",
-            "ze_pod_core.Handle",
-            scene_surface,
-        );
+        registry.register_component::<Surface>(scene_surface);
         // B7 Step 4：三个此前脚本层不可达的能力入口。
-        registry.register_fn1_named::<Group, Handle>(
-            "zela.scene::group",
-            "zela.Group",
-            "ze_pod_core.Handle",
-            scene_group,
-        );
-        registry.register_fn1_named::<PhaseAnim, Handle>(
-            "zela.scene::phase_anim",
-            "zela.PhaseAnim",
-            "ze_pod_core.Handle",
-            scene_phase_anim,
-        );
-        registry.register_fn1_named::<Morph, Handle>(
-            "zela.scene::morph",
-            "zela.Morph",
-            "ze_pod_core.Handle",
-            scene_morph,
-        );
-        registry.register_fn1_named::<Transform3D, Handle>(
-            "zela.scene::transform3d",
-            "zela.Transform3D",
-            "ze_pod_core.Handle",
-            scene_transform3d,
-        );
-        registry.register_fn1_named::<Reveal, Handle>(
-            "zela.scene::reveal",
-            "zela.Reveal",
-            "ze_pod_core.Handle",
-            scene_reveal,
-        );
-        registry.register_fn1_named::<Polyline, Handle>(
-            "zela.scene::polyline",
-            "zela.Polyline",
-            "ze_pod_core.Handle",
-            scene_polyline,
-        );
+        registry.register_component::<Group>(scene_group);
+        registry.register_component::<PhaseAnim>(scene_phase_anim);
+        registry.register_component::<Morph>(scene_morph);
+        registry.register_component::<Transform3D>(scene_transform3d);
+        registry.register_component::<Reveal>(scene_reveal);
+        registry.register_component::<Polyline>(scene_polyline);
         registry.register_fn1::<Parent, Handle>("zela.scene::parent", scene_parent);
         registry.register_fn1::<Name, Handle>("zela.scene::name", scene_name);
         registry.register_fn1::<Opacity, Handle>("zela.scene::opacity", scene_opacity);
-        registry.register_fn1_named::<Axes2D, Handle>(
-            "zela.scene::axes2d",
-            "zela.Axes2D",
-            "ze_pod_core.Handle",
-            scene_axes2d,
-        );
-        registry.register_fn1_named::<Arrow, Handle>(
-            "zela.scene::arrow",
-            "zela.Arrow",
-            "ze_pod_core.Handle",
-            scene_arrow,
-        );
-        registry.register_fn1_named::<Fill, Handle>(
-            "zela.scene::fill",
-            "zela.Fill",
-            "ze_pod_core.Handle",
-            scene_fill,
-        );
+        registry.register_component::<Axes2D>(scene_axes2d);
+        registry.register_component::<Arrow>(scene_arrow);
+        registry.register_component::<Fill>(scene_fill);
         // PE：绘制参数（后端已实现能力的场景层入口）。挂上即开启，缺席 = 当前行为。
-        registry.register_fn1_named::<Gradient, Handle>(
-            "zela.scene::gradient",
-            "zela.Gradient",
-            "ze_pod_core.Handle",
-            scene_gradient,
-        );
-        registry.register_fn1_named::<Dash, Handle>(
-            "zela.scene::dash",
-            "zela.Dash",
-            "ze_pod_core.Handle",
-            scene_dash,
-        );
-        registry.register_fn1_named::<SecondPaint, Handle>(
-            "zela.scene::second_paint",
-            "zela.SecondPaint",
-            "ze_pod_core.Handle",
-            scene_second_paint,
-        );
-        registry.register_fn1_named::<BackgroundStroke, Handle>(
-            "zela.scene::background_stroke",
-            "zela.BackgroundStroke",
-            "ze_pod_core.Handle",
-            scene_background_stroke,
-        );
-        registry.register_fn1_named::<CurveWindow, Handle>(
-            "zela.scene::curve_window",
-            "zela.CurveWindow",
-            "ze_pod_core.Handle",
-            scene_curve_window,
-        );
-        registry.register_fn1_named::<Transform, Handle>(
-            "zela.scene::transform",
-            "zela.Transform",
-            "ze_pod_core.Handle",
-            scene_transform,
-        );
-        registry.register_fn1_named::<RevealPath, Handle>(
-            "zela.scene::reveal_path",
-            "zela.RevealPath",
-            "ze_pod_core.Handle",
-            scene_reveal_path,
-        );
-        registry.register_fn1_named::<PathShape, Handle>(
-            "zela.scene::path_shape",
-            "zela.PathShape",
-            "ze_pod_core.Handle",
-            scene_path_shape,
-        );
+        registry.register_component::<Gradient>(scene_gradient);
+        registry.register_component::<Dash>(scene_dash);
+        registry.register_component::<SecondPaint>(scene_second_paint);
+        registry.register_component::<BackgroundStroke>(scene_background_stroke);
+        registry.register_component::<CurveWindow>(scene_curve_window);
+        registry.register_component::<Transform>(scene_transform);
+        registry.register_component::<RevealPath>(scene_reveal_path);
+        registry.register_component::<PathShape>(scene_path_shape);
 
         // ── 对象 ────────────────────────────────────────────────────────
         registry.register_fn1::<Vec<Handle>, Handle>("zela.scene::spawn", scene_spawn);

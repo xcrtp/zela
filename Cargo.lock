@@ -6721,6 +6721,7 @@ dependencies = [
  "ze-render-ir",
  "ze-scene-contract",
  "ze-scene-core",
+ "ze-scene-macros",
  "ze-time",
 ]
 
@@ -6760,6 +6761,15 @@ version = "0.1.1"
 dependencies = [
  "hecs",
  "ze-scene-contract",
+]
+
+[[package]]
+name = "ze-scene-macros"
+version = "0.1.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
