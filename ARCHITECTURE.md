@@ -1946,3 +1946,34 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   可能不可求）。CLI / web 需要时从 payload 现算 `SceneScript::still_time()`，
   状态行写"静止时刻 ≈ Xs / 不可推导"。
   录制长度由 `ExportSpec.frames` 完全决定 —— 录得长就是尾部静止，录得短就是截断。
+
+### 类型系统 A 批：类型数据就位（2026-10-26）
+
+> 一句话：**通道带类型、算子带签名**；A 批只加元数据，不改行为。
+
+- `ChannelRef.ty`（`ChannelType`：Unknown / Number / Bool / Vec2 / Vec3）是**元数据**：
+  `#[serde(skip)]` ⇒ 不进 payload；手写 `PartialEq` / `Hash` 只比 `(namespace, name)`，
+  解码后的 `Unknown` 与原值相等（round-trip 用例仍成立）。
+- **算子签名表** `SIGNATURES: &[OpDef]`（[`signature.rs`](crates/ze/pod/ze-pod-func/src/signature.rs)）：
+  每条 `OpSig { params, ret, vars, variadic }` 是 rank-1 + kind（`Num` / `Vector` / `Bool`）。
+  `Vec2 * F64 -> Vec2` 只写一行（返回类型绑在向量那一侧），不必穷举几何组合。
+- 声明文件输出签名（`Sin: (F64) -> F64`）与通道值类型（`Circle.channel.radius: Channel<number>`）；
+  `DOCS_SCHEMA_VERSION 1 → 2`。产物逐位不变（纯新增元数据）。
+
+### 类型系统 B 批：L2 合一与装配期检查（2026-10-26）
+
+> 一句话：**类型错误在装配期死掉**。binding 不再接受"运行期才发现算错"的表达式。
+
+- [`infer.rs`](crates/ze/pod/ze-pod-func/src/infer.rs)：每条签名独立实例化，
+  `Subst` 做槽位合一 + kind 检查 + occurs check；重载**逐条尝试**，0 条 ⇒ 错误带
+  「签名 + 第 N 个参数」，>1 条 ⇒ 显式歧义（硬约束 4，不静默选第一条）。
+- **叶子类型封闭**：字面量 / 通道直接给出数值 / 布尔 / Vec2 / Vec3；`Ref` 继承定义类型；
+  `Select.cond` 必须是 Bool、两个分支同型。
+- **两道门在 `bind`**：`infer_root` 拒绝 Bool 根（Bool 只用于 predicate），
+  `infer_predicate` 拒绝非 Bool predicate —— AH-03 的运行期检查前移到装配期。
+- **根 / 目标核对**：`PendingBinding.root_type` 带到宿主，装配期用
+  `target_entry(...).spec.ty` 反查目标字段（`Circle.radius` = F32 ⇒ 数值）。
+  目标通道常量本身仍是 `{ namespace, name }`（GAPS AI-02：类型留在宿主地址表，
+  `zela.math` 保持场景无关）。
+- **零产物代价**：推导结果不进 payload ⇒ `zela.math@6` 不变，23 条 demo payload 与
+  `expr_demo` 哈希逐位不变。

@@ -21,7 +21,7 @@
 use std::any::Any;
 use std::sync::Mutex;
 
-use ze_func::{ChannelRef, CompiledExpr, Expr, Literal, Node, OpRef};
+use ze_func::{ChannelRef, ChannelType, CompiledExpr, Expr, Literal, Node, OpRef};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
@@ -29,6 +29,7 @@ use crate::api::{
     GtSpec, LeSpec, LtSpec, MulSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec,
     SinSpec, SumSpec,
 };
+use crate::infer::{infer_predicate, infer_root};
 
 /// 函子库 namespace（进产物）。
 pub const LIBRARY_NAMESPACE: &str = "zela.math";
@@ -58,6 +59,8 @@ pub struct PendingBinding {
     pub reset: ResetSpec,
     /// 语法糖：`> 0` ⇒ 先生成 predicate 后由场景层展开（`predicate` 必须为 None）。
     pub duration: f64,
+    /// 装配期推导出的根表达式类型（不进 payload；宿主核对目标通道用）。
+    pub root_type: ChannelType,
 }
 
 /// 表达式 Pod。
@@ -506,6 +509,17 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
         );
         return;
     }
+    // 装配期类型推导（L2）：类型错误在这里显式失败，不留到运行期。
+    let root_type = match infer_root(&expr) {
+        Ok(ty) => ty,
+        Err(error) => {
+            push_binding_error(
+                this,
+                format!("表达式绑定 `{}` 类型检查失败：{error}", spec.object),
+            );
+            return;
+        }
+    };
     // predicate 是**独立的** Bool 表达式：单独校验（Bool 不经过 `anim_value`）。
     let predicate = match spec.predicate {
         PredicateSpec::Always => None,
@@ -515,6 +529,13 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
                     push_binding_error(
                         this,
                         format!("predicate 绑定 `{}` 非法：{message}", spec.object),
+                    );
+                    return;
+                }
+                if let Err(error) = infer_predicate(&tree) {
+                    push_binding_error(
+                        this,
+                        format!("predicate 绑定 `{}` 类型检查失败：{error}", spec.object),
                     );
                     return;
                 }
@@ -547,6 +568,7 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
             predicate,
             reset: spec.reset,
             duration: spec.duration,
+            root_type,
         });
 }
 
@@ -727,5 +749,70 @@ mod tests {
             .downcast::<String>()
             .expect("返回 String");
         assert_eq!(*slow, this.export(fast).unwrap());
+    }
+
+    fn bind_spec(root: Handle) -> BindSpec {
+        BindSpec {
+            object: Handle::new(PodId::next(), 0, 1),
+            target: ChannelSpec {
+                namespace: String::new(),
+                name: "Circle.radius".to_string(),
+            },
+            root,
+            clock: ClockSpec { links: Vec::new() },
+            predicate: PredicateSpec::Always,
+            reset: ResetSpec::Hold,
+            duration: 0.0,
+        }
+    }
+
+    /// **B 批验收**：`Bool` 根在装配期被拒（不经过 `anim_value` 的静默）。
+    #[test]
+    fn bind_rejects_bool_root_at_assembly() {
+        let this = pod();
+        let lt = lt_ctor(
+            &this,
+            LtSpec {
+                a: time(&this),
+                b: pure(&this, 1.0),
+            },
+        );
+        bind(&this, bind_spec(lt));
+        let (bindings, errors) = this.take_bindings();
+        assert!(bindings.is_empty(), "Bool 根不应登记为绑定");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("Bool"), "{errors:?}");
+    }
+
+    /// predicate 必须是 `Bool`：装配期失败（AH-03 的运行期检查前移）。
+    #[test]
+    fn bind_rejects_non_bool_predicate_at_assembly() {
+        let this = pod();
+        let mut spec = bind_spec(pure(&this, 1.0));
+        spec.predicate = PredicateSpec::Of {
+            expr: pure(&this, 1.0),
+        };
+        bind(&this, spec);
+        let (_, errors) = this.take_bindings();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("predicate") && error.contains("Bool")),
+            "{errors:?}"
+        );
+    }
+
+    /// 推导结果进 `PendingBinding`（宿主核对目标通道类型用；不进 payload）。
+    #[test]
+    fn bind_records_the_inferred_root_type() {
+        let this = pod();
+        let t = time(&this);
+        let k = pure(&this, 2.0);
+        let root = mul(&this, t, k);
+        bind(&this, bind_spec(root));
+        let (bindings, errors) = this.take_bindings();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].root_type, ChannelType::Number);
     }
 }

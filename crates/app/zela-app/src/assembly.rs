@@ -16,10 +16,11 @@ use std::sync::Arc;
 
 use ze_pod_core::{
     AssemblyPlan, Broker, BrokerError, Capability, FnSig, NodeSpec, Pod, PodError, PodNode,
-    ServiceRequirement,
+    ScalarKind, ServiceRequirement, TypeSpec,
 };
 use ze_pod_func::{
-    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SCENE_NAMESPACE, SERVICE as EXPR_SERVICE,
+    ChannelType, ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SCENE_NAMESPACE,
+    SERVICE as EXPR_SERVICE,
 };
 use ze_pod_lua::LuaPod;
 use ze_prerender::InMemoryEngine;
@@ -217,6 +218,23 @@ impl PodAssembly {
                     )),
                 }
             })?;
+            // 根表达式类型 vs 目标字段类型：装配期显式失败（硬约束 5）。
+            if let Some(entry) = zela_scene_ecs::target_entry(&pending.target.name) {
+                if let Some(expected) = expected_value_type(entry.spec.ty) {
+                    if expected != pending.root_type {
+                        return Err(BrokerError::Injection {
+                            node: EXPR_SERVICE.to_string(),
+                            source: PodError::CallFailed(format!(
+                                "表达式绑定 `{}` 的目标 `{}` 期望 {}，根表达式是 {}",
+                                pending.object,
+                                pending.target.name,
+                                expected.name(),
+                                pending.root_type.name()
+                            )),
+                        });
+                    }
+                }
+            }
             // 时钟是**数据**：Pod 侧的扁平链在这里转成产物类型（与通道同一套路）。
             let clock = zela_scene_ecs::ClockProgram {
                 links: pending
@@ -258,6 +276,25 @@ impl PodAssembly {
                 })?;
         }
         Ok(script)
+    }
+}
+
+/// 目标字段类型（pod `TypeSpec`）→ 表达式层粗类型。
+///
+/// 未知形状返回 `None`（不阻断）：类型系统只覆盖数值 / 布尔 / 向量，
+/// 其它字段由 `Target::write` 在运行期显式报 `TypeMismatch`。
+fn expected_value_type(ty: &TypeSpec) -> Option<ChannelType> {
+    match ty {
+        TypeSpec::Scalar(ScalarKind::F32 | ScalarKind::F64) => Some(ChannelType::Number),
+        TypeSpec::Scalar(ScalarKind::Bool) => Some(ChannelType::Bool),
+        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } | TypeSpec::Opaque(name) => {
+            match name.strip_prefix("zela.").unwrap_or(name) {
+                "Vec2" => Some(ChannelType::Vec2),
+                "Vec3" => Some(ChannelType::Vec3),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -474,5 +511,32 @@ mod tests {
             ),
         ]);
         assert!(matches!(plan.validate(), Err(BrokerError::Cycle { .. })));
+    }
+
+    /// 目标字段类型 → 表达式层粗类型（根 / 目标核对的桥）。
+    #[test]
+    fn target_types_map_to_expression_types() {
+        static VEC2: TypeSpec = TypeSpec::Struct {
+            name: "zela.Vec2",
+            fields: &[],
+        };
+        static VEC3: TypeSpec = TypeSpec::Struct {
+            name: "zela.Vec3",
+            fields: &[],
+        };
+        assert_eq!(
+            expected_value_type(&TypeSpec::Scalar(ScalarKind::F32)),
+            Some(ChannelType::Number)
+        );
+        assert_eq!(
+            expected_value_type(&TypeSpec::Scalar(ScalarKind::F64)),
+            Some(ChannelType::Number)
+        );
+        assert_eq!(
+            expected_value_type(&TypeSpec::Scalar(ScalarKind::Bool)),
+            Some(ChannelType::Bool)
+        );
+        assert_eq!(expected_value_type(&VEC2), Some(ChannelType::Vec2));
+        assert_eq!(expected_value_type(&VEC3), Some(ChannelType::Vec3));
     }
 }

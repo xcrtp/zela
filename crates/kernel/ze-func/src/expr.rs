@@ -145,6 +145,19 @@ pub enum ChannelType {
     Vec3,
 }
 
+impl ChannelType {
+    /// 文档 / 诊断里的短名（`F64` / `Bool` / `Vec2` / `Vec3`）。
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Unknown => "Unknown",
+            Self::Number => "F64",
+            Self::Bool => "Bool",
+            Self::Vec2 => "Vec2",
+            Self::Vec3 => "Vec3",
+        }
+    }
+}
+
 /// **通道引用**：`namespace` + `name` 是**数据**（与 [`OpRef`] 同形）。
 ///
 /// # 为什么不是封闭枚举
