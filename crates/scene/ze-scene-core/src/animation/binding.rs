@@ -5,9 +5,14 @@
 // P0：`Binding.target` 由**枚举**改为 `Arc<dyn Target>`（类型擦除）——
 // 新增驱动目标不再需要改枚举、也不需要改 System 源码。五个目标类型见
 // [`crate::animation::target`]（四个既有 + 2D 相机取景）。
+//
+// S3：一条绑定可以由**曲线**驱动，也可以由**组合子表达式**驱动。
+// 表达式在装配期编译成后序程序（`CompiledExpr`），运行期由宿主单子 `M` 注入通道值；
+// 这样「加一个关系」不必再加一个 `Curve` 变体，也不必每帧回脚本手算。
 
 use std::sync::Arc;
 
+use ze_func::CompiledExpr;
 use ze_time::{ClockId, Curve};
 
 use crate::animation::target::Target;
@@ -23,7 +28,47 @@ pub enum SeekKind {
     Replay,
 }
 
-/// 单条绑定：`(时钟, 曲线, 目标)`。
+/// 绑定的驱动源。
+#[derive(Debug, Clone)]
+pub enum BindingDriver {
+    /// 手写 / 脚本曲线（既有全部绑定）。
+    Curve(Curve),
+    /// 组合子表达式（S3）：装配期编译，运行期只做线性扫描。
+    Expr(CompiledExpr),
+}
+
+impl BindingDriver {
+    pub fn as_curve(&self) -> Option<&Curve> {
+        match self {
+            BindingDriver::Curve(curve) => Some(curve),
+            BindingDriver::Expr(_) => None,
+        }
+    }
+
+    /// 可变曲线访问（参数面板滑块只改曲线绑定）。
+    pub fn as_curve_mut(&mut self) -> Option<&mut Curve> {
+        match self {
+            BindingDriver::Curve(curve) => Some(curve),
+            BindingDriver::Expr(_) => None,
+        }
+    }
+
+    pub fn as_expr(&self) -> Option<&CompiledExpr> {
+        match self {
+            BindingDriver::Expr(program) => Some(program),
+            BindingDriver::Curve(_) => None,
+        }
+    }
+}
+
+/// 函子库身份：进产物，声明文件与库版本都由它派生。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LibraryRef {
+    pub namespace: String,
+    pub version: String,
+}
+
+/// 单条绑定：`(时钟, 驱动源, 目标)`。
 ///
 /// `Binding: Clone` 是硬约束（`BindingApplySystem` 每帧 clone 整表），
 /// 这也是 `target` 用 `Arc<dyn Target>` 而非 `Box<dyn Target>` 的原因
@@ -31,10 +76,18 @@ pub enum SeekKind {
 #[derive(Debug, Clone)]
 pub struct Binding {
     pub clock: ClockId,
-    pub curve: Curve,
+    /// 曲线或表达式（S3）。
+    pub driver: BindingDriver,
     /// 驱动目标（类型擦除：`BindingTable` 要装异构的所有 target）。
     pub target: Arc<dyn Target>,
     pub seek_kind: SeekKind,
+}
+
+impl Binding {
+    /// 便捷访问：曲线绑定时返回曲线（表达式绑定返回 `None`）。
+    pub fn curve(&self) -> Option<&Curve> {
+        self.driver.as_curve()
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -51,16 +104,27 @@ impl BindingTable {
     pub fn add(&mut self, binding: Binding) {
         self.bindings.push(binding);
     }
-    /// 用**类型擦除的目标**添加一条绑定，`seek_kind` 取 [`SeekKind::O1`]
+    /// 用**类型擦除的目标**添加一条曲线绑定，`seek_kind` 取 [`SeekKind::O1`]
     /// （当前所有绑定都是纯函数 O1）。Timeline 的编译产物在此落地。
     pub fn bind_arc(&mut self, clock: ClockId, curve: Curve, target: Arc<dyn Target>) {
         self.add(Binding {
             clock,
-            curve,
+            driver: BindingDriver::Curve(curve),
             target,
             seek_kind: SeekKind::O1,
         });
     }
+
+    /// 添加一条**表达式绑定**（S3）：程序已在装配期编译。
+    pub fn bind_expr(&mut self, clock: ClockId, program: CompiledExpr, target: Arc<dyn Target>) {
+        self.add(Binding {
+            clock,
+            driver: BindingDriver::Expr(program),
+            target,
+            seek_kind: SeekKind::O1,
+        });
+    }
+
     pub fn is_empty(&self) -> bool {
         self.bindings.is_empty()
     }

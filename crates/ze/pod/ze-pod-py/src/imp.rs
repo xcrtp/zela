@@ -149,6 +149,14 @@ impl<'py> ValueCodec for PyCodec<'py> {
             TypeSpec::Enum { name, .. } => Err(PyErr::new::<PyTypeError, _>(format!(
                 "枚举 `{name}` 请用构造器创建"
             ))),
+            // 泛型 / 类型变量没有 PodValue 形态：它们是**装配期类型**，
+            // 具体转换必须由绑定层显式提供（S1 只保证 schema 能表达）。
+            TypeSpec::Var(name) => Err(PyErr::new::<PyTypeError, _>(format!(
+                "类型变量 `{name}` 没有运行时表示"
+            ))),
+            TypeSpec::App { ty, .. } => Err(PyErr::new::<PyTypeError, _>(format!(
+                "泛型类型 `{ty}` 没有通用运行时转换"
+            ))),
         }
     }
 

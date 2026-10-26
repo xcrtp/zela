@@ -11,6 +11,12 @@
 > [`FRAME_HASH_BASELINES.md`](crates/app/zela-app/scripts/FRAME_HASH_BASELINES.md#L117-L128)）：
 > 同目标可复现 ✅（最硬）· 跨端结构一致 ✅ · 跨端逐位相同 ❌（已知可接受）。
 > 本文件谈「确定性」时沿用这三层，不混用。
+>
+> **第四判据（S0，2026-10-26）**：确定性 = 输入相同 ⇒ 输出相同，**且无隐式可变状态**。
+> 「逐位相同」是测试夹具，不是定义本身。本判据可直接变成检查项：全局可变静态 / 墙钟 /
+> 随机 / 系统环境 / 进程计数。它把三个分头修过的坑统一为同一规则的实例
+> （W1-01 `MeshGeometry.id` 的 `AtomicU64`、X1-11 系统字体、#93 预记 `random/time`），
+> 详见 AF 段（AF-01..AF-05）。
 
 ## 状态定义（四类 + 两个补充 + 落档）
 
@@ -886,11 +892,33 @@
 
 ---
 
+## AF. 表达式层立约（S0，2026-10-26）
+
+> 计划《表达式层执行计划：组合子库、单子注入与 API 导出》。本段只**立约与记账**，不改代码：
+> 组合子内核的实现在 S1（[`ze-func`](crates/kernel/ze-func/src/lib.rs)）。
+> 口径：能力面不再只由「手写方法 + 静态数据」构成；脚本只提交**结构**，
+> 时间 / 帧 / 事件 / 组件 / 环境由宿主以单子 `M` 注入。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AF-01 | **确定性第四判据：无隐式可变状态** | 全仓 | **立约（S0）** | 判据与三层结果口径并列（见文件头）。检查项：全局可变静态 / 墙钟 / 随机 / 系统环境 / 进程计数。已关闭的三个实例：W1-01（`MeshGeometry.id` 曾用进程内 `AtomicU64` 全局计数）、X1-11（系统字体不在版本控制）、#93（预记 `random/time`）。三者此前分头修，现统一为同一规则 |
+| AF-02 | **拒绝 `fix`、接受 codata** | 表达式层 / 语言模型 | **立约（S0）** | 组合子（Functor / Applicative / Monad，无 `fix`）不是图灵完备的：bind 次数由项的语法结构决定；游戏需要的累积状态 `stateₙ₊₁ = f(stateₙ, inputₙ)` 是 primitive recursion，保证停机。真需要无界搜索时走 **bounded loop 且上限进产物**。无限细分曲面是 codata（生产性展开），不是无界计算 —— **缺的不是 `fix`，是 codata**（S4） |
+| AF-03 | **f64 向量 / floating origin 是双曲漫游的前置（G6）** | `ze-notion` / 3D 相机 | **记账（本批不实现）** | 实测：[`Camera3D.eye`](crates/scene/ze-scene-core/src/object/camera.rs) 是 `Vec3`（f32）；[`ze-notion`](crates/kernel/ze-notion/src/vec.rs) 无 f64 向量；全仓无 floating origin。双曲空间面积随半径指数增长：f32 上限 ~3.4e38 ⇒ 半径约 89 处溢出；尾数 24 位 ⇒ 距原点 1e6 时分辨率已 ~0.06，漫游肉眼可见抖动。**表达力救不了精度，这是数学层的事**，与组合子库无关 |
+| AF-04 | **运行时脚本执行 = 延后非不做** | 脚本 / 产物 | **记账（S0）** | 它与提案 #2（ZSB v5 烘焙）是**同一能力的两种实现**，判据是 `--script` / `--bundle` / `--baked` 三条路径像素逐位相同。本计划不实施 #2（26 条基线全重录），但**不否决**运行时脚本执行 |
+| AF-05 | **交互 / 输入方向记账（G4）** | 输入 / 宿主 | **记账（S0）** | `ViewportClick` / `ViewportHover` 由 [`zela-egui`](crates/ui/zela-egui/src/host.rs) 产出，**零消费方**。此前「交互 / 游戏 / 用户输入」在本文件 grep 零命中（第 5 次漏账，PA 批刚记过这个模式）。S3 的 `Event` 通道是它们的第一个消费方 |
+| AF-06 | **字面量要显式包装（S2 边界）** | 脚本 API | **记账（S2）** | 当前 `expr.mul(t, k)` 的第二参必须是表达式句柄 ⇒ 脚本要写 `expr.mul(t, expr.pure(k))`（`ze-pod-func` 的集成用例即此形态）。表构造器 `Mul { t, k }` 与字面量自动提升属 §7.5 第 3 条（声明生成 / 遍历已注册函子 pod），未在 S2 落地。**边界**：产物格式不受影响（字面量已是 `Pure` 叶子），只是作者书写形态。 |
+| AF-07 | **S3 已落地 / 未落地** | 时间 / 求值 / 绑定 | **记账（S3）** | **已落地**：`Director` 折叠时间（`t = base_t + (frame−base_frame)×dt×speed`，固定 fps 下严格等于 `frame×dt`）、`TimeState.frame` 一等通道、`CompiledExpr`（装配期末序程序 + 帧内 memo，无跨帧缓存）、`Mono` / `SceneMono`（Time / Frame 通道 + `zela.math` 标量算子语义）、**表达式 → 场景目标绑定**（`expr.bind{}` 登记 → 宿主 `PodAssembly` 按对象名并入 `SceneScript` → `BindingDriver::Expr` 在 `BindingApplySystem` 求值；对象名 / 目标名 / 通道 / 算子都在**装配期**校验，JSON 往返保留 ⇒ bundle 路径可用）。**验证**：36 条像素基线（native + vector）逐位不变。**未落地**：`Event` / `ComponentState` / `Env` 通道仍显式缺失；`Reveal.current_pos` 的 read 通道（G1 读方向）未接线；相机 pos 未建模为 `M<Vec3>`。⚠️ 语义边界：表达式读**全局** `Time`，`duration` 只做区间门控（`Hold`）—— 需要段内局部时间时应新增通道，不能偷改 `Time` 语义。⚠️ 验收里的 `--baked` 路径不存在（提案 #2 未实施），当前只能验证 `--script == --bundle`。 |
+| AF-08 | **S4 codata 已落地 / 未落地** | 表达式层 / 几何 | **记账（S4）** | **已落地**：[`ze-func::codata`](crates/kernel/ze-func/src/codata.rs) 的生产性展开器（`Unfold`）、`depth` 观察者（`observe` / `Expanded::frontier`）、**上限进产物**（`CodataSpec { depth, max_nodes }` 可序列化）、节点预算实时检查（超出即显式错误，不静默截断）、**零缓存**（每次展开从头算 ⇒ 清空重算逐位相同是结构事实）、不生产（`step` 返回空）显式失败。**未落地**：场景侧无限细分曲面消费方（网格生成 / LOD 选择）未接线；`CodataSpec` 尚未进入 `SceneScript`（当前只是内核 API）；"无限曲面 + 有限帧数"的帧成本实测未做。 |
+
+**AF 段小计**：立约 2（AF-01、AF-02）· 记账 6（AF-03、AF-04、AF-05、AF-06、AF-07、AF-08）。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AE**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AE 段，含"部分关闭"与"落档"）。
+> （**D–AF**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AE 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
 
 | 类别 | 数量 |
 |---|---|

@@ -27,10 +27,11 @@
 
 use std::sync::Arc;
 
+use ze_func::{CompiledExpr, Expr};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, Curve, PlayMode};
 
-use crate::animation::binding::BindingTable;
+use crate::animation::binding::{BindingTable, LibraryRef};
 use crate::animation::target::Target;
 
 /// 一段已声明动画在**全局时间轴**上的区间（秒）。
@@ -125,11 +126,24 @@ struct Action {
     target: ActionTarget,
 }
 
-/// 编排步骤：`Wait` 只推进游标；`Play` 产出一个时间区间（区间内可含多个**并行**动作）。
+/// 编排步骤：`Wait` 只推进游标；`Play` / `Expr` 各产出一个时间区间。
+///
+/// `Expr`（S3）与 `Play` 的差别只在**驱动源**：区间内求值的是组合子表达式，
+/// 由宿主单子 `M` 注入时间 / 帧号。旧 payload 不含该变体 ⇒ 解码与像素都不受影响。
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 enum Step {
     Wait(f64),
-    Play { duration: f64, actions: Vec<Action> },
+    Play {
+        duration: f64,
+        actions: Vec<Action>,
+    },
+    Expr {
+        duration: f64,
+        target: ActionTarget,
+        expr: Expr,
+        /// 函子库身份（namespace + version）—— 随产物走。
+        library: LibraryRef,
+    },
 }
 
 /// 顺序编排器：声明"先…再…"，编译成 `ClockNode + Binding`。
@@ -211,6 +225,27 @@ impl Timeline {
         self
     }
 
+    /// 录一段**表达式驱动**的动画（S3；`SceneEncoder` 专用入口）。
+    ///
+    /// `expr` 在 `commit` 时编译成后序程序；`library` 随产物进 payload。
+    pub(crate) fn bind_expr_pending(
+        &mut self,
+        expr: Expr,
+        library: LibraryRef,
+        make: fn(ObjectId) -> Arc<dyn Target>,
+        handle: usize,
+        dur: f64,
+    ) -> &mut Self {
+        let name = make(ObjectId::DANGLING).name();
+        self.steps.push(Step::Expr {
+            duration: dur,
+            target: ActionTarget::Pending { make, name, handle },
+            expr,
+            library,
+        });
+        self
+    }
+
     /// 向**上一段** `play` 追加一个**同区间**动作（同一 `ClockNode`，同一 `span`）。
     ///
     /// 上一段不是 `play`（无可依附的区间）时本调用**不产生任何效果** ——
@@ -244,7 +279,7 @@ impl Timeline {
         for step in &self.steps {
             match step {
                 Step::Wait(d) => cursor += d,
-                Step::Play { duration, .. } => {
+                Step::Play { duration, .. } | Step::Expr { duration, .. } => {
                     out.push(Segment {
                         start: cursor,
                         duration: *duration,
@@ -256,18 +291,21 @@ impl Timeline {
         out
     }
 
-    /// 改写第 `play_index` 段（0 基，**只数 `play`**，不含 `wait`）的时长。
+    /// 改写第 `play_index` 段（0 基，**数 `play` 与 `expr`**，不含 `wait`）的时长。
     ///
     /// 越界则无操作。改完后 `schedule()` 里后续段的 `start` 自动跟随。
     pub fn set_duration(&mut self, play_index: usize, dur: f64) -> &mut Self {
         let mut seen = 0usize;
         for step in &mut self.steps {
-            if let Step::Play { duration, .. } = step {
-                if seen == play_index {
-                    *duration = dur;
-                    break;
+            match step {
+                Step::Play { duration, .. } | Step::Expr { duration, .. } => {
+                    if seen == play_index {
+                        *duration = dur;
+                        break;
+                    }
+                    seen += 1;
                 }
-                seen += 1;
+                Step::Wait(_) => {}
             }
         }
         self
@@ -315,6 +353,28 @@ impl Timeline {
                     }
                     cursor += duration;
                 }
+                Step::Expr {
+                    duration, target, expr, ..
+                } => {
+                    let mut node = ClockNode::new(None);
+                    node.local_offset = cursor;
+                    node.span = Some((0.0, *duration));
+                    node.mode = PlayMode::Hold;
+                    if let Ok(id) = forest.insert(node) {
+                        let target: Arc<dyn Target> = match target {
+                            ActionTarget::Ready(t) => Arc::clone(t),
+                            ActionTarget::Pending { make, handle, .. } => make(resolve(*handle)),
+                        };
+                        // `bind` 时已用同一个 `Expr` 校验/编译过一次；此处失败说明内部不变量被破坏。
+                        match CompiledExpr::compile(expr) {
+                            Ok(program) => bindings.bind_expr(id, program, target),
+                            Err(error) => {
+                                debug_assert!(false, "表达式绑定在 commit 时编译失败：{error}");
+                            }
+                        }
+                    }
+                    cursor += duration;
+                }
             }
         }
     }
@@ -325,7 +385,7 @@ impl Timeline {
         for step in &self.steps {
             match step {
                 Step::Wait(d) => cursor += d,
-                Step::Play { duration, .. } => cursor += duration,
+                Step::Play { duration, .. } | Step::Expr { duration, .. } => cursor += duration,
             }
         }
         cursor
@@ -361,6 +421,27 @@ impl Timeline {
                     self.steps.push(Step::Play {
                         duration: *duration,
                         actions,
+                    });
+                }
+                Step::Expr {
+                    duration,
+                    target,
+                    expr,
+                    library,
+                } => {
+                    let target = match target {
+                        ActionTarget::Ready(t) => ActionTarget::Ready(Arc::clone(t)),
+                        ActionTarget::Pending { make, name, handle } => ActionTarget::Pending {
+                            make: *make,
+                            name,
+                            handle: handle + base,
+                        },
+                    };
+                    self.steps.push(Step::Expr {
+                        duration: *duration,
+                        target,
+                        expr: expr.clone(),
+                        library: library.clone(),
                     });
                 }
             }
@@ -496,14 +577,18 @@ mod tests {
         tl.compile(&mut forest, &mut bindings);
 
         let b = &bindings.bindings[0];
-        let sample = |t: f64| b.curve.sample(forest.eval_local(b.clock, t)).scalar();
+        let curve = b.driver.as_curve().expect("曲线绑定");
+        let sample = |t: f64| curve.sample(forest.eval_local(b.clock, t)).scalar();
         assert_eq!(sample(0.0), 0.0);
         assert!((sample(1.0) - 0.5).abs() < 1e-6);
         assert_eq!(sample(2.0), 1.0);
         // 段后仍钳终值 1.0（Hold），不会继续增长。
         assert_eq!(sample(5.0), 1.0);
         // 与 AnimValue 类型无关：本例是 Scalar。
-        assert!(matches!(b.curve.sample(0.0), AnimValue::Scalar(_)));
+        assert!(matches!(
+            b.driver.as_curve().expect("曲线绑定").sample(0.0),
+            AnimValue::Scalar(_)
+        ));
     }
 
     /// `parallel`：同一区间内多个动作——共享**同一个** `ClockNode`（同一 span），

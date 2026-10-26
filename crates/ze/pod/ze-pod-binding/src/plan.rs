@@ -65,11 +65,47 @@ pub fn collect_types(
             }
         }
         TypeSpec::Array { elem } => collect_types(elem, out),
-        TypeSpec::Scalar(_) | TypeSpec::Opaque(_) => {}
+        // 泛型实参也是可达类型：`Expr<Vec2>` 里的 `Vec2` 必须进类型表（§7.3）。
+        TypeSpec::App { args, .. } => {
+            for arg in *args {
+                collect_types(arg, out);
+            }
+        }
+        TypeSpec::Scalar(_) | TypeSpec::Opaque(_) | TypeSpec::Var(_) => {}
     }
 }
 
 /// `"zela.Color"` → `"Color"`（语言侧全局名用短名）。
 pub fn short_name(full: &'static str) -> &'static str {
     full.rsplit(|c| c == '.' || c == ':').next().unwrap_or(full)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ze_pod_core::TypeSpec;
+
+    const VEC2_SPEC: TypeSpec = TypeSpec::Struct {
+        name: "zela.Vec2",
+        fields: &[],
+    };
+    const EXPR_VEC2: TypeSpec = TypeSpec::App {
+        ty: "zela.Expr",
+        args: &[VEC2_SPEC],
+    };
+
+    #[test]
+    fn app_type_arguments_are_reachable() {
+        // 不做这一步，`Expr<Vec2>` 里的 `Vec2` 就不会进类型表（§7.3 / S1）。
+        let mut out = BTreeMap::new();
+        collect_types(&EXPR_VEC2, &mut out);
+        assert!(out.contains_key("zela.Vec2"));
+    }
+
+    #[test]
+    fn type_variables_contribute_nothing() {
+        let mut out = BTreeMap::new();
+        collect_types(&TypeSpec::Var("T"), &mut out);
+        assert!(out.is_empty());
+    }
 }

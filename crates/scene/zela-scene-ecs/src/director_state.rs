@@ -44,6 +44,8 @@ impl System for DirectorAdvanceSystem {
 
         if let Some(state) = ctx.get_mut::<TimeState>() {
             state.elapsed = dir.global_t as f32;
+            // 帧号同源同步：表达式求值的 `Frame` 通道与 `Director` 是同一份事实。
+            state.frame = dir.frame;
         }
     }
 }

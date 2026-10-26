@@ -547,7 +547,9 @@ mod tests {
     use super::*;
     use ze_scene_core::{Camera2DHandle, Camera3D, Camera3DHandle, Framing2D, Projection};
     use zela_scene_ecs::ClockForest;
-    use zela_scene_ecs::animation::{BindingTable, Camera2DFraming, CameraEye, SeekKind};
+    use zela_scene_ecs::animation::{
+        BindingDriver, BindingTable, Camera2DFraming, CameraEye, SeekKind,
+    };
     use zela_scene_ecs::contract::object_id_of;
     use zela_scene_ecs::domain::CameraMode;
     use zela_scene_ecs::{AnimValue, Interp};
@@ -690,12 +692,12 @@ mod tests {
         let clock = forest.insert(ClockNode::new(None)).unwrap();
         let orbit = Binding {
             clock,
-            curve: Curve::Orbit {
+            driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 5.0,
                 axis: ze_notion::Vec3::Y,
                 speed: 0.5,
                 initial_angle: 0.0,
-            },
+            }),
             target: Arc::new(CameraEye {
                 id: object_id_of(camera3d),
             }),
@@ -705,13 +707,13 @@ mod tests {
         let cam2d_clock = forest.insert(ClockNode::new(None)).unwrap();
         let cam2d_framing = Binding {
             clock: cam2d_clock,
-            curve: Curve::Keyframes {
+            driver: BindingDriver::Curve(Curve::Keyframes {
                 keys: vec![
                     (0.0, AnimValue::Scalar(40.0)),
                     (1.0, AnimValue::Scalar(110.0)),
                 ],
                 interpolation: Interp::Linear,
-            },
+            }),
             target: Arc::new(Camera2DFraming {
                 id: object_id_of(camera2d),
             }),
@@ -1420,7 +1422,7 @@ mod tests {
                     span,
                     mode: format!("{:?}", node.mode),
                     target: binding.target.name().to_string(),
-                    curve: format!("{:?}", binding.curve),
+                    curve: format!("{:?}", binding.driver),
                 }
             })
             .collect()
@@ -1817,7 +1819,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         let world = scene.into_world();
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(recipe.forest);
         resources.insert(recipe.bindings);
 
@@ -2115,6 +2117,39 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
             return;
         }
         assert!(!assembly.lua.registered_global_names("python").is_empty());
+    }
+
+    /// S3：Lua 用 `expr.bind{...}` 提交表达式动画，宿主把它并入 `SceneScript`
+    /// —— 装配期解析对象名 / 目标名，产物里是一条 `BindingDriver::Expr`。
+    #[test]
+    fn expression_binding_reaches_the_recipe_through_lua() {
+        use ze_prerender::placeholder_engine;
+        use zela_scene_ecs::animation::BindingDriver;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功");
+        let script = assembly
+            .run_script(
+                r#"
+                scene.spawn({ Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 } })
+                scene.spawn({
+                    Circle { x = 0.0, y = 0.0, r = 0.25 },
+                    Name { value = "dot" },
+                })
+                local y = expr.sin(expr.time())
+                expr.bind { object = "dot", target = "CircleRadius", root = y, duration = 2.0 }
+                "#,
+            )
+            .expect("脚本执行成功");
+
+        let mut scene = zela_scene_ecs::scene::Scene::new();
+        let recipe = script.commit(&mut scene).expect("commit 成功");
+        assert_eq!(recipe.bindings.bindings.len(), 1, "应有一条表达式绑定");
+        let binding = &recipe.bindings.bindings[0];
+        assert!(matches!(binding.driver, BindingDriver::Expr(_)));
+        assert_eq!(binding.target.name(), "CircleRadius");
+        let node = recipe.forest.get(binding.clock).expect("时钟节点");
+        assert_eq!(node.span, Some((0.0, 2.0)));
     }
 }
 

@@ -6498,6 +6498,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-func"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ze-graph-algo"
 version = "0.1.1"
 dependencies = [
@@ -6595,6 +6604,18 @@ dependencies = [
 name = "ze-pod-core"
 version = "0.1.1"
 dependencies = [
+ "ze-pod-macro",
+]
+
+[[package]]
+name = "ze-pod-func"
+version = "0.1.1"
+dependencies = [
+ "serde_json",
+ "ze-func",
+ "ze-pod-binding",
+ "ze-pod-core",
+ "ze-pod-lua",
  "ze-pod-macro",
 ]
 
@@ -6721,6 +6742,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "ze-content",
+ "ze-func",
  "ze-macro",
  "ze-notion",
  "ze-pod-core",
@@ -6782,6 +6804,7 @@ dependencies = [
  "ze-notion",
  "ze-pod-binding",
  "ze-pod-core",
+ "ze-pod-func",
  "ze-pod-js",
  "ze-pod-lua",
  "ze-pod-py",
@@ -7005,9 +7028,11 @@ dependencies = [
  "smart-default",
  "thiserror 2.0.20",
  "ze-content",
+ "ze-func",
  "ze-macro",
  "ze-notion",
  "ze-pod-core",
+ "ze-pod-func",
  "ze-pod-macro",
  "ze-prerender",
  "ze-render-ir",

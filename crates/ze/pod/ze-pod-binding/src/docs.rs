@@ -94,6 +94,17 @@ fn spec_ref(spec: &'static TypeSpec) -> String {
         TypeSpec::Opaque(name) => {
             format!("{{\"kind\":\"opaque\",\"name\":\"{}\"}}", escape(name))
         }
+        TypeSpec::Var(name) => {
+            format!("{{\"kind\":\"var\",\"name\":\"{}\"}}", escape(name))
+        }
+        TypeSpec::App { ty, args } => {
+            let items: Vec<String> = args.iter().map(spec_ref).collect();
+            format!(
+                "{{\"kind\":\"app\",\"name\":\"{}\",\"args\":[{}]}}",
+                escape(ty),
+                items.join(",")
+            )
+        }
     }
 }
 

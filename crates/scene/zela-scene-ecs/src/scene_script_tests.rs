@@ -368,8 +368,8 @@ mod tests {
             assert_eq!(e_node.mode, h_node.mode);
             // `Curve` 未实现 `PartialEq` ⇒ 用 `Debug` 结构相等比对（同一构造 ⇒ 同一 Debug）。
             assert_eq!(
-                format!("{:?}", enc_b.curve),
-                format!("{:?}", h_b.curve),
+                format!("{:?}", enc_b.driver),
+                format!("{:?}", h_b.driver),
                 "曲线必须一致"
             );
             assert_eq!(enc_b.target.name(), h_b.target.name(), "目标语义名必须一致");

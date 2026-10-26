@@ -21,6 +21,9 @@ pub fn lua_type_name(spec: &'static TypeSpec) -> &'static str {
         TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => short_name(name),
         TypeSpec::Array { .. } => "table",
         TypeSpec::Opaque(_) => "Handle",
+        // Lua 没有泛型：`Expr<f32>` 只暴露构造器名；类型变量退化为 `any`。
+        TypeSpec::App { ty, .. } => short_name(ty),
+        TypeSpec::Var(_) => "any",
     }
 }
 

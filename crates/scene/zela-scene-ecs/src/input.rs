@@ -39,7 +39,8 @@ impl System for TimeControlSystem {
                 // 重新播放：拨回 0 并恢复播放。全部绑定是 O1（纯函数、无记忆）
                 // ⇒ 场景状态由 t 唯一决定，回到 0 即回到初始画面（无需重建场景）。
                 SceneEvent::Button { id } if id == ids::REPLAY => {
-                    dir.director.seek(0.0);
+                    // 重播 = 回到起点：帧号与 t 一起归零（帧号是一等通道）。
+                    dir.director.rewind();
                     dir.director.resume();
                 }
                 SceneEvent::Slider { id, value } if id == ids::SPEED => {
@@ -96,7 +97,11 @@ impl System for ParamPanelSystem {
         // 写回：**只按 `WidgetId` + 曲线类型**匹配（不再需要 target 类别）。
         for binding in table.bindings.iter_mut() {
             for (id, value) in &sliders {
-                match (*id, &mut binding.curve) {
+                // 表达式绑定没有可调曲线字段（滑块只服务于曲线绑定）。
+                let Some(curve) = binding.driver.as_curve_mut() else {
+                    continue;
+                };
+                match (*id, curve) {
                     (ids::CIRCLE_BASE, Curve::Sin { base, .. }) => *base = *value,
                     (ids::CIRCLE_AMP, Curve::Sin { amp, .. }) => *amp = *value,
                     (ids::CIRCLE_OMEGA, Curve::Sin { omega, .. }) => *omega = *value,
@@ -123,7 +128,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use crate::ClockId;
-    use crate::animation::{Binding, CameraEye, CircleRadius, SeekKind};
+    use crate::animation::{Binding, BindingDriver, CameraEye, CircleRadius, SeekKind};
     use crate::contract::ObjectId;
     use zela_schedule::resource::Resources;
     use zela_schedule::scheduler::{Phase, Scheduler};
@@ -216,11 +221,11 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: ClockId(0),
-            curve: Curve::Sin {
+            driver: BindingDriver::Curve(Curve::Sin {
                 base: 1.0,
                 amp: 0.4,
                 omega: 2.0,
-            },
+            }),
             target: Arc::new(CircleRadius {
                 id: ObjectId::DANGLING,
             }),
@@ -228,12 +233,12 @@ mod tests {
         });
         table.add(Binding {
             clock: ClockId(1),
-            curve: Curve::Orbit {
+            driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 5.0,
                 axis: ze_notion::Vec3::Y,
                 speed: 0.5,
                 initial_angle: 0.0,
-            },
+            }),
             target: Arc::new(CameraEye {
                 id: ObjectId::DANGLING,
             }),
@@ -263,7 +268,10 @@ mod tests {
         let mut saw_orbit = false;
         for binding in &table.bindings {
             // T0-② 后按**曲线类型**分辨绑定（target 类别清单已删除）。
-            match &binding.curve {
+            let Some(curve) = binding.driver.as_curve() else {
+                continue;
+            };
+            match curve {
                 Curve::Sin { amp, base, omega } => {
                     saw_sin = true;
                     assert!((amp - 0.8).abs() < 1e-5, "amp = {amp}");

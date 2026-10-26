@@ -23,7 +23,8 @@
 ## 依赖图
 
 依赖方向自上而下：`kernel / pod → object / graph → schedule → scene → render → ui → app`，反向禁止。
-（`pod` 是独立底座：只依赖自身核心组，不依赖 kernel / scene；`schedule` 无内部依赖，是通用底座；
+（`pod` 是独立底座：除函子库 `ze-pod-func → ze-func`（组合子内核，S3）外只依赖自身核心组，
+不依赖 scene；`schedule` 无内部依赖，是通用底座；
 `render` / `ui` / `app` 亦可直接依赖 `kernel` / `pod` / `object` / `graph`。）
 
 ```mermaid
@@ -35,6 +36,7 @@ graph TD
         ze_content["ze-content"]
         ze_prerender["ze-prerender"]
         ze_time["ze-time"]
+        ze_func["ze-func"]
         ze_vertex["ze-vertex"]
         ze_resource["ze-resource"]
         ze_macro["ze-macro"]
@@ -44,6 +46,7 @@ graph TD
         ze_pod_core["ze-pod-core（核心组）"]
         ze_pod_binding["ze-pod-binding（核心组）"]
         ze_pod_macro["ze-pod-macro（核心组）"]
+        ze_pod_func["ze-pod-func（函子库组）"]
         ze_pod_lua["ze-pod-lua（语言适配器组）"]
         ze_pod_py["ze-pod-py（语言适配器组）"]
         ze_pod_js["ze-pod-js（语言适配器组，boa）"]
@@ -100,8 +103,11 @@ graph TD
     ze_prerender --> ze_notion
     ze_time --> ze_notion
 
-    %% pod：核心组 + 语言适配器组（生产边不含任何 zela-*）
+    %% pod：核心组 + 函子库组 + 语言适配器组（生产边不含任何 zela-*）
     ze_pod_binding --> ze_pod_core
+    ze_pod_func --> ze_pod_core
+    ze_pod_func --> ze_pod_macro
+    ze_pod_func --> ze_func
     ze_pod_py --> ze_pod_core
     ze_pod_py --> ze_pod_binding
     ze_pod_py --> ze_pod_macro
@@ -135,6 +141,8 @@ graph TD
     zela_scene_ecs --> zela_schedule
     zela_scene_ecs --> ze_pod_core
     zela_scene_ecs --> ze_pod_macro
+    zela_scene_ecs --> ze_pod_func
+    zela_scene_ecs --> ze_func
     ze_scene_api --> ze_scene_core
     ze_scene_api --> ze_pod_core
     ze_scene_api --> ze_pod_macro
@@ -145,6 +153,7 @@ graph TD
     ze_scene_core --> ze_prerender
     ze_scene_core --> ze_pod_core
     ze_scene_core --> ze_pod_macro
+    ze_scene_core --> ze_func
     ze_scene_core --> ze_render_ir
     ze_scene_core --> ze_scene_contract
     zela_render --> ze_content
@@ -202,6 +211,7 @@ graph TD
     zela_app --> ze_scene_core
     zela_app --> ze_pod_core
     zela_app --> ze_pod_binding
+    zela_app --> ze_pod_func
     zela_app --> ze_pod_lua
     zela_app --> ze_pod_py
 
@@ -217,7 +227,7 @@ graph TD
 | NoReverseDependency | ✅ 通过 | 无 ze-* → zela-* / egui / wgpu 生产依赖 |
 | NoAppDependency | ✅ 通过 | 无 zela-* crate 依赖 zela-app |
 | NoGraphDomainTypes | ✅ 通过 | crates/ze/graph 无领域类型引用 |
-| NoPodDomainDependency | ✅ 通过 | `crates/ze/pod` 全部 5 个 crate 的生产依赖不含任何 `zela-*`（含两个语言适配器）；domain 由 App 注入 |
+| NoPodDomainDependency | ✅ 通过 | `crates/ze/pod` 全部 crate 的生产依赖不含任何 `zela-*`（含语言适配器与函子库组）；domain 由 App 注入 |
 | NoCycles | ✅ 通过 | 生产依赖为 DAG（dev-deps 不计入） |
 
 **依赖分析（2026-10-18 按 `cargo metadata` 等价重算，仅生产依赖、dev-deps 不计；见文末说明）：**
@@ -229,6 +239,12 @@ graph TD
 > **2026-10-19 更新**：新增 `zela-playback` / `zela-web` 后，`cargo metadata` 口径的
 > 内部生产边为 **100 条**，见 [`workspace-analyzer.mmd`](workspace-analyzer.mmd)。
 > 下方 FanIn/FanOut 表仍是 2026-10-18 快照，**未包含这两个 crate**。
+>
+> **2026-10-26 更新（表达式层 S1/S2/S3）**：新增 `ze-func`（kernel）与 `ze-pod-func`（pod）。
+> 生产边新增 `ze-pod-func → ze-pod-core / ze-pod-macro / ze-func`、`zela-app → ze-pod-func`、
+> `zela-scene-ecs → ze-pod-func / ze-func`（宿主单子 `M` 的注入点）与
+> `ze-scene-core → ze-func`（表达式绑定的数据层）；
+> 两者均进 wasm gate。上方 FanIn/FanOut 表仍是 2026-10-18 快照，**未包含这两个 crate**。
 
 | Package | FanIn | FanOut | Instability |
 |---------|-------|--------|-------------|

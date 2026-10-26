@@ -42,15 +42,91 @@
 
 use std::sync::Arc;
 
+use ze_func::{Channel, CompiledExpr, Expr, Node};
 use ze_scene_contract::{
-    Components, ObjectId, Parent, Scene as SceneContract, Visibility, VisibilityTag,
+    Components, Name as ComponentName, ObjectId, Parent, Scene as SceneContract, Visibility,
+    VisibilityTag,
 };
 use ze_time::{ClockForest, Curve};
 
-use crate::animation::binding::BindingTable;
+use crate::animation::binding::{BindingTable, LibraryRef};
 use crate::animation::target::{TargetCtor, target_ctor_by_name};
 use crate::animation::timeline::Timeline;
 use crate::surface::SurfaceTextureRef;
+
+/// 表达式绑定的装配期错误（**显式**，不静默丢弃）。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExprBindError {
+    /// 按名字找不到对象。
+    #[error("表达式绑定的目标对象不存在：`{0}`")]
+    UnknownObject(String),
+    /// 同名对象不唯一（装配层策略：拒绝歧义，不猜第一个）。
+    #[error("表达式绑定的目标对象名不唯一：`{0}`")]
+    DuplicateObject(String),
+    /// 目标字段名不在构造器表里。
+    #[error("未知的动画目标：`{0}`")]
+    UnknownTarget(String),
+    /// 表达式结构非法（悬空 Ref / 环 / 重名 id）。
+    #[error("表达式非法：{0}")]
+    BadExpression(String),
+    /// 该通道尚未由宿主注入（Event / ComponentState / Env 属 S3 后续）。
+    #[error("通道 `{0:?}` 尚未由宿主注入")]
+    UnsupportedChannel(Channel),
+}
+
+fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
+    CompiledExpr::compile(expr).map_err(|error| ExprBindError::BadExpression(error.to_string()))?;
+    fn first_unsupported(expr: &Expr) -> Option<Channel> {
+        if let Node::Channel { channel } = &expr.node {
+            if !matches!(channel, Channel::Time | Channel::Frame) {
+                return Some(*channel);
+            }
+        }
+        expr.node.children().iter().find_map(first_unsupported)
+    }
+    match first_unsupported(expr) {
+        Some(channel) => Err(ExprBindError::UnsupportedChannel(channel)),
+        None => Ok(()),
+    }
+}
+
+/// 在声明期对象里按 [`ComponentName`] 找唯一句柄。
+fn find_named(creates: &[Components], object: &str) -> Result<usize, ExprBindError> {
+    let mut found: Option<usize> = None;
+    for (index, components) in creates.iter().enumerate() {
+        for component in components.iter() {
+            let is_named = (**component)
+                .as_any()
+                .downcast_ref::<ComponentName>()
+                .is_some_and(|name| name.0 == object);
+            if is_named {
+                if found.is_some() {
+                    return Err(ExprBindError::DuplicateObject(object.to_string()));
+                }
+                found = Some(index);
+            }
+        }
+    }
+    found.ok_or_else(|| ExprBindError::UnknownObject(object.to_string()))
+}
+
+/// 录制一条**表达式绑定**（编码器与成品脚本共用）。
+fn record_expression(
+    timeline: &mut Timeline,
+    creates: &[Components],
+    object: &str,
+    target: &str,
+    expr: Expr,
+    library: LibraryRef,
+    duration: f64,
+) -> Result<(), ExprBindError> {
+    validate_expression(&expr)?;
+    let (make, _) = target_ctor_by_name(target)
+        .ok_or_else(|| ExprBindError::UnknownTarget(target.to_string()))?;
+    let handle = find_named(creates, object)?;
+    timeline.bind_expr_pending(expr, library, make, handle, duration);
+    Ok(())
+}
 
 /// **Encoder 内的局部句柄**：声明期索引，`commit` 时才映射到 [`ObjectId`]。
 ///
@@ -222,6 +298,29 @@ impl SceneEncoder {
         self
     }
 
+    /// 声明一条**表达式驱动**的动画（S3）：对象按名字找，目标按名字查表。
+    ///
+    /// 表达式在这里就完成结构校验（悬空 Ref / 环 / 尚未注入的通道），
+    /// 错误是显式的 —— 不留给运行期静默跳过。
+    pub fn bind_expr_named(
+        &mut self,
+        object: &str,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        record_expression(
+            &mut self.timeline,
+            &self.creates,
+            object,
+            target,
+            expr,
+            library,
+            duration,
+        )
+    }
+
     /// 收尾：产出一份不可变的 [`SceneScript`]。
     pub fn finish(self) -> SceneScript {
         SceneScript {
@@ -372,6 +471,28 @@ impl SceneScript {
     /// 重新绑定（`ze-notion` 的 `FunctionX2Y::name`）。
     pub fn from_json(text: &str) -> Result<Self, crate::persist::PersistError> {
         serde_json::from_str(text).map_err(|e| crate::persist::PersistError::Json(e.to_string()))
+    }
+
+    /// 向**成品脚本**追加一条表达式绑定（S3：宿主编排完成后合并）。
+    ///
+    /// 对象按 [`ComponentName`] 解析；名字缺失 / 重名 / 目标未知都是显式错误。
+    pub fn bind_expr_named(
+        &mut self,
+        object: &str,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        record_expression(
+            &mut self.timeline,
+            &self.creates,
+            object,
+            target,
+            expr,
+            library,
+            duration,
+        )
     }
 }
 

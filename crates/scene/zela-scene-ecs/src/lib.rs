@@ -15,6 +15,9 @@ pub mod deferred;
 pub mod director_state;
 pub mod driver;
 pub mod errors;
+pub mod expr_mono;
+#[cfg(test)]
+mod expr_binding_tests;
 pub mod geometry;
 pub mod input;
 pub mod lifetime;
@@ -48,6 +51,7 @@ pub use deferred::{
 pub use director_state::{DirectorAdvanceSystem, DirectorState};
 pub use driver::{DriverCommand, DriverEvent, DriverPod};
 pub use errors::Error;
+pub use expr_mono::SceneMono;
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 pub use input::{ParamPanelSystem, TimeControlSystem};
 pub use lifetime::{
@@ -65,7 +69,8 @@ pub use scene::{
 // B3-1b：脚本数据（SceneScript / SceneEncoder）已下沉核心层；路径保持不变。
 pub use ze_scene_core::scene_script;
 pub use ze_scene_core::scene_script::{
-    Handle, HandleRange, SceneEncoder, SceneRecipe, SceneScript, ScriptError, handle_ref,
+    ExprBindError, Handle, HandleRange, SceneEncoder, SceneRecipe, SceneScript, ScriptError,
+    handle_ref,
 };
 
 #[cfg(test)]

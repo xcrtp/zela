@@ -19,7 +19,7 @@ pub use system::BindingApplySystem;
 
 pub use ze_scene_core::animation::{binding, target, timeline};
 pub use ze_scene_core::animation::{
-    Binding, BindingTable, Camera2DFraming, CameraEye, CircleRadius, MorphT, OpacityValue, Phase,
-    RevealRange, SeekKind, Target, TargetCtor, TargetKind, Timeline, TransformChannel,
-    TransformChannelValue,
+    Binding, BindingDriver, BindingTable, Camera2DFraming, CameraEye, CircleRadius, LibraryRef,
+    MorphT, OpacityValue, Phase, RevealRange, SeekKind, Target, TargetCtor, TargetKind, Timeline,
+    TransformChannel, TransformChannelValue,
 };

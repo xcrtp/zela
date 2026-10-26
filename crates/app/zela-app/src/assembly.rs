@@ -15,9 +15,10 @@
 use std::sync::Arc;
 
 use ze_pod_core::{
-    AssemblyPlan, Broker, BrokerError, Capability, FnSig, NodeSpec, Pod, PodNode,
+    AssemblyPlan, Broker, BrokerError, Capability, FnSig, NodeSpec, Pod, PodError, PodNode,
     ServiceRequirement,
 };
+use ze_pod_func::{ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SERVICE as EXPR_SERVICE};
 use ze_pod_lua::LuaPod;
 use ze_prerender::InMemoryEngine;
 use zela_scene_ecs::pod::{self, ContentApi, PathStore, SceneApi};
@@ -36,10 +37,13 @@ pub fn plan(with_python: bool, with_js: bool) -> AssemblyPlan {
     let mut nodes = vec![
         NodeSpec::new("scene", &["scene"], Vec::new()),
         NodeSpec::new("content", &["content"], Vec::new()),
+        // 函子库：独立 Service / 独立 namespace ⇒ 加算子不动 `zela.scene` 的指纹。
+        NodeSpec::new(EXPR_SERVICE, &[EXPR_SERVICE], Vec::new()),
     ];
 
     let mut lua_requires = requirements("scene", SceneApi::signatures(), true);
     lua_requires.extend(requirements("content", ContentApi::signatures(), true));
+    lua_requires.extend(requirements(EXPR_SERVICE, MathApi::signatures(), true));
 
     #[cfg(feature = "python")]
     {
@@ -51,6 +55,7 @@ pub fn plan(with_python: bool, with_js: bool) -> AssemblyPlan {
         if with_python {
             let mut python_requires = requirements("scene", SceneApi::signatures(), true);
             python_requires.extend(requirements("content", ContentApi::signatures(), true));
+            python_requires.extend(requirements(EXPR_SERVICE, MathApi::signatures(), true));
             nodes.push(NodeSpec::new("python", &["python"], python_requires));
         }
     }
@@ -67,6 +72,7 @@ pub fn plan(with_python: bool, with_js: bool) -> AssemblyPlan {
     if with_js {
         let mut js_requires = requirements("scene", SceneApi::signatures(), true);
         js_requires.extend(requirements("content", ContentApi::signatures(), true));
+        js_requires.extend(requirements(EXPR_SERVICE, MathApi::signatures(), true));
         nodes.push(NodeSpec::new("js", &["js"], js_requires));
     }
     #[cfg(not(feature = "js"))]
@@ -113,6 +119,8 @@ pub struct PodAssembly {
     // 保留：默认构建无读取点，但 python feature 的测试会用到；属"排查句柄"而非漏接线。
     #[allow(dead_code)]
     pub lua: Arc<LuaPod>,
+    /// 函子库 Pod 句柄：脚本结束后取走表达式绑定，并入 `SceneScript`。
+    pub(crate) expr: Arc<ExprPod>,
     /// 内容 Service 句柄：`compile_script` 用它读"内容能力是否被实际使用"。
     pub(crate) content: Arc<pod::ContentServicePod>,
     /// JS Pod 句柄（`js` feature）：只用于测试 / 排查。
@@ -133,27 +141,74 @@ impl PodAssembly {
         self.broker.nodes().iter().any(|node| node.name == "python")
     }
 
-    /// 宿主 → Lua：执行分镜脚本，取回 `SceneScript`。
+    /// 宿主 → Lua：执行分镜脚本，取回 `SceneScript`（含表达式绑定合并）。
     pub fn run_script(&self, source: &str) -> Result<SceneScript, BrokerError> {
+        self.clear_expr_bindings();
         let owned = source.to_string();
         let arg: &dyn std::any::Any = &owned;
-        self.broker.run_with("lua", ze_pod_lua::RUN_ENTRY, &[arg])
+        let script = self.broker.run_with("lua", ze_pod_lua::RUN_ENTRY, &[arg])?;
+        self.merge_expr_bindings(script)
     }
 
     /// 宿主 → Python：执行分镜脚本，取回 `SceneScript`。
     #[cfg(feature = "python")]
     pub fn run_python_script(&self, source: &str) -> Result<SceneScript, BrokerError> {
+        self.clear_expr_bindings();
         let owned = source.to_string();
         let arg: &dyn std::any::Any = &owned;
-        self.broker.run_with("python", ze_pod_py::RUN_ENTRY, &[arg])
+        let script = self.broker.run_with("python", ze_pod_py::RUN_ENTRY, &[arg])?;
+        self.merge_expr_bindings(script)
     }
 
     /// 宿主 → JS：执行分镜脚本，取回 `SceneScript`。
     #[cfg(feature = "js")]
     pub fn run_js_script(&self, source: &str) -> Result<SceneScript, BrokerError> {
+        self.clear_expr_bindings();
         let owned = source.to_string();
         let arg: &dyn std::any::Any = &owned;
-        self.broker.run_with("js", ze_pod_js::RUN_ENTRY, &[arg])
+        let script = self.broker.run_with("js", ze_pod_js::RUN_ENTRY, &[arg])?;
+        self.merge_expr_bindings(script)
+    }
+
+    /// 清掉上一轮残留（脚本执行失败时也可能留下半成品）。
+    fn clear_expr_bindings(&self) {
+        let _ = self.expr.take_bindings();
+    }
+
+    /// 把脚本登记的表达式动画并入成品脚本（S3）。
+    ///
+    /// 装配期错误（未知对象 / 重名 / 目标未知 / 未注入通道）在这里**显式失败**，
+    /// 不留给运行期静默跳过。
+    fn merge_expr_bindings(
+        &self,
+        mut script: SceneScript,
+    ) -> Result<SceneScript, BrokerError> {
+        let (bindings, errors) = self.expr.take_bindings();
+        if let Some(message) = errors.into_iter().next() {
+            return Err(BrokerError::Injection {
+                node: EXPR_SERVICE.to_string(),
+                source: PodError::CallFailed(message),
+            });
+        }
+        let library = zela_scene_ecs::animation::LibraryRef {
+            namespace: LIBRARY_NAMESPACE.to_string(),
+            version: LIBRARY_VERSION.to_string(),
+        };
+        for pending in bindings {
+            script
+                .bind_expr_named(
+                    &pending.object,
+                    &pending.target,
+                    pending.expr,
+                    library.clone(),
+                    pending.duration,
+                )
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(error.to_string()),
+                })?;
+        }
+        Ok(script)
     }
 }
 
@@ -164,7 +219,7 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
         not(any(feature = "python", feature = "js")),
         allow(unused_mut)
     )]
-    let (lua, content, mut nodes) = base_nodes(engine);
+    let (lua, content, expr, mut nodes) = base_nodes(engine);
 
     #[cfg(feature = "python")]
     {
@@ -180,6 +235,7 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
                     let python = Arc::new(python);
                     python.register_capability::<SceneApi>("scene", true);
                     python.register_capability::<ContentApi>("content", true);
+                    python.register_capability::<MathApi>(EXPR_SERVICE, true);
                     // P1：Python 闭包要求 `Send + Sync` ⇒ 登记 SyncPod 徽章，Broker 走 inject_sync。
                     nodes.push(PodNode::new_sync("python", python, &["python"]));
                 }
@@ -198,6 +254,7 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
         let js = Arc::new(ze_pod_js::JsPod::new());
         js.register_capability::<SceneApi>("scene", true);
         js.register_capability::<ContentApi>("content", true);
+        js.register_capability::<MathApi>(EXPR_SERVICE, true);
         // boa 的 `Context` 是 `!Send + !Sync`（`examples/send_probe.rs` 实测）
         // ⇒ 与 LuaPod 一样不登记 SyncPod 徽章。
         nodes.push(PodNode::new("js", Arc::clone(&js) as Arc<dyn Pod>, &["js"]));
@@ -208,38 +265,43 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
     Ok(PodAssembly {
         broker,
         lua,
+        expr,
         content,
         #[cfg(feature = "js")]
         js,
     })
 }
 
-/// 三个内置节点 + Lua 的能力注册。
+/// 四个内置节点 + Lua 的能力注册。
 fn base_nodes(
     engine: Arc<InMemoryEngine>,
 ) -> (
     Arc<LuaPod>,
     Arc<pod::ContentServicePod>,
+    Arc<ExprPod>,
     Vec<PodNode>,
 ) {
     let paths = PathStore::new();
     let scene = pod::scene_service(paths.clone());
     let content = pod::content_service(engine, paths);
+    let expr = Arc::new(ExprPod::new());
 
     let lua = Arc::new(LuaPod::new());
     lua.register_capability::<SceneApi>("scene", true);
     lua.register_capability::<ContentApi>("content", true);
+    lua.register_capability::<MathApi>(EXPR_SERVICE, true);
     #[cfg(feature = "python")]
     lua.register_capability::<ze_pod_py::PythonApi>("python", false);
 
     let nodes = vec![
-        // scene / content 只含装配期状态（内部用锁），登记 SyncPod 徽章供 Python 闭包捕获。
+        // scene / content / expr 只含装配期状态（内部用锁），登记 SyncPod 徽章供 Python 闭包捕获。
         PodNode::new_sync("scene", scene, &["scene"]),
         PodNode::new_sync("content", Arc::clone(&content), &["content"]),
+        PodNode::new_sync(EXPR_SERVICE, Arc::clone(&expr), &[EXPR_SERVICE]),
         // LuaPod 持有 mlua 解释器（非 Send + Sync）⇒ 不登记徽章。
         PodNode::new("lua", Arc::clone(&lua) as Arc<dyn Pod>, &["script"]),
     ];
-    (lua, content, nodes)
+    (lua, content, expr, nodes)
 }
 
 fn run_broker(nodes: &[PodNode]) -> Result<Broker, AssemblyError> {

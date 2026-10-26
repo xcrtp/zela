@@ -33,6 +33,16 @@ pub fn ts_type_name(spec: &'static TypeSpec) -> String {
         }
         TypeSpec::Array { elem } => format!("{}[]", ts_type_name(elem)),
         TypeSpec::Opaque(_) => "Handle".to_string(),
+        TypeSpec::App { ty, args } => {
+            let name = short_name(ty);
+            if args.is_empty() {
+                name.to_string()
+            } else {
+                let args: Vec<String> = args.iter().map(ts_type_name).collect();
+                format!("{name}<{}>", args.join(", "))
+            }
+        }
+        TypeSpec::Var(_) => "unknown".to_string(),
     }
 }
 

@@ -186,7 +186,7 @@ mod tests {
     use zela_schedule::resource::Resources;
     use zela_schedule::scheduler::{Phase, Scheduler};
 
-    use crate::animation::{Camera2DFraming, CameraEye, SeekKind};
+    use crate::animation::{BindingDriver, Camera2DFraming, CameraEye, SeekKind};
     use crate::{ClockForest, ClockId, ClockNode, Curve};
 
     /// 测试脚手架：1 台 2D 相机 + 1 台 3D 相机 + 分镜 2D 绑定×2 + 自动轨道×1。
@@ -217,13 +217,13 @@ mod tests {
             let cam2d_bindings = vec![
                 Binding {
                     clock: c_center,
-                    curve: Curve::Keyframes {
+                    driver: BindingDriver::Curve(Curve::Keyframes {
                         keys: vec![
                             (0.0, crate::AnimValue::Vec2((0.0, 0.0).into())),
                             (1.0, crate::AnimValue::Vec2((1.0, 1.0).into())),
                         ],
                         interpolation: crate::Interp::Linear,
-                    },
+                    }),
                     target: Arc::new(Camera2DFraming {
                         id: crate::contract::object_id_of(cam2d),
                     }),
@@ -231,13 +231,13 @@ mod tests {
                 },
                 Binding {
                     clock: c_scale,
-                    curve: Curve::Keyframes {
+                    driver: BindingDriver::Curve(Curve::Keyframes {
                         keys: vec![
                             (0.0, crate::AnimValue::Scalar(40.0)),
                             (1.0, crate::AnimValue::Scalar(110.0)),
                         ],
                         interpolation: crate::Interp::Linear,
-                    },
+                    }),
                     target: Arc::new(Camera2DFraming {
                         id: crate::contract::object_id_of(cam2d),
                     }),
@@ -246,12 +246,12 @@ mod tests {
             ];
             let orbit = Binding {
                 clock: c_orbit,
-                curve: Curve::Orbit {
+                driver: BindingDriver::Curve(Curve::Orbit {
                     radius: 5.0,
                     axis: ze_notion::Vec3::Y,
                     speed: 0.5,
                     initial_angle: 0.0,
-                },
+                }),
                 target: Arc::new(CameraEye {
                     id: crate::contract::object_id_of(cam3d),
                 }),
@@ -401,12 +401,12 @@ mod tests {
         // 模拟脚本绑定：另一条 `CameraEye`，写同一台 3D 相机、用不同的时钟。
         let script = Binding {
             clock: ClockId(999),
-            curve: Curve::Orbit {
+            driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 3.0,
                 axis: ze_notion::Vec3::Y,
                 speed: 0.2,
                 initial_angle: 0.0,
-            },
+            }),
             target: Arc::new(CameraEye {
                 id: crate::contract::object_id_of(f.cam3d),
             }),
@@ -444,7 +444,7 @@ mod tests {
         res.insert(Camera3DHandle::default());
         let orbit = Binding {
             clock: ClockId(0),
-            curve: Curve::Phase { omega: 1.0 },
+            driver: BindingDriver::Curve(Curve::Phase { omega: 1.0 }),
             target: Arc::new(CameraEye {
                 id: crate::contract::ObjectId::DANGLING,
             }),

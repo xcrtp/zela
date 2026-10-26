@@ -207,6 +207,13 @@ fn lua_to_pod(value: &Value, spec: &'static TypeSpec) -> mlua::Result<PodValue> 
                 "枚举 `{name}` 请用构造器创建（如 `Curve.Phase {{ ... }}`）"
             )))
         }
+        // 泛型 / 类型变量没有 PodValue 形态：它们是**装配期类型**。
+        TypeSpec::Var(name) => Err(mlua::Error::RuntimeError(format!(
+            "类型变量 `{name}` 没有运行时表示"
+        ))),
+        TypeSpec::App { ty, .. } => Err(mlua::Error::RuntimeError(format!(
+            "泛型类型 `{ty}` 没有通用运行时转换"
+        ))),
     }
 }
 

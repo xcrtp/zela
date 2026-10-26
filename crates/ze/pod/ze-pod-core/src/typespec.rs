@@ -51,15 +51,30 @@ pub enum TypeSpec {
     },
     /// 不透明句柄（组件 / 对象 / 曲线 / 动作）：值只以 [`crate::Handle`] 过边界。
     Opaque(&'static str),
+    /// 类型变量（S1）：只出现在**函子库作者侧**的签名与诊断里。
+    ///
+    /// 导出到脚本侧时退化为 `any` / `unknown` / `Any` —— 本批不做合一（L2 延后，§7.2）。
+    Var(&'static str),
+    /// 类型构造应用（S1）：如 `zela.Expr<f32>`。
+    ///
+    /// `ty` 是构造器的**限定名**，`args` 是实参。它让 `Expr<f32>` 这类类型能精确进
+    /// 声明文件，而不需要引入类型变量与合一 —— 两者是独立的事（§7.3）。
+    App {
+        ty: &'static str,
+        args: &'static [TypeSpec],
+    },
 }
 
 impl TypeSpec {
-    /// 命名类型的名字（标量 / 数组 / 匿名句柄返回 `None`）。
+    /// 命名类型的名字（标量 / 数组 / 类型变量返回 `None`）。
+    ///
+    /// `App` 返回**构造器名**（`"zela.Expr"`）；含实参的完整串由导出器按需拼出。
     pub const fn type_name(&self) -> Option<&'static str> {
         match self {
             TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => Some(*name),
             TypeSpec::Opaque(name) => Some(*name),
-            TypeSpec::Scalar(_) | TypeSpec::Array { .. } => None,
+            TypeSpec::App { ty, .. } => Some(*ty),
+            TypeSpec::Scalar(_) | TypeSpec::Array { .. } | TypeSpec::Var(_) => None,
         }
     }
 
@@ -128,5 +143,25 @@ impl std::fmt::Debug for ErasedFn {
             .field("signature", &self.signature)
             .field("io", &self.io)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EXPR_F32: TypeSpec = TypeSpec::App {
+        ty: "zela.Expr",
+        args: &[TypeSpec::Scalar(ScalarKind::F32)],
+    };
+
+    #[test]
+    fn app_reports_its_constructor_name() {
+        assert_eq!(EXPR_F32.type_name(), Some("zela.Expr"));
+    }
+
+    #[test]
+    fn type_variables_have_no_named_type() {
+        assert_eq!(TypeSpec::Var("T").type_name(), None);
     }
 }

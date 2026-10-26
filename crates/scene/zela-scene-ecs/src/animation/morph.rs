@@ -38,7 +38,7 @@ impl System for MorphApplySystem {
 mod tests {
     use super::*;
     use crate::TimeState;
-    use crate::animation::binding::{Binding, BindingTable, SeekKind};
+    use crate::animation::binding::{Binding, BindingDriver, BindingTable, SeekKind};
     use crate::animation::system::BindingApplySystem;
     use crate::animation::target::MorphT;
     use ze_notion::Vec2;
@@ -74,7 +74,7 @@ mod tests {
         table.add(Binding {
             clock: root,
             // Phase：sample(t) = omega * t = 0.5 → 形变参数 0.5
-            curve: Curve::Phase { omega: 1.0 },
+            driver: BindingDriver::Curve(Curve::Phase { omega: 1.0 }),
             target: std::sync::Arc::new(MorphT {
                 id: crate::contract::object_id_of(entity),
             }),
@@ -82,7 +82,7 @@ mod tests {
         });
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.5 });
+        resources.insert(TimeState::at(0.5));
         resources.insert(forest);
         resources.insert(table);
 

@@ -41,7 +41,7 @@ use zela_render_backends::{
 };
 #[cfg(feature = "blocking")]
 use zela_render_backends::render_frame_headless;
-use zela_scene_ecs::animation::{Binding, BindingTable, CameraEye};
+use zela_scene_ecs::animation::{Binding, BindingDriver, BindingTable, CameraEye};
 use zela_scene_ecs::contract::{GroupVisibility, ObjectId, SceneRead, WorldView};
 use zela_scene_ecs::director_state::DirectorState;
 use zela_scene_ecs::domain::{ContentTextureSpecs, InputEvents, UiConfig};
@@ -211,12 +211,12 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     let orbit_clock = forest.insert(ClockNode::new(None)).unwrap();
     let orbit_binding = Binding {
         clock: orbit_clock,
-        curve: Curve::Orbit {
+        driver: BindingDriver::Curve(Curve::Orbit {
             radius: 5.0,
             axis: Vec3::Y,
             speed: 0.5,
             initial_angle: 0.0,
-        },
+        }),
         // 无 3D 相机时指向悬垂 id（不会命中任何对象）。
         target: Arc::new(CameraEye {
             id: camera3d.map_or(ObjectId::DANGLING, |handle| handle.0),

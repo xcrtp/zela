@@ -12,8 +12,10 @@ use zela_scene_ecs::TimeState;
 use zela_schedule::context::ExecutorContext;
 use zela_schedule::system::System;
 
+use crate::animation::binding::BindingDriver;
 use crate::animation::binding::BindingTable;
 use crate::contract::WorldScene;
+use crate::expr_mono::{SceneMono, anim_value};
 
 /// 遍历 BindingTable，按 `Binding.target` 把 `Curve::sample(forest.eval_local(clock, t))` 写入组件字段。
 pub struct BindingApplySystem;
@@ -25,10 +27,10 @@ impl System for BindingApplySystem {
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         // 先从 ctx.get 取出所有数据（&mut ctx 的借用到此释放），
         // 再独立用 ctx.world 做 &mut query。
-        let t_global = ctx
-            .get::<TimeState>()
-            .map(|s| s.elapsed as f64)
-            .unwrap_or(0.0);
+        let time_state = ctx.get::<TimeState>().copied().unwrap_or_default();
+        let t_global = time_state.elapsed as f64;
+        // 表达式绑定用的 M：Time / Frame 同源，算子语义来自 `zela.math`。
+        let mono = SceneMono::from_time_state(&time_state);
         let forest = match ctx.get::<ClockForest>().cloned() {
             Some(f) => f,
             None => return,
@@ -61,7 +63,27 @@ impl System for BindingApplySystem {
                 continue;
             }
             let lt = forest.eval_local(b.clock, t_global);
-            let value: AnimValue = b.curve.sample(lt);
+            let value: AnimValue = match &b.driver {
+                BindingDriver::Curve(curve) => curve.sample(lt),
+                BindingDriver::Expr(program) => match program.eval(&mono) {
+                    Ok(value) => match anim_value(&value) {
+                        Some(value) => value,
+                        None => {
+                            // 类型在装配期已校验；这里只兜底，显式记录而不是写 0。
+                            eprintln!(
+                                "[expr] 绑定目标 {} 不支持值类型 {:?}（本帧跳过）",
+                                b.target.name(),
+                                value
+                            );
+                            continue;
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!("[expr] 绑定目标 {} 求值失败：{error}", b.target.name());
+                        continue;
+                    }
+                },
+            };
             // 目标自己负责"类型匹配 + 写组件"（不符则跳过本帧，不 panic）。
             b.target.apply(&mut scene, &value);
         }
@@ -72,7 +94,7 @@ impl System for BindingApplySystem {
 mod tests {
     use super::BindingApplySystem;
     use crate::TimeState;
-    use crate::animation::binding::{Binding, BindingTable, SeekKind};
+    use crate::animation::binding::{Binding, BindingDriver, BindingTable, SeekKind};
     use crate::animation::target::CircleRadius;
     use hecs::World;
     use ze_notion::Vec3;
@@ -182,11 +204,11 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: root,
-            curve: Curve::Sin {
+            driver: BindingDriver::Curve(Curve::Sin {
                 base: 1.0,
                 amp: 0.5,
                 omega: 1.0,
-            },
+            }),
             target: std::sync::Arc::new(CircleRadius {
                 id: crate::contract::object_id_of(entity),
             }),
@@ -194,7 +216,7 @@ mod tests {
         });
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(forest);
         resources.insert(table);
 
@@ -242,7 +264,7 @@ mod tests {
         tl.compile(&mut forest, &mut table);
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(forest);
         resources.insert(table);
 
@@ -296,7 +318,7 @@ mod tests {
         tl.compile(&mut forest, &mut table);
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.5 });
+        resources.insert(TimeState::at(0.5));
         resources.insert(forest);
         resources.insert(table);
 
@@ -335,7 +357,7 @@ mod tests {
         tl.compile(&mut forest, &mut table);
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(forest);
         resources.insert(table);
 
@@ -408,7 +430,7 @@ mod tests {
         let mut bind = |curve: Curve, target: Arc<dyn crate::animation::Target>| {
             table.add(Binding {
                 clock: root,
-                curve,
+                driver: BindingDriver::Curve(curve),
                 target,
                 seek_kind: SeekKind::O1,
             });
@@ -490,7 +512,7 @@ mod tests {
         );
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.5 });
+        resources.insert(TimeState::at(0.5));
         resources.insert(forest);
         resources.insert(table);
 

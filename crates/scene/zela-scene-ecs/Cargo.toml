@@ -19,6 +19,9 @@ ze-notion = { path = "../../kernel/ze-notion" }
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 # `TargetKind` 的 schema：target 枚举是持久化表与脚本绑定的**唯一真源**。
 ze-pod-macro = { path = "../../ze/pod/ze-pod-macro" }
+# S3：表达式求值的宿主单子 M（通道来自 TimeState，算子语义来自 `zela.math` 函子库）。
+ze-func = { path = "../../kernel/ze-func" }
+ze-pod-func = { path = "../../ze/pod/ze-pod-func" }
 # 渲染 IR（样式组件）：ECS 里存的 `StrokeSolid` / `FillSolid` 组件来自此处。
 ze-render-ir = { path = "../../kernel/ze-render-ir" }
 # 契约层（M3-7/M3-8）：本层为 `ze_scene_contract::Scene` 提供 hecs 实现，

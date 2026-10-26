@@ -514,7 +514,11 @@ impl EguiSceneHost {
                 ui.separator();
 
                 for binding in table.bindings.iter() {
-                    match &binding.curve {
+                    // 表达式绑定没有可调曲线参数（面板只服务于曲线绑定）。
+                    let Some(curve) = binding.driver.as_curve() else {
+                        continue;
+                    };
+                    match curve {
                         Curve::Sin { base, amp, omega } => {
                             ui.label(target_label(binding.target.name()));
                             for (id, label, value, range, step) in [

@@ -87,7 +87,12 @@ fn collect_named(spec: &'static TypeSpec, into: &mut BTreeSet<&'static str>) {
             }
         }
         TypeSpec::Array { elem } => collect_named(elem, into),
-        TypeSpec::Scalar(_) | TypeSpec::Opaque(_) => {}
+        TypeSpec::App { args, .. } => {
+            for arg in *args {
+                collect_named(arg, into);
+            }
+        }
+        TypeSpec::Scalar(_) | TypeSpec::Opaque(_) | TypeSpec::Var(_) => {}
     }
 }
 
@@ -98,7 +103,12 @@ fn collect_top(spec: &'static TypeSpec, into: &mut BTreeSet<&'static str>) {
             into.insert(name);
         }
         TypeSpec::Array { elem } => collect_top(elem, into),
-        TypeSpec::Scalar(_) | TypeSpec::Opaque(_) => {}
+        TypeSpec::App { args, .. } => {
+            for arg in *args {
+                collect_top(arg, into);
+            }
+        }
+        TypeSpec::Scalar(_) | TypeSpec::Opaque(_) | TypeSpec::Var(_) => {}
     }
 }
 
@@ -119,6 +129,16 @@ fn py_type(spec: &'static TypeSpec, components: &BTreeSet<&'static str>) -> Stri
         }
         TypeSpec::Array { elem } => format!("List[{}]", py_type(elem, components)),
         TypeSpec::Opaque(_) => "Handle".to_string(),
+        TypeSpec::App { ty, args } => {
+            let name = short_name(ty);
+            if args.is_empty() {
+                name.to_string()
+            } else {
+                let args: Vec<String> = args.iter().map(|arg| py_type(arg, components)).collect();
+                format!("{name}[{}]", args.join(", "))
+            }
+        }
+        TypeSpec::Var(_) => "Any".to_string(),
     }
 }
 

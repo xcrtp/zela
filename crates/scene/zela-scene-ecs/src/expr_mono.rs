@@ -1,0 +1,119 @@
+//! 表达式求值的**宿主单子 `M`**（S3）。
+//!
+//! # 它是唯一的不纯入口
+//!
+//! `ze-func` 的组合子树只描述结构；值必须由宿主注入。本模块把
+//! `TimeState`（时间 + 帧号）包成 [`Mono`]，算子语义委托给函子库
+//! `zela.math`（[`ze_pod_func::eval_op`]）—— **同一份算子身份与语义**。
+//!
+//! # 当前通道
+//!
+//! | 通道 | 状态 |
+//! |---|---|
+//! | `Time` | ✅ 由 `TimeState.elapsed` 注入（S3 起由帧号派生） |
+//! | `Frame` | ✅ 由 `TimeState.frame` 注入 |
+//! | `Event` / `ComponentState` / `Env` | **显式缺失**（S3 后续：输入 / 读通道 / 运行环境） |
+//!
+//! 缺失通道返回 [`EvalError::MissingChannel`]，不静默给 0。
+//!
+//! # 边界（记账）
+//!
+//! `TimeState.elapsed` 是 `f32`（既有跨边界量化点）；这里 `as f64` 只是提升，
+//! 不引入新的量化。若将来需要 f64 时间轴，应把 `TimeState` 一起升级，而不是在
+//! 求值器里偷偷改精度。
+
+use ze_func::{Channel, EvalError, Mono, OpRef, Value};
+use ze_time::AnimValue;
+
+use crate::TimeState;
+
+/// 场景侧的 `M`：时间 / 帧号来自资源，算子来自 `zela.math`。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneMono {
+    pub time: f64,
+    pub frame: u64,
+}
+
+impl SceneMono {
+    pub fn new(time: f64, frame: u64) -> Self {
+        Self { time, frame }
+    }
+
+    /// 从 [`TimeState`] 取通道值（每帧构造一次，无状态）。
+    pub fn from_time_state(state: &TimeState) -> Self {
+        Self {
+            time: state.elapsed as f64,
+            frame: state.frame,
+        }
+    }
+}
+
+impl Mono for SceneMono {
+    fn read(&self, channel: Channel) -> Result<Value, EvalError> {
+        match channel {
+            Channel::Time => Ok(Value::F64(self.time)),
+            Channel::Frame => Ok(Value::F64(self.frame as f64)),
+            other => Err(EvalError::MissingChannel { channel: other }),
+        }
+    }
+
+    fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+        ze_pod_func::eval_op(op, args)
+    }
+}
+
+/// 求值结果 → 绑定目标可写的值。
+///
+/// `Bool` / `Text` 没有对应的组件字段通道 ⇒ 返回 `None`（调用方显式记录，不静默写 0）。
+pub fn anim_value(value: &Value) -> Option<AnimValue> {
+    match value {
+        Value::F64(value) => Some(AnimValue::Scalar(*value as f32)),
+        Value::Vec2(value) => Some(AnimValue::Vec2((*value).into())),
+        Value::Vec3(value) => Some(AnimValue::Vec3((*value).into())),
+        Value::Bool(_) | Value::Text(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ze_func::{CompiledExpr, Expr};
+
+    #[test]
+    fn channels_come_from_time_state() {
+        let state = TimeState::at_frame(1.5, 45);
+        let mono = SceneMono::from_time_state(&state);
+        assert_eq!(mono.read(Channel::Time).unwrap(), Value::F64(1.5));
+        assert_eq!(mono.read(Channel::Frame).unwrap(), Value::F64(45.0));
+        assert_eq!(
+            mono.read(Channel::Event).unwrap_err(),
+            EvalError::MissingChannel {
+                channel: Channel::Event
+            }
+        );
+    }
+
+    /// 宿主 M + 函子库语义：`sin(t)` 在 `t = π/2` 处为 1。
+    #[test]
+    fn evaluation_uses_the_host_monad_and_functor_library() {
+        let expr = Expr::call(
+            ze_func::OpRef::new("zela.math", "sin"),
+            [Expr::channel(Channel::Time)],
+        );
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let mono = SceneMono::new(std::f64::consts::FRAC_PI_2, 0);
+        assert_eq!(program.eval(&mono).unwrap(), Value::F64(1.0));
+    }
+
+    /// 帧号通道与时间通道互相独立：`sin(frame)` 用的是帧号。
+    #[test]
+    fn frame_channel_is_independent_of_time() {
+        let expr = Expr::call(
+            ze_func::OpRef::new("zela.math", "sin"),
+            [Expr::channel(Channel::Frame)],
+        );
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let mono = SceneMono::new(0.0, 30);
+        assert_eq!(program.eval(&mono).unwrap(), Value::F64(30.0_f64.sin()));
+    }
+}

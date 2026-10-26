@@ -18,6 +18,8 @@ zela-scene-bundle = { path = "../../scene/zela-scene-bundle" }
 # Pod 机制 + 静态插件装配（src/assembly.rs）。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 ze-pod-binding = { path = "../../ze/pod/ze-pod-binding" }
+# 函子库 Pod（namespace `zela.math`）：表达式层叶子算子（S2）。
+ze-pod-func = { path = "../../ze/pod/ze-pod-func" }
 # Lua 适配器（纯语言层）：`--script` 用 Lua 编排最小分镜。
 ze-pod-lua = { path = "../../ze/pod/ze-pod-lua" }
 # Python 适配器：只在 feature = "python" 时引入，默认构建不受 pyo3 影响。

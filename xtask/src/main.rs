@@ -34,12 +34,14 @@ const KERNEL_CRATES: &[&str] = &[
     "ze-scene-contract",
     "ze-content",
     "ze-time",
+    "ze-func",
     "ze-vertex",
     "ze-resource",
     "ze-macro",
     "ze-prerender",
     "ze-pod-core",
     "ze-pod-binding",
+    "ze-pod-func",
 ];
 
 /// 门面 crate：必须与核心组一样保持 wasm32 可编译（不含 lua / py / UI）。
@@ -60,7 +62,8 @@ const OPTIONAL_WASM_CRATES: &[&str] = &["ze-pod-js"];
 const JQ_POD_LAYER: &str = r#"
 .packages[]
 | select(.name | IN("ze-pod-core", "ze-pod-binding", "ze-pod-macro",
-                    "ze-pod-lua", "ze-pod-py", "ze-pod-js", "ze-pod-tests", "ze-pod"))
+                    "ze-pod-lua", "ze-pod-py", "ze-pod-js", "ze-pod-tests", "ze-pod",
+                    "ze-pod-func"))
 | .name as $n
 | .dependencies[]
 | select(.kind != "dev")

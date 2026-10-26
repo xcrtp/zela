@@ -22,6 +22,8 @@ ze-scene-contract = { path = "../../kernel/ze-scene-contract" }
 ze-macro = { path = "../../kernel/ze-macro" }
 # 动画曲线 / 时钟（Binding / Timeline 的纯数据来源）。
 ze-time = { path = "../../kernel/ze-time" }
+# S3：表达式绑定（只做结构 + 求值程序；效果值经宿主 M 注入）。
+ze-func = { path = "../../kernel/ze-func" }
 # 内置数学函数由 Pod 提供（math_pod）；核心层不依赖任何 zela-*。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 # `TargetKind` 的 schema（`#[pod_type]` 派生）。
