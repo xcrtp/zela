@@ -53,7 +53,7 @@ mod tests {
         enc.animate::<OpacityValue>(h, ramp(1.0), 1.0);
         let script = enc.finish();
         assert_eq!(script.len(), 1);
-        assert!((script.duration() - 1.5).abs() < 1e-9);
+        assert!((script.still_time().expect("可分析") - 1.5).abs() < 1e-9);
     }
 
     /// **§7.2.2 + §7.2.3**：两个对象 + 一个引用另一个 ⇒ commit 后引用解析正确，
@@ -201,7 +201,7 @@ mod tests {
         let ha = Handle(0);
         a.animate::<OpacityValue>(ha, ramp(1.0), 2.0);
         let a = a.finish();
-        let a_dur = a.duration();
+        let a_dur = a.still_time().expect("可分析");
 
         // b：一个对象 + 一段 1.0s 动画（句柄在 b 内是 0）。
         let mut b = SceneEncoder::new();
@@ -219,7 +219,7 @@ mod tests {
         // 对象数 = 两段之和。
         assert_eq!(merged.len(), 2);
         // 时间游标接续：总时长 = 2.0 + 1.0。
-        assert!((merged.duration() - (a_dur + 1.0)).abs() < 1e-9);
+        assert!((merged.still_time().expect("可分析") - (a_dur + 1.0)).abs() < 1e-9);
 
         // commit 后：b 段的首段起始 = a 的总时长（2.0）；两条绑定分别落在 0 与 2.0。
         let mut scene = SceneStruct::new();

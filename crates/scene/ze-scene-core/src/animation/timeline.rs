@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use ze_func::{CompiledExpr, Expr};
+use ze_func::{CompiledExpr, Expr, Literal, Node};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, ClockProgram, Curve, PlayMode};
 
@@ -459,23 +459,44 @@ impl Timeline {
         }
     }
 
-    /// 编排总时长（所有 `wait` + 所有段时长之和）—— 合并（append）的时间游标依据。
+    /// **静止时刻**（D 批）：所有只依赖 Time 的门都失效的最晚时刻。
     ///
-    /// 新的表达式绑定没有固定区间（`duration = None`）⇒ 不贡献时长。
-    pub fn total_duration(&self) -> f64 {
+    /// 它不是"作品时长"——录得长就是尾部静止，录得短就是截断；渲染多久由
+    /// `ExportSpec { fps, frames }` 决定。`None` = **不可推导**（含非时间依赖、
+    /// 恒生效的 predicate，或负速率时钟），调用方必须显式说明，不能拿 0 冒充。
+    ///
+    /// 能推导的形状：
+    /// - `Play` 段：`start + duration`（段后 `Hold` ⇒ 画面静止）；
+    /// - `Expr` 段：predicate 是 `Lt { time, Pure(d) }`，且时钟链是正速率的仿射映射
+    ///   （空链 / `shift` / `scale` / `nest` 都可）⇒ 解 `a·t + b = d`。
+    pub fn still_time(&self) -> Option<f64> {
         let mut cursor = 0.0f64;
+        let mut end = 0.0f64;
         for step in &self.steps {
             match step {
                 Step::Wait(d) => cursor += d,
-                Step::Play { duration, .. } => cursor += duration,
+                Step::Play { duration, .. } => {
+                    end = end.max(cursor + duration);
+                    cursor += duration;
+                }
                 Step::Expr {
-                    duration: Some(duration),
-                    ..
-                } => cursor += duration,
-                Step::Expr { duration: None, .. } => {}
+                    duration, ..
+                } if duration.is_some() => {
+                    // 历史产物：段节点 span + Hold 决定静止时刻。
+                    let d = duration.unwrap_or(0.0);
+                    end = end.max(cursor + d);
+                    cursor += d;
+                }
+                Step::Expr {
+                    predicate, clock, ..
+                } => {
+                    let window = predicate.as_ref().and_then(time_window)?;
+                    let (rate, shift) = clock_affine(clock)?;
+                    end = end.max((window - shift) / rate);
+                }
             }
         }
-        cursor
+        Some(end)
     }
 
     /// 把 `other` 的步骤**整体追加**到本编排之后（合并语义，§3.3）。
@@ -540,6 +561,48 @@ impl Timeline {
             }
         }
     }
+}
+
+/// 只依赖 Time 的窗口：`Lt { Channel("", time), Pure(d) }` ⇒ `Some(d)`。
+///
+/// 其它形状（含 Event / 组件状态 / And / Or …）一律返回 `None` ——
+/// "不可分析时显式说明"，不给错的数（硬约束 4）。
+fn time_window(expr: &Expr) -> Option<f64> {
+    let Node::Call { op, args } = &expr.node else {
+        return None;
+    };
+    if op.namespace != "zela.math" || op.name != "lt" || args.len() != 2 {
+        return None;
+    }
+    let Node::Channel { channel } = &args[0].node else {
+        return None;
+    };
+    if !channel.is_builtin() || channel.name != "time" {
+        return None;
+    }
+    match &args[1].node {
+        Node::Pure {
+            value: Literal::F64(value),
+        } => Some(*value),
+        Node::Pure {
+            value: Literal::F32(value),
+        } => Some(f64::from(*value)),
+        _ => None,
+    }
+}
+
+/// 时钟链 → 仿射映射 `local = rate · t + shift`（只接受 `rate > 0`）。
+///
+/// 逐层复合：`local' = (local − shiftᵢ) × rateᵢ`。负速率 / 零速率没有唯一解
+/// （时间反向或冻结）⇒ `None`，不猜。
+fn clock_affine(clock: &ClockProgram) -> Option<(f64, f64)> {
+    let mut rate = 1.0f64;
+    let mut shift = 0.0f64;
+    for link in &clock.links {
+        shift = (shift - link.shift) * link.rate;
+        rate *= link.rate;
+    }
+    (rate > 0.0).then_some((rate, shift))
 }
 
 #[cfg(test)]

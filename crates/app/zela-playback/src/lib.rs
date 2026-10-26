@@ -81,7 +81,7 @@ pub struct Runtime {
     pub driver: Arc<DriverPod>,
     /// 渲染上下文（由宿主创建后传入）。
     pub render_ctx: RenderContext,
-    /// 动画时长（秒）。
+    /// 静止时刻提示（秒）。
     pub duration: f64,
 }
 
@@ -95,7 +95,7 @@ pub struct SceneAssembly {
     /// 2D 相机（**可缺席**：纯 3D 场景不需要占位相机 —— PF Step 2）。
     pub camera2d: Option<Camera2DHandle>,
     pub group_visibility: GroupVisibility,
-    /// 脚本时长；`<= 0` 时按最晚绑定结束时间推断。
+    /// 静止时刻提示（`<= 0` = 不可推导 / 未提供；录多长由 frames 决定）。
     pub duration: f64,
     /// 可选 3D 相机（GUI demo 用）。
     pub camera3d: Option<Camera3DHandle>,
@@ -133,7 +133,8 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
     let _params = bundle_render_params(bundle)?;
 
     let script = bundle.script()?;
-    let duration = script.duration();
+    // 静止时刻是**派生量**（可能不可推导）；录多长仍由调用方的 frames 决定。
+    let duration = script.still_time().unwrap_or(0.0);
 
     let mut scene = Scene::new();
     let recipe = script

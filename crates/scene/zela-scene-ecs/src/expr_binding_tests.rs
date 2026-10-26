@@ -286,6 +286,74 @@ fn duration_sugar_equals_predicate_and_hold() {
     );
 }
 
+/// **D 批**：静止时刻由 predicate 的**纯 Time 依赖**推出（含时钟的仿射换算）。
+#[test]
+fn still_time_is_derived_from_time_only_predicates() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    // local = t × 0.5 − 1；窗口 local < 2 ⇒ 全局 t = (2 + 1) / 0.5 = 6。
+    let clock = crate::ClockProgram {
+        links: vec![
+            crate::ClockLink {
+                shift: 0.0,
+                rate: 0.5,
+            },
+            crate::ClockLink {
+                shift: 1.0,
+                rate: 1.0,
+            },
+        ],
+    };
+    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), clock, 2.0)
+        .expect("装配期校验通过");
+    assert_eq!(enc.finish().still_time(), Some(6.0));
+}
+
+/// 不可分析时**不给错的数**：恒生效 / 非 `Lt{time}` 形状 ⇒ `None`。
+#[test]
+fn still_time_is_none_when_not_analyzable() {
+    // 恒生效（没有 predicate）：永远在动。
+    let mut always = SceneEncoder::new();
+    let dot = always.spawn(circle());
+    always
+        .bind_expr_gated(
+            dot,
+            "CircleRadius",
+            sin_time(),
+            library(),
+            global_clock(),
+            None,
+            ResetBehavior::Skip,
+            0.0,
+        )
+        .expect("装配成功");
+    assert_eq!(always.finish().still_time(), None);
+
+    // predicate 是 `Gt`（不是可解的 `Lt` 形状）⇒ 显式不可推导。
+    let mut other = SceneEncoder::new();
+    let dot = other.spawn(circle());
+    let predicate = Expr::call(
+        OpRef::new("zela.math", "gt"),
+        [
+            Expr::channel(ChannelRef::builtin("time")),
+            Expr::pure(1.0),
+        ],
+    );
+    other
+        .bind_expr_gated(
+            dot,
+            "CircleRadius",
+            sin_time(),
+            library(),
+            global_clock(),
+            Some(predicate),
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("装配成功");
+    assert_eq!(other.finish().still_time(), None);
+}
+
 /// 嵌套时钟：`clock.nest(scale(0.5), shift(1))` ⇒ `local = t × 0.5 − 1`。
 #[test]
 fn nested_clocks_compose_linearly() {

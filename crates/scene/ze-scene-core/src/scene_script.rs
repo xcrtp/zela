@@ -568,9 +568,11 @@ impl SceneScript {
         self.creates.is_empty()
     }
 
-    /// 编排总时长（秒）—— 合并时 `other` 的首段起点即落到这里之后（§3.3）。
-    pub fn duration(&self) -> f64 {
-        self.timeline.total_duration()
+    /// **静止时刻**（秒；`None` = 不可推导，见 [`Timeline::still_time`]）。
+    ///
+    /// 它**不是**"作品时长"：录多长由 `ExportSpec { fps, frames }` 决定。
+    pub fn still_time(&self) -> Option<f64> {
+        self.timeline.still_time()
     }
 
     /// **合并**：把 `other` 整体接到本脚本之后（拼接命令序列，§3.3）。
@@ -578,7 +580,7 @@ impl SceneScript {
     /// 三条规则：
     /// 1. **句柄偏移**：`other` 的 `Handle(n)` → `Handle(base + n)`（`base = self.len()`），
     ///    `other` 内部**所有引用**（创建载荷里的占位引用 + 销毁 + 待解析动画目标）同步改写；
-    /// 2. **时间游标**：`other` 的时序接在 `self.duration()` 之后；
+    /// 2. **时间游标**：`other` 的步骤直接续在本脚本的步骤之后（顺序即游标）；
     /// 3. **返回 [`HandleRange`]**：告诉调用方 `other` 原句柄的新落位。
     ///
     /// 不做并行合并（两段时间轴对齐）—— 需要额外语义，等真实需求（§11.1）。

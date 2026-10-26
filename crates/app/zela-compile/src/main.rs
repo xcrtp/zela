@@ -125,11 +125,14 @@ fn run() -> Result<(), String> {
     }
 
     eprintln!(
-        "[zela-compile] {} → {}（{} 个对象，{}s）\n  payload hash = {}\n  capabilities = {:?}\n  pods = {:?}",
+        "[zela-compile] {} → {}（{} 个对象，静止时刻 {}）\n  payload hash = {}\n  capabilities = {:?}\n  pods = {:?}",
         args.script.display(),
         args.out.display(),
         bundle.meta().object_count,
-        bundle.meta().duration,
+        compiled
+            .script
+            .still_time()
+            .map_or_else(|| "不可推导".to_string(), |value| format!("≈ {value:.3}s")),
         bundle.payload_hash_hex(),
         bundle
             .meta()

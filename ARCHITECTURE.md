@@ -1928,3 +1928,21 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   其余 `O1`。不进脚本（硬约束 2）。
 - **新语义不钳局部时间**：时钟只做线性映射；区间由 predicate 决定。
   历史 payload（带 `duration`）仍走旧的 `span + Hold` 段节点 —— 老 ZSB 语义不变。
+
+
+### 时钟显式化 D 批：去 cursor 与时长（2026-10-26）
+
+> 一句话：**"作品有多长"是个不存在的概念**。只有"所有纯 Time 门都失效的最晚时刻"
+> （可分析时），以及"录多少帧"（`ExportSpec.frames`）。
+
+- **删除**：`SceneScript::duration()` / `Timeline::total_duration()`。
+  时间游标只存在于编译期（顺序展开），不再是可查询的量。
+- **`still_time() -> Option<f64>`**：只对**纯 Time 依赖**的 predicate
+  （`Lt { time, Pure(d) }`）求上界：时钟链先复合为仿射 `local = rate·t + shift`
+  （`rate > 0`），再反解 `t`。`Play` 段按 `start + duration` 计入（段后 Hold）。
+- **不可分析 ⇒ `None`**：恒生效 predicate、`Gt` 等非可解形状、负/零速率时钟
+  一律不给数；日志显式写"静止时刻不可推导：含非时间依赖或恒生效的 predicate"。
+- **ZSB 没有终止时间字段**：删掉 `Meta.duration`；静止时刻**不进产物**（U3 —— 派生量、
+  可能不可求）。CLI / web 需要时从 payload 现算 `SceneScript::still_time()`，
+  状态行写"静止时刻 ≈ Xs / 不可推导"。
+  录制长度由 `ExportSpec.frames` 完全决定 —— 录得长就是尾部静止，录得短就是截断。

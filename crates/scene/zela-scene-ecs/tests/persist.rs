@@ -225,7 +225,7 @@ fn scene_script_round_trips_through_json() {
     let back = SceneScript::from_json(&json).expect("反序列化成功");
 
     assert_eq!(back.len(), script.len());
-    assert!((back.duration() - script.duration()).abs() < 1e-9);
+    assert_eq!(back.still_time(), script.still_time());
 
     let mut a = Scene::new();
     let mut b = Scene::new();

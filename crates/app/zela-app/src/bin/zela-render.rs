@@ -252,10 +252,13 @@ fn run() -> Result<(), String> {
         let bundle = Bundle::from_bytes(&bytes)
             .map_err(|e| format!("ZSB 解析失败（{}）：{e}", bundle_path.display()))?;
         eprintln!(
-            "[zsb] payload hash = {}（{} 个对象，{}s）",
+            "[zsb] payload hash = {}（{} 个对象，静止时刻 {}）",
             bundle.payload_hash_hex(),
             bundle.meta().object_count,
-            bundle.meta().duration
+            bundle.script().ok().and_then(|script| script.still_time()).map_or_else(
+                || "不可推导".to_string(),
+                |value| format!("≈ {value:.3}s")
+            )
         );
         build_bundle_runtime(ctx.clone(), &bundle).map_err(|e| e.to_string())?
     } else {

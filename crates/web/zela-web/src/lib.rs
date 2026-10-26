@@ -494,9 +494,13 @@ async fn run_with(
     set_status(
         &document,
         &format!(
-            "已加载：{} 个对象 / {:.3}s / payload {} / {:.2}×；{}",
+            "已加载：{} 个对象 / 静止时刻 {} / payload {} / {:.2}×；{}",
             bundle.meta().object_count,
-            bundle.meta().duration,
+            if runtime.duration > 0.0 {
+                format!("≈ {:.3}s", runtime.duration)
+            } else {
+                "不可推导".to_string()
+            },
             payload_short,
             playback_speed(compare),
             if compare { "对拍模式" } else { "播放" }

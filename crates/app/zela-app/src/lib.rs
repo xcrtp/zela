@@ -191,9 +191,9 @@ fn compile_script_on_this_thread(
     let script = run_script_source(&assembly, source, language)?;
 
     // **最小集**（不是"编译器注册的全部"）：只记录脚本实际用到的 capability。
-    // - scene：出现了对象或时间线（`wait` 也算使用）；
+    // - scene：出现了对象（`creates` 非空 —— 绑定必须挂在对象上，所以它覆盖动画）；
     // - content：`content.formula` / `content.text` 被实际调用过。
-    let scene_used = script.len() > 0 || script.duration() > 0.0;
+    let scene_used = script.len() > 0;
     let content_used = assembly.content_used();
 
     Ok(CompiledScript {
@@ -428,12 +428,19 @@ fn build_scene_source(
         let assembly = assembly::assemble(Arc::clone(engine))
             .map_err(|e| Error::InitializationError(format!("脚本 Pod 装配失败：{e}")))?;
         let script = run_script_source(&assembly, source, *language)?;
-        eprintln!(
-            "[zela-app] 场景 = 脚本分镜（{} 个对象，{}s）",
-            script.len(),
-            script.duration()
-        );
-        let duration = script.duration();
+        // **静止时刻**是派生量：能分析时打印，不能分析时显式说明（不给错的数）。
+        match script.still_time() {
+            Some(still) => eprintln!(
+                "[zela-app] 场景 = 脚本分镜（{} 个对象，静止时刻 ≈ {still:.3}s）",
+                script.len()
+            ),
+            None => eprintln!(
+                "[zela-app] 场景 = 脚本分镜（{} 个对象，静止时刻不可推导：含非时间依赖或恒生效的 predicate）",
+                script.len()
+            ),
+        }
+        // 只作为默认录制长度的提示；`ExportSpec.frames` 才是录制长度的唯一依据。
+        let duration = script.still_time().unwrap_or(0.0);
         let recipe = script
             .commit(scene)
             .map_err(|e| Error::InitializationError(format!("脚本 commit 失败：{e}")))?;
@@ -656,8 +663,8 @@ mod tests {
             bindings_b.bindings.len(),
             "绑定数一致"
         );
-        assert_eq!(duration_a, duration_b, "时长一致");
-        assert_eq!(duration_a, 4.5, "默认分镜时长 = 脚本 duration()");
+        assert_eq!(duration_a, duration_b, "静止时刻一致");
+        assert_eq!(duration_a, 4.5, "默认分镜的静止时刻 = 最后一段的结束");
         let _ = (camera_a, camera_b);
     }
 
@@ -1551,8 +1558,12 @@ mod tests {
         let py = assembly
             .run_python_script(include_str!("../scripts/fourier.py"))
             .expect("Python 傅里叶脚本执行成功");
-        assert_eq!(lua.duration(), py.duration(), "两侧时长必须一致");
-        let duration = lua.duration();
+        assert_eq!(
+            lua.still_time(),
+            py.still_time(),
+            "两侧静止时刻必须一致"
+        );
+        let duration = lua.still_time().expect("fourier 的段区间可分析");
 
         let mut scene_lua = Scene::new();
         let mut scene_py = Scene::new();
@@ -1900,7 +1911,7 @@ scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes
         let py = assembly
             .run_python_script(py_source)
             .expect("Python Keyframes 脚本");
-        assert_eq!(lua.duration(), py.duration());
+        assert_eq!(lua.still_time(), py.still_time());
 
         let mut scene_lua = Scene::new();
         let mut scene_py = Scene::new();
@@ -2090,7 +2101,11 @@ scene.animate(dot, scene.clip("CircleRadius", Curve.Ramp({ from: 0.8, to: 1.6, d
         let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
         let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
 
-        assert_eq!(lua.duration(), js.duration(), "两侧时长必须一致");
+        assert_eq!(
+            lua.still_time(),
+            js.still_time(),
+            "两侧静止时刻必须一致"
+        );
         assert_eq!(
             lua.to_json().expect("serialize lua"),
             js.to_json().expect("serialize js"),
@@ -2128,7 +2143,11 @@ expr.bind({ object: dot, target: Circle.channel.radius, root: y, duration: 2.0 }
         let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
         let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
 
-        assert_eq!(lua.duration(), js.duration(), "两侧时长必须一致");
+        assert_eq!(
+            lua.still_time(),
+            js.still_time(),
+            "两侧静止时刻必须一致"
+        );
         assert_eq!(
             lua.to_json().expect("serialize lua"),
             js.to_json().expect("serialize js"),

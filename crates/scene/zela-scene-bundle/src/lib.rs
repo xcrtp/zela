@@ -128,8 +128,6 @@ pub struct Meta {
     /// 让既有 ZSB 仍可读（缺字段 ⇒ `RenderParams::default()` = 当前行为）。
     #[serde(default)]
     pub render_params: crate::RenderParams,
-    /// 场景时长（秒；从 SceneScript 重算，作为交叉校验）。
-    pub duration: f64,
     /// 对象数（交叉校验）。
     pub object_count: usize,
     /// payload 的 SHA-256（读取时校验；不参与自身的计算）。
@@ -272,13 +270,8 @@ impl Bundle {
             });
         }
 
-        let duration = script.duration();
-        if !duration.is_finite() {
-            return Err(BundleError::NonCanonical {
-                message: format!("时长不是有限数：{duration}"),
-            });
-        }
-
+        // **静止时刻不进产物**（U3）：它是派生量、可能不可求；需要时由
+        // `SceneScript::still_time()` 从 payload 现算（日志 / 默认帧数提示）。
         let payload = text.into_bytes();
         let payload_sha256 = sha256::hex(&sha256::sha256(&payload));
         let meta = Meta {
@@ -291,7 +284,6 @@ impl Bundle {
             downgrades: input.downgrades,
             source_sha256: input.source_sha256,
             render_params: input.render_params,
-            duration,
             object_count: script.len(),
             payload_sha256,
         };
@@ -618,7 +610,7 @@ mod tests {
         let recipe = script.clone().commit(&mut scene).expect("commit");
         assert_eq!(recipe.handles.len(), 1);
         assert_eq!(recipe.bindings.bindings.len(), 1);
-        assert_eq!(script.duration(), 2.0);
+        assert_eq!(script.still_time(), Some(2.0));
     }
 
     // J：不可信输入（上传预览）
