@@ -597,14 +597,6 @@ pub const TARGETS: &[TargetEntry] = &[
         make: crate::object::primitives::make_arrow_head_width,
     },
     TargetEntry {
-        spec: &crate::object::camera::CAMERA2D_CENTER,
-        make: crate::object::camera::make_camera2d_center,
-    },
-    TargetEntry {
-        spec: &crate::object::camera::CAMERA2D_SCALE,
-        make: crate::object::camera::make_camera2d_scale,
-    },
-    TargetEntry {
         spec: &CAMERA3D_EYE,
         make: crate::object::camera::make_camera3d_eye,
     },
@@ -834,10 +826,10 @@ mod tests {
             assert_has(a);
         }
         // 派生新增（F 批）。
+        // 注：`Camera2D` 是派生视图类型（`Framing2D::to_camera_2d` 现算），不存储 ⇒
+        // 2D 相机就是上面的 `Framing2D.center` / `Framing2D.scale`（GAPS AJ-05）。
         for a in [
             "Circle.center",
-            "Camera2D.center",
-            "Camera2D.scale",
             "Reveal.start",
             "Arrow.from",
             "Arrow.to",

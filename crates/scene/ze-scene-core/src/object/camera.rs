@@ -29,18 +29,19 @@ const FIT_MIN_EXTENT: f32 = 1e-3;
 /// 方向**相反**——薄壳层（Camera2D = Camera3D + Orthographic）负责两者换算。
 /// 屏幕 Y-down ↔ 世界 Y-up 的翻转只在 [`Camera2D::to_transform2d`] 的矩阵里
 /// 存在一份，其它地方不得再写翻转。
+///
+/// **不注册字段通道**（F 批偏差，见 GAPS AJ-05）：`Camera2D` 是**派生视图类型**
+/// （`Framing2D::to_camera_2d` 现算），场景里不存储这个组件 —— 给它挂 `#[channel]`
+/// 会得到"写永远命不中"的静默 no-op。2D 相机的可写通道是存储组件 `Framing2D`
+/// 的 `Framing2D.center` / `Framing2D.scale`（旧组合键 `Camera2DFraming` 同源）。
 #[derive(
     Debug,
     Clone,
     Copy,
     derive_new::new,
-    ze_scene_macros::Channels,
     serde::Serialize,
     serde::Deserialize,
 )]
-// F 批：center / scale 全量注册（缺省名 = 规范地址 "Camera2D.center" / "Camera2D.scale"）。
-#[channel(center: Vec2)]
-#[channel(scale: f32)]
 pub struct Camera2D {
     /// 逻辑坐标系中相机中心位置
     pub center: Vec2,
