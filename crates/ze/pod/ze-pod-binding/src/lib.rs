@@ -26,5 +26,5 @@ pub mod docs;
 pub mod plan;
 
 pub use codec::{ValueCodec, invoke};
-pub use docs::{CapabilityDocs, capabilities_json, reachable_types};
+pub use docs::{CapabilityDocs, DOCS_SCHEMA_VERSION, capabilities_json, reachable_types};
 pub use plan::{BindingPlan, collect_types, short_name};

@@ -2136,7 +2136,7 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
                     Circle { x = 0.0, y = 0.0, r = 0.25 },
                     Name { value = "dot" },
                 })
-                local y = expr.sin(expr.time())
+                local y = Sin { of = expr.time() }
                 expr.bind { object = "dot", target = "CircleRadius", root = y, duration = 2.0 }
                 "#,
             )

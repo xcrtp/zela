@@ -39,6 +39,51 @@ pub struct BindSpec {
     pub duration: f64,
 }
 
+/// `Sin { of = ... }`。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Sin")]
+pub struct SinSpec {
+    pub of: Handle,
+}
+
+/// `Cos { of = ... }`。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Cos")]
+pub struct CosSpec {
+    pub of: Handle,
+}
+
+/// `Add { a = ..., b = ... }`。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Add")]
+pub struct AddSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Mul { a = ..., b = ... }`。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Mul")]
+pub struct MulSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Scale { k = ..., of = ... }`（`k` 进产物时是字面量叶子）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Scale")]
+pub struct ScaleSpec {
+    pub k: f64,
+    pub of: Handle,
+}
+
+/// `Sum { terms = { ... } }`。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Sum")]
+pub struct SumSpec {
+    pub terms: Vec<Handle>,
+}
+
 /// 表达式叶子算子集合。
 ///
 /// 字段名就是脚本侧函数名（`expr.sin` / `expr.mul` …）。
@@ -47,7 +92,7 @@ pub struct BindSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "2",
+    version = "3",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -70,23 +115,23 @@ pub struct MathApi<'a> {
     /// 运行环境通道（`RuntimeEval`）。
     pub env: fn(&'a dyn Pod) -> Handle,
 
-    /// `sin(of)`。
-    pub sin: fn(&'a dyn Pod, of: Handle) -> Handle,
+    /// `Sin { of = ... }`（表构造器；与 `spawn{}` 同构）。
+    pub sin: fn(&'a dyn Pod, spec: SinSpec) -> Handle,
 
-    /// `cos(of)`。
-    pub cos: fn(&'a dyn Pod, of: Handle) -> Handle,
+    /// `Cos { of = ... }`。
+    pub cos: fn(&'a dyn Pod, spec: CosSpec) -> Handle,
 
-    /// `a + b`。
-    pub add: fn(&'a dyn Pod, a: Handle, b: Handle) -> Handle,
+    /// `Add { a = ..., b = ... }`。
+    pub add: fn(&'a dyn Pod, spec: AddSpec) -> Handle,
 
-    /// `a * b`。
-    pub mul: fn(&'a dyn Pod, a: Handle, b: Handle) -> Handle,
+    /// `Mul { a = ..., b = ... }`。
+    pub mul: fn(&'a dyn Pod, spec: MulSpec) -> Handle,
 
-    /// `k * of`（`k` 进产物时是字面量叶子）。
-    pub scale: fn(&'a dyn Pod, k: f64, of: Handle) -> Handle,
+    /// `Scale { k = ..., of = ... }`（`k` 进产物时是字面量叶子）。
+    pub scale: fn(&'a dyn Pod, spec: ScaleSpec) -> Handle,
 
-    /// `Σ terms`（数组参数；空数组 = 零元 `Pure(0)`）。
-    pub sum: fn(&'a dyn Pod, terms: Vec<Handle>) -> Handle,
+    /// `Sum { terms = { ... } }`（空数组 = 零元 `Pure(0)`）。
+    pub sum: fn(&'a dyn Pod, spec: SumSpec) -> Handle,
 
     /// 把表达式导出为 JSON（**产物侧证据**：含库 namespace + version）。
     pub expression: fn(&'a dyn Pod, root: Handle) -> String,

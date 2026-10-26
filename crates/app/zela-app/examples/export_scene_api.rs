@@ -4,23 +4,31 @@
 //! cargo run -p zela-app --example export_scene_api
 //! ```
 //!
-//! 产物写到 `target/scene_api/`：
+//! 产物默认写到 `target/scene_api/`（第一个命令行参数可改目录）：
 //! - `scene_api.json` / `scene_api.lua`（`ze-pod-lua`）；
 //! - `scene_api.d.ts`（`ze-pod-js`，`js` feature）；
 //! - `zela/__init__.pyi` / `zela/scene.pyi` / `zela/content.pyi` / `zela/python.pyi`
 //!   （`ze-pod-py`，路径与 capability 命名空间一致）。
+//!
+//! `cargo verify --step docs` 用它生成到 `target/` 并与
+//! `crates/app/zela-app/api/` 的基线逐字节比对。
 
-use ze_pod_core::Capability;
+use std::path::PathBuf;
+
 use ze_pod_binding::CapabilityDocs;
+use ze_pod_core::Capability;
+use ze_pod_func::MathApi;
 use zela_scene_ecs::pod::{ContentApi, SceneApi};
 
 fn main() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("target")
-        .join("scene_api");
+    let dir = std::env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("scene_api")
+    });
 
     // `capabilities` 只在开启 python feature 时追加 PythonApi。
     #[cfg_attr(not(feature = "python"), allow(unused_mut))]
@@ -36,6 +44,12 @@ fn main() {
             calls: ContentApi::calls(),
             docs: ContentApi::docs(),
             meta: ContentApi::meta(),
+        },
+        CapabilityDocs {
+            name: "expr",
+            calls: MathApi::calls(),
+            docs: MathApi::docs(),
+            meta: MathApi::meta(),
         },
     ];
     #[cfg(feature = "python")]

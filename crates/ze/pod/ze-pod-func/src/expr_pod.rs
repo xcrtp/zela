@@ -24,15 +24,16 @@ use std::sync::Mutex;
 use ze_func::{Channel, CompiledExpr, Expr, Literal, Node, OpRef};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
-use crate::api::BindSpec;
+use crate::api::{
+    AddSpec, BindSpec, CosSpec, MulSpec, ScaleSpec, SinSpec, SumSpec,
+};
 
 /// 函子库 namespace（进产物）。
 pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// 函子库版本（进产物；加算子递增它，`zela.scene` 不受影响）。
-pub const LIBRARY_VERSION: &str = "2";
+pub const LIBRARY_VERSION: &str = "3";
 
 const HANDLE: &str = "ze_pod_core.Handle";
-const HANDLE_LIST: &str = "Array<ze_pod_core.Handle>";
 
 /// 一条待并入 `SceneScript` 的表达式动画（S3）。
 #[derive(Clone, Debug)]
@@ -71,41 +72,23 @@ impl ExprPod {
         registry.register_fn0_named("zela.math::env", HANDLE, env);
 
         registry.register_fn1_named::<f64, Handle>("zela.math::pure", "f64", HANDLE, pure);
-        registry.register_fn1_named::<Handle, Handle>("zela.math::sin", HANDLE, HANDLE, sin);
-        registry.register_fn1_named::<Handle, Handle>("zela.math::cos", HANDLE, HANDLE, cos);
+        registry.register_fn1_named::<SinSpec, Handle>("zela.math::sin", "zela.math.Sin", HANDLE, sin_ctor);
+        registry.register_fn1_named::<CosSpec, Handle>("zela.math::cos", "zela.math.Cos", HANDLE, cos_ctor);
         registry.register_fn1_named::<Handle, String>(
             "zela.math::expression",
             HANDLE,
             "String",
             expression,
         );
-        registry.register_fn2_named::<Handle, Handle, Handle>(
-            "zela.math::add",
-            HANDLE,
-            HANDLE,
-            HANDLE,
-            add,
-        );
-        registry.register_fn2_named::<Handle, Handle, Handle>(
-            "zela.math::mul",
-            HANDLE,
-            HANDLE,
-            HANDLE,
-            mul,
-        );
-        registry.register_fn2_named::<f64, Handle, Handle>(
+        registry.register_fn1_named::<AddSpec, Handle>("zela.math::add", "zela.math.Add", HANDLE, add_ctor);
+        registry.register_fn1_named::<MulSpec, Handle>("zela.math::mul", "zela.math.Mul", HANDLE, mul_ctor);
+        registry.register_fn1_named::<ScaleSpec, Handle>(
             "zela.math::scale",
-            "f64",
+            "zela.math.Scale",
             HANDLE,
-            HANDLE,
-            scale,
+            scale_ctor,
         );
-        registry.register_fn1_named::<Vec<Handle>, Handle>(
-            "zela.math::sum",
-            HANDLE_LIST,
-            HANDLE,
-            sum,
-        );
+        registry.register_fn1_named::<SumSpec, Handle>("zela.math::sum", "zela.math.Sum", HANDLE, sum_ctor);
         registry.register_fn1_named::<BindSpec, ()>(
             "zela.math::bind",
             "zela.math.Bind",
@@ -209,24 +192,12 @@ impl Pod for ExprPod {
             "event" => Box::new(event(self)),
             "component_state" => Box::new(component_state(self)),
             "env" => Box::new(env(self)),
-            "sin" => Box::new(sin(self, *arg::<Handle>(args, 0)?)),
-            "cos" => Box::new(cos(self, *arg::<Handle>(args, 0)?)),
-            "add" => Box::new(add(
-                self,
-                *arg::<Handle>(args, 0)?,
-                *arg::<Handle>(args, 1)?,
-            )),
-            "mul" => Box::new(mul(
-                self,
-                *arg::<Handle>(args, 0)?,
-                *arg::<Handle>(args, 1)?,
-            )),
-            "scale" => Box::new(scale(
-                self,
-                *arg::<f64>(args, 0)?,
-                *arg::<Handle>(args, 1)?,
-            )),
-            "sum" => Box::new(sum(self, arg::<Vec<Handle>>(args, 0)?.clone())),
+            "sin" => Box::new(sin_ctor(self, arg::<SinSpec>(args, 0)?.clone())),
+            "cos" => Box::new(cos_ctor(self, arg::<CosSpec>(args, 0)?.clone())),
+            "add" => Box::new(add_ctor(self, arg::<AddSpec>(args, 0)?.clone())),
+            "mul" => Box::new(mul_ctor(self, arg::<MulSpec>(args, 0)?.clone())),
+            "scale" => Box::new(scale_ctor(self, arg::<ScaleSpec>(args, 0)?.clone())),
+            "sum" => Box::new(sum_ctor(self, arg::<SumSpec>(args, 0)?.clone())),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
             other => {
@@ -331,6 +302,32 @@ fn sum(pod: &dyn Pod, terms: Vec<Handle>) -> Handle {
     }
     let terms: Vec<Expr> = terms.into_iter().map(|handle| child(this, handle)).collect();
     this.intern(Expr::call(op("sum"), terms))
+}
+
+// ─── 表构造器入口（`Sin { of = ... }` 等）──────────────────────────────
+
+fn sin_ctor(pod: &dyn Pod, spec: SinSpec) -> Handle {
+    sin(pod, spec.of)
+}
+
+fn cos_ctor(pod: &dyn Pod, spec: CosSpec) -> Handle {
+    cos(pod, spec.of)
+}
+
+fn add_ctor(pod: &dyn Pod, spec: AddSpec) -> Handle {
+    add(pod, spec.a, spec.b)
+}
+
+fn mul_ctor(pod: &dyn Pod, spec: MulSpec) -> Handle {
+    mul(pod, spec.a, spec.b)
+}
+
+fn scale_ctor(pod: &dyn Pod, spec: ScaleSpec) -> Handle {
+    scale(pod, spec.k, spec.of)
+}
+
+fn sum_ctor(pod: &dyn Pod, spec: SumSpec) -> Handle {
+    sum(pod, spec.terms)
 }
 
 fn expression(pod: &dyn Pod, root: Handle) -> String {

@@ -137,8 +137,12 @@ fn lua_builds_an_expression_and_exports_it() {
         r#"
         local k = 3.0
         local t = expr.time()
-        -- 字面量目前要显式包装（表构造器 + 自动提升在声明生成阶段做）。
-        local y = expr.scale(4.0 / (3.141592653589793 * k), expr.sin(expr.mul(t, expr.pure(k))))
+        -- 表构造器（与 `scene.spawn{}` 同构）；字面量仍需显式 `expr.pure`
+        -- （自动提升属 AF-06 的剩余项）。
+        local y = Scale {
+            k = 4.0 / (3.141592653589793 * k),
+            of = Sin { of = Mul { a = t, b = expr.pure(k) } },
+        }
         scene.emit(expr.expression(y))
         "#,
     );
@@ -168,9 +172,12 @@ fn lua_sum_accepts_an_array() {
         local terms = {}
         for i = 1, 3 do
             local k = i * 2.0
-            terms[i] = expr.scale(4.0 / (3.141592653589793 * k), expr.sin(expr.mul(expr.time(), expr.pure(k))))
+            terms[i] = Scale {
+                k = 4.0 / (3.141592653589793 * k),
+                of = Sin { of = Mul { a = expr.time(), b = expr.pure(k) } },
+            }
         end
-        scene.emit(expr.expression(expr.sum(terms)))
+        scene.emit(expr.expression(Sum { terms = terms }))
         "#,
     );
     let json: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -209,6 +216,31 @@ fn missing_functor_pod_fails_at_assembly() {
     assert!(
         err.to_string().contains(SERVICE),
         "错误必须点名缺失的 Service，实际：{err}"
+    );
+}
+
+/// 表构造器由**已注册的函子签名**自动生成（§7.5 第 3 条）。
+#[test]
+fn table_constructors_are_generated_for_expression_ops() {
+    let capabilities = [ze_pod_binding::CapabilityDocs {
+        name: SERVICE,
+        calls: MathApi::calls(),
+        docs: MathApi::docs(),
+        meta: MathApi::meta(),
+    }];
+    let lua = ze_pod_lua::lua_ls(&capabilities);
+    assert!(lua.contains("---@class Sin"), "Sin 类型声明缺失");
+    assert!(lua.contains("function Sin(spec) end"), "Sin 构造器缺失");
+    assert!(lua.contains("function Mul(spec) end"), "Mul 构造器缺失");
+    assert!(lua.contains("function Scale(spec) end"), "Scale 构造器缺失");
+
+    let json = ze_pod_binding::capabilities_json(&capabilities);
+    assert!(json.contains("zela.math.Sin"), "JSON 应含 Sin 的类型名");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("合法 JSON");
+    assert_eq!(
+        value["schema_version"].as_u64(),
+        Some(u64::from(ze_pod_binding::DOCS_SCHEMA_VERSION)),
+        "文档 JSON 顶层必须带 schema_version"
     );
 }
 

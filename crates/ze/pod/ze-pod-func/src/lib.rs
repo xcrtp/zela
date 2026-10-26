@@ -25,7 +25,9 @@ pub mod api;
 pub mod expr_pod;
 pub mod ops;
 
-pub use api::{BindSpec, MathApi};
+pub use api::{
+    AddSpec, BindSpec, CosSpec, MathApi, MulSpec, ScaleSpec, SinSpec, SumSpec,
+};
 pub use expr_pod::{ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding};
 pub use ops::eval as eval_op;
 

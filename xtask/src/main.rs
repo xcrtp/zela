@@ -1,9 +1,9 @@
 //! xtask：本机验证入口（`cargo verify`）。
 //!
 //! ```text
-//! cargo verify               # full：check + test + wasm + structure + coverage + demo + smoke + hashes
+//! cargo verify               # full：check + test + wasm + structure + docs + coverage + demo + smoke + hashes
 //! cargo verify --fast        # 开发循环：check + test + 短对拍（smoke）
-//! cargo verify --step <name> # 单步：check | test | wasm | structure | coverage | demo | smoke | hashes
+//! cargo verify --step <name> # 单步：check | test | wasm | structure | docs | coverage | demo | smoke | hashes
 //! cargo verify --record --reason <text>
 //!                            # 录制设备重录基线（见 lib.rs：两槽窗口 / 强制 reason）
 //! ```
@@ -17,6 +17,7 @@
 //! 本 crate 是**独立 workspace**（`xtask/Cargo.toml` 中的空 `[workspace]`），
 //! 因此不会被根 workspace 的 `--workspace` 或 wasm gate 收进去。
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -257,6 +258,7 @@ fn run(options: &Options) -> Result<(), String> {
             Step::Test => step_test(&root, &plan)?,
             Step::Wasm => step_wasm(&root)?,
             Step::Structure => step_structure(&root)?,
+            Step::Docs => step_docs(&root)?,
             Step::Coverage => step_coverage(&root)?,
             Step::Demo => step_demo(&root)?,
             Step::Smoke => step_smoke(&root, options.skip_baseline)?,
@@ -449,6 +451,110 @@ fn git_short_head(root: &Path) -> Result<String, String> {
         return Err("git rev-parse --short HEAD 输出为空".to_string());
     }
     Ok(head)
+}
+
+// ─── step: docs（声明文件防腐烂）─────────────────────────────────────────
+
+/// **表达式层 §7.5**：生成 LuaLS / `.d.ts` / JSON，与仓库内基线**逐字节**比对。
+///
+/// 为什么需要：声明文件是导出物，`cargo verify` 不跑它就会腐烂（函数加了、
+/// 声明没更新，直到有人手跑 example 才发现）。与锚点 / 指纹同形态：
+/// 有差异即 fail，报错给出重新生成的命令。
+fn step_docs(root: &Path) -> Result<(), String> {
+    let baseline = root.join("crates").join("app").join("zela-app").join("api");
+    if !baseline.is_dir() {
+        return Err(format!(
+            "缺少声明文件基线目录：{}\n  ⇒ 先生成并提交：\n     \
+             cargo run -p zela-app --example export_scene_api --no-default-features --features typst,js -- crates/app/zela-app/api",
+            baseline.display()
+        ));
+    }
+
+    let out = root.join("target").join("xtask").join("scene_api");
+    if out.exists() {
+        fs::remove_dir_all(&out)
+            .map_err(|error| format!("清理 {} 失败：{error}", out.display()))?;
+    }
+    fs::create_dir_all(&out)
+        .map_err(|error| format!("创建 {} 失败：{error}", out.display()))?;
+
+    let args = [
+        strings(&[
+            "run",
+            "-q",
+            "--profile",
+            "verify",
+            "-p",
+            "zela-app",
+            "--example",
+            "export_scene_api",
+            "--no-default-features",
+            "--features",
+            "typst,js",
+            "--",
+        ]),
+        vec![out.to_string_lossy().into_owned()],
+    ]
+    .concat();
+    cargo(root, &args)?;
+
+    let expected = collect_files(&baseline)?;
+    let actual = collect_files(&out)?;
+    let mut problems = Vec::new();
+    for (path, bytes) in &expected {
+        match actual.get(path) {
+            None => problems.push(format!("缺少：{path}")),
+            Some(other) if other != bytes => problems.push(format!("不一致：{path}")),
+            Some(_) => {}
+        }
+    }
+    for path in actual.keys() {
+        if !expected.contains_key(path) {
+            problems.push(format!("多出：{path}（基线未收录）"));
+        }
+    }
+    if !problems.is_empty() {
+        return Err(format!(
+            "声明文件与基线不一致（{} 项）：\n  {}\n  \
+             ⇒ 确认变更后重跑并提交 api/：\n     \
+             cargo run -p zela-app --example export_scene_api --no-default-features --features typst,js -- crates/app/zela-app/api",
+            problems.len(),
+            problems.join("\n  ")
+        ));
+    }
+    println!(
+        "[xtask] 声明文件：{} 个文件与 api/ 基线逐字节一致",
+        expected.len()
+    );
+    Ok(())
+}
+
+/// 递归收集目录下的文件（相对路径用 `/` 分隔，值 = 原始字节）。
+fn collect_files(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    fn walk(base: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+        let entries =
+            fs::read_dir(dir).map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("遍历 {} 失败：{error}", dir.display()))?;
+            let path = entry.path();
+            if path.is_dir() {
+                walk(base, &path, out)?;
+                continue;
+            }
+            let relative = path
+                .strip_prefix(base)
+                .map_err(|error| format!("相对路径失败：{error}"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes =
+                fs::read(&path).map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+            out.insert(relative, bytes);
+        }
+        Ok(())
+    }
+    let mut out = BTreeMap::new();
+    walk(dir, dir, &mut out)?;
+    Ok(out)
 }
 
 // ─── step: check ────────────────────────────────────────────────────────────

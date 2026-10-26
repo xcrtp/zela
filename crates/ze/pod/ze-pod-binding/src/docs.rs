@@ -13,6 +13,12 @@ use ze_pod_core::{CapabilityMeta, ErasedFn, FnDoc, ScalarKind, TypeSpec};
 
 use crate::plan::collect_types;
 
+/// 文档 JSON 的 schema 版本（**解析器兼容用**）。
+///
+/// 与 capability 的 `version` 分开：后者描述**函数集合**，本常量描述
+/// `capabilities_json` 的**顶层结构**。加函数不递增它；改 JSON 形态才递增。
+pub const DOCS_SCHEMA_VERSION: u32 = 1;
+
 /// 一个 capability 的导出视图。
 #[derive(Clone, Copy)]
 pub struct CapabilityDocs {
@@ -155,7 +161,10 @@ fn spec_def(spec: &'static TypeSpec) -> String {
 pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
     let types = reachable_types(capabilities);
     let mut out = String::new();
-    out.push_str("{\n  \"api\": \"zela.script\",\n  \"capabilities\": {\n");
+    let _ = writeln!(
+        out,
+        "{{\n  \"schema_version\": {DOCS_SCHEMA_VERSION},\n  \"api\": \"zela.script\",\n  \"capabilities\": {{"
+    );
 
     for (cap_index, capability) in capabilities.iter().enumerate() {
         if cap_index > 0 {

@@ -16,9 +16,9 @@ use std::path::Path;
 /// 用法文本。
 pub const USAGE: &str = "\
 用法：
-  cargo verify               # full：check + test + wasm + structure + coverage + demo + smoke + hashes
+  cargo verify               # full：check + test + wasm + structure + docs + coverage + demo + smoke + hashes
   cargo verify --fast        # 开发循环：check + test + 短对拍（smoke）
-  cargo verify --step <name> # 单步：check | test | wasm | structure | coverage | demo | smoke | hashes
+  cargo verify --step <name> # 单步：check | test | wasm | structure | docs | coverage | demo | smoke | hashes
   cargo verify --record --reason <text>
                              # 录制设备重录基线（基线策略 §九）：强制 reason、自动回填
                              # 上一槽 commit、轮换 slotA/slotB、写 device 行
@@ -40,6 +40,8 @@ pub enum Step {
     Test,
     Wasm,
     Structure,
+    /// **表达式层 §7.5**：声明文件生成 → 与仓库内基线逐字节比对（防腐烂）。
+    Docs,
     Coverage,
     /// **PG 记账 AD-01**：`demo/manifest.txt` 的 payload 断言（与 build.ps1 同口径）。
     Demo,
@@ -48,11 +50,12 @@ pub enum Step {
 }
 
 impl Step {
-    pub const ALL: [Step; 8] = [
+    pub const ALL: [Step; 9] = [
         Step::Check,
         Step::Test,
         Step::Wasm,
         Step::Structure,
+        Step::Docs,
         Step::Coverage,
         Step::Demo,
         Step::Smoke,
@@ -65,6 +68,7 @@ impl Step {
             Step::Test => "test",
             Step::Wasm => "wasm",
             Step::Structure => "structure",
+            Step::Docs => "docs",
             Step::Coverage => "coverage",
             Step::Demo => "demo",
             Step::Smoke => "smoke",
