@@ -103,6 +103,77 @@ pub struct SumSpec {
     pub terms: Vec<Handle>,
 }
 
+/// `Lt { a = ..., b = ... }`：`a < b`（数值 → Bool）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Lt")]
+pub struct LtSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Gt { a = ..., b = ... }`：`a > b`（数值 → Bool）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Gt")]
+pub struct GtSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Le { a = ..., b = ... }`：`a ≤ b`（数值 → Bool）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Le")]
+pub struct LeSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Ge { a = ..., b = ... }`：`a ≥ b`（数值 → Bool）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Ge")]
+pub struct GeSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Eq { a = ..., b = ... }`：数值或布尔相等。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Eq")]
+pub struct EqSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Ne { a = ..., b = ... }`：数值或布尔不等（U2：不做隐式真值转换，请显式比较）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Ne")]
+pub struct NeSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `And { a = ..., b = ... }`：布尔合取。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.And")]
+pub struct AndSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Or { a = ..., b = ... }`：布尔析取。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Or")]
+pub struct OrSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `Not { of = ... }`：布尔取反。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Not")]
+pub struct NotSpec {
+    pub of: Handle,
+}
+
 /// 表达式叶子算子集合。
 ///
 /// 字段名就是脚本侧函数名（`expr.sin` / `expr.mul` …）。
@@ -151,6 +222,36 @@ pub struct MathApi<'a> {
 
     /// `Sum { terms = { ... } }`（空数组 = 零元 `Pure(0)`）。
     pub sum: fn(&'a dyn Pod, spec: SumSpec) -> Handle,
+
+    /// `Lt { a = ..., b = ... }`：`a < b`（数值 → `Bool`）。
+    pub lt: fn(&'a dyn Pod, spec: LtSpec) -> Handle,
+
+    /// `Gt { a = ..., b = ... }`：`a > b`（数值 → `Bool`）。
+    pub gt: fn(&'a dyn Pod, spec: GtSpec) -> Handle,
+
+    /// `Le { a = ..., b = ... }`：`a ≤ b`（数值 → `Bool`）。
+    pub le: fn(&'a dyn Pod, spec: LeSpec) -> Handle,
+
+    /// `Ge { a = ..., b = ... }`：`a ≥ b`（数值 → `Bool`）。
+    pub ge: fn(&'a dyn Pod, spec: GeSpec) -> Handle,
+
+    /// `Eq { a = ..., b = ... }`：数值或布尔相等（不做隐式真值转换）。
+    pub eq: fn(&'a dyn Pod, spec: EqSpec) -> Handle,
+
+    /// `Ne { a = ..., b = ... }`：数值或布尔不等（U2：请显式比较，不要依赖 0 = false）。
+    pub ne: fn(&'a dyn Pod, spec: NeSpec) -> Handle,
+
+    /// `And { a = ..., b = ... }`：布尔合取。
+    ///
+    /// ⚠️ 函数名就是 `and`（Lua / Python 里它是关键字，**那些语言请用表构造器**
+    /// `And { a = ..., b = ... }`；JS 侧 `expr.and(...)` 可用）。
+    pub and: fn(&'a dyn Pod, spec: AndSpec) -> Handle,
+
+    /// `Or { a = ..., b = ... }`：布尔析取（同上：Lua / Python 用 `Or {}`）。
+    pub or: fn(&'a dyn Pod, spec: OrSpec) -> Handle,
+
+    /// `Not { of = ... }`：布尔取反（同上：Lua / Python 用 `Not {}`）。
+    pub not: fn(&'a dyn Pod, spec: NotSpec) -> Handle,
 
     /// 把表达式导出为 JSON（**产物侧证据**：含库 namespace + version）。
     pub expression: fn(&'a dyn Pod, root: Handle) -> String,

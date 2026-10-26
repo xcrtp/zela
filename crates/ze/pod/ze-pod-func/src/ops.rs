@@ -13,7 +13,15 @@
 use ze_func::{EvalError, OpRef, Value};
 
 /// 本函子库认识的算子（装配期校验用；未知算子直接拒绝）。
-pub const OPS: &[&str] = &["sin", "cos", "add", "mul", "scale", "sum"];
+///
+/// # 为什么有 `and` / `or` / `not`
+///
+/// predicate（`bind` 的生效条件）是 Bool 表达式，必须有比较与布尔组合子；
+/// 它们是**值算子**，与 `sin` 等同层。Bool 结果不进 `anim_value`（root 侧语义不变）。
+pub const OPS: &[&str] = &[
+    "sin", "cos", "add", "mul", "scale", "sum", "lt", "gt", "le", "ge", "eq", "ne", "and", "or",
+    "not",
+];
 
 /// `op` 是否属于本库（namespace 必须一致，名字在 [`OPS`] 里）。
 pub fn is_known(op: &OpRef) -> bool {
@@ -28,6 +36,15 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
         args.get(index)
             .and_then(Value::as_f64)
             .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是数值")))
+    };
+    let boolean = |index: usize| -> Result<bool, EvalError> {
+        match args.get(index) {
+            Some(Value::Bool(value)) => Ok(*value),
+            _ => Err(EvalError::op(
+                op,
+                format!("第 {index} 个实参不是布尔（Bool 由比较算子产出）"),
+            )),
+        }
     };
 
     match op.name.as_str() {
@@ -44,6 +61,29 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
             }
             Ok(Value::F64(total))
         }
+        "lt" => Ok(Value::Bool(number(0)? < number(1)?)),
+        "gt" => Ok(Value::Bool(number(0)? > number(1)?)),
+        "le" => Ok(Value::Bool(number(0)? <= number(1)?)),
+        "ge" => Ok(Value::Bool(number(0)? >= number(1)?)),
+        "eq" | "ne" => {
+            let equal = match (args.first(), args.get(1)) {
+                (Some(Value::Bool(a)), Some(Value::Bool(b))) => a == b,
+                (Some(a), Some(b)) => match (a.as_f64(), b.as_f64()) {
+                    (Some(a), Some(b)) => a == b,
+                    _ => {
+                        return Err(EvalError::op(
+                            op,
+                            "只支持数值或布尔比较（不做隐式真值转换）",
+                        ))
+                    }
+                },
+                _ => return Err(EvalError::op(op, "需要两个实参")),
+            };
+            Ok(Value::Bool(if op.name == "eq" { equal } else { !equal }))
+        }
+        "and" => Ok(Value::Bool(boolean(0)? && boolean(1)?)),
+        "or" => Ok(Value::Bool(boolean(0)? || boolean(1)?)),
+        "not" => Ok(Value::Bool(!boolean(0)?)),
         other => Err(EvalError::op(op, format!("未知算子 `{other}`"))),
     }
 }
@@ -94,5 +134,47 @@ mod tests {
     fn unknown_operator_is_explicit() {
         let err = eval(&math("tan"), &[Value::F64(1.0)]).unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::tan"));
+    }
+
+    /// 比较算子产出 `Bool`（predicate 的原料）；顺序与边界都按 IEEE 比较。
+    #[test]
+    fn comparisons_yield_bool() {
+        let one = Value::F64(1.0);
+        let two = Value::F64(2.0);
+        assert_eq!(eval(&math("lt"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(true));
+        assert_eq!(eval(&math("gt"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(false));
+        assert_eq!(eval(&math("le"), &[two.clone(), two.clone()]).unwrap(), Value::Bool(true));
+        assert_eq!(eval(&math("ge"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(false));
+        assert_eq!(eval(&math("eq"), &[two.clone(), two.clone()]).unwrap(), Value::Bool(true));
+        assert_eq!(eval(&math("ne"), &[one, two]).unwrap(), Value::Bool(true));
+    }
+
+    /// 布尔组合子只接受 Bool：不做 `0 = false` 的隐式真值转换（U2）。
+    #[test]
+    fn boolean_combinators_require_bool() {
+        assert_eq!(
+            eval(&math("and"), &[Value::Bool(true), Value::Bool(false)]).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            eval(&math("or"), &[Value::Bool(true), Value::Bool(false)]).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(eval(&math("not"), &[Value::Bool(true)]).unwrap(), Value::Bool(false));
+
+        let err = eval(&math("and"), &[Value::F64(1.0), Value::Bool(true)]).unwrap_err();
+        assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::and"));
+    }
+
+    /// `eq` / `ne` 支持数值与布尔两种比较，其他类型显式报错。
+    #[test]
+    fn equality_compares_numbers_and_bools_only() {
+        assert_eq!(
+            eval(&math("eq"), &[Value::Bool(true), Value::Bool(true)]).unwrap(),
+            Value::Bool(true)
+        );
+        let err = eval(&math("eq"), &[Value::Text("a".into()), Value::Text("a".into())])
+            .unwrap_err();
+        assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::eq"));
     }
 }

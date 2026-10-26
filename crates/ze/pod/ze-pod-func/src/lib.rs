@@ -26,7 +26,8 @@ pub mod expr_pod;
 pub mod ops;
 
 pub use api::{
-    AddSpec, BindSpec, ChannelSpec, CosSpec, MathApi, MulSpec, ScaleSpec, SinSpec, SumSpec,
+    AddSpec, AndSpec, BindSpec, ChannelSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LtSpec,
+    MathApi, MulSpec, NeSpec, NotSpec, OrSpec, ScaleSpec, SinSpec, SumSpec,
 };
 pub use expr_pod::{
     ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding, SCENE_NAMESPACE,

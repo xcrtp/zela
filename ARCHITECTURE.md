@@ -1868,3 +1868,20 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   构造器本身仍是函数 / 可调用对象；LuaLS 的 `---@operator call(...)` 方案已撤销（对
   `@class` + `@operator` 的组合不稳定，且与函数形态只能二选一）。
 - **影响**：`expr_demo` 改用常量；产物里的库版本 `4 → 5` ⇒ payload 重录为 `94d731b4…`，像素不变。
+
+
+### 时钟显式化 A 批：比较 / 布尔算子（2026-10-26）
+
+> 一句话：**predicate 的原料先备齐**。`zela.math` 从"只有算术"扩到"算术 + 比较 + 布尔"，
+> 但 Bool 是**值**，不改变 root 绑定的可写类型。
+
+- **算子**（[`ops.rs`](crates/ze/pod/ze-pod-func/src/ops.rs)）：`lt` / `gt` / `le` / `ge` /
+  `eq` / `ne` / `and` / `or` / `not`。四个比较算子（`lt` / `gt` / `le` / `ge`）产出
+  `Value::Bool`；`eq` / `ne` 只接受「数值或布尔」，`and` / `or` / `not` 只接受 Bool
+  —— **不做 `0 = false` 的隐式真值转换**（U2）。
+- **两条求值路径**：predicate 与 root 共享同一个宿主 M（算子语义同源），但 Bool **不经过**
+  [`anim_value`](crates/scene/zela-scene-ecs/src/expr_mono.rs)：root 写字段仍只接受
+  Scalar / Vec2 / Vec3，类型不符照旧显式跳过并记录。
+- **命名**：`and` / `or` / `not` 在 Rust 里是合法标识符，但在 Lua / Python 里是关键字
+  ⇒ 作者侧统一用表构造器 `And {}` / `Or {}` / `Not {}`；JS 可以写 `expr.and(...)`。
+- **零格式代价**：`LIBRARY_VERSION` 不变（既有表达式语义不动）⇒ 23 条 demo payload 逐位不变。

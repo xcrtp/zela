@@ -935,6 +935,18 @@
 
 ---
 
+## AH. 时钟显式化批次记账（分布式时间源 + predicate / reset，2026-10-26）
+
+> 计划《时钟显式化执行计划：分布式时间源 + predicate 绑定》（一批四次提交 A/B/C/D）。
+> 口径：**A 比较算子 → B clock 显式化 → C predicate / reset → D 去 cursor 与时长**；
+> 旧 `Curve` 路径保持可用，36 条基线不得重录。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AH-01 | **比较 / 布尔算子已落地（A 批）** | 表达式层 / 函子库 | **已关闭（A）** | `zela.math` 的 [`OPS`](crates/ze/pod/ze-pod-func/src/ops.rs) 增加 `lt` / `gt` / `le` / `ge` / `eq` / `ne` / `and` / `or` / `not`；对应 PodType（`Lt` … `Not`）在 [`api.rs`](crates/ze/pod/ze-pod-func/src/api.rs) 声明、在 [`expr_pod.rs`](crates/ze/pod/ze-pod-func/src/expr_pod.rs) 注册为值算子（纯结构、无状态）。比较算子产出 `Value::Bool`，**不经过 `anim_value`**（root 侧语义不变：Bool 仍是显式不可写，`comparisons_evaluate_to_bool_but_are_not_animatable`）。`eq` / `ne` 只支持数值与布尔（不做隐式真值转换，U2）；`and` / `or` / `not` 只接受 Bool（`boolean_combinators_require_bool`）。⚠️ Lua / Python 里 `and` / `or` / `not` 是关键字 ⇒ 作者侧用表构造器 `And {}` / `Or {}` / `Not {}`（JS 可用 `expr.and(...)`）。`LIBRARY_VERSION` 仍为 5：既有表达式语义与 payload 逐位不变 |
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后

@@ -25,7 +25,8 @@ use ze_func::{ChannelRef, CompiledExpr, Expr, Literal, Node, OpRef};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
-    AddSpec, BindSpec, ChannelSpec, CosSpec, MulSpec, ScaleSpec, SinSpec, SumSpec,
+    AddSpec, AndSpec, BindSpec, ChannelSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LtSpec,
+    MulSpec, NeSpec, NotSpec, OrSpec, ScaleSpec, SinSpec, SumSpec,
 };
 
 /// 函子库 namespace（进产物）。
@@ -94,6 +95,16 @@ impl ExprPod {
             scale_ctor,
         );
         registry.register_fn1_named::<SumSpec, Handle>("zela.math::sum", "zela.math.Sum", HANDLE, sum_ctor);
+        // 比较 / 布尔组合子（predicate 的原料；值语义，Bool 不进 `anim_value`）。
+        registry.register_fn1_named::<LtSpec, Handle>("zela.math::lt", "zela.math.Lt", HANDLE, lt_ctor);
+        registry.register_fn1_named::<GtSpec, Handle>("zela.math::gt", "zela.math.Gt", HANDLE, gt_ctor);
+        registry.register_fn1_named::<LeSpec, Handle>("zela.math::le", "zela.math.Le", HANDLE, le_ctor);
+        registry.register_fn1_named::<GeSpec, Handle>("zela.math::ge", "zela.math.Ge", HANDLE, ge_ctor);
+        registry.register_fn1_named::<EqSpec, Handle>("zela.math::eq", "zela.math.Eq", HANDLE, eq_ctor);
+        registry.register_fn1_named::<NeSpec, Handle>("zela.math::ne", "zela.math.Ne", HANDLE, ne_ctor);
+        registry.register_fn1_named::<AndSpec, Handle>("zela.math::and", "zela.math.And", HANDLE, and_ctor);
+        registry.register_fn1_named::<OrSpec, Handle>("zela.math::or", "zela.math.Or", HANDLE, or_ctor);
+        registry.register_fn1_named::<NotSpec, Handle>("zela.math::not", "zela.math.Not", HANDLE, not_ctor);
         registry.register_fn1_named::<BindSpec, ()>(
             "zela.math::bind",
             "zela.math.Bind",
@@ -203,6 +214,15 @@ impl Pod for ExprPod {
             "mul" => Box::new(mul_ctor(self, arg::<MulSpec>(args, 0)?.clone())),
             "scale" => Box::new(scale_ctor(self, arg::<ScaleSpec>(args, 0)?.clone())),
             "sum" => Box::new(sum_ctor(self, arg::<SumSpec>(args, 0)?.clone())),
+            "lt" => Box::new(lt_ctor(self, arg::<LtSpec>(args, 0)?.clone())),
+            "gt" => Box::new(gt_ctor(self, arg::<GtSpec>(args, 0)?.clone())),
+            "le" => Box::new(le_ctor(self, arg::<LeSpec>(args, 0)?.clone())),
+            "ge" => Box::new(ge_ctor(self, arg::<GeSpec>(args, 0)?.clone())),
+            "eq" => Box::new(eq_ctor(self, arg::<EqSpec>(args, 0)?.clone())),
+            "ne" => Box::new(ne_ctor(self, arg::<NeSpec>(args, 0)?.clone())),
+            "and" => Box::new(and_ctor(self, arg::<AndSpec>(args, 0)?.clone())),
+            "or" => Box::new(or_ctor(self, arg::<OrSpec>(args, 0)?.clone())),
+            "not" => Box::new(not_ctor(self, arg::<NotSpec>(args, 0)?.clone())),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
             other => {
@@ -333,6 +353,42 @@ fn scale_ctor(pod: &dyn Pod, spec: ScaleSpec) -> Handle {
 
 fn sum_ctor(pod: &dyn Pod, spec: SumSpec) -> Handle {
     sum(pod, spec.terms)
+}
+
+fn lt_ctor(pod: &dyn Pod, spec: LtSpec) -> Handle {
+    call2(pod, "lt", spec.a, spec.b)
+}
+
+fn gt_ctor(pod: &dyn Pod, spec: GtSpec) -> Handle {
+    call2(pod, "gt", spec.a, spec.b)
+}
+
+fn le_ctor(pod: &dyn Pod, spec: LeSpec) -> Handle {
+    call2(pod, "le", spec.a, spec.b)
+}
+
+fn ge_ctor(pod: &dyn Pod, spec: GeSpec) -> Handle {
+    call2(pod, "ge", spec.a, spec.b)
+}
+
+fn eq_ctor(pod: &dyn Pod, spec: EqSpec) -> Handle {
+    call2(pod, "eq", spec.a, spec.b)
+}
+
+fn ne_ctor(pod: &dyn Pod, spec: NeSpec) -> Handle {
+    call2(pod, "ne", spec.a, spec.b)
+}
+
+fn and_ctor(pod: &dyn Pod, spec: AndSpec) -> Handle {
+    call2(pod, "and", spec.a, spec.b)
+}
+
+fn or_ctor(pod: &dyn Pod, spec: OrSpec) -> Handle {
+    call2(pod, "or", spec.a, spec.b)
+}
+
+fn not_ctor(pod: &dyn Pod, spec: NotSpec) -> Handle {
+    call1(pod, "not", spec.of)
 }
 
 fn expression(pod: &dyn Pod, root: Handle) -> String {
@@ -473,6 +529,40 @@ mod tests {
         let this = pod();
         let h = sum(&this, Vec::new());
         assert_eq!(this.tree(h).unwrap().node, Node::Pure { value: Literal::F64(0.0) });
+    }
+
+    /// **本批 A**：比较算子建出 `call` 节点，结果类型是 Bool（不经过 `anim_value`）。
+    #[test]
+    fn comparison_operators_build_bool_calls() {
+        let this = pod();
+        let t = time(&this);
+        let two = pure(&this, 2.0);
+        let lt = lt_ctor(
+            &this,
+            LtSpec {
+                a: t,
+                b: two,
+            },
+        );
+        let Node::Call { op, args } = &this.tree(lt).unwrap().node else {
+            panic!("期望 call 节点");
+        };
+        assert_eq!(op, &OpRef::new(LIBRARY_NAMESPACE, "lt"));
+        assert_eq!(args.len(), 2);
+
+        // `And` / `Not` 也是值算子：结构上只是 call。
+        let and = and_ctor(
+            &this,
+            AndSpec {
+                a: lt,
+                b: lt,
+            },
+        );
+        let not = not_ctor(&this, NotSpec { of: and });
+        assert!(matches!(
+            this.tree(not).unwrap().node,
+            Node::Call { ref op, .. } if op.name == "not"
+        ));
     }
 
     /// 快慢路径调用同一组 helper ⇒ 结果一致（结构可序列化对比）。

@@ -135,4 +135,24 @@ mod tests {
         let mono = SceneMono::new(0.0, 30);
         assert_eq!(program.eval(&mono).unwrap(), Value::F64(30.0_f64.sin()));
     }
+
+    /// **本批 A**：比较算子经同一个宿主 M 求值得到 `Bool`；
+    /// Bool 不进 `anim_value`（root 绑定语义不变，predicate 将走独立路径）。
+    #[test]
+    fn comparisons_evaluate_to_bool_but_are_not_animatable() {
+        let expr = Expr::call(
+            ze_func::OpRef::new("zela.math", "lt"),
+            [
+                Expr::channel(ChannelRef::builtin(TIME_CHANNEL)),
+                Expr::pure(2.0),
+            ],
+        );
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let value = program.eval(&SceneMono::new(1.0, 0)).unwrap();
+        assert_eq!(value, Value::Bool(true));
+        assert_eq!(anim_value(&value), None);
+
+        let value = program.eval(&SceneMono::new(3.0, 0)).unwrap();
+        assert_eq!(value, Value::Bool(false));
+    }
 }
