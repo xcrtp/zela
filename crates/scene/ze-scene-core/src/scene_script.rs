@@ -71,6 +71,15 @@ pub enum ExprBindError {
     /// `predicate` 与 `duration` 同时给出（后者是 `t < d` 的糖）。
     #[error("predicate 与 duration 不能同时指定（duration ≡ predicate `t < d` + reset hold）")]
     ConflictingGate,
+    /// `reset = Hold` 的 predicate 无法分析成局部时间区间集。
+    ///
+    /// Hold 的硬约束是**纯函数** `f(last_active(t))`（AH-07）；不可分析就只能退回
+    /// "上一帧写过什么"的历史依赖 —— 这正是本批要消灭的东西，故在装配期拒绝。
+    #[error(
+        "reset = Hold 需要可分析的 predicate（`time` 与字面量比较 + And/Or/Not）；\
+         当前形状含非时间依赖或非字面量边界 —— 请改成 reset = skip，或把窗口写成可分析形状"
+    )]
+    UnanalyzableHold,
 }
 
 /// 宿主当前真正注入的通道（提案 #6 B：通道是数据，白名单也只有两条）。
@@ -128,6 +137,15 @@ fn record_expression(
         ),
         (None, _) => (None, reset),
     };
+    // **AH-07 硬约束**：Hold 是纯函数 `f(last_active(t))`。不可分析的时间门在装配期
+    // 拒绝，而不是留到运行期靠"上一帧写过什么"（那会重新引入顺序耦合）。
+    if reset == ResetBehavior::Hold {
+        if let Some(predicate) = &predicate {
+            if crate::animation::predicate::analyze(predicate).is_none() {
+                return Err(ExprBindError::UnanalyzableHold);
+            }
+        }
+    }
     let (make, _) = target_ctor_by_name(target)
         .ok_or_else(|| ExprBindError::UnknownTarget(target.to_string()))?;
     if object.0 >= object_count {

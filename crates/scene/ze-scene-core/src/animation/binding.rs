@@ -152,8 +152,9 @@ impl BindingTable {
     ///
     /// `active` 是 predicate 在**局部时间**上的区间集（[`crate::animation::predicate`]）：
     /// - `Some` ⇒ 生效判定与 `Hold` 都是纯函数 `f(last_active(t))` ⇒ `SeekKind::O1`；
-    /// - `None` ⇒ predicate 不可分析（事件 / 组件状态 / 非字面量边界）：运行期逐帧求值，
-    ///   `Hold` 仍有历史依赖，保守地记 [`SeekKind::Replay`]。
+    /// - `None` ⇒ predicate 不可分析：运行期逐帧求值。脚本装配期已拒绝
+    ///   `Hold + 不可分析`（[`crate::scene_script::ExprBindError::UnanalyzableHold`]），
+    ///   因此这里只可能来自**历史 payload**；`Hold` 仍有历史依赖，保守记 `Replay`。
     ///
     /// `Replay` 本身只为"有记忆的 root"（弹簧 / 数值积分）保留 —— 本批不实现，
     /// 但**不得删除**（AH-07）。

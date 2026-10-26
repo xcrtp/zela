@@ -1991,7 +1991,8 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   （U3：`t < 2` 的意图是"到 2 为止"）；第一段之前 ⇒ `None`（还没生效过，不写）。
 - **运行期**：`Binding.active: Option<IntervalSet>`；可分析时生效判定不再逐帧求
   predicate，`Hold` 求值在 `last_active` 上（`BindApplySystem`）。`predicate + Hold`
-  因此退回 `SeekKind::O1`；只有**不可分析**的 predicate 才保守保留 `Replay`。
+  因此退回 `SeekKind::O1`；脚本装配期对 `Hold + 不可分析` 显式拒绝
+  （`ExprBindError::UnanalyzableHold`），只有历史 payload 才可能落到 `Replay`。
   `Replay` 仍为有记忆的 root（弹簧 / 积分）保留，**不得删除**。
 - **静止时刻**：`still_time` 复用同一份区间集 —— 有限右端按仿射时钟反解；
   恒生效 / `+∞` ⇒ `None`（永远在动）；不可分析**逐条跳过**（AH-05 的粒度修正）。

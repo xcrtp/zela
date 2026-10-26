@@ -10,7 +10,7 @@
 use ze_func::{ChannelRef, Expr, OpRef};
 use ze_scene_core::animation::LibraryRef;
 use ze_scene_core::object::Circle;
-use ze_scene_core::scene_script::{SceneEncoder, SceneScript};
+use ze_scene_core::scene_script::{ExprBindError, SceneEncoder, SceneScript};
 use zela_schedule::resource::Resources;
 use zela_schedule::scheduler::{Phase, Scheduler};
 
@@ -310,6 +310,34 @@ fn skip_leaves_the_field_untouched() {
     assert!((radius - 0.5f32.sin()).abs() < 1e-5);
 }
 
+/// **AH-07 硬约束**：`reset = Hold` 必须能反算 `last_active` ⇒ 不可分析的时间门
+/// 在**装配期**拒绝（而不是退回"上一帧写过什么"）。
+#[test]
+fn hold_rejects_unanalyzable_predicate_at_assembly() {
+    let mut enc = SceneEncoder::new();
+    let dot = enc.spawn(circle());
+    let opaque = Expr::call(
+        OpRef::new("zela.math", "eq"),
+        [
+            Expr::channel(ChannelRef::builtin("time")),
+            Expr::channel(ChannelRef::builtin("time")),
+        ],
+    );
+    let error = enc
+        .bind_expr_gated(
+            dot,
+            "CircleRadius",
+            sin_time(),
+            library(),
+            global_clock(),
+            Some(opaque),
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect_err("不可分析的 Hold 必须装配期失败");
+    assert_eq!(error, ExprBindError::UnanalyzableHold);
+}
+
 /// 糖层展开后的 payload 与手写 predicate + hold **逐字节相同**。
 #[test]
 fn duration_sugar_equals_predicate_and_hold() {
@@ -452,10 +480,10 @@ fn still_time_skips_unanalyzable_bindings() {
         library(),
         global_clock(),
         Some(opaque),
-        ResetBehavior::Hold,
+        ResetBehavior::Skip,
         0.0,
     )
-    .expect("不可分析也可以装配");
+    .expect("不可分析也可以装配（Skip 不需要历史）");
     assert_eq!(enc.finish().still_time(), Some(2.0));
 }
 
@@ -478,7 +506,7 @@ fn still_time_is_none_when_every_predicate_is_unanalyzable() {
         library(),
         global_clock(),
         Some(opaque),
-        ResetBehavior::Hold,
+        ResetBehavior::Skip,
         0.0,
     )
     .expect("装配成功");
