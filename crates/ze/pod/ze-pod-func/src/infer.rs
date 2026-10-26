@@ -524,6 +524,7 @@ mod tests {
         static DUPLICATED: &[OpSig] = &[SIG, SIG];
         let def = OpDef {
             name: "dup",
+            spec: "test.Dup",
             sigs: DUPLICATED,
         };
         let error = unify_overloads(&def, &[ChannelType::Number]).expect_err("必须报歧义");

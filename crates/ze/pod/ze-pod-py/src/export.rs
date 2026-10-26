@@ -17,8 +17,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use ze_pod_core::{ScalarKind, TypeSpec};
-use ze_pod_binding::{BindingPlan, CapabilityDocs, short_name};
+use ze_pod_core::{Field, Kind, OpDef, RetType, ScalarKind, TypeSpec};
+use ze_pod_binding::{
+    BindingPlan, CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
+};
 
 /// Python 关键字（不能直接作形参名）；仅对我们 domain 里出现的做最小映射。
 fn py_ident(name: &str) -> String {
@@ -123,6 +125,10 @@ fn py_type(spec: &'static TypeSpec, components: &BTreeSet<&'static str>) -> Stri
             ScalarKind::String => "str".to_string(),
         },
         TypeSpec::Struct { name, .. } if *name == "()" => "None".to_string(),
+        // 通道常量的值形状：T 由组件字段给出；`Bind.target` 不限定值类型。
+        TypeSpec::Struct { name, .. } if *name == "zela.math.Channel" => {
+            "Channel[Any]".to_string()
+        }
         TypeSpec::Struct { name, .. } if components.contains(name) => "Any".to_string(),
         TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => {
             short_name(name).to_string()
@@ -142,10 +148,35 @@ fn py_type(spec: &'static TypeSpec, components: &BTreeSet<&'static str>) -> Stri
     }
 }
 
+/// 字段类型：`zela.math.*` 里的 `Handle` 字段是**表达式输入**，标成 `Expr[Any]`；
+/// `Predicate.Of.expr` 是 Bool 表达式。
+fn py_field_type(
+    parent: &str,
+    field: &Field,
+    components: &BTreeSet<&'static str>,
+    typed_expr: bool,
+) -> String {
+    // `Bind.object` 是**场景对象**句柄，不是表达式输入。
+    if typed_expr
+        && parent.starts_with("zela.math.")
+        && !(parent == "zela.math.Bind" && field.name == "object")
+    {
+        if parent == "zela.math.Predicate.Of" && field.name == "expr" {
+            return "Expr[bool]".to_string();
+        }
+        if matches!(*field.ty, TypeSpec::Opaque(_)) {
+            return "Expr[Any]".to_string();
+        }
+    }
+    py_type(field.ty, components)
+}
+
 fn params(
     fields: &'static [ze_pod_core::Field],
     components: &BTreeSet<&'static str>,
     type_name: &'static str,
+    parent: &str,
+    typed_expr: bool,
 ) -> String {
     fields
         .iter()
@@ -157,7 +188,7 @@ fn params(
             format!(
                 "{}: {}{default}",
                 py_ident(field.name),
-                py_type(field.ty, components)
+                py_field_type(parent, field, components, typed_expr)
             )
         })
         .collect::<Vec<_>>()
@@ -200,15 +231,23 @@ fn render_type(
     spec: &'static TypeSpec,
     components: &BTreeSet<&'static str>,
     channels: &[&'static ze_pod_core::ChannelSpec],
+    capabilities: &[CapabilityDocs],
+    typed_expr: bool,
 ) {
     let name = short_name(full_name);
     match spec {
         TypeSpec::Struct { name: type_name, fields } => {
             if components.contains(full_name) {
+                // 算子构造器返回**带静态类型的表达式句柄**；其它组件返回 Handle。
+                let returns = if let Some(op) = op_by_spec(capabilities, full_name) {
+                    py_expr_returns(op, components)
+                } else {
+                    "Handle".to_string()
+                };
                 if channels.is_empty() {
                     out.push_str(&format!(
-                        "def {name}({}) -> Handle: ...\n",
-                        params(fields, components, type_name)
+                        "def {name}({}) -> {returns}: ...\n",
+                        params(fields, components, type_name, full_name, typed_expr)
                     ));
                 } else {
                     // 带通道常量的组件在运行期是"可调用对象"⇒ 用 Protocol 建模，
@@ -217,21 +256,26 @@ fn render_type(
                     out.push_str(&format!("class _{name}Channel:\n"));
                     for channel in channels {
                         out.push_str(&format!(
-                            "    {}: {}\n",
+                            "    {}: Channel[{}]\n",
                             channel.name,
-                            short_name(channel.value_type)
+                            py_type(channel.ty, components)
                         ));
                     }
                     out.push_str(&format!("class _{name}Ctor(Protocol):\n"));
                     out.push_str(&format!("    channel: _{name}Channel\n"));
                     out.push_str(&format!(
-                        "    def __call__(self, {}) -> Handle: ...\n",
-                        params(fields, components, type_name)
+                        "    def __call__(self, {}) -> {returns}: ...\n",
+                        params(fields, components, type_name, full_name, typed_expr)
                     ));
                     out.push_str(&format!("{name}: _{name}Ctor\n"));
                 }
             } else {
-                out.push_str(&format!("class {name}:\n"));
+                // 通道值形状是泛型 `Channel<T>`：T 由组件字段给出。
+                if full_name == "zela.math.Channel" {
+                    out.push_str("class Channel(Generic[T]):\n");
+                } else {
+                    out.push_str(&format!("class {name}:\n"));
+                }
                 if fields.is_empty() {
                     out.push_str("    ...\n");
                     return;
@@ -240,12 +284,12 @@ fn render_type(
                     out.push_str(&format!(
                         "    {}: {}\n",
                         py_ident(field.name),
-                        py_type(field.ty, components)
+                        py_field_type(full_name, field, components, typed_expr)
                     ));
                 }
                 out.push_str(&format!(
                     "    def __init__(self, {}) -> None: ...\n",
-                    params(fields, components, type_name)
+                    params(fields, components, type_name, full_name, typed_expr)
                 ));
             }
         }
@@ -259,10 +303,17 @@ fn render_type(
                 if variant.fields.is_empty() {
                     out.push_str(&format!("    {}: {}\n", variant.name, name));
                 } else {
+                    let parent = format!("{type_name}.{}", variant.name);
                     out.push_str(&format!(
                         "    @staticmethod\n    def {}({}) -> {}: ...\n",
                         variant.name,
-                        params(variant.fields, components, type_name),
+                        params(
+                            variant.fields,
+                            components,
+                            type_name,
+                            &parent,
+                            typed_expr
+                        ),
                         name
                     ));
                 }
@@ -272,11 +323,62 @@ fn render_type(
     }
 }
 
+/// 一条能力函数的返回类型：算子按签名表给 `Expr[…]`。
+fn py_call_return(
+    capabilities: &[CapabilityDocs],
+    item: &ze_pod_core::ErasedFn,
+    components: &BTreeSet<&'static str>,
+) -> String {
+    if matches!(item.io.ret, TypeSpec::Struct { name: "()", .. }) {
+        return "None".to_string();
+    }
+    if let Some(op) = op_by_name(capabilities, item.signature.name) {
+        return py_expr_returns(op, components);
+    }
+    match item.signature.name {
+        "pure" | "time" | "frame" | "clock_time" => "Expr[float]".to_string(),
+        "event" | "component_state" | "env" => "Expr[Any]".to_string(),
+        _ => py_type(item.io.ret, components),
+    }
+}
+
+/// 算子的返回类型候选：`Expr[float] | Expr[Vec2] | Expr[Vec3]` …
+fn py_expr_returns(op: &OpDef, components: &BTreeSet<&'static str>) -> String {
+    let mut types: Vec<String> = Vec::new();
+    let mut add = |ty: String| {
+        if !types.contains(&ty) {
+            types.push(ty);
+        }
+    };
+    for sig in op.sigs {
+        for ret in sig.ret_types() {
+            match ret {
+                RetType::Concrete(spec) => add(py_type(spec, components)),
+                RetType::Kind(Kind::Num) => add("float".to_string()),
+                RetType::Kind(Kind::Bool) => add("bool".to_string()),
+                RetType::Kind(Kind::Vector) => {
+                    add("Vec2".to_string());
+                    add("Vec3".to_string());
+                }
+            }
+        }
+    }
+    if types.is_empty() {
+        return "Handle".to_string();
+    }
+    types
+        .into_iter()
+        .map(|ty| format!("Expr[{ty}]"))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 /// 生成按 capability 路径组织的 `.pyi` 文件树。
 ///
 /// key 是相对路径（`/` 分隔），例如 `zela/__init__.pyi` / `zela/scene.pyi`。
 pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
     let types = ze_pod_binding::reachable_types(capabilities);
+    let typed_expr = has_ops(capabilities);
 
     // 组件类型（运行时是函数，不产生类）。
     let mut components: BTreeSet<&'static str> = BTreeSet::new();
@@ -353,17 +455,43 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
 
     // ── 包 __init__.pyi：Handle + 共享类型 + 子模块再导出 ───────────────
     for package in &packages {
-        let mut out = String::from(
-            "# 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。\n\
-             from typing import Any, List, Protocol\n\n",
-        );
         let root = root_of(package);
+        // 本包是否需要泛型（`Expr<T>` 由根包定义；`Channel<T>` 在 zela.math 定义）。
+        let defines_channel = types.iter().any(|(&full, _)| {
+            full == "zela.math.Channel" && type_home.get(full) == Some(package)
+        });
+        let needs_generic = defines_channel || (typed_expr && package == root);
+        let package_has_math = types.iter().any(|(&full, _)| {
+            type_home.get(full) == Some(package) && full.starts_with("zela.math.")
+        });
+
+        let mut out = String::from(
+            "# 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。\n",
+        );
+        if needs_generic {
+            out.push_str("from typing import Any, Generic, List, Protocol, TypeVar\n\n");
+            out.push_str("T = TypeVar(\"T\")\n\n");
+        } else {
+            out.push_str("from typing import Any, List, Protocol\n\n");
+        }
         if package == root {
             out.push_str(
                 "class Handle:\n    \"\"\"不透明句柄（组件 / 对象 / 曲线 / 动作）。\"\"\"\n\n",
             );
+            if typed_expr {
+                out.push_str(
+                    "class Expr(Handle, Generic[T]):\n    \"\"\"表达式句柄（T 是装配期推导的静态类型；运行期仍是 Handle）。\"\"\"\n\n",
+                );
+            }
         } else {
-            out.push_str(&format!("from {root} import Handle\n\n"));
+            let mut imported = vec!["Handle"];
+            if typed_expr && package_has_math {
+                imported.push("Expr");
+            }
+            out.push_str(&format!(
+                "from {root} import {}\n\n",
+                imported.join(", ")
+            ));
         }
 
         let package_types: Vec<(&'static str, &'static TypeSpec)> = types
@@ -426,7 +554,15 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
                 .get(short_name(full_name))
                 .cloned()
                 .unwrap_or_default();
-            render_type(&mut out, full_name, spec, &components, &own);
+            render_type(
+                &mut out,
+                full_name,
+                spec,
+                &components,
+                &own,
+                capabilities,
+                typed_expr,
+            );
             out.push('\n');
         }
         files.insert(format!("{}/__init__.pyi", package.replace('.', "/")), out);
@@ -446,8 +582,16 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
                 .any(|param| matches!(param.ty, TypeSpec::Opaque(_)))
                 || matches!(item.io.ret, TypeSpec::Opaque(_))
         });
+        let needs_expr = typed_expr && !capability.ops.is_empty();
+        let mut imported = Vec::new();
         if needs_handle {
-            out.push_str(&format!("from {root} import Handle\n"));
+            imported.push("Handle");
+        }
+        if needs_expr {
+            imported.push("Expr");
+        }
+        if !imported.is_empty() {
+            out.push_str(&format!("from {root} import {}\n", imported.join(", ")));
         }
 
         let mut references = BTreeSet::new();
@@ -502,7 +646,7 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
                 "def {}({}) -> {}: ...\n\n",
                 item.signature.name,
                 params.join(", "),
-                py_type(item.io.ret, &components)
+                py_call_return(capabilities, item, &components)
             ));
         }
         files.insert(format!("{}.pyi", path.replace('.', "/")), out);

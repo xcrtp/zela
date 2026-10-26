@@ -113,65 +113,83 @@ const NOT: OpSig = OpSig {
 };
 
 /// `zela.math` 全部算子的签名表（顺序与 [`crate::OPS`] 一致）。
+///
+/// `spec` 是构造器 PodType 的完整名：存根生成器据此把签名挂到
+/// `Sin` / `Mul` … 上（`Sin(...) -> Expr<number>`）。
 pub static SIGNATURES: &[OpDef] = &[
     OpDef {
         name: "sin",
+        spec: "zela.math.Sin",
         sigs: &[UNARY_NUM],
     },
     OpDef {
         name: "cos",
+        spec: "zela.math.Cos",
         sigs: &[UNARY_NUM],
     },
     OpDef {
         name: "add",
+        spec: "zela.math.Add",
         sigs: &[SAME_NUM, SAME_VEC],
     },
     OpDef {
         name: "mul",
+        spec: "zela.math.Mul",
         sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
     },
     OpDef {
         name: "scale",
+        spec: "zela.math.Scale",
         sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
     },
     OpDef {
         name: "sum",
+        spec: "zela.math.Sum",
         sigs: &[SUM_NUM, SUM_VEC],
     },
     OpDef {
         name: "lt",
+        spec: "zela.math.Lt",
         sigs: &[CMP_NUM],
     },
     OpDef {
         name: "gt",
+        spec: "zela.math.Gt",
         sigs: &[CMP_NUM],
     },
     OpDef {
         name: "le",
+        spec: "zela.math.Le",
         sigs: &[CMP_NUM],
     },
     OpDef {
         name: "ge",
+        spec: "zela.math.Ge",
         sigs: &[CMP_NUM],
     },
     OpDef {
         name: "eq",
+        spec: "zela.math.Eq",
         sigs: &[EQ_NUM, EQ_BOOL],
     },
     OpDef {
         name: "ne",
+        spec: "zela.math.Ne",
         sigs: &[EQ_NUM, EQ_BOOL],
     },
     OpDef {
         name: "and",
+        spec: "zela.math.And",
         sigs: &[AND],
     },
     OpDef {
         name: "or",
+        spec: "zela.math.Or",
         sigs: &[AND],
     },
     OpDef {
         name: "not",
+        spec: "zela.math.Not",
         sigs: &[NOT],
     },
 ];

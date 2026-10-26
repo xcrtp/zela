@@ -2020,3 +2020,19 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   零输入（空流）= `Render(ZSB, ∅)`，与既有 36 条基线同一条路径。
 - **确定性门禁**：同一份流重放两次，Director 状态逐位相同；ZSB 变更后加载旧流 ⇒
   显式 fail。宿主侧"录制开关 + 保存"的 UI 入口尚未接线（GAPS AI-05）。
+
+### 类型存根优化：L2 签名 → `Expr<T>`（2026-10-26）
+
+> 一句话：**声明文件不再把表达式句柄写成 `Handle`**。运行期不变，收益全在编辑器。
+
+- **`OpDef.spec`**（`zela.math.Sin`）把签名挂到构造器上；JSON `ops[].spec`
+  （`DOCS_SCHEMA_VERSION 2 → 3`），脚本侧不必按名字猜。
+- **`Expr<T>`**（纯静态品牌，运行期仍是 `Handle`）：
+  - `Sin(...) -> Expr<number>`；`Mul(...) -> Expr<number> | Expr<Vec2> | Expr<Vec3>`；
+  - `Lt(...) -> Expr<boolean>`；`expr.pure/time/frame/clock.time() -> Expr<number>`；
+  - `Bind.root: Expr<any>`，算子 spec 的 `of/a/b/terms: Expr<any>`，
+    `Predicate.Of.expr: Expr<boolean>`；`Bind.object` 仍是场景 `Handle`。
+- **`Channel<T>`**：Lua 去掉重复的两个 `@class Channel`（`zela.math.Channel`
+  与组件常量共用一个泛型类）；TS/Py 新增泛型。
+  组件常量 `radius: Channel<number>` / `Channel[float]`，`Bind.target: Channel<any>`。
+- **零运行时变化**：只改声明文件与 JSON；payload / 像素基线不受影响。

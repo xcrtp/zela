@@ -11,8 +11,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use ze_pod_binding::{BindingPlan, CapabilityDocs, short_name};
-use ze_pod_core::{ScalarKind, TypeSpec};
+use ze_pod_binding::{
+    BindingPlan, CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
+};
+use ze_pod_core::{Field, Kind, OpDef, RetType, ScalarKind, TypeSpec};
 
 /// JS 侧类型名（TypeScript 声明用）。
 ///
@@ -28,6 +30,10 @@ pub fn ts_type_name(spec: &'static TypeSpec) -> String {
             ScalarKind::Bool => "boolean".to_string(),
             ScalarKind::String => "string".to_string(),
         },
+        // 通道常量的值形状：T 由组件字段给出；`Bind.target` 不限定值类型。
+        TypeSpec::Struct { name, .. } if *name == "zela.math.Channel" => {
+            "Channel<any>".to_string()
+        }
         TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => {
             short_name(name).to_string()
         }
@@ -49,6 +55,7 @@ pub fn ts_type_name(spec: &'static TypeSpec) -> String {
 /// 从 `CapabilityDocs` 生成 TypeScript 声明（**无 domain 知识**）。
 pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
     let types = ze_pod_binding::reachable_types(capabilities);
+    let typed_expr = has_ops(capabilities);
 
     let mut out = String::from(
         "// 自动生成：zela 脚本能力声明（TypeScript）\n\
@@ -56,13 +63,25 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
          /** zela 场景句柄（组件 / 对象 / 曲线 / 动作） */\n\
          export type Handle = { readonly __zela_handle: unique symbol };\n\n",
     );
+    if typed_expr {
+        // 纯静态品牌：`Expr<T>` 运行期仍是 `Handle`，但编辑器可据此检查组合。
+        out.push_str(
+            "/** 表达式句柄（T 是装配期推导的静态类型；运行期仍是 Handle） */\n\
+             export type Expr<T> = Handle & { readonly __zela_expr?: T };\n\n",
+        );
+    }
 
     // ── 类型（一次）────────────────────────────────────────────────────
     for (&full_name, &spec) in &types {
         let name = short_name(full_name);
         match spec {
             TypeSpec::Struct { name: type_name, fields } => {
-                out.push_str(&format!("export interface {name} {{\n"));
+                let is_channel = full_name == "zela.math.Channel";
+                if is_channel {
+                    out.push_str("export interface Channel<T = unknown> {\n");
+                } else {
+                    out.push_str(&format!("export interface {name} {{\n"));
+                }
                 for field in *fields {
                     // 提案 #6 C：默认值进声明文件（`Color.a = 255`），可选字段用 `?`。
                     let optional =
@@ -71,8 +90,12 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                         "  {}{}: {};\n",
                         field.name,
                         if optional { "?" } else { "" },
-                        ts_type_name(field.ty)
+                        ts_field_type(full_name, field, typed_expr)
                     ));
+                }
+                if is_channel {
+                    // 纯静态品牌：让 `Channel<number>` 与 `Channel<Vec2>` 不互相赋值。
+                    out.push_str("  readonly __zela_channel?: T;\n");
                 }
                 out.push_str("}\n");
                 let component = capabilities.iter().any(|capability| {
@@ -80,7 +103,15 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                         .component_ctor(full_name)
                         .is_some()
                 });
-                let returns = if component { "Handle" } else { name };
+                let returns = if let Some(op) = op_by_spec(capabilities, full_name) {
+                    ts_expr_returns(op)
+                } else if is_channel {
+                    "Channel<any>".to_string()
+                } else if component {
+                    "Handle".to_string()
+                } else {
+                    name.to_string()
+                };
                 let positional: Vec<String> = fields
                     .iter()
                     .map(|field| {
@@ -90,7 +121,7 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                             "{}{}: {}",
                             field.name,
                             if optional { "?" } else { "" },
-                            ts_type_name(field.ty)
+                            ts_field_type(full_name, field, typed_expr)
                         )
                     })
                     .collect();
@@ -112,9 +143,9 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                     out.push_str(&format!("export interface {name}Channel {{\n"));
                     for channel in &channels {
                         out.push_str(&format!(
-                            "  {}: {};\n",
+                            "  {}: Channel<{}>;\n",
                             channel.name,
-                            short_name(channel.value_type)
+                            ts_type_name(channel.ty)
                         ));
                     }
                     out.push_str("}\n");
@@ -160,10 +191,7 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                 .iter()
                 .map(|param| format!("{}: {}", param.name, ts_type_name(param.ty)))
                 .collect();
-            let returns = match item.io.ret {
-                TypeSpec::Struct { name: "()", .. } => "void".to_string(),
-                other => ts_type_name(other),
-            };
+            let returns = ts_call_return(capabilities, item);
             out.push_str(&format!(
                 "  {}({}): {returns};\n",
                 item.signature.name,
@@ -207,16 +235,77 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                     .iter()
                     .map(|param| format!("{}: {}", param.name, ts_type_name(param.ty)))
                     .collect();
-                let returns = match item.io.ret {
-                    TypeSpec::Struct { name: "()", .. } => "void".to_string(),
-                    other => ts_type_name(other),
-                };
+                let returns = ts_call_return(capabilities, item);
                 out.push_str(&format!("  {short}({}): {returns};\n", params.join(", ")));
             }
             out.push_str("};\n\n");
         }
     }
     out
+}
+
+/// 字段类型：`zela.math.*` 里的 `Handle` 字段是**表达式输入**，标成 `Expr<any>`；
+/// `Predicate.Of.expr` 是 Bool 表达式。
+fn ts_field_type(parent: &str, field: &Field, typed_expr: bool) -> String {
+    // `Bind.object` 是**场景对象**句柄，不是表达式输入。
+    if typed_expr
+        && parent.starts_with("zela.math.")
+        && !(parent == "zela.math.Bind" && field.name == "object")
+    {
+        if parent == "zela.math.Predicate.Of" && field.name == "expr" {
+            return "Expr<boolean>".to_string();
+        }
+        if matches!(*field.ty, TypeSpec::Opaque(_)) {
+            return "Expr<any>".to_string();
+        }
+    }
+    ts_type_name(field.ty)
+}
+
+/// 一条能力函数的返回类型：算子按签名表给 `Expr<…>`。
+fn ts_call_return(capabilities: &[CapabilityDocs], item: &ze_pod_core::ErasedFn) -> String {
+    if matches!(item.io.ret, TypeSpec::Struct { name: "()", .. }) {
+        return "void".to_string();
+    }
+    if let Some(op) = op_by_name(capabilities, item.signature.name) {
+        return ts_expr_returns(op);
+    }
+    match item.signature.name {
+        "pure" | "time" | "frame" | "clock_time" => "Expr<number>".to_string(),
+        "event" | "component_state" | "env" => "Expr<any>".to_string(),
+        _ => ts_type_name(item.io.ret),
+    }
+}
+
+/// 算子的返回类型候选：`Expr<number>` / `Expr<Vec2> | Expr<Vec3>` …
+fn ts_expr_returns(op: &OpDef) -> String {
+    let mut types: Vec<String> = Vec::new();
+    let mut add = |ty: String| {
+        if !types.contains(&ty) {
+            types.push(ty);
+        }
+    };
+    for sig in op.sigs {
+        for ret in sig.ret_types() {
+            match ret {
+                RetType::Concrete(spec) => add(ts_type_name(spec)),
+                RetType::Kind(Kind::Num) => add("number".to_string()),
+                RetType::Kind(Kind::Bool) => add("boolean".to_string()),
+                RetType::Kind(Kind::Vector) => {
+                    add("Vec2".to_string());
+                    add("Vec3".to_string());
+                }
+            }
+        }
+    }
+    if types.is_empty() {
+        return "Handle".to_string();
+    }
+    types
+        .into_iter()
+        .map(|ty| format!("Expr<{ty}>"))
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// 把 JSON + `.d.ts` 写到 `dir`（返回实际写入的两个路径）。

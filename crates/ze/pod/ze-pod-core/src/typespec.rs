@@ -148,12 +148,42 @@ impl OpSig {
         }
         format!("({}) -> {}", params.join(", "), render_type(self.ret, self.vars))
     }
+
+    /// 返回类型的候选（`Var` 按 kind 展开；语言侧再把 kind 映射成具体类型）。
+    ///
+    /// 存根生成器用它把 `mul` 的返回类型写成
+    /// `Expr<number> | Expr<Vec2> | Expr<Vec3>`，而不是一个笼统的 `Handle`。
+    pub fn ret_types(&self) -> Vec<RetType> {
+        match self.ret {
+            TypeSpec::Var(name) => self
+                .vars
+                .iter()
+                .find(|(candidate, _)| *candidate == *name)
+                .map(|(_, kind)| vec![RetType::Kind(*kind)])
+                .unwrap_or_default(),
+            concrete => vec![RetType::Concrete(concrete)],
+        }
+    }
+}
+
+/// 一条签名的返回类型候选（见 [`OpSig::ret_types`]）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetType {
+    /// 具体类型。
+    Concrete(&'static TypeSpec),
+    /// 类型变量 → 由 kind 决定（`Vector` 在存根里展开为 `Vec2 | Vec3`）。
+    Kind(Kind),
 }
 
 /// 一个算子的全部重载。
 #[derive(Clone, Copy, Debug)]
 pub struct OpDef {
     pub name: &'static str,
+    /// 构造器 PodType 的**完整名**（`zela.math.Sin`）。
+    ///
+    /// 存根生成器用它把签名挂到对应的 spec 类型上（`Sin(...) -> Expr<number>`）；
+    /// JSON 也带上它，脚本侧不必按名字猜。
+    pub spec: &'static str,
     pub sigs: &'static [OpSig],
 }
 

@@ -20,3 +20,6 @@ serde_json.workspace = true
 [dev-dependencies]
 ze-pod-binding = { path = "../ze-pod-binding" }
 ze-pod-lua = { path = "../ze-pod-lua" }
+# 存根（.d.ts / .pyi）对 L2 签名的映射：只用到纯 Rust 的导出器。
+ze-pod-js = { path = "../ze-pod-js" }
+ze-pod-py = { path = "../ze-pod-py" }

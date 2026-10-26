@@ -260,6 +260,63 @@ fn table_constructors_are_generated_for_expression_ops() {
     );
 }
 
+/// **类型存根优化**：L2 签名 → `Expr<T>`（Lua / TS / Python 三侧同一份真源）。
+#[test]
+fn typed_stubs_carry_l2_signatures() {
+    let capabilities = [ze_pod_binding::CapabilityDocs {
+        name: SERVICE,
+        calls: MathApi::calls(),
+        docs: MathApi::docs(),
+        meta: MathApi::meta(),
+        channels: &[],
+        ops: ze_pod_func::SIGNATURES,
+    }];
+
+    let lua = ze_pod_lua::lua_ls(&capabilities);
+    assert!(lua.contains("---@class Expr<T>: Handle"), "缺 Expr<T>：\n{lua}");
+    assert!(lua.contains("---@field of Expr<any>"), "Sin.of 应是表达式：\n{lua}");
+    assert!(
+        lua.contains("---@overload fun(a: Expr<any>, b: Expr<any>): Expr<number> | Expr<Vec2> | Expr<Vec3>"),
+        "Mul 的返回应是具体类型并集：\n{lua}"
+    );
+    assert!(lua.contains("---@return Expr<number>"));
+    assert!(lua.contains("---@return Expr<boolean>"));
+    assert!(lua.contains("---@field root Expr<any>"));
+    assert!(lua.contains("---@field target Channel<any>"));
+    assert!(lua.contains("---@field expr Expr<boolean>"));
+    // 通道的泛型类只能出现一次（`zela.math.Channel` 与组件常量共用一个）。
+    assert_eq!(lua.matches("---@class Channel").count(), 1, "Channel 类重复：\n{lua}");
+
+    let ts = ze_pod_js::d_ts(&capabilities);
+    assert!(ts.contains("export type Expr<T> = Handle"));
+    assert!(ts.contains("export declare function Sin(spec: Sin): Expr<number>;"));
+    assert!(ts.contains(
+        "export declare function Mul(a: Expr<any>, b: Expr<any>): Expr<number> | Expr<Vec2> | Expr<Vec3>;"
+    ));
+    assert!(ts.contains("root: Expr<any>;") && ts.contains("target: Channel<any>;"));
+    assert!(ts.contains("export interface Channel<T = unknown>"));
+
+    let pyi = ze_pod_py::pyi_files(&capabilities);
+    let root = pyi.get("zela/__init__.pyi").expect("根包");
+    assert!(root.contains("class Expr(Handle, Generic[T]):"));
+    let math = pyi.get("zela/math/__init__.pyi").expect("math 类型包");
+    assert!(math.contains("def Sin(of: Expr[Any]) -> Expr[float]: ..."));
+    assert!(math.contains(
+        "def Mul(a: Expr[Any], b: Expr[Any]) -> Expr[float] | Expr[Vec2] | Expr[Vec3]: ..."
+    ));
+    assert!(math.contains("class Channel(Generic[T]):"));
+    assert!(math.contains("target: Channel[Any]") && math.contains("root: Expr[Any]"));
+    assert!(math.contains("def Of(expr: Expr[bool]) -> Predicate: ..."));
+    let math_mod = pyi.get("zela/math.pyi").expect("math 能力模块");
+    assert!(math_mod.contains("def sin(spec: Any) -> Expr[float]: ..."));
+    assert!(math_mod.contains("from zela import Handle, Expr"));
+
+    // JSON 真源也带 spec：脚本侧不必按名字猜构造器。
+    let json = ze_pod_binding::capabilities_json(&capabilities);
+    assert!(json.contains("\"spec\":\"zela.math.Sin\""));
+    assert!(json.contains("\"spec\":\"zela.math.Mul\""));
+}
+
 /// 注册名 == capability 签名（绑定层与函数表不漂移）。
 #[test]
 fn registered_names_match_signatures() {

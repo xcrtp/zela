@@ -20,7 +20,9 @@ use crate::plan::collect_types;
 ///
 /// `1 → 2`（L2 类型化 A 批）：每个 capability 增加 `ops`（算子签名表），
 /// 每个 channel 增加 `value`（字段的 `TypeSpec`），并带 `display` 文本。
-pub const DOCS_SCHEMA_VERSION: u32 = 2;
+/// `2 → 3`（类型存根优化）：每个 op 增加 `spec`（构造器 PodType 全名），
+/// 存根据此把签名挂到 `Sin` / `Mul` 上并生成 `Expr<T>` 返回类型。
+pub const DOCS_SCHEMA_VERSION: u32 = 3;
 
 /// 一个 capability 的导出视图。
 #[derive(Clone, Copy)]
@@ -254,8 +256,9 @@ pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
             }
             let _ = write!(
                 out,
-                "\n        {{\"name\":\"{}\",\"signatures\":[",
-                escape(op.name)
+                "\n        {{\"name\":\"{}\",\"spec\":\"{}\",\"signatures\":[",
+                escape(op.name),
+                escape(op.spec)
             );
             for (sig_index, sig) in op.sigs.iter().enumerate() {
                 if sig_index > 0 {
@@ -298,6 +301,35 @@ pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
     }
     out.push_str("\n  ]\n}\n");
     out
+}
+
+/// 按函数名查算子（跨 capability；存根生成器用）。
+pub fn op_by_name<'a>(
+    capabilities: &'a [CapabilityDocs],
+    name: &str,
+) -> Option<&'a ze_pod_core::OpDef> {
+    capabilities
+        .iter()
+        .flat_map(|capability| capability.ops.iter())
+        .find(|op| op.name == name)
+}
+
+/// 按构造器 PodType 全名查算子（`zela.math.Sin` → `sin` 的签名）。
+pub fn op_by_spec<'a>(
+    capabilities: &'a [CapabilityDocs],
+    spec: &str,
+) -> Option<&'a ze_pod_core::OpDef> {
+    capabilities
+        .iter()
+        .flat_map(|capability| capability.ops.iter())
+        .find(|op| op.spec == spec)
+}
+
+/// 是否存在算子签名（决定存根是否导出 `Expr<T>`）。
+pub fn has_ops(capabilities: &[CapabilityDocs]) -> bool {
+    capabilities
+        .iter()
+        .any(|capability| !capability.ops.is_empty())
 }
 
 

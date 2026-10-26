@@ -6615,8 +6615,10 @@ dependencies = [
  "ze-func",
  "ze-pod-binding",
  "ze-pod-core",
+ "ze-pod-js",
  "ze-pod-lua",
  "ze-pod-macro",
+ "ze-pod-py",
 ]
 
 [[package]]
