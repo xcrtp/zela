@@ -1841,8 +1841,17 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - 形状是三个**命名子表达式**（`cond` / `then` / `else`），不是位置数组 —— 事后加字段
   就是新格式，而本批已经付过 `payload 1 → 2` 的代价。
 - `Node::children()` 覆盖三个分支 ⇒ 悬空 `Ref` / 环 / 通道校验对 `Select` 同样生效。
-- **不实现**：求值遇到 `Select` 是 `ExprError::UnsupportedNode("select")`，不静默算错。
+- **本批不实现**：求值遇到 `Select` 是 `ExprError::UnsupportedNode("select")`，不静默算错。
 - **未落地**：`Reveal.current_pos` 的读通道还没接进宿主 `M`，值分支暂时没有真实条件可用（GAPS AG-04）。
+
+### H 批：`Select` 求值（2026-10-27）
+
+> 一句话：**条件必须是 Bool，分支惰性求值**。
+
+- `Step::Select { cond, then, else }`：`cond` 编进外层程序，两个分支各自是**独立子程序**
+  （各自的值表 + 根索引）⇒ 运行期只 `eval` 被选中那一支，未选中支的通道 / 算子一次都不求值。
+- `cond` 不是 `Bool` ⇒ `EvalError::SelectCondition`（显式，不静默当真 / 假）。
+- G 批的通道读端（`expr.read`）提供了真实条件（组件状态），`Select` 因此不再是"时间分支"的糖。
 
 
 ### 提案 #6 收口：声明文件出仓库 + 通道常量唯一入口（2026-10-26）

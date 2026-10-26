@@ -779,25 +779,41 @@ impl From<SceneEncoder> for SceneScript {
 /// 正确顺序（写者 start ≤ 读者 start）静默通过。
 fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(), ExprBindError> {
     use crate::animation::binding::BindingDriver;
-    use ze_func::Step;
+    use ze_func::{ChannelRef, CompiledExpr, Step};
+
+    /// 收集程序里的读集（含 `Select` 分支内的读 —— 分支子程序是独立值表，
+    /// 必须递归，否则漏检）。
+    fn collect_reads(program: &CompiledExpr, out: &mut Vec<(ChannelRef, u64)>) {
+        for step in program.steps() {
+            match step {
+                Step::Read { channel, object } => out.push((channel.clone(), *object)),
+                Step::Select { then, r#else, .. } => {
+                    collect_reads(then, out);
+                    collect_reads(r#else, out);
+                }
+                _ => {}
+            }
+        }
+    }
+
     for binding in &bindings.bindings {
         let BindingDriver::Expr(program) = &binding.driver else {
             continue; // 曲线绑定没有读集
         };
         let reader_start = forest.start_offset(binding.clock);
-        for step in program.steps() {
-            if let Step::Read { channel, object } = step {
-                for writer in &bindings.bindings {
-                    if writer.target.address() == channel.name.as_str()
-                        && writer.target.target_id() == ObjectId::from_packed(*object)
-                        && forest.start_offset(writer.clock) > reader_start
-                    {
-                        return Err(ExprBindError::ReadOrderConflict {
-                            reader: binding.target.name().to_string(),
-                            writer: writer.target.name().to_string(),
-                            address: channel.name.clone(),
-                        });
-                    }
+        let mut reads = Vec::new();
+        collect_reads(program, &mut reads);
+        for (channel, object) in reads {
+            for writer in &bindings.bindings {
+                if writer.target.address() == channel.name.as_str()
+                    && writer.target.target_id() == ObjectId::from_packed(object)
+                    && forest.start_offset(writer.clock) > reader_start
+                {
+                    return Err(ExprBindError::ReadOrderConflict {
+                        reader: binding.target.name().to_string(),
+                        writer: writer.target.name().to_string(),
+                        address: channel.name.clone(),
+                    });
                 }
             }
         }

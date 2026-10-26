@@ -79,6 +79,9 @@ pub enum EvalError {
     /// 算子求值失败（类型 / 定义域 / 未知算子）。
     #[error("算子 `{op}` 求值失败：{message}")]
     Op { op: String, message: String },
+    /// `Select` 的条件不是 `Bool`（显式失败，不静默当真 / 假）。
+    #[error("select 的条件必须是 Bool，实际 {actual}")]
+    SelectCondition { actual: &'static str },
 }
 
 impl EvalError {
@@ -103,6 +106,15 @@ pub enum Step {
     /// 运行期经 [`Mono::read_object`] 解包读组件。
     Read { channel: ChannelRef, object: u64 },
     Call { op: OpRef, args: Vec<usize> },
+    /// **值分支**（H 批）：`cond` 是外层程序里的索引，两个分支各自是**独立子程序**。
+    ///
+    /// 子程序形态让"惰性"成为结构性事实：只有被选中的那一支会被 `eval`，
+    /// 另一支的通道 / 算子一次都不求值（不是靠短路标记）。
+    Select {
+        cond: usize,
+        then: Box<CompiledExpr>,
+        r#else: Box<CompiledExpr>,
+    },
 }
 
 /// 编译后的表达式（装配期一次，运行期线性扫描）。
@@ -116,9 +128,6 @@ impl CompiledExpr {
     /// 编译并校验（悬空 `Ref` / 环 / 重名 id 都在这里显式失败）。
     pub fn compile(expr: &Expr) -> Result<Self, ExprError> {
         expr.validate()?;
-        if let Some(name) = first_unimplemented(expr) {
-            return Err(ExprError::UnsupportedNode(name));
-        }
         let defs = crate::expr::definitions(expr);
         let mut steps = Vec::new();
         let mut memo = BTreeMap::new();
@@ -146,6 +155,15 @@ impl CompiledExpr {
                 Step::Pure(literal) => literal_value(literal),
                 Step::Channel(channel) => mono.read(channel)?,
                 Step::Read { channel, object } => mono.read_object(channel, *object)?,
+                Step::Select { cond, then, r#else } => match &values[*cond] {
+                    Value::Bool(true) => then.eval(mono)?,
+                    Value::Bool(false) => r#else.eval(mono)?,
+                    other => {
+                        return Err(EvalError::SelectCondition {
+                            actual: value_kind(other),
+                        })
+                    }
+                },
                 Step::Call { op, args } => {
                     let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
                     mono.call(op, &args)?
@@ -157,12 +175,15 @@ impl CompiledExpr {
     }
 }
 
-/// 只有格式、尚未实现求值的节点（提案 #6 D）。
-fn first_unimplemented(expr: &Expr) -> Option<&'static str> {
-    if let Node::Select { .. } = &expr.node {
-        return Some("select");
+/// 值种类名（错误消息用；与 Pod 层词汇一致）。
+fn value_kind(value: &Value) -> &'static str {
+    match value {
+        Value::F64(_) => "scalar",
+        Value::Bool(_) => "bool",
+        Value::Text(_) => "text",
+        Value::Vec2(_) => "vec2",
+        Value::Vec3(_) => "vec3",
     }
-    expr.node.children().into_iter().find_map(first_unimplemented)
 }
 
 fn literal_value(literal: &Literal) -> Value {
@@ -226,14 +247,37 @@ fn compile_node<'a>(
                 .expect("compile 之前必须通过 Expr::validate");
             compile_node(target, defs, memo, steps)
         }
-        // `compile` 入口已用 `first_unimplemented` 显式拒绝（不静默算错）。
-        Node::Select { .. } => unreachable!("Select 在 compile 入口被拒绝"),
+        // **H 批**：`cond` 编进外层程序（它的值就在合并点前一步），
+        // 两个分支各自编译成**独立子程序**（各自的值表 / 根索引），
+        // 运行期只 `eval` 被选中那一支 ⇒ 惰性是结构性的。
+        Node::Select { cond, then, r#else } => {
+            let cond = compile_node(cond, defs, memo, steps);
+            let then = compile_branch(then, defs);
+            let r#else = compile_branch(r#else, defs);
+            steps.push(Step::Select {
+                cond,
+                then: Box::new(then),
+                r#else: Box::new(r#else),
+            });
+            steps.len() - 1
+        }
     };
 
     if let Some(id) = expr.id.as_deref() {
         memo.insert(id, index);
     }
     index
+}
+
+/// 把一个分支编译成独立子程序（H 批）。
+///
+/// 子程序有自己的值表与根索引；`defs` 仍是整棵表达式的定义表 ⇒ 分支里对
+/// 外层 `id` 的 `Ref` 照常解析（共享节点在分支内重新编译一次是纯函数，无副作用）。
+fn compile_branch<'a>(expr: &'a Expr, defs: &BTreeMap<&'a str, &'a Expr>) -> CompiledExpr {
+    let mut steps = Vec::new();
+    let mut memo = BTreeMap::new();
+    let root = compile_node(expr, defs, &mut memo, &mut steps);
+    CompiledExpr { steps, root }
 }
 
 #[cfg(test)]
@@ -384,13 +428,58 @@ mod tests {
         );
     }
 
-    /// **提案 #6 D**：`Select` 只有格式 ⇒ 编译期**显式未实现**（不静默算错）。
+    /// **H 批**：`Select` 按 `cond` 取值分支。
     #[test]
-    fn select_is_explicitly_unimplemented() {
+    fn select_picks_branch_by_condition() {
         let expr = Expr::select(Expr::pure(true), Expr::pure(1.0), Expr::pure(0.0));
+        let program = CompiledExpr::compile(&expr).expect("Select 已实现");
         assert_eq!(
-            CompiledExpr::compile(&expr).unwrap_err(),
-            ExprError::UnsupportedNode("select")
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
+            Value::F64(1.0)
+        );
+
+        let expr = Expr::select(Expr::pure(false), Expr::pure(1.0), Expr::pure(0.0));
+        let program = CompiledExpr::compile(&expr).unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
+            Value::F64(0.0)
+        );
+    }
+
+    /// **H 批惰性**：未选中的分支**一次都不求值**（分支里读缺失通道也不报错）。
+    #[test]
+    fn select_is_lazy_on_the_unselected_branch() {
+        let then = Expr::channel(ChannelRef::builtin("event"));
+        let r#else = Expr::pure(0.0);
+        let expr = Expr::select(Expr::pure(false), then, r#else);
+        let program = CompiledExpr::compile(&expr).unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
+            Value::F64(0.0),
+            "else 分支生效 ⇒ then 里的缺失通道不会被读到"
+        );
+
+        // 反向：选中 then（有值）时 else 的缺失通道同样不读。
+        let expr = Expr::select(
+            Expr::pure(true),
+            Expr::pure(1.0),
+            Expr::channel(ChannelRef::builtin("event")),
+        );
+        let program = CompiledExpr::compile(&expr).unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
+            Value::F64(1.0)
+        );
+    }
+
+    /// **H 批**：`cond` 不是 Bool ⇒ 显式报错（不静默当真 / 假）。
+    #[test]
+    fn select_condition_must_be_bool() {
+        let expr = Expr::select(Expr::pure(1.0), Expr::pure(1.0), Expr::pure(0.0));
+        let program = CompiledExpr::compile(&expr).unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap_err(),
+            EvalError::SelectCondition { actual: "scalar" }
         );
     }
 
