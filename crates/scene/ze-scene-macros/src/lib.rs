@@ -251,7 +251,15 @@ fn expand_channels(input: &DeriveInput) -> syn::Result<TokenStream2> {
             ),
             MappedKind::Vec2 => (
                 quote! {
-                    ::ze_pod_core::TypeSpec::Struct { name: "zela.Vec2", fields: &[] }
+                    ::ze_pod_core::TypeSpec::Struct {
+                        name: "zela.Vec2",
+                        layout: ::core::option::Option::Some(::ze_pod_core::Layout::new(
+                            8,
+                            4,
+                            ::ze_pod_core::VEC2_FIELDS,
+                        )),
+                        fields: &[],
+                    }
                 },
                 quote! {
                     let value = value.try_vec2().ok_or_else(|| {
@@ -270,7 +278,15 @@ fn expand_channels(input: &DeriveInput) -> syn::Result<TokenStream2> {
             ),
             MappedKind::Vec3 => (
                 quote! {
-                    ::ze_pod_core::TypeSpec::Struct { name: "zela.Vec3", fields: &[] }
+                    ::ze_pod_core::TypeSpec::Struct {
+                        name: "zela.Vec3",
+                        layout: ::core::option::Option::Some(::ze_pod_core::Layout::new(
+                            12,
+                            4,
+                            ::ze_pod_core::VEC3_FIELDS,
+                        )),
+                        fields: &[],
+                    }
                 },
                 quote! {
                     let value = value.try_vec3().ok_or_else(|| {

@@ -12,6 +12,10 @@
 
 use ze_comb::{EvalError, OpRef, Value};
 
+use std::sync::OnceLock;
+
+use ze_reflect::{Blame, SymbolTable};
+
 /// 本函子库认识的算子（装配期校验用；未知算子直接拒绝）。
 ///
 /// # 为什么有 `and` / `or` / `not`
@@ -25,8 +29,25 @@ pub const OPS: &[&str] = &[
 ];
 
 /// `op` 是否属于本库（namespace 必须一致，名字在 [`OPS`] 里）。
+///
+/// 名字查找是 **O(1)**：符号表在首次查询时建立一次，之后是整数槽位
+/// （计划 §3.5，取代 `OPS.contains` 的线性扫描）。
 pub fn is_known(op: &OpRef) -> bool {
-    op.namespace == crate::LIBRARY_NAMESPACE && OPS.contains(&op.name.as_str())
+    op.namespace == crate::LIBRARY_NAMESPACE && index().resolve(op.name.as_str()).is_some()
+}
+
+/// 算子名 → 符号（`OnceLock`：只建一次）。
+fn index() -> &'static SymbolTable<&'static str, &'static str> {
+    static INDEX: OnceLock<SymbolTable<&'static str, &'static str>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut table = SymbolTable::new();
+        for &name in OPS {
+            table
+                .intern(name, name, Blame::Assembly)
+                .expect("OPS 的名字唯一");
+        }
+        table
+    })
 }
 
 /// 标量算子求值。

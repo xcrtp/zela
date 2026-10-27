@@ -48,7 +48,7 @@ pub fn collect_types(
     out: &mut BTreeMap<&'static str, &'static TypeSpec>,
 ) {
     match spec {
-        TypeSpec::Struct { name, fields } => {
+        TypeSpec::Struct { name, fields, .. } => {
             if *name != "()" {
                 out.insert(*name, spec);
             }
@@ -64,7 +64,7 @@ pub fn collect_types(
                 }
             }
         }
-        TypeSpec::Array { elem } => collect_types(elem, out),
+        TypeSpec::Array { elem, .. } => collect_types(elem, out),
         // 泛型实参也是可达类型：`Expr<Vec2>` 里的 `Vec2` 必须进类型表（§7.3）。
         TypeSpec::App { args, .. } => {
             for arg in *args {
@@ -87,6 +87,7 @@ mod tests {
 
     const VEC2_SPEC: TypeSpec = TypeSpec::Struct {
         name: "zela.Vec2",
+        layout: None,
         fields: &[],
     };
     const EXPR_VEC2: TypeSpec = TypeSpec::App {

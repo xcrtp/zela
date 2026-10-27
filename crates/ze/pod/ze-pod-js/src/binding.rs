@@ -196,7 +196,7 @@ fn register_types(
     for (&full_name, &spec) in &plan.types {
         let global = short_name(full_name);
         match spec {
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let fields = *fields;
                 let type_name = *name;
                 match plan.component_ctor(type_name) {
@@ -474,7 +474,7 @@ fn js_to_pod(
             ))),
             None => Err(type_error("zela 句柄", value)),
         },
-        TypeSpec::Array { elem } => {
+        TypeSpec::Array { elem, .. } => {
             let object = value
                 .as_object()
                 .filter(|object| object.is_array())
@@ -489,7 +489,7 @@ fn js_to_pod(
             }
             Ok(PodValue::Array(values))
         }
-        TypeSpec::Struct { name, fields } => {
+        TypeSpec::Struct { name, fields, .. } => {
             if let Some(value) = token_of(ctx, value) {
                 return match &value {
                     PodValue::Struct(actual, _) if actual == name => Ok(value),

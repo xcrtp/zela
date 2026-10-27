@@ -1,0 +1,16 @@
+[package]
+name = "ze-type"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+description = "纯代数类型层：TypeSpec / Layout / unify / 单态化上界 / 冲突诊断（零运行时状态，可 no_std）"
+
+# 依赖铁律：ze-type 是**代数层**，只描述类型，不持有任何运行时状态。
+#   ✅ serde — Layout / Record 等需要可序列化描述（no_std + alloc）
+#   ❌ 任何 arena / 注册表 / 句柄表 — 那些属于 ze-reflect
+#   ❌ 任何 zela-* / pod / 宿主 crate — 它必须能被 build script 与 wasm 复用
+[dependencies]
+# 直接声明（不走 workspace 继承）：本 crate 是 no_std，必须关掉 serde 的默认 `std`。
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }

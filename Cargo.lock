@@ -6496,6 +6496,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "ze-type",
 ]
 
 [[package]]
@@ -6514,6 +6515,8 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "ze-comb",
+ "ze-reflect",
+ "ze-type",
 ]
 
 [[package]]
@@ -6615,6 +6618,8 @@ name = "ze-pod-core"
 version = "0.1.1"
 dependencies = [
  "ze-pod-macro",
+ "ze-reflect",
+ "ze-type",
 ]
 
 [[package]]
@@ -6630,6 +6635,8 @@ dependencies = [
  "ze-pod-lua",
  "ze-pod-macro",
  "ze-pod-py",
+ "ze-reflect",
+ "ze-type",
 ]
 
 [[package]]
@@ -6705,6 +6712,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-reflect"
+version = "0.1.1"
+dependencies = [
+ "ze-type",
+]
+
+[[package]]
 name = "ze-render-ir"
 version = "0.1.1"
 dependencies = [
@@ -6761,6 +6775,7 @@ dependencies = [
  "ze-notion",
  "ze-pod-core",
  "ze-prerender",
+ "ze-reflect",
  "ze-render-ir",
  "ze-scene-contract",
  "ze-scene-macros",
@@ -6792,6 +6807,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "ze-notion",
+]
+
+[[package]]
+name = "ze-type"
+version = "0.1.1"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

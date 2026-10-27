@@ -74,7 +74,7 @@ fn capability_path(capability: &CapabilityDocs) -> String {
 /// 收集一个类型（含嵌套字段）引用到的命名类型。
 fn collect_named(spec: &'static TypeSpec, into: &mut BTreeSet<&'static str>) {
     match spec {
-        TypeSpec::Struct { name, fields } => {
+        TypeSpec::Struct { name, fields, .. } => {
             into.insert(name);
             for field in *fields {
                 collect_named(field.ty, into);
@@ -88,7 +88,7 @@ fn collect_named(spec: &'static TypeSpec, into: &mut BTreeSet<&'static str>) {
                 }
             }
         }
-        TypeSpec::Array { elem } => collect_named(elem, into),
+        TypeSpec::Array { elem, .. } => collect_named(elem, into),
         TypeSpec::App { args, .. } => {
             for arg in *args {
                 collect_named(arg, into);
@@ -104,7 +104,7 @@ fn collect_top(spec: &'static TypeSpec, into: &mut BTreeSet<&'static str>) {
         TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => {
             into.insert(name);
         }
-        TypeSpec::Array { elem } => collect_top(elem, into),
+        TypeSpec::Array { elem, .. } => collect_top(elem, into),
         TypeSpec::App { args, .. } => {
             for arg in *args {
                 collect_top(arg, into);
@@ -133,7 +133,7 @@ fn py_type(spec: &'static TypeSpec, components: &BTreeSet<&'static str>) -> Stri
         TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => {
             short_name(name).to_string()
         }
-        TypeSpec::Array { elem } => format!("List[{}]", py_type(elem, components)),
+        TypeSpec::Array { elem, .. } => format!("List[{}]", py_type(elem, components)),
         TypeSpec::Opaque(_) => "Handle".to_string(),
         TypeSpec::App { ty, args } => {
             let name = short_name(ty);
@@ -236,7 +236,7 @@ fn render_type(
 ) {
     let name = short_name(full_name);
     match spec {
-        TypeSpec::Struct { name: type_name, fields } => {
+        TypeSpec::Struct { name: type_name, fields, .. } => {
             if components.contains(full_name) {
                 // 算子构造器返回**带静态类型的表达式句柄**；其它组件返回 Handle。
                 let returns = if let Some(op) = op_by_spec(capabilities, full_name) {

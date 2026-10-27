@@ -9,6 +9,9 @@
 
 use std::any::Any;
 
+use ze_reflect::Blame;
+use ze_reflect::sym::SymbolTable;
+
 use crate::error::PodError;
 use crate::handle::PodId;
 use crate::qualified::QualifiedName;
@@ -102,6 +105,8 @@ where
 pub struct RegistryPod {
     id: PodId,
     names: Vec<QualifiedName>,
+    /// 名字 → 槽位（装配期解析一次；调用期 O(1)，不再 `iter().position`）。
+    index: SymbolTable<QualifiedName, u32>,
     typed: Vec<Option<Box<dyn Any + Send + Sync>>>,
     erased: Vec<Option<Box<dyn ErasedCall>>>,
 }
@@ -118,6 +123,7 @@ impl RegistryPod {
         Self {
             id: PodId::next(),
             names: Vec::new(),
+            index: SymbolTable::new(),
             typed: Vec::new(),
             erased: Vec::new(),
         }
@@ -129,10 +135,15 @@ impl RegistryPod {
         typed: Option<Box<dyn Any + Send + Sync>>,
         erased: Box<dyn ErasedCall>,
     ) {
-        if let Some(i) = self.names.iter().position(|n| *n == name) {
+        if let Some((_, slot)) = self.index.resolve(&name) {
+            let i = *slot as usize;
             self.typed[i] = typed;
             self.erased[i] = Some(erased);
         } else {
+            let i = self.names.len() as u32;
+            self.index
+                .intern(name.clone(), i, Blame::pod("registry"))
+                .expect("调用方已确认名字不存在");
             self.names.push(name);
             self.typed.push(typed);
             self.erased.push(Some(erased));
@@ -269,16 +280,89 @@ impl Pod for RegistryPod {
     }
 
     fn resolve(&self, name: &QualifiedName) -> Option<&(dyn Any + Send + Sync)> {
-        let i = self.names.iter().position(|n| n == name)?;
-        self.typed[i].as_deref()
+        let (_, slot) = self.index.resolve(name)?;
+        self.typed[*slot as usize].as_deref()
+    }
+
+    /// 快路径句柄：装配期建立的符号槽位，调用期 O(1)。
+    fn function_id(&self, name: &QualifiedName) -> Option<FunctionId> {
+        let (symbol, _) = self.index.resolve(name)?;
+        Some(FunctionId::local(
+            self.id,
+            u64::from(symbol.slot()),
+            symbol.generation(),
+        ))
     }
 
     fn call(&self, id: FunctionId, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
+        id.ensure_owner(self.id)?;
+        let slot = u32::try_from(id.slot()).map_err(|_| PodError::UnknownFunction(format!(
+            "函数编号 {id}"
+        )))?;
+        // generation 不匹配 ⇒ 槽位已被复用：显式错误，不是读到别人的函数。
+        self.index
+            .get(ze_reflect::SymbolId::new(slot, id.generation()))
+            .map_err(|_| PodError::StaleFunction {
+                slot: id.slot(),
+                generation: id.generation(),
+            })?;
         let entry = self
             .erased
-            .get(id.get() as usize)
+            .get(id.slot() as usize)
             .and_then(|e| e.as_deref())
             .ok_or_else(|| PodError::UnknownFunction(format!("函数编号 {id}")))?;
         entry.invoke(self, args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 函数句柄 = owner + slot + generation：装配期解析一次，调用期 O(1)。
+    #[test]
+    fn function_ids_are_generation_aware() {
+        let mut pod = RegistryPod::new();
+        pod.register_fn0::<u64>("test::zero", |_| 7u64);
+        let name = QualifiedName::from_path("test::zero", Vec::new(), "u64");
+
+        let id = pod.function_id(&name).expect("已注册");
+        assert_eq!(id.owner(), pod.id());
+        assert_eq!(
+            *pod.call(id, &[]).unwrap().downcast::<u64>().unwrap(),
+            7u64
+        );
+
+        // generation 不匹配 ⇒ 显式错误，不是读到别人的函数。
+        let stale = FunctionId::local(pod.id(), id.slot(), id.generation() + 1);
+        assert!(matches!(
+            pod.call(stale, &[]),
+            Err(PodError::StaleFunction { .. })
+        ));
+
+        // owner 不匹配 ⇒ 跨 Pod 句柄。
+        let foreign = FunctionId::local(PodId::next(), id.slot(), id.generation());
+        assert!(matches!(
+            pod.call(foreign, &[]),
+            Err(PodError::CrossPodHandle { .. })
+        ));
+
+        // 兼容入口（owner = 0 / generation = 0）仍然可用。
+        assert!(pod.call(FunctionId::new(id.slot()), &[]).is_ok());
+    }
+
+    /// 名字解析走符号表（重名不再静默覆盖）。
+    #[test]
+    fn re_registration_replaces_the_same_slot() {
+        let mut pod = RegistryPod::new();
+        pod.register_fn0::<u64>("test::value", |_| 1u64);
+        pod.register_fn0::<u64>("test::value", |_| 2u64);
+        let name = QualifiedName::from_path("test::value", Vec::new(), "u64");
+        let id = pod.function_id(&name).unwrap();
+        assert_eq!(
+            *pod.call(id, &[]).unwrap().downcast::<u64>().unwrap(),
+            2u64
+        );
+        assert_eq!(pod.len(), 1, "同名重注册复用同一槽位");
     }
 }

@@ -776,6 +776,8 @@ fn expand_pod_type(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 quote! {
                     &::ze_pod_core::TypeSpec::Struct {
                         name: #type_name_lit,
+                        // 没有声明布局是**安全缺省**：走序列化慢路径，语义一致。
+                        layout: ::core::option::Option::None,
                         fields: &[#(#field_defs),*],
                     }
                 },

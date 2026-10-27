@@ -29,25 +29,92 @@ pub struct ChannelSpec {
     pub value_type: &'static str,
 }
 
-/// per-Pod 局部的函数编号（函数集合属于某个状态机）。
+/// 函数句柄：**per-Pod 局部槽位 + generation**（计划 §0.2 的第六个句柄）。
+///
+/// 旧形态是裸 `u64`（只有编号、没有 owner / generation），查找靠
+/// `functions().iter().position(..)` —— 线性扫描，且槽位复用后会读到别人的函数。
+/// 现在是 generation 感知句柄：机制与 [`crate::Handle`] 同源
+/// （`ze_reflect::handle::HandleCore`），Pod 在装配期建立符号表，之后是整数槽位。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FunctionId(u64);
+pub struct FunctionId {
+    owner: PodId,
+    slot: u64,
+    generation: u32,
+}
 
 impl FunctionId {
-    /// 直接构造（自定义 Pod 可在慢路径里使用）。
+    /// 直接构造（自定义 Pod 的慢路径兼容入口：owner = `PodId(0)`、generation = 0）。
     pub const fn new(raw: u64) -> Self {
-        Self(raw)
+        Self {
+            owner: PodId::new(0),
+            slot: raw,
+            generation: 0,
+        }
     }
 
-    /// 原始值。
+    /// 带 owner + generation 的构造（装配期符号表用）。
+    pub const fn local(owner: PodId, slot: u64, generation: u32) -> Self {
+        Self {
+            owner,
+            slot,
+            generation,
+        }
+    }
+
+    /// 所属 Pod。
+    pub const fn owner(&self) -> PodId {
+        self.owner
+    }
+
+    /// 槽位号（= 旧形态的"函数编号"）。
+    pub const fn slot(&self) -> u64 {
+        self.slot
+    }
+
+    /// 槽位代数（防 ABA）。
+    pub const fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// 原始槽位号（兼容旧的 `get()`）。
     pub const fn get(self) -> u64 {
-        self.0
+        self.slot
+    }
+
+    /// 校验句柄属于 `owner`；不属于 ⇒ [`PodError::CrossPodHandle`]。
+    ///
+    /// `owner = PodId(0)` 视为"未绑定 owner 的兼容句柄"，不参与校验。
+    pub fn ensure_owner(&self, owner: PodId) -> Result<(), PodError> {
+        if self.owner == owner || self.owner == PodId::new(0) {
+            Ok(())
+        } else {
+            Err(PodError::CrossPodHandle {
+                expected: owner.get(),
+                actual: self.owner.get(),
+            })
+        }
+    }
+}
+
+impl ze_reflect::handle::HandleCore for FunctionId {
+    type Owner = PodId;
+
+    fn owner(&self) -> PodId {
+        self.owner
+    }
+
+    fn slot(&self) -> u64 {
+        self.slot
+    }
+
+    fn generation(&self) -> u32 {
+        self.generation
     }
 }
 
 impl fmt::Display for FunctionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{}", self.0)
+        write!(f, "#{}", self.slot)
     }
 }
 
@@ -94,12 +161,14 @@ pub trait Pod: 'static {
         &[]
     }
 
-    /// 按完整函数名取函数编号（默认按 [`Pod::functions`] 的顺序）。
+    /// 按完整函数名取函数句柄（默认按 [`Pod::functions`] 的顺序，线性扫描）。
+    ///
+    /// 有符号表的 Pod（如 `RegistryPod`）应覆盖它：装配期解析一次，之后 O(1)。
     fn function_id(&self, name: &QualifiedName) -> Option<FunctionId> {
         self.functions()
             .iter()
             .position(|n| n == name)
-            .map(|i| FunctionId::new(i as u64))
+            .map(|i| FunctionId::local(self.id(), i as u64, 0))
     }
 
     /// 以 capability struct 为泛型实参协商；**全有或全无**。

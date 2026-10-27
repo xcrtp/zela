@@ -9,6 +9,15 @@
 //!
 //! 语义实现见 [`crate::ops`]，本模块只描述元数据；两者由
 //! [`crate::op::DEFS`] 的顺序测试钉在一起（漏登记当场暴露）。
+//!
+//! # 查表是 O(1)
+//!
+//! `op_def` 以前是 `DEFS.iter().find(..)` —— 每次都扫。现在装配期把名字解析
+//! 一次进符号表，之后是整数槽位（计划 §3.5 的同一机制）。
+
+use std::sync::OnceLock;
+
+use ze_reflect::{Blame, SymbolTable};
 
 /// 算子出口能力（阶段 4 的占位；当前全部只由宿主求值）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,9 +101,23 @@ pub static DEFS: &[OpDef] = &[
     def("not", 1, 1),
 ];
 
-/// 查一个算子的元数据。
+/// 查一个算子的元数据（**O(1)**：符号表在首次查询时建立一次）。
 pub fn op_def(name: &str) -> Option<&'static OpDef> {
-    DEFS.iter().find(|def| def.name == name)
+    index().resolve(name).map(|(_, def)| *def)
+}
+
+/// 名字 → 元数据的符号表（`OnceLock`：只建一次）。
+fn index() -> &'static SymbolTable<&'static str, &'static OpDef> {
+    static INDEX: OnceLock<SymbolTable<&'static str, &'static OpDef>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut table = SymbolTable::new();
+        for def in DEFS {
+            table
+                .intern(def.name, def, Blame::Assembly)
+                .expect("DEFS 的名字唯一（顺序测试已钉住）");
+        }
+        table
+    })
 }
 
 /// 某算子的 `(since, changed)`（产物记录 / 加载比对用）。

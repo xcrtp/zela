@@ -322,6 +322,7 @@ pub static REVEAL_RANGE_ADDR: FieldSpec = FieldSpec {
     field: "range",
     ty: &TypeSpec::Struct {
         name: "zela.Vec2",
+        layout: None,
         fields: &[],
     },
     is_composite: false,
@@ -356,6 +357,7 @@ pub static REVEAL_CURRENT_POS: FieldSpec = FieldSpec {
     field: "current_pos",
     ty: &TypeSpec::Struct {
         name: "zela.Vec2",
+        layout: None,
         fields: &[],
     },
     is_composite: false,
@@ -388,6 +390,7 @@ pub static TRANSFORM_POSITION: FieldSpec = FieldSpec {
     field: "position",
     ty: &TypeSpec::Struct {
         name: "zela.Vec3",
+        layout: None,
         fields: &[],
     },
     is_composite: false,
@@ -479,6 +482,7 @@ pub static GRADIENT_FROM: FieldSpec = FieldSpec {
     field: "from",
     ty: &TypeSpec::Struct {
         name: "zela.Vec3",
+        layout: None,
         fields: &[],
     },
     is_composite: false,
@@ -506,6 +510,7 @@ pub static GRADIENT_TO: FieldSpec = FieldSpec {
     field: "to",
     ty: &TypeSpec::Struct {
         name: "zela.Vec3",
+        layout: None,
         fields: &[],
     },
     is_composite: false,
@@ -683,11 +688,28 @@ pub const TARGETS: &[TargetEntry] = &[
     },
 ];
 
-/// 按**持久化名或规范地址**查表。
+/// 按**持久化名或规范地址**查表（O(1)：装配期建立符号索引，不再线性扫描）。
 pub fn target_entry(name: &str) -> Option<&'static TargetEntry> {
-    TARGETS
-        .iter()
-        .find(|entry| entry.spec.name == name || entry.spec.address == name)
+    targets_index()
+        .resolve(name)
+        .map(|(_, index)| &TARGETS[*index])
+}
+
+/// 名字 / 地址 → `TARGETS` 下标（`OnceLock`：只建一次）。
+fn targets_index() -> &'static ze_reflect::SymbolTable<&'static str, usize> {
+    use std::sync::OnceLock;
+
+    static INDEX: OnceLock<ze_reflect::SymbolTable<&'static str, usize>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut table = ze_reflect::SymbolTable::new();
+        for (index, entry) in TARGETS.iter().enumerate() {
+            // 同一个字段的两个可寻址名字（持久化名 / 规范地址）。
+            // 若某个组件的两者恰好相同，第一次登记即真源，第二次忽略。
+            let _ = table.intern(entry.spec.name, index, ze_reflect::Blame::Assembly);
+            let _ = table.intern(entry.spec.address, index, ze_reflect::Blame::Assembly);
+        }
+        table
+    })
 }
 
 /// 反序列化 / 脚本共用：名字 → `(构造器, 持久化名)`。

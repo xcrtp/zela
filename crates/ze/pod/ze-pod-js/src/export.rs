@@ -37,7 +37,7 @@ pub fn ts_type_name(spec: &'static TypeSpec) -> String {
         TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => {
             short_name(name).to_string()
         }
-        TypeSpec::Array { elem } => format!("{}[]", ts_type_name(elem)),
+        TypeSpec::Array { elem, .. } => format!("{}[]", ts_type_name(elem)),
         TypeSpec::Opaque(_) => "Handle".to_string(),
         TypeSpec::App { ty, args } => {
             let name = short_name(ty);
@@ -75,7 +75,7 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
     for (&full_name, &spec) in &types {
         let name = short_name(full_name);
         match spec {
-            TypeSpec::Struct { name: type_name, fields } => {
+            TypeSpec::Struct { name: type_name, fields, .. } => {
                 let is_channel = full_name == "zela.math.Channel";
                 if is_channel {
                     out.push_str("export interface Channel<T = unknown> {\n");

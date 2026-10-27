@@ -119,7 +119,7 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
     for (&full_name, &spec) in &plan.types {
         let lua_name = short_name(full_name);
         match spec {
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let fields = *fields;
                 let type_name = *name;
                 let call = plan.component_ctor(type_name).map(|ctor| ctor.call);
@@ -313,7 +313,7 @@ fn lua_to_pod(value: &Value, spec: &'static TypeSpec) -> mlua::Result<PodValue> 
             Value::UserData(ud) => Ok(PodValue::Opaque(handle_of(ud)?)),
             other => Err(type_error("句柄（userdata）", other)),
         },
-        TypeSpec::Array { elem } => match value {
+        TypeSpec::Array { elem, .. } => match value {
             Value::Table(table) => {
                 let mut values = Vec::new();
                 for item in table.sequence_values::<Value>() {
@@ -323,7 +323,7 @@ fn lua_to_pod(value: &Value, spec: &'static TypeSpec) -> mlua::Result<PodValue> 
             }
             other => Err(type_error("table（数组）", other)),
         },
-        TypeSpec::Struct { name, fields } => {
+        TypeSpec::Struct { name, fields, .. } => {
             if let Some(value) = wrapped_value(value) {
                 return match &value {
                     PodValue::Struct(actual, _) if actual == name => Ok(value),

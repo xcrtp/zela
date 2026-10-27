@@ -77,6 +77,7 @@ impl PodType for PodBytes {
     /// schema 上与 `Array<u8>` 同构（字节串）；区别在**值层**（`PodValue::Bytes`）。
     const SPEC: &'static TypeSpec = &TypeSpec::Array {
         elem: &TypeSpec::Scalar(ScalarKind::U8),
+        len: None,
     };
 
     fn to_pod_value(&self) -> PodValue {
@@ -262,7 +263,10 @@ impl PodType for () {
 }
 
 impl<T: PodType> PodType for Vec<T> {
-    const SPEC: &'static TypeSpec = &TypeSpec::Array { elem: T::SPEC };
+    const SPEC: &'static TypeSpec = &TypeSpec::Array {
+        elem: T::SPEC,
+        len: None,
+    };
 
     fn to_pod_value(&self) -> PodValue {
         PodValue::Array(self.iter().map(PodType::to_pod_value).collect())

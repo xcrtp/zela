@@ -103,7 +103,7 @@ fn spec_ref(spec: &'static TypeSpec) -> String {
         TypeSpec::Enum { name, .. } => {
             format!("{{\"kind\":\"enum\",\"name\":\"{}\"}}", escape(name))
         }
-        TypeSpec::Array { elem } => {
+        TypeSpec::Array { elem, .. } => {
             format!("{{\"kind\":\"array\",\"elem\":{}}}", spec_ref(elem))
         }
         TypeSpec::Opaque(name) => {
@@ -140,7 +140,7 @@ fn fields_json(fields: &'static [ze_pod_core::Field]) -> String {
 /// 类型**定义**（只用于顶层 `types` 表）。
 fn spec_def(spec: &'static TypeSpec) -> String {
     match spec {
-        TypeSpec::Struct { name, fields } => format!(
+        TypeSpec::Struct { name, fields, .. } => format!(
             "{{\"kind\":\"struct\",\"name\":\"{}\",\"fields\":{}}}",
             escape(name),
             fields_json(fields)

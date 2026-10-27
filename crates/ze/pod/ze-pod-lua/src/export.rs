@@ -77,7 +77,7 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
     for (&full_name, &spec) in &types {
         let lua_name = short_name(full_name);
         match spec {
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let own_channels = channels.get(lua_name).map(Vec::as_slice).unwrap_or(&[]);
                 // `zela.math.Channel` 是 `Channel<T>` 的值形状（namespace + name）：
                 // 与组件通道常量共用同一个泛型类，避免两个同名 `@class`。

@@ -108,6 +108,13 @@ pub use typespec::{
     ErasedFn, Field, FnIo, HANDLE_SPEC, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, TypeSpec,
     UNIT_SPEC, Variant,
 };
+// Layout 已收进 `TypeSpec::Struct`（计划 §3.1）；仍在此 re-export，
+// 因为 derive 生成的 schema 需要直接构造它（`layout: Some(...)`）。
+pub use ze_type::layout::{
+    ENDIAN, Endian, FieldLayout, FieldTy, Layout, LayoutError, Record, Scalar, Transcode,
+    VEC2_FIELDS, VEC3_FIELDS, PATH_TYPE,
+};
+pub use ze_type::{VEC2_SPEC, VEC3_SPEC};
 pub use value::{
     PodBytes, ScalarValue, PodType, PodValue, PodValueError, describe, expect_enum, expect_struct,
     field,

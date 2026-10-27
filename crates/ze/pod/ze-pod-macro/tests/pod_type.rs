@@ -73,7 +73,7 @@ fn registry() -> RegistryPod {
 #[test]
 fn type_spec_is_reflective() {
     let spec = <Style as PodType>::SPEC;
-    let TypeSpec::Struct { name, fields } = spec else {
+    let TypeSpec::Struct { name, fields, .. } = spec else {
         panic!("Style 必须是结构体，实际 {spec:?}");
     };
     assert_eq!(*name, "test.Style");

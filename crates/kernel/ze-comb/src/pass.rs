@@ -13,6 +13,8 @@
 //! 它和 lowered 求值器是同一语义的两个实现。把两者都登记成 pass，才能在
 //! `cargo verify` 里**自动**跑对拍，而不是靠人记得"改化简要重录基线"。
 
+use ze_type::{Blame, NameKind, ReflectError};
+
 use crate::expr::{Expr, ExprError};
 use crate::program::{CompiledExpr, EvalError, Mono, Value};
 use crate::reference::ReferenceEvaluator;
@@ -60,7 +62,11 @@ impl PassRegistry {
     /// 注册一条 pass；重名是**显式错误**（静默覆盖会让指纹与调度各说各话）。
     pub fn register(&mut self, info: PassInfo) -> Result<(), PassRegistryError> {
         if self.entries.iter().any(|entry| entry.name == info.name) {
-            return Err(PassRegistryError::Duplicate(info.name));
+            return Err(PassRegistryError::Duplicate(ReflectError::duplicate(
+                NameKind::Pass,
+                info.name,
+                Blame::Assembly,
+            )));
         }
         self.entries.push(info);
         Ok(())
@@ -87,8 +93,8 @@ impl PassRegistry {
 /// 注册表错误。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PassRegistryError {
-    #[error("pass 重名：`{0}`")]
-    Duplicate(&'static str),
+    #[error(transparent)]
+    Duplicate(ReflectError),
 }
 
 /// 分析 pass：只读 IR。
@@ -228,10 +234,10 @@ mod tests {
     fn duplicate_registration_is_explicit() {
         let mut registry = PassRegistry::new();
         registry.register(Validate::INFO).unwrap();
-        assert_eq!(
-            registry.register(Validate::INFO).unwrap_err(),
-            PassRegistryError::Duplicate("expr.validate")
-        );
+        let PassRegistryError::Duplicate(diagnostic) =
+            registry.register(Validate::INFO).unwrap_err();
+        assert_eq!(diagnostic.name(), Some("expr.validate"));
+        assert_eq!(diagnostic.class(), "重名");
     }
 
     /// 参考求值器与 lowered 求值器逐位一致（抽象成立的证据）。

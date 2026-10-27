@@ -245,6 +245,16 @@ graph TD
 > `zela-scene-ecs → ze-pod-func / ze-func`（宿主单子 `M` 的注入点）与
 > `ze-scene-core → ze-func`（表达式绑定的数据层）；
 > 两者均进 wasm gate。上方 FanIn/FanOut 表仍是 2026-10-18 快照，**未包含这两个 crate**。
+>
+> **2026-10-27 更新（统一解析协议子系统）**：新增 `ze-type` 与 `ze-reflect`（kernel）。
+> - `ze-type`：纯代数（`TypeSpec` / `Layout` / `unify` / 冲突诊断 / 单态化上界），
+>   `no_std + alloc`、零运行时状态；
+> - `ze-reflect`：运行时（generation 感知槽位表 / 符号表 / `TypeRegistry` / `MonoCache`）；
+> - 生产边新增 `ze-pod-core → ze-type / ze-reflect`、`ze-comb → ze-type`、
+>   `ze-func → ze-type / ze-reflect`、`ze-scene-core → ze-reflect`；
+> - `typespec.rs` 的实现迁至 `ze-type`（`ze-pod-core` 只 re-export + 保留 `ErasedFn`），
+>   `ze-func::layout` 成为 `ze-type`（代数）+ `ze-reflect`（注册表）的门面；
+> - 两者均进 wasm gate。
 
 | Package | FanIn | FanOut | Instability |
 |---------|-------|--------|-------------|
@@ -1000,7 +1010,9 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > **Pod 类型系统与绑定生成（2026-10-17，V 线）**：`ze-pod-core` 从"字符串签名"升级为
 > **类型描述 IDL**：
 > - `typespec.rs`：`TypeSpec`（Scalar / Struct / Enum / Array / Opaque）+ `ParamSpec`
->   （**形参名进 schema**）+ `ErasedFn`（绑定入口）；仍然零依赖、过 wasm gate；
+>   （**形参名进 schema**）+ `ErasedFn`（绑定入口）；
+>   **2026-10-27 起**：实现迁至 `ze-type`（kernel，`no_std`），本模块只 re-export；
+>   `ErasedFn` 是唯一留下的运行时绑定入口；仍然过 wasm gate；
 > - `value.rs`：`PodValue` / `PodType` 只用于**跨语言边界**；`FunctionX2Y` 热路径
 >   不引用（`math_pod` / `ze-time` 中 `PodValue|TypeSpec` 命中数为 0）；
 > - `#[derive(PodType)]`：一处定义生成 schema + 双向转换 + `IntoPodTypeName`；

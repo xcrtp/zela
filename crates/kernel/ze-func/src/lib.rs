@@ -26,11 +26,11 @@ pub mod ops;
 pub mod simplify;
 
 pub use layout::{
-    ENDIAN, Endian, FieldLayout, Layout, LayoutError, Record, Scalar, Transcode, TypeRegistry,
-    decode_path, decode_record, encode_path, encode_record,
+    ENDIAN, Endian, FieldLayout, Layout, LayoutError, PATH_TYPE, Record, Scalar, Transcode,
+    TypeRegistry, decode_path, decode_record, encode_path, encode_record, negotiate_bytes,
 };
 pub use op::{
     DEFS as OP_DEFS, LIBRARY_NAMESPACE, OpDef, Target, is_pointwise, op_def, op_revision, targets,
 };
-pub use ops::{OPS, eval};
+pub use ops::{OPS, eval, is_known};
 pub use simplify::{SIMPLIFY_REC_LIMIT, Simplify, simplify};

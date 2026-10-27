@@ -127,7 +127,7 @@ impl<'py> ValueCodec for PyCodec<'py> {
                 ScalarKind::String => ScalarValue::String(bound.extract::<String>()?),
             })),
             TypeSpec::Opaque(_) => Err(PyErr::new::<PyTypeError, _>("期望 zela 句柄（PyHandle）")),
-            TypeSpec::Array { elem } => {
+            TypeSpec::Array { elem, .. } => {
                 let list = bound.cast::<PyList>()?;
                 let mut values = Vec::with_capacity(list.len());
                 for item in list.iter() {
@@ -135,7 +135,7 @@ impl<'py> ValueCodec for PyCodec<'py> {
                 }
                 Ok(ze_pod_core::PodValue::Array(values))
             }
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let dict = bound.cast::<PyDict>()?;
                 let mut values = Vec::with_capacity(fields.len());
                 for field in *fields {
@@ -412,7 +412,7 @@ fn register_types(
         };
 
         match spec {
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let ctor = plan.component_ctor(name);
                 let function =
                     make_ctor(py, fields, name, None, ctor, Arc::clone(&service))?;

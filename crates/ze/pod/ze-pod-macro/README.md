@@ -5,7 +5,7 @@
 > 与 `#[derive(PodType)]`（类型定义 → `TypeSpec` + 双向转换）。
 >
 > 单独成 crate 是 Rust 的硬性要求：proc-macro 必须独立编译；
-> `ze-pod-core` 本身保持零依赖。
+> `ze-pod-core` 本身只依赖同仓 kernel 的 `ze-type`（类型代数）/ `ze-reflect`（句柄机制）。
 
 ---
 

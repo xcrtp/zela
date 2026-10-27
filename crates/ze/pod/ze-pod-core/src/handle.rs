@@ -176,19 +176,32 @@ impl fmt::Display for Handle {
     }
 }
 
-struct Slot<T> {
-    generation: u32,
-    value: Option<T>,
+impl ze_reflect::handle::HandleCore for Handle {
+    type Owner = PodId;
+
+    fn owner(&self) -> PodId {
+        self.owner
+    }
+
+    fn slot(&self) -> u64 {
+        self.slot
+    }
+
+    fn generation(&self) -> u32 {
+        self.generation
+    }
 }
 
 /// 句柄槽位表：数据留在 Pod 内，外部只拿到 [`Handle`]。
 ///
 /// 一个表只属于一个 Pod（构造时绑定 [`PodId`]）；跨表使用句柄会得到
 /// [`PodError::CrossPodHandle`]。
+///
+/// **机制只有一处**：`slots / free / generation` 由
+/// `ze_reflect::handle::SlotTable` 实现，本类型只补 owner 绑定与类型化句柄。
 pub struct HandleTable<T> {
     owner: PodId,
-    slots: Vec<Slot<T>>,
-    free: Vec<u64>,
+    slots: ze_reflect::handle::SlotTable<T>,
 }
 
 impl<T> HandleTable<T> {
@@ -196,8 +209,7 @@ impl<T> HandleTable<T> {
     pub fn new(owner: PodId) -> Self {
         Self {
             owner,
-            slots: Vec::new(),
-            free: Vec::new(),
+            slots: ze_reflect::handle::SlotTable::new(),
         }
     }
 
@@ -208,62 +220,33 @@ impl<T> HandleTable<T> {
 
     /// 存入一个值，返回不透明句柄。
     pub fn insert(&mut self, value: T) -> Handle {
-        if let Some(slot) = self.free.pop() {
-            let entry = &mut self.slots[slot as usize];
-            entry.generation = entry.generation.wrapping_add(1);
-            entry.value = Some(value);
-            Handle::new(self.owner, slot, entry.generation)
-        } else {
-            let slot = self.slots.len() as u64;
-            self.slots.push(Slot {
-                generation: 0,
-                value: Some(value),
-            });
-            Handle::new(self.owner, slot, 0)
-        }
+        let (slot, generation) = self.slots.insert(value);
+        Handle::new(self.owner, slot, generation)
     }
 
-    /// 取只读引用。跨 Pod / 已释放 ⇒ 明确错误。
+    /// 取只读引用。跨 Pod / 已释放 / generation 不匹配 ⇒ 明确错误。
     pub fn get(&self, handle: &Handle) -> Result<&T, PodError> {
         handle.ensure_owner(self.owner)?;
-        let entry = self
-            .slots
-            .get(handle.slot as usize)
-            .filter(|e| e.generation == handle.generation)
-            .ok_or(PodError::HandleReleased { slot: handle.slot })?;
-        entry
-            .value
-            .as_ref()
-            .ok_or(PodError::HandleReleased { slot: handle.slot })
+        self.slots
+            .get(handle.slot, handle.generation)
+            .map_err(|_| PodError::HandleReleased { slot: handle.slot })
     }
 
-    /// 取可变引用。跨 Pod / 已释放 ⇒ 明确错误。
+    /// 取可变引用。跨 Pod / 已释放 / generation 不匹配 ⇒ 明确错误。
     pub fn get_mut(&mut self, handle: &Handle) -> Result<&mut T, PodError> {
         handle.ensure_owner(self.owner)?;
-        let entry = self
-            .slots
-            .get_mut(handle.slot as usize)
-            .filter(|e| e.generation == handle.generation)
-            .ok_or(PodError::HandleReleased { slot: handle.slot })?;
-        entry
-            .value
-            .as_mut()
-            .ok_or(PodError::HandleReleased { slot: handle.slot })
+        self.slots
+            .get_mut(handle.slot, handle.generation)
+            .map_err(|_| PodError::HandleReleased { slot: handle.slot })
     }
 
     /// 显式释放。重复释放同样是明确错误。
     pub fn release(&mut self, handle: Handle) -> Result<(), PodError> {
         handle.ensure_owner(self.owner)?;
-        let entry = self
-            .slots
-            .get_mut(handle.slot as usize)
-            .filter(|e| e.generation == handle.generation)
-            .ok_or(PodError::HandleReleased { slot: handle.slot })?;
-        if entry.value.take().is_none() {
-            return Err(PodError::HandleReleased { slot: handle.slot });
-        }
-        self.free.push(handle.slot);
-        Ok(())
+        self.slots
+            .release(handle.slot, handle.generation)
+            .map(|_| ())
+            .map_err(|_| PodError::HandleReleased { slot: handle.slot })
     }
 
     /// 句柄当前是否有效（跨 Pod 也算无效）。
@@ -273,11 +256,11 @@ impl<T> HandleTable<T> {
 
     /// 存活值数量。
     pub fn len(&self) -> usize {
-        self.slots.iter().filter(|s| s.value.is_some()).count()
+        self.slots.len()
     }
 
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.slots.is_empty()
     }
 }

@@ -288,35 +288,20 @@ impl Subst {
     }
 }
 
-/// 签名里的具体类型 → 表达式层类型。
+/// 签名里的具体类型 → 表达式层类型（走 `ChannelType::from_type_spec` 的**唯一**投影）。
 fn spec_concrete(spec: &TypeSpec) -> Result<ChannelType, String> {
-    match spec {
-        TypeSpec::Scalar(kind) => match kind {
-            ScalarKind::F32
-            | ScalarKind::F64
-            | ScalarKind::I32
-            | ScalarKind::U32
-            | ScalarKind::U64
-            | ScalarKind::U8 => Ok(ChannelType::Number),
-            ScalarKind::Bool => Ok(ChannelType::Bool),
-            ScalarKind::String => Err("签名里的 string 不是动画值类型".to_string()),
-        },
-        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } | TypeSpec::Opaque(name) => {
-            match short(name) {
-                "Vec2" => Ok(ChannelType::Vec2),
-                "Vec3" => Ok(ChannelType::Vec3),
-                other => Err(format!("签名里的类型 `{other}` 尚未接入表达式类型系统")),
-            }
-        }
-        TypeSpec::Array { .. } | TypeSpec::App { .. } => {
-            Err("签名里的数组 / 类型构造应用不支持（rank-1 限定）".to_string())
-        }
-        TypeSpec::Var(_) => unreachable!("类型变量由 `spec_ty` 处理"),
+    if matches!(spec, TypeSpec::Scalar(ScalarKind::String)) {
+        return Err("签名里的 string 不是动画值类型".to_string());
     }
-}
-
-fn short(name: &str) -> &str {
-    name.strip_prefix("zela.").unwrap_or(name)
+    if matches!(spec, TypeSpec::Var(_)) {
+        unreachable!("类型变量由 `spec_ty` 处理");
+    }
+    ChannelType::from_type_spec(spec).ok_or_else(|| match spec {
+        TypeSpec::Array { .. } | TypeSpec::App { .. } => {
+            "签名里的数组 / 类型构造应用不支持（rank-1 限定）".to_string()
+        }
+        other => format!("签名里的类型 `{}` 尚未接入表达式类型系统", other.render()),
+    })
 }
 
 /// 具体类型 → kind（`Unknown` 只可能来自未接线的通道，推导前已拒绝）。

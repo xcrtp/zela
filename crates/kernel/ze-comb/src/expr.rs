@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use ze_type::{Blame, NameKind, ReflectError, ScalarKind, TypeSpec};
 
 /// 表达式局部作用域里的节点名（`Def { id = "h1", ... }` 的对应物）。
 pub type Id = String;
@@ -199,6 +200,31 @@ impl ChannelType {
             Self::Vec2 => "Vec2",
             Self::Vec3 => "Vec3",
             Self::Bytes => "Bytes",
+        }
+    }
+
+    /// **schema → 通道类型**：`ChannelType` 是 `TypeSpec` 的降级视图。
+    ///
+    /// 这是内核侧**唯一**的 TypeSpec → 表达式类型投影点：装配期类型推导不再维护
+    /// 第二份映射（计划 §3.1「② 降级为 ① 的视图」）。
+    ///
+    /// 不支持的 schema（变长数组 / 类型构造应用 / 类型变量 / `String`）返回 `None`，
+    /// 由调用方给出带上下文的显式错误。
+    pub fn from_type_spec(spec: &TypeSpec) -> Option<Self> {
+        match spec {
+            TypeSpec::Scalar(kind) => match kind {
+                ScalarKind::Bool => Some(Self::Bool),
+                ScalarKind::String => None,
+                _ => Some(Self::Number),
+            },
+            TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } | TypeSpec::Opaque(name) => {
+                match name.strip_prefix("zela.").unwrap_or(name) {
+                    "Vec2" => Some(Self::Vec2),
+                    "Vec3" => Some(Self::Vec3),
+                    _ => None,
+                }
+            }
+            TypeSpec::Var(_) | TypeSpec::Array { .. } | TypeSpec::App { .. } => None,
         }
     }
 }
@@ -429,8 +455,8 @@ impl Expr {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ExprError {
     /// 同一作用域里两个节点用了同一个 id。
-    #[error("重复的节点 id：`{0}`")]
-    DuplicateId(Id),
+    #[error(transparent)]
+    DuplicateId(ReflectError),
     /// `Ref` 指向未定义的 id。
     #[error("悬空的 Ref：`{0}` 没有定义")]
     DanglingRef(Id),
@@ -491,7 +517,11 @@ fn collect_defs<'a>(
 ) -> Result<(), ExprError> {
     if let Some(id) = expr.id.as_deref() {
         if defs.insert(id, expr).is_some() {
-            return Err(ExprError::DuplicateId(id.to_string()));
+            return Err(ExprError::DuplicateId(ReflectError::duplicate(
+                NameKind::NodeId,
+                id,
+                Blame::Assembly,
+            )));
         }
     }
     for child in expr.node.children() {
@@ -783,10 +813,13 @@ mod tests {
             math("sum"),
             [Expr::pure(1.0).with_id("dup"), Expr::pure(2.0).with_id("dup")],
         );
-        assert_eq!(
-            root.validate().unwrap_err(),
-            ExprError::DuplicateId("dup".to_string())
-        );
+        let error = root.validate().unwrap_err();
+        let ExprError::DuplicateId(diagnostic) = error else {
+            panic!("必须是重名诊断，实际 {error:?}");
+        };
+        assert_eq!(diagnostic.name(), Some("dup"));
+        assert_eq!(diagnostic.origin(), Blame::Assembly);
+        assert_eq!(diagnostic.class(), "重名");
     }
 
     #[test]

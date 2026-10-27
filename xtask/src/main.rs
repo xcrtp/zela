@@ -30,6 +30,8 @@ use xtask::{
 
 /// wasm gate 的 kernel 组（与 CI 名单逐字一致）。
 const KERNEL_CRATES: &[&str] = &[
+    "ze-type",
+    "ze-reflect",
     "ze-notion",
     "ze-render-ir",
     "ze-scene-contract",

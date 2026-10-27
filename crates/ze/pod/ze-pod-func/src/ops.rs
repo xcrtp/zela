@@ -12,6 +12,8 @@ pub use ze_func::{OPS, eval};
 pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 
 /// `op` 是否属于本库（namespace 必须一致，名字在 [`OPS`] 里）。
+///
+/// 走 `ze-func` 的符号表（O(1)），不在本层再维护一份名字清单。
 pub fn is_known(op: &OpRef) -> bool {
-    op.namespace == LIBRARY_NAMESPACE && OPS.contains(&op.name.as_str())
+    ze_func::is_known(op)
 }

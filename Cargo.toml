@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "crates/kernel/ze-type",
+    "crates/kernel/ze-reflect",
     "crates/kernel/ze-notion",
     "crates/kernel/ze-render-ir",
     "crates/kernel/ze-scene-contract",

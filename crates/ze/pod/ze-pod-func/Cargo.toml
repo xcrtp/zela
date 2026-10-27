@@ -17,6 +17,8 @@ ze-pod-core = { path = "../ze-pod-core" }
 ze-pod-macro = { path = "../ze-pod-macro" }
 ze-comb = { path = "../../../kernel/ze-comb" }
 ze-func = { path = "../../../kernel/ze-func" }
+ze-reflect = { path = "../../../kernel/ze-reflect" }
+ze-type = { path = "../../../kernel/ze-type" }
 serde_json.workspace = true
 
 [dev-dependencies]

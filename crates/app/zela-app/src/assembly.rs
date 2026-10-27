@@ -527,10 +527,12 @@ mod tests {
     fn target_types_map_to_expression_types() {
         static VEC2: TypeSpec = TypeSpec::Struct {
             name: "zela.Vec2",
+            layout: None,
             fields: &[],
         };
         static VEC3: TypeSpec = TypeSpec::Struct {
             name: "zela.Vec3",
+            layout: None,
             fields: &[],
         };
         assert_eq!(

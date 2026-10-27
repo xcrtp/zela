@@ -82,10 +82,12 @@ const SUM_VEC: OpSig = OpSig {
 
 const VEC2: &TypeSpec = &TypeSpec::Struct {
     name: "zela.Vec2",
+    layout: None,
     fields: &[],
 };
 const VEC3: &TypeSpec = &TypeSpec::Struct {
     name: "zela.Vec3",
+    layout: None,
     fields: &[],
 };
 
@@ -442,9 +444,25 @@ pub static SIGNATURES: &[OpDef] = &[
     },
 ];
 
-/// 查一个算子的签名（未知算子返回 `None`）。
+/// 查一个算子的签名（未知算子返回 `None`；**O(1)**，符号表只建一次）。
 pub fn signature_of(name: &str) -> Option<&'static OpDef> {
-    SIGNATURES.iter().find(|def| def.name == name)
+    index().resolve(name).map(|(_, def)| *def)
+}
+
+fn index() -> &'static ze_reflect::SymbolTable<&'static str, &'static OpDef> {
+    use std::sync::OnceLock;
+
+    static INDEX: OnceLock<ze_reflect::SymbolTable<&'static str, &'static OpDef>> =
+        OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut table = ze_reflect::SymbolTable::new();
+        for def in SIGNATURES {
+            table
+                .intern(def.name, def, ze_reflect::Blame::Assembly)
+                .expect("SIGNATURES 的名字唯一（顺序测试已钉住）");
+        }
+        table
+    })
 }
 
 /// 某算子的 `(since, changed)`（产物记录 / 加载比对用）。
@@ -528,6 +546,47 @@ mod tests {
     fn signatures_cover_every_op_once() {
         let names: Vec<&str> = super::SIGNATURES.iter().map(|def| def.name).collect();
         assert_eq!(names.as_slice(), crate::ops::OPS);
+    }
+
+    /// **阶段 4**：向量实例由 kind **lift** 生成，算子表里不出现 `cos_vec2` 之类条目。
+    #[test]
+    fn vector_instances_are_lifted_not_enumerated() {
+        use ze_type::Kind;
+
+        // 这些算子的向量版本必须由 kind lift，而不是逐条登记。
+        for base in [
+            "sin", "cos", "add", "mul", "scale", "sum", "mix", "clamp", "length", "normalize",
+        ] {
+            for suffix in ["_vec2", "_vec3"] {
+                let lifted = format!("{base}{suffix}");
+                assert!(
+                    !crate::OPS.contains(&lifted.as_str()),
+                    "算子表不得按维度逐条登记（`{lifted}`）"
+                );
+            }
+        }
+        assert!(super::signature_of("cos_vec2").is_none());
+
+        let cos = super::signature_of("cos").expect("cos 已登记");
+        let mut scalar_cache = ze_reflect::MonoCache::default();
+        let scalar = scalar_cache
+            .instances("cos", &cos.sigs[0])
+            .expect("单态化在界内");
+        assert_eq!(scalar.len(), 1, "标量签名已是具体类型（F64）");
+        assert_eq!(scalar[0].ret.type_name(), None);
+
+        let mul = super::signature_of("mul").expect("mul 已登记");
+        let vector_sig = mul
+            .sigs
+            .iter()
+            .find(|sig| sig.vars.iter().any(|(_, kind)| *kind == Kind::Vector))
+            .expect("mul 有向量重载");
+        let mut vector_cache = ze_reflect::MonoCache::default();
+        let vector = vector_cache
+            .instances("mul", vector_sig)
+            .expect("单态化在界内");
+        assert_eq!(vector.len(), 2, "Vector ⇒ Vec2 / Vec3");
+        assert_eq!(vector[0].ret.type_name(), Some("zela.Vec2"));
     }
 
     /// **阶段 0 切分证据**：签名表里的 `since/changed` 与基础函子库的
