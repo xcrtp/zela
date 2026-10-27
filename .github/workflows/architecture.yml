@@ -27,6 +27,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # xtask 给所有子进程硬注入 ZELA_TYPST_FONT_DIR（缺失即报错，防止静默退回
+      # 系统字体 ⇒ payload / 帧哈希随机器漂移）。fonts 不入库，必须先下载。
+      - name: Fetch deterministic fonts
+        run: pwsh crates/web/zela-web/build.ps1 -FontsOnly
+        shell: pwsh
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
@@ -111,6 +117,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Fetch deterministic fonts
+        run: pwsh crates/web/zela-web/build.ps1 -FontsOnly
+        shell: pwsh
+
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
@@ -150,6 +160,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
+      - name: Fetch deterministic fonts
+        run: pwsh crates/web/zela-web/build.ps1 -FontsOnly
+        shell: pwsh
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2

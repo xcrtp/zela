@@ -20,6 +20,11 @@
 # 铁律：**不得另写 bash 版**。ubuntu runner 预装 pwsh，CI 直接
 # `pwsh crates/web/zela-web/build.ps1` —— 与本地跑同一份定义。
 
+# -FontsOnly：只做「下载 + 校验确定字体」这一步就退出。
+# architecture.yml 的 check / test / hash / wasm job 都需要字体（xtask 对所有
+# 子进程硬注入 ZELA_TYPST_FONT_DIR，缺失即报错），但它们不构建 wasm 产物。
+param([switch]$FontsOnly)
+
 $ErrorActionPreference = "Stop"
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot "../../..")
@@ -125,6 +130,10 @@ try {
     # 只对随后的 zela-compile 生效：ze-prerender 见到它就不再读系统字体。
     $env:ZELA_TYPST_FONT_DIR = $fontDir
     Write-Host "[font] ZELA_TYPST_FONT_DIR = $fontDir"
+    if ($FontsOnly) {
+        Write-Host "[font] -FontsOnly：字体就绪，跳过 demo 编译与 wasm 构建"
+        return
+    }
 
     # ── Demo 集：清单（单一真源）→ www/<id>.zsb，并断言 payload hash ──────
     # 先编译（快）再 wasm-pack（慢）：断言失败要尽早失败。
