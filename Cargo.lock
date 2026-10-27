@@ -6939,6 +6939,7 @@ dependencies = [
  "wgpu",
  "ze-notion",
  "ze-pod-core",
+ "ze-pod-func",
  "ze-render-ir",
  "ze-scene-core",
  "zela-render",

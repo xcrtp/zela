@@ -18,6 +18,8 @@ zela-render-backends = { path = "../../render/zela-render-backends", default-fea
 zela-render-vector = { path = "../../render/zela-render-vector" }
 # 场景能力版本（Meta 的 capability 口径唯一真源）。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
+# 第 4 批：加载期比对产物记录的算子 revision（函数级版本）。
+ze-pod-func = { path = "../../ze/pod/ze-pod-func" }
 # 对象层：相机句柄与内容纹理默认配置。
 ze-scene-core = { path = "../../scene/ze-scene-core" }
 ze-notion = { path = "../../kernel/ze-notion" }

@@ -77,10 +77,17 @@ impl BindingDriver {
 }
 
 /// 函子库身份：进产物，声明文件与库版本都由它派生。
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+///
+/// **第 4 批**：`op_revisions` 是**细粒度**的算子版本记录（`name → (since, changed)`），
+/// 与粗粒度的 `version` 并存。加载时逐个比对 ⇒ 只作废**用到变了语义的算子**的产物，
+/// 而不是整库作废。老 payload 没有这个字段 ⇒ `#[serde(default)]` 解成空表
+/// （回放路径不做推导，缺记录是合法状态）。
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LibraryRef {
     pub namespace: String,
     pub version: String,
+    #[serde(default)]
+    pub op_revisions: std::collections::BTreeMap<String, (u32, u32)>,
 }
 
 /// 单条绑定：`(时钟, 驱动源, 目标)`。

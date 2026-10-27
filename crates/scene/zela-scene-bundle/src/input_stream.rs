@@ -310,6 +310,7 @@ mod tests {
         LibraryRef {
             namespace: "zela.math".to_string(),
             version: "6".to_string(),
+            op_revisions: Default::default(),
         }
     }
 

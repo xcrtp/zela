@@ -454,6 +454,7 @@ mod tests {
         let lib = LibraryRef {
             namespace: "zela.math".to_string(),
             version: "7".to_string(),
+            op_revisions: Default::default(),
         };
         // `sin(read(Circle.radius, 对象0))`：对象 0 = 第一个 spawn 的圆。
         let read_radius = Expr::call(

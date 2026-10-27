@@ -1011,7 +1011,9 @@
 
 | AK-03 | **类型系统扩展 + 转换算子族（第 3 批）** | 表达式 / 类型系统 | **已关闭（3）** | `zela.math@10 → @11`：三处类型补 `Path` —— `Value::Path { points, closed }`（纯数据点列，不把 `ze_notion::Path2D` 拉进 kernel 层）、`ChannelType::Path`、`Kind::Path`；**Path 通道本批不接**（计划 W1：脚本侧零使用，只扩类型系统）。`anim_to_value` 的 `None` 改为显式 `EvalError::UnsupportedValue { channel, kind }`：`Color` / `Path` 不再伪装成 `MissingComponent`（硬约束 4）。新增转换算子 `splat(v)`（`F64 → Vec3`）、`vec3_from_vec2(v, z)`、`vec2_from_vec3(v)`（**显式**丢 z）、`length(v)` / `normalize(v)`（`Vector → F64` / `Vector`；零向量保持零，不产出 NaN）。签名全部进 [`signature.rs`](crates/ze/pod/ze-pod-func/src/signature.rs)，`MATH_API_FINGERPRINT = 6327976336490177055`。**验收**：`conversion_operators_are_explicit`、`unsupported_component_value_types_are_explicit`；36 条像素基线逐位不变（5 件表达式作品 payload 因 `LIBRARY_VERSION` 变化重录） |
 
-**AK 段小计**：已关闭 3（AK-01、AK-02、AK-03）· 待处理 0（第 4–5b 批尚未开始）。
+| AK-04 | **函数级版本标注（第 4 批）** | 表达式 / 产物 / 回放 | **已关闭（4）** | `OpDef` 增加 `since` / `changed`（revision 取算子库版本序号：既有 = 1、第 1 批 = 9、第 3 批 = 11）；`LibraryRef` 增加 `op_revisions: BTreeMap<String,(u32,u32)>`（`#[serde(default)]`：老 payload 解成空表 ⇒ 回放路径合法）。装配期由 `ze_pod_func::collect_op_revisions`（实现在函子库内，算子身份与 revision 同源）把**每条绑定实际用到的值算子**（含 predicate）写进产物；加载期 `zela-playback::build_bundle_runtime` 在 `bundle.script()` 之后逐个比对，不符 ⇒ `check_op_revisions` **点名算子**（不是笼统的库版本不符），也不整库作废。验收：`op_revisions_follow_the_batches`、`stale_op_revision_names_the_operator`（改 `changed` / 删算子都点名）。 |
+
+**AK 段小计**：已关闭 4（AK-01、AK-02、AK-03、AK-04）· 待处理 0（第 5a–5b 批尚未开始）。
 
 ---
 

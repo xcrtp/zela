@@ -136,6 +136,12 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
     let _params = bundle_render_params(bundle)?;
 
     let script = bundle.script()?;
+    // **第 4 批**：产物记录的算子 revision vs 当前库 —— 不符即**点名算子**失败
+    // （不是笼统的库版本不符）。老 payload 没有记录 ⇒ 空表，直接通过。
+    for library in script.libraries() {
+        ze_pod_func::check_op_revisions(&library.op_revisions)
+            .map_err(PlaybackError::Assembly)?;
+    }
     // 静止时刻是**派生量**（可能不可推导）；录多长仍由调用方的 frames 决定。
     let record_hint = script.still_time();
 

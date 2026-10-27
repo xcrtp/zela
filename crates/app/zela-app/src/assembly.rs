@@ -195,10 +195,8 @@ impl PodAssembly {
                 source: PodError::CallFailed(message),
             });
         }
-        let library = zela_scene_ecs::animation::LibraryRef {
-            namespace: LIBRARY_NAMESPACE.to_string(),
-            version: LIBRARY_VERSION.to_string(),
-        };
+        let library_namespace = LIBRARY_NAMESPACE.to_string();
+        let library_version = LIBRARY_VERSION.to_string();
         for pending in bindings {
             let namespace = pending.target.namespace.as_str();
             if !namespace.is_empty() && namespace != SCENE_NAMESPACE {
@@ -259,12 +257,23 @@ impl PodAssembly {
                     zela_scene_ecs::animation::ResetBehavior::Skip
                 }
             };
+            // **第 4 批**：把这条绑定**实际用到的算子** revision 写进产物
+            // （predicate 是独立表达式，同样记录；算子身份与 revision 同源于函子库）。
+            let mut op_revisions = ze_pod_func::collect_op_revisions(&pending.expr);
+            if let Some(predicate) = &pending.predicate {
+                op_revisions.extend(ze_pod_func::collect_op_revisions(predicate));
+            }
+            let library = zela_scene_ecs::animation::LibraryRef {
+                namespace: library_namespace.clone(),
+                version: library_version.clone(),
+                op_revisions,
+            };
             script
                 .bind_expr_gated(
                     object,
                     &pending.target.name,
                     pending.expr,
-                    library.clone(),
+                    library,
                     clock,
                     pending.predicate,
                     reset,

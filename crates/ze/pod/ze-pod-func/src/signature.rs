@@ -10,6 +10,8 @@
 //!
 //! 签名里 [`TypeSpec::Var`] 的名字只是 `vars` 的键，**不是**自由命名空间。
 
+use std::collections::BTreeMap;
+
 use ze_pod_core::{Kind, OpDef, OpSig, ScalarKind, TypeSpec};
 
 const F64: &TypeSpec = &TypeSpec::Scalar(ScalarKind::F64);
@@ -221,146 +223,207 @@ const NOT: OpSig = OpSig {
 ///
 /// `spec` 是构造器 PodType 的完整名：存根生成器据此把签名挂到
 /// `Sin` / `Mul` … 上（`Sin(...) -> Expr<number>`）。
+///
+/// `since` / `changed` 是**函数级版本**（第 4 批）：revision 取算子库版本的序号
+/// （`1` = 追踪开始前的既有算子，`9` = 第 1 批，`11` = 第 3 批）。改某个算子的
+/// **语义**（签名不变也算）时只 bump 它的 `changed` —— 用到它的 payload 会在加载时
+/// 被**点名**拒绝，而不是整库作废。
 pub static SIGNATURES: &[OpDef] = &[
     OpDef {
         name: "sin",
         spec: "zela.math.Sin",
         sigs: &[UNARY_NUM],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "cos",
         spec: "zela.math.Cos",
         sigs: &[UNARY_NUM],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "add",
         spec: "zela.math.Add",
         sigs: &[SAME_NUM, SAME_VEC],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "mul",
         spec: "zela.math.Mul",
         sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "scale",
         spec: "zela.math.Scale",
         sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "sum",
         spec: "zela.math.Sum",
         sigs: &[SUM_NUM, SUM_VEC],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "mix",
         spec: "zela.math.Mix",
         sigs: &[MIX_NUM, MIX_VEC],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "clamp",
         spec: "zela.math.Clamp",
         sigs: &[CLAMP],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "vec2",
         spec: "zela.math.Vec2Of",
         sigs: &[TO_VEC2],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "vec3",
         spec: "zela.math.Vec3Of",
         sigs: &[TO_VEC3],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "x",
         spec: "zela.math.Component",
         sigs: &[COMPONENT],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "y",
         spec: "zela.math.Component",
         sigs: &[COMPONENT],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "z",
         spec: "zela.math.Component",
         sigs: &[COMPONENT],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "rotate3",
         spec: "zela.math.Rotate3",
         sigs: &[ROTATE3],
+        since: 9,
+        changed: 9,
     },
     OpDef {
         name: "splat",
         spec: "zela.math.Splat",
         sigs: &[SPLAT],
+        since: 11,
+        changed: 11,
     },
     OpDef {
         name: "vec3_from_vec2",
         spec: "zela.math.Vec3FromVec2",
         sigs: &[VEC3_FROM_VEC2],
+        since: 11,
+        changed: 11,
     },
     OpDef {
         name: "vec2_from_vec3",
         spec: "zela.math.Vec2FromVec3",
         sigs: &[VEC2_FROM_VEC3],
+        since: 11,
+        changed: 11,
     },
     OpDef {
         name: "length",
         spec: "zela.math.Length",
         sigs: &[LENGTH],
+        since: 11,
+        changed: 11,
     },
     OpDef {
         name: "normalize",
         spec: "zela.math.Normalize",
         sigs: &[NORMALIZE],
+        since: 11,
+        changed: 11,
     },
     OpDef {
         name: "lt",
         spec: "zela.math.Lt",
         sigs: &[CMP_NUM],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "gt",
         spec: "zela.math.Gt",
         sigs: &[CMP_NUM],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "le",
         spec: "zela.math.Le",
         sigs: &[CMP_NUM],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "ge",
         spec: "zela.math.Ge",
         sigs: &[CMP_NUM],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "eq",
         spec: "zela.math.Eq",
         sigs: &[EQ_NUM, EQ_BOOL],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "ne",
         spec: "zela.math.Ne",
         sigs: &[EQ_NUM, EQ_BOOL],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "and",
         spec: "zela.math.And",
         sigs: &[AND],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "or",
         spec: "zela.math.Or",
         sigs: &[AND],
+        since: 1,
+        changed: 1,
     },
     OpDef {
         name: "not",
         spec: "zela.math.Not",
         sigs: &[NOT],
+        since: 1,
+        changed: 1,
     },
 ];
 
@@ -369,8 +432,67 @@ pub fn signature_of(name: &str) -> Option<&'static OpDef> {
     SIGNATURES.iter().find(|def| def.name == name)
 }
 
+/// 某算子的 `(since, changed)`（产物记录 / 加载比对用）。
+pub fn op_revision(name: &str) -> Option<(u32, u32)> {
+    signature_of(name).map(|def| (def.since, def.changed))
+}
+
+/// 表达式树里用到的**值算子** `(since, changed)`（产物记录用）。
+///
+/// 只记本库（`zela.math`）的 `Call` 节点；`Read` / `Select` / 通道叶子没有算子
+/// revision（它们不是 [`SIGNATURES`] 里的值算子）。`Ref` 的子树是另一份 `Expr`，
+/// 照常遍历。
+pub fn collect_op_revisions(expr: &ze_func::Expr) -> BTreeMap<String, (u32, u32)> {
+    fn walk(expr: &ze_func::Expr, out: &mut BTreeMap<String, (u32, u32)>) {
+        if let ze_func::Node::Call { op, .. } = &expr.node {
+            if op.namespace == "zela.math" {
+                if let Some(revision) = op_revision(&op.name) {
+                    out.insert(op.name.clone(), revision);
+                }
+            }
+        }
+        for child in expr.node.children() {
+            walk(child, out);
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(expr, &mut out);
+    out
+}
+
+/// **加载期比对**（第 4 批）：产物记录的算子 revision vs 当前库。
+///
+/// 不符 ⇒ 点名**具体算子**（不是笼统的"库版本不符"）。空表（老 payload）直接通过：
+/// 回放路径不做推导，缺记录是合法状态。
+pub fn check_op_revisions(revisions: &BTreeMap<String, (u32, u32)>) -> Result<(), String> {
+    let mut stale = Vec::new();
+    for (name, &(since, changed)) in revisions {
+        match op_revision(name) {
+            None => stale.push(format!("`{name}`（当前库已无此算子）")),
+            Some((current_since, current_changed))
+                if current_since != since || current_changed != changed =>
+            {
+                stale.push(format!(
+                    "`{name}`（产物 since/changed = {since}/{changed}，当前 = {current_since}/{current_changed}）"
+                ));
+            }
+            Some(_) => {}
+        }
+    }
+    if stale.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "表达式产物与当前 `zela.math` 不兼容：{}",
+            stale.join("；")
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     /// 签名表与算子表**同名同序**：漏登记会在这里当场暴露。
     #[test]
     fn signatures_cover_every_op_once() {
@@ -393,6 +515,35 @@ mod tests {
                 "Mul: (F64, Vector) -> Vector",
             ]
         );
+    }
+
+    /// 第 4 批：函数级 revision 与批次对应（既有 = 1、第 1 批 = 9、第 3 批 = 11）。
+    #[test]
+    fn op_revisions_follow_the_batches() {
+        assert_eq!(super::op_revision("sin"), Some((1, 1)));
+        assert_eq!(super::op_revision("mix"), Some((9, 9)));
+        assert_eq!(super::op_revision("normalize"), Some((11, 11)));
+        assert_eq!(super::op_revision("read"), None, "read 不是值算子");
+    }
+
+    /// 第 4 批验收：产物记录与当前库不符 ⇒ **点名算子**；空表（老 payload）通过。
+    #[test]
+    fn stale_op_revision_names_the_operator() {
+        let mut stale = BTreeMap::new();
+        stale.insert("sin".to_string(), (1, 2));
+        let error = super::check_op_revisions(&stale).expect_err("语义变更必须拒绝");
+        assert!(error.contains("`sin`"), "{error}");
+        assert!(error.contains("1/2"), "{error}");
+
+        let mut gone = BTreeMap::new();
+        gone.insert("tan".to_string(), (1, 1));
+        let error = super::check_op_revisions(&gone).expect_err("已删除的算子必须拒绝");
+        assert!(error.contains("`tan`"), "{error}");
+
+        assert!(super::check_op_revisions(&BTreeMap::new()).is_ok());
+        let mut current = BTreeMap::new();
+        current.insert("sin".to_string(), super::op_revision("sin").unwrap());
+        assert!(super::check_op_revisions(&current).is_ok());
     }
 }
 

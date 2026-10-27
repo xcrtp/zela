@@ -188,6 +188,10 @@ pub struct OpDef {
     /// JSON 也带上它，脚本侧不必按名字猜。
     pub spec: &'static str,
     pub sigs: &'static [OpSig],
+    /// 引入此签名的算子库 revision（第 4 批：函数级版本）。
+    pub since: u32,
+    /// 语义最后一次变更的 revision（**签名不变但实现变了也要 bump**）。
+    pub changed: u32,
 }
 
 impl OpDef {

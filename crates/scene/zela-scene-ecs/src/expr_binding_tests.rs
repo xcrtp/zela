@@ -23,6 +23,7 @@ fn library() -> LibraryRef {
     LibraryRef {
         namespace: "zela.math".to_string(),
         version: "4".to_string(),
+        op_revisions: Default::default(),
     }
 }
 
