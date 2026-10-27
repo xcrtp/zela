@@ -82,6 +82,13 @@ pub enum EvalError {
     /// `Select` 的条件不是 `Bool`（显式失败，不静默当真 / 假）。
     #[error("select 的条件必须是 Bool，实际 {actual}")]
     SelectCondition { actual: &'static str },
+    /// 通道**声明类型**与运行期返回值标签不符（装配期推导 vs 实际值对账）。
+    #[error("通道 `{channel}` 声明为 {expected}，运行期返回 {actual}")]
+    ChannelTypeMismatch {
+        channel: ChannelRef,
+        expected: &'static str,
+        actual: &'static str,
+    },
 }
 
 impl EvalError {

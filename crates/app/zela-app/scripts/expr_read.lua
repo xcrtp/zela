@@ -1,10 +1,10 @@
 -- expr_read.lua — G 批通道读端 + H 批值分支（脚本级验收夹）。
 --
 -- 目的：证明**一个量可以跟随另一个量**（而不只是"是时间的函数"）。
--- 全部读取都用 `expr.read { channel = <组件 channel 常量>, ty = <F 批类型名>, object = <句柄> }`：
+-- 读取写法（第 2 批）：通道常量**可调用** —— `<组件>.channel.<字段>(<对象>)`，
+-- 类型由常量自带（不再手写 `ty = "Vec2"`）：
 --   - `object` **必须显式传入**（没有"默认读绑定自己的对象"这种隐式）；
---   - `ty` 是 F 批 `FieldSpec.ty` 的映射（`Number` / `Vec2` / `Vec3`），
---     装配期据此推导（缺 `ty` ⇒ 装配期显式报错）。
+--   - 等价于 `expr.read { channel = <常量>, object = <句柄> }`。
 --
 -- 覆盖：
 --   读 Vec2  —— 箭头终点跟随圆点中心（跨对象）；
@@ -65,11 +65,8 @@ local arrow = scene.spawn({
 expr.bind {
     object = arrow,
     target = Arrow.channel.to,
-    root = expr.read {
-        channel = Circle.channel.center,
-        ty = "Vec2",
-        object = dot,
-    },
+    -- 通道常量可调用（第 2 批语法糖）≡ `expr.read { channel = …, object = dot }`。
+    root = Circle.channel.center(dot),
 }
 
 -- ── 读者 2（Number + Select）：半径 > 0.6 ⇒ 0.22，否则 0.34 ────────────
@@ -82,11 +79,7 @@ expr.bind {
     target = Circle.channel.radius,
     root = Select {
         cond = Gt {
-            a = expr.read {
-                channel = Circle.channel.radius,
-                ty = "Number",
-                object = dot,
-            },
+            a = Circle.channel.radius(dot),
             b = expr.pure(0.6),
         },
         -- `then` 是 Lua 关键字 ⇒ 必须用 ["then"] 的表键写法。
@@ -108,18 +101,10 @@ local grad = scene.spawn({
 expr.bind {
     object = grad,
     target = Gradient.channel.from,
-    root = expr.read {
-        channel = Transform.channel.position,
-        ty = "Vec3",
-        object = a,
-    },
+    root = Transform.channel.position(a),
 }
 expr.bind {
     object = grad,
     target = Gradient.channel.to,
-    root = expr.read {
-        channel = Transform.channel.position,
-        ty = "Vec3",
-        object = b,
-    },
+    root = Transform.channel.position(b),
 }

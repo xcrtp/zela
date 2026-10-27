@@ -285,7 +285,13 @@ fn typed_stubs_carry_l2_signatures() {
     assert!(lua.contains("---@field target Channel<any>"));
     assert!(lua.contains("---@field expr Expr<boolean>"));
     // 通道的泛型类只能出现一次（`zela.math.Channel` 与组件常量共用一个）。
-    assert_eq!(lua.matches("---@class Channel").count(), 1, "Channel 类重复：\n{lua}");
+    // 注：用 `Channel<` 而不是 `Channel` —— 第 2 批新增的枚举类 `ChannelType`
+    // 前缀相同，宽松匹配会把它算进来。
+    assert_eq!(
+        lua.matches("---@class Channel<").count(),
+        1,
+        "Channel 类重复：\n{lua}"
+    );
 
     let ts = ze_pod_js::d_ts(&capabilities);
     assert!(ts.contains("export type Expr<T> = Handle"));

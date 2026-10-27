@@ -76,6 +76,69 @@ const SUM_VEC: OpSig = OpSig {
     variadic: true,
 };
 
+// ─── 第 1 批（算子补齐）────────────────────────────────────────────────
+
+const VEC2: &TypeSpec = &TypeSpec::Struct {
+    name: "zela.Vec2",
+    fields: &[],
+};
+const VEC3: &TypeSpec = &TypeSpec::Struct {
+    name: "zela.Vec3",
+    fields: &[],
+};
+
+/// `mix(a, b, t)`：`(T, T, F64) → T`，`T ∈ Num | Vector`。
+const MIX_NUM: OpSig = OpSig {
+    params: &[VAR_A, VAR_A, F64],
+    ret: VAR_A,
+    vars: NUM_A,
+    variadic: false,
+};
+const MIX_VEC: OpSig = OpSig {
+    params: &[VAR_A, VAR_A, F64],
+    ret: VAR_A,
+    vars: VEC_A,
+    variadic: false,
+};
+
+/// `clamp(x, lo, hi)`：`(F64, F64, F64) → F64`。
+const CLAMP: OpSig = OpSig {
+    params: &[F64, F64, F64],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `vec2(x, y)` / `vec3(x, y, z)`：标量 → 向量（显式构造，不做隐式提升）。
+const TO_VEC2: OpSig = OpSig {
+    params: &[F64, F64],
+    ret: VEC2,
+    vars: NO_VARS,
+    variadic: false,
+};
+const TO_VEC3: OpSig = OpSig {
+    params: &[F64, F64, F64],
+    ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `x(v)` / `y(v)` / `z(v)`：向量分量（`Vector → F64`）。
+const COMPONENT: OpSig = OpSig {
+    params: &[VAR_A],
+    ret: F64,
+    vars: VEC_A,
+    variadic: false,
+};
+
+/// `rotate3(v, axis, angle)`：罗德里格斯旋转（`Vec3, Vec3, F64 → Vec3`）。
+const ROTATE3: OpSig = OpSig {
+    params: &[VEC3, VEC3, F64],
+    ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+
 /// 比较：数值 → Bool。
 const CMP_NUM: OpSig = OpSig {
     params: &[F64, F64],
@@ -146,6 +209,46 @@ pub static SIGNATURES: &[OpDef] = &[
         name: "sum",
         spec: "zela.math.Sum",
         sigs: &[SUM_NUM, SUM_VEC],
+    },
+    OpDef {
+        name: "mix",
+        spec: "zela.math.Mix",
+        sigs: &[MIX_NUM, MIX_VEC],
+    },
+    OpDef {
+        name: "clamp",
+        spec: "zela.math.Clamp",
+        sigs: &[CLAMP],
+    },
+    OpDef {
+        name: "vec2",
+        spec: "zela.math.Vec2Of",
+        sigs: &[TO_VEC2],
+    },
+    OpDef {
+        name: "vec3",
+        spec: "zela.math.Vec3Of",
+        sigs: &[TO_VEC3],
+    },
+    OpDef {
+        name: "x",
+        spec: "zela.math.Component",
+        sigs: &[COMPONENT],
+    },
+    OpDef {
+        name: "y",
+        spec: "zela.math.Component",
+        sigs: &[COMPONENT],
+    },
+    OpDef {
+        name: "z",
+        spec: "zela.math.Component",
+        sigs: &[COMPONENT],
+    },
+    OpDef {
+        name: "rotate3",
+        spec: "zela.math.Rotate3",
+        sigs: &[ROTATE3],
     },
     OpDef {
         name: "lt",

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use mlua::{AnyUserData, Lua, MultiValue, Table, UserData, Value};
 use ze_pod_core::{Capability, ErasedFn, Field, Pod, PodValue, ScalarKind, ScalarValue, TypeSpec};
-use ze_pod_binding::{BindingPlan, ValueCodec, short_name};
+use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, short_name};
 
 /// Lua 侧的不透明句柄令牌。
 #[derive(Clone, Copy, Debug)]
@@ -201,6 +201,36 @@ fn attach_channels(
         let value = lua.create_table()?;
         value.set("namespace", channel.namespace)?;
         value.set("name", channel.address)?;
+        // 第 2 批：类型随常量过边界（结构化枚举，不再是脚本手写的字符串）。
+        value.set(
+            "ty",
+            LuaPodValue(PodValue::Enum(
+                "zela.math.ChannelType",
+                channel_type_variant(channel.ty),
+                Vec::new(),
+            )),
+        )?;
+        // 第 2 批语法糖：常量**可调用** —— `Reveal.channel.current_pos(curve)`
+        // 等价于 `expr.read { channel = Reveal.channel.current_pos, object = curve }`。
+        // `expr` 在另一个 capability 里注册，故在**调用时**才解析（不依赖装配顺序）。
+        let mt = lua.create_table()?;
+        mt.set(
+            "__call",
+            lua.create_function(|lua, (channel, object): (Table, Value)| {
+                let expr: Table = lua.globals().get("expr")?;
+                let Value::Function(read) = expr.get::<Value>("read")? else {
+                    return Err(mlua::Error::RuntimeError(
+                        "`expr.read` 尚未注册（宿主未装配表达式能力）".into(),
+                    ));
+                };
+                // Pod 侧 `read` 收一个 `ReadSpec` 表（具名），故这里组表再调用。
+                let spec = lua.create_table()?;
+                spec.set("channel", channel)?;
+                spec.set("object", object)?;
+                read.call::<Value>(spec)
+            })?,
+        )?;
+        value.set_metatable(Some(mt))?;
         channel_table.set(channel.name, value)?;
     }
     Ok(())

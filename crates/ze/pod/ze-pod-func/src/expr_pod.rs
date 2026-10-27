@@ -25,9 +25,10 @@ use ze_func::{ChannelRef, ChannelType, CompiledExpr, Expr, Literal, Node, OpRef}
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
-    AddSpec, AndSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec, EqSpec, GeSpec,
-    GtSpec, LeSpec, LtSpec, MulSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec,
-    ScaleSpec, SelectSpec, SinSpec, SumSpec,
+    AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
+    ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LtSpec, MixSpec, MulSpec, NeSpec,
+    NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, ScaleSpec, SelectSpec,
+    SinSpec, SumSpec, Vec2OfSpec, Vec3OfSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
 
@@ -37,7 +38,9 @@ pub const LIBRARY_NAMESPACE: &str = "zela.math";
 ///
 /// `7`：**G 批**新增 `read`（读某对象的组件字段；`zela.math::read`）。
 /// `8`：**H 批**新增 `select`（值分支；`zela.math::select`）。
-pub const LIBRARY_VERSION: &str = "8";
+/// `9`：**算子补齐批**新增 `mix` / `clamp` / `vec2` / `vec3` / `x` / `y` / `z` / `rotate3`。
+/// `10`：**第 2 批**通道常量带结构化类型（`zela.math.Channel` 增加 `ty`），`Read` 去掉 `ty` 字符串。
+pub const LIBRARY_VERSION: &str = "10";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -109,6 +112,50 @@ impl ExprPod {
             scale_ctor,
         );
         registry.register_fn1_named::<SumSpec, Handle>("zela.math::sum", "zela.math.Sum", HANDLE, sum_ctor);
+        // 第 1 批（算子补齐）：插值 / 钳制 / 向量构造 / 分量 / 旋转。
+        registry.register_fn1_named::<MixSpec, Handle>("zela.math::mix", "zela.math.Mix", HANDLE, mix_ctor);
+        registry.register_fn1_named::<ClampSpec, Handle>(
+            "zela.math::clamp",
+            "zela.math.Clamp",
+            HANDLE,
+            clamp_ctor,
+        );
+        registry.register_fn1_named::<Vec2OfSpec, Handle>(
+            "zela.math::vec2",
+            "zela.math.Vec2Of",
+            HANDLE,
+            vec2_ctor,
+        );
+        registry.register_fn1_named::<Vec3OfSpec, Handle>(
+            "zela.math::vec3",
+            "zela.math.Vec3Of",
+            HANDLE,
+            vec3_ctor,
+        );
+        registry.register_fn1_named::<ComponentSpec, Handle>(
+            "zela.math::x",
+            "zela.math.Component",
+            HANDLE,
+            component_x_ctor,
+        );
+        registry.register_fn1_named::<ComponentSpec, Handle>(
+            "zela.math::y",
+            "zela.math.Component",
+            HANDLE,
+            component_y_ctor,
+        );
+        registry.register_fn1_named::<ComponentSpec, Handle>(
+            "zela.math::z",
+            "zela.math.Component",
+            HANDLE,
+            component_z_ctor,
+        );
+        registry.register_fn1_named::<Rotate3Spec, Handle>(
+            "zela.math::rotate3",
+            "zela.math.Rotate3",
+            HANDLE,
+            rotate3_ctor,
+        );
         // 比较 / 布尔组合子（predicate 的原料；值语义，Bool 不进 `anim_value`）。
         registry.register_fn1_named::<LtSpec, Handle>("zela.math::lt", "zela.math.Lt", HANDLE, lt_ctor);
         registry.register_fn1_named::<GtSpec, Handle>("zela.math::gt", "zela.math.Gt", HANDLE, gt_ctor);
@@ -261,6 +308,14 @@ impl Pod for ExprPod {
             "mul" => Box::new(mul_ctor(self, arg::<MulSpec>(args, 0)?.clone())),
             "scale" => Box::new(scale_ctor(self, arg::<ScaleSpec>(args, 0)?.clone())),
             "sum" => Box::new(sum_ctor(self, arg::<SumSpec>(args, 0)?.clone())),
+            "mix" => Box::new(mix_ctor(self, arg::<MixSpec>(args, 0)?.clone())),
+            "clamp" => Box::new(clamp_ctor(self, arg::<ClampSpec>(args, 0)?.clone())),
+            "vec2" => Box::new(vec2_ctor(self, arg::<Vec2OfSpec>(args, 0)?.clone())),
+            "vec3" => Box::new(vec3_ctor(self, arg::<Vec3OfSpec>(args, 0)?.clone())),
+            "x" => Box::new(component_x_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
+            "y" => Box::new(component_y_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
+            "z" => Box::new(component_z_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
+            "rotate3" => Box::new(rotate3_ctor(self, arg::<Rotate3Spec>(args, 0)?.clone())),
             "lt" => Box::new(lt_ctor(self, arg::<LtSpec>(args, 0)?.clone())),
             "gt" => Box::new(gt_ctor(self, arg::<GtSpec>(args, 0)?.clone())),
             "le" => Box::new(le_ctor(self, arg::<LeSpec>(args, 0)?.clone())),
@@ -328,6 +383,14 @@ fn call2(pod: &dyn Pod, name: &str, a: Handle, b: Handle) -> Handle {
     let left = child(this, a);
     let right = child(this, b);
     this.intern(Expr::call(op(name), [left, right]))
+}
+
+fn call3(pod: &dyn Pod, name: &str, a: Handle, b: Handle, c: Handle) -> Handle {
+    let this = expr_pod(pod);
+    let first = child(this, a);
+    let second = child(this, b);
+    let third = child(this, c);
+    this.intern(Expr::call(op(name), [first, second, third]))
 }
 
 fn pure(pod: &dyn Pod, value: f64) -> Handle {
@@ -412,6 +475,40 @@ fn sum_ctor(pod: &dyn Pod, spec: SumSpec) -> Handle {
     sum(pod, spec.terms)
 }
 
+// ─── 第 1 批（算子补齐）：插值 / 钳制 / 向量 / 分量 / 旋转 ─────────────────
+
+fn mix_ctor(pod: &dyn Pod, spec: MixSpec) -> Handle {
+    call3(pod, "mix", spec.a, spec.b, spec.t)
+}
+
+fn clamp_ctor(pod: &dyn Pod, spec: ClampSpec) -> Handle {
+    call3(pod, "clamp", spec.x, spec.lo, spec.hi)
+}
+
+fn vec2_ctor(pod: &dyn Pod, spec: Vec2OfSpec) -> Handle {
+    call2(pod, "vec2", spec.x, spec.y)
+}
+
+fn vec3_ctor(pod: &dyn Pod, spec: Vec3OfSpec) -> Handle {
+    call3(pod, "vec3", spec.x, spec.y, spec.z)
+}
+
+fn component_x_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
+    call1(pod, "x", spec.v)
+}
+
+fn component_y_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
+    call1(pod, "y", spec.v)
+}
+
+fn component_z_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
+    call1(pod, "z", spec.v)
+}
+
+fn rotate3_ctor(pod: &dyn Pod, spec: Rotate3Spec) -> Handle {
+    call3(pod, "rotate3", spec.v, spec.axis, spec.angle)
+}
+
 fn lt_ctor(pod: &dyn Pod, spec: LtSpec) -> Handle {
     call2(pod, "lt", spec.a, spec.b)
 }
@@ -477,16 +574,15 @@ fn clock_time(pod: &dyn Pod) -> Handle {
     time(pod)
 }
 
-/// **G 批通道读端**：`Read { channel, ty, object }` → `Expr::read`（叶子）。
+/// **G 批通道读端**：`Read { channel, object }` → `Expr::read`（叶子）。
 ///
-/// `ChannelSpec` → `ChannelRef`（namespace / name 原样；`name` 是规范地址
-/// `Circle.radius`）；`ty` 按 F 批 `FieldSpec.ty` 的映射（`infer::spec_concrete`
-/// 同款约定：`Vec2`→Vec2、`Vec3`→Vec3、`Bool`→Bool、其余标量→Number）；
-/// `object` 取句柄的 `slot`（脚本局部句柄下标，产物只存它）。
+/// **第 2 批**：类型从常量自带的 [`ChannelTypeSpec`] 取（不再有 `ty` 字符串）——
+/// 一份类型只写一遍。`Unknown` 原样带进 `ChannelRef.ty` ⇒ 装配期 `infer`
+/// **显式报错**（不再静默退化成 `Number`）；回放路径不推导，`Unknown` 是合法状态。
 fn read_ctor(pod: &dyn Pod, spec: ReadSpec) -> Handle {
     let this = expr_pod(pod);
     let channel = ChannelRef::new(spec.channel.namespace, spec.channel.name)
-        .with_type(channel_type_of(&spec.ty));
+        .with_type(channel_type_of(spec.channel.ty));
     this.intern(Expr::read(channel, spec.object.slot() as u64))
 }
 
@@ -503,16 +599,14 @@ fn select_ctor(pod: &dyn Pod, spec: SelectSpec) -> Handle {
     ))
 }
 
-/// `ty` 字符串（F 批 `FieldSpec.ty` 的映射）→ 通道类型（与 [`crate::infer`] 同款约定：
-/// `zela.` 前缀剥掉后按短名映射）。
-fn channel_type_of(ty: &str) -> ChannelType {
-    match ty.strip_prefix("zela.").unwrap_or(ty) {
-        "Vec2" => ChannelType::Vec2,
-        "Vec3" => ChannelType::Vec3,
-        "Bool" => ChannelType::Bool,
-        // 标量（F32 / F64 / I32 / U32 / U8）与未知都按 Number ——
-        // 组件字段通道只有 Scalar / Vec2 / Vec3（F 批 `FieldSpec.ty`）。
-        _ => ChannelType::Number,
+/// 结构化通道类型 → 表达式层类型（一一对应，**没有默认分支**）。
+fn channel_type_of(ty: ChannelTypeSpec) -> ChannelType {
+    match ty {
+        ChannelTypeSpec::Unknown => ChannelType::Unknown,
+        ChannelTypeSpec::Number => ChannelType::Number,
+        ChannelTypeSpec::Bool => ChannelType::Bool,
+        ChannelTypeSpec::Vec2 => ChannelType::Vec2,
+        ChannelTypeSpec::Vec3 => ChannelType::Vec3,
     }
 }
 
@@ -747,8 +841,8 @@ mod tests {
                 channel: ChannelSpec {
                     namespace: SCENE_NAMESPACE.to_string(),
                     name: "Circle.radius".to_string(),
+                    ty: ChannelTypeSpec::Number,
                 },
-                ty: "Number".to_string(),
                 object,
             },
         );
@@ -760,14 +854,14 @@ mod tests {
         assert_eq!(channel.ty, ChannelType::Number);
         assert_eq!(*read_object, 3, "object 取句柄 slot（脚本局部句柄下标）");
 
-        // 快路径与慢路径同一组 helper：`Vec2` 类型映射也一致。
+        // 快路径与慢路径同一组 helper：`Vec2` 类型也一致（第 2 批：类型来自常量）。
         let pod_any: &dyn Pod = &this;
         let read_spec = ReadSpec {
             channel: ChannelSpec {
                 namespace: SCENE_NAMESPACE.to_string(),
-                name: "Circle.radius".to_string(),
+                name: "Circle.center".to_string(),
+                ty: ChannelTypeSpec::Vec2,
             },
-            ty: "zela.Vec2".to_string(),
             object,
         };
         let slow: Box<dyn Any> = pod_any
@@ -785,7 +879,7 @@ mod tests {
         let Node::Read { channel, .. } = &this.tree(*slow_handle).unwrap().node else {
             panic!("期望 Read 节点");
         };
-        assert_eq!(channel.ty, ChannelType::Vec2, "Vec2 类型映射生效（含 zela. 前缀）");
+        assert_eq!(channel.ty, ChannelType::Vec2, "常量类型直接带过来");
     }
 
     #[test]
@@ -894,6 +988,7 @@ mod tests {
             target: ChannelSpec {
                 namespace: String::new(),
                 name: "Circle.radius".to_string(),
+                ty: ChannelTypeSpec::Number,
             },
             root,
             clock: ClockSpec { links: Vec::new() },

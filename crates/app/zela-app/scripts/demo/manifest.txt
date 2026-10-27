@@ -54,10 +54,10 @@ cap_window      曲线窗口            cap_window.lua  90ba47a4a19fa0571ba42aa0
 # PF Step 2：2D/3D 混排（2D 记录以屏幕平面 overlay 叠进 3D 帧）。
 cap_mix         2D/3D混排           cap_mix.lua     1443758a2fe47a469411ae35eb39bfa758d310f16cc82b997a757f1dab26959d
 # S3 验收作品：脚本只提交表达式结构（半径 / 透明度由宿主 M 注入 Time）。
-expr_demo       表达式驱动          expr_demo.lua   2f373603228c530752c2e562edc1143af1e5ceb4674096a43bd651aaa77ef8b1
+expr_demo       表达式驱动          expr_demo.lua   949281d342c688d94399cd793d0779ceeb9e207c6c7d14e95c7ee2af7f06645d
 # F / G / H 批验收作品：新字段通道（一个通道一条绑定）+ 通道读端 + 值分支。
 cap_channels2d  2D字段通道          cap_channels2d.lua  fa9a5806ccebd6370d9737a95075b495a23fbb4f721391b349d2b565e4a13a33
 cap_channels3d  3D字段通道          cap_channels3d.lua  077d88791c5ebe5765ed16d79e3758e7258b4cce4275a59dee64a49e2548dbae
-expr_read       通道读端与值分支     expr_read.lua       367d769992ffc959715db79d42daa17735b1e88ba0bb48da162ea7daeb4ad368
+expr_read       通道读端与值分支     expr_read.lua       c6c619c9a295cd74914f95469ebbc01d8dd231ce92560edc6e7b9a69ec75267f
 # 内容作品：小球随 Reveal 画出正弦（书写进度与小珠位置逐段同步）。
-sine_trace      小球画正弦          sine_trace.lua      8125a95db8e8099967c67fb511bac788be3bde542b6ad3c41e04d79a6dae193c
+sine_trace      小球画正弦          sine_trace.lua      cd8addee0052494ec49dfd1b3f24ccdcf1a550c369a4eaee840fc666a53b2ae8

@@ -88,6 +88,8 @@ expr.bind {
 }
 
 -- ── 小球：读端管道 —— 位置完全由 `Reveal.current_pos` 决定 ────────────
+-- 通道常量**可调用**（第 2 批语法糖）：`Reveal.channel.current_pos(curve)`
+-- 等价于 `expr.read { channel = …, object = curve }`，类型由常量自带。
 local ball = scene.spawn({
     Circle { x = start_x, y = start_y, r = 0.16 },
     Fill { color = rgba(255, 210, 120, 255) },
@@ -96,9 +98,5 @@ local ball = scene.spawn({
 expr.bind {
     object = ball,
     target = Circle.channel.center,
-    root = expr.read {
-        channel = Reveal.channel.current_pos,
-        ty = "Vec2",
-        object = curve,
-    },
+    root = Reveal.channel.current_pos(curve),
 }

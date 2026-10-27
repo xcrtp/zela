@@ -22,11 +22,27 @@
 use ze_pod_core::Handle;
 use ze_pod_macro::{PodType, capability};
 
-/// 一条**通道引用**（提案 #6）：`namespace` + `name` 是数据。
+/// 通道**值类型**（结构化，不是字符串）。
 ///
-/// - 基础通道：`{ namespace = "", name = "time" }`（宿主 M 直接注入）；
-/// - 组件字段：`{ namespace = "zela.scene", name = "Circle.radius" }`
-///   （B 批只提供选择键；G 批起 `Read` 用它读回组件字段）。
+/// 第 2 批：类型随通道常量一起过边界 —— 脚本不再手写 `ty = "Vec2"`，
+/// 也就没有"写错类型名静默退化成 Number"的路径（未知类型是显式状态）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PodType)]
+#[pod_type(name = "zela.math.ChannelType")]
+pub enum ChannelTypeSpec {
+    /// 未知（老 payload / 未标注的第三方常量）：装配期推导会**显式报错**，
+    /// 回放路径不做推导，所以它是合法状态。
+    Unknown,
+    Number,
+    Bool,
+    Vec2,
+    Vec3,
+}
+
+/// 一条**通道引用**（提案 #6）：`namespace` + `name` + `ty` 是数据。
+///
+/// - 基础通道：`{ namespace = "", name = "time", ty = Number }`（宿主 M 直接注入）；
+/// - 组件字段：`{ namespace = "zela.scene", name = "Circle.radius", ty = Number }`
+///   （G 批起 `Read` 用它读回组件字段）。
 ///
 /// 它与 `ze-func` 的 `ChannelRef` **同形**：Pod 边界上只是数据，跨层不需要转换规则。
 #[derive(Clone, Debug, PartialEq, PodType)]
@@ -36,22 +52,20 @@ pub struct ChannelSpec {
     pub namespace: String,
     /// 通道名（基础通道 `time` / `frame`；组件字段是地址 `Circle.radius`）。
     pub name: String,
+    /// 值类型（来自 `FieldSpec.ty`；基础通道是 `Number`）。
+    pub ty: ChannelTypeSpec,
 }
 
-/// `Read { channel = ..., ty = ..., object = ... }`：读**某对象**上的组件字段
+/// `Read { channel = ..., object = ... }`：读**某对象**上的组件字段
 /// （**G 批通道读端**；运行期由宿主 `Mono::read_object` 经 `SceneRead` 读回）。
 ///
-/// `channel` 用组件的 `channel` 常量（`Circle.channel.radius`，`name` 是规范地址
-/// `Circle.radius`）；`ty` 是 F 批 `FieldSpec.ty` 的映射（`Number` / `Vec2` / `Vec3`，
-/// 脚本侧语言绑定在生成通道常量时填充 —— 本批的 Rust 侧构造直接填写）；
-/// `object` 是目标对象句柄（`scene.spawn` 的返回值）。
+/// `channel` 用组件的 `channel` 常量（`Circle.channel.radius`）—— **类型在常量里**，
+/// 所以这里不再有 `ty` 字符串参数（第 2 批）；`object` 是目标对象句柄。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Read")]
 pub struct ReadSpec {
-    /// 通道选择键（`namespace = "zela.scene"`，`name` 是规范地址如 `Circle.radius`）。
+    /// 通道选择键（常量自带 `namespace` / `name` / `ty`）。
     pub channel: ChannelSpec,
-    /// 字段值类型名（F 批 `FieldSpec.ty` 的映射：`Number` / `Vec2` / `Vec3`）。
-    pub ty: String,
     /// 目标对象**句柄**（`scene.spawn` 的返回值）。
     pub object: Handle,
 }
@@ -195,6 +209,62 @@ pub struct ScaleSpec {
     pub of: Handle,
 }
 
+// ─── 第 1 批（算子补齐）：插值 / 向量 / 分量 / 旋转 ──────────────────────
+//
+// 这批算子让脚本**不再需要 `Curve` 变体**表达常见动画：
+// `Ramp` ⇒ `mix(from, to, clamp(t / dur, 0, 1))`，`Orbit` ⇒ `rotate3`。
+
+/// `mix(a, b, t)`：线性插值（数值 / Vec2 / Vec3 同型）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Mix")]
+pub struct MixSpec {
+    pub a: Handle,
+    pub b: Handle,
+    pub t: Handle,
+}
+
+/// `clamp(x, lo, hi)`：区间钳制（与 predicate / reset 同族）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Clamp")]
+pub struct ClampSpec {
+    pub x: Handle,
+    pub lo: Handle,
+    pub hi: Handle,
+}
+
+/// `vec2(x, y)`：两个标量合成一个 `Vec2`。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Vec2Of")]
+pub struct Vec2OfSpec {
+    pub x: Handle,
+    pub y: Handle,
+}
+
+/// `vec3(x, y, z)`：三个标量合成一个 `Vec3`。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Vec3Of")]
+pub struct Vec3OfSpec {
+    pub x: Handle,
+    pub y: Handle,
+    pub z: Handle,
+}
+
+/// `x(v)` / `y(v)` / `z(v)`：向量分量访问（`z` 对 `Vec2` 显式报错）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Component")]
+pub struct ComponentSpec {
+    pub v: Handle,
+}
+
+/// `rotate3(v, axis, angle)`：罗德里格斯旋转（`Curve::Orbit` 的算子化形态）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Rotate3")]
+pub struct Rotate3Spec {
+    pub v: Handle,
+    pub axis: Handle,
+    pub angle: Handle,
+}
+
 /// `Sum { terms = { ... } }`。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Sum")]
@@ -281,7 +351,7 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "8",
+    version = "10",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -330,6 +400,30 @@ pub struct MathApi<'a> {
 
     /// `Sum { terms = { ... } }`（空数组 = 零元 `Pure(0)`）。
     pub sum: fn(&'a dyn Pod, spec: SumSpec) -> Handle,
+
+    /// `mix(a, b, t)`：线性插值（`Num | Vector` 同型；`Ramp` / `Ramp2` 的算子化形态）。
+    pub mix: fn(&'a dyn Pod, spec: MixSpec) -> Handle,
+
+    /// `clamp(x, lo, hi)`：区间钳制（与 predicate / reset 同族）。
+    pub clamp: fn(&'a dyn Pod, spec: ClampSpec) -> Handle,
+
+    /// `vec2(x, y)`：两个标量合成 `Vec2`。
+    pub vec2: fn(&'a dyn Pod, spec: Vec2OfSpec) -> Handle,
+
+    /// `vec3(x, y, z)`：三个标量合成 `Vec3`。
+    pub vec3: fn(&'a dyn Pod, spec: Vec3OfSpec) -> Handle,
+
+    /// `x(v)`：向量 x 分量。
+    pub x: fn(&'a dyn Pod, spec: ComponentSpec) -> Handle,
+
+    /// `y(v)`：向量 y 分量。
+    pub y: fn(&'a dyn Pod, spec: ComponentSpec) -> Handle,
+
+    /// `z(v)`：向量 z 分量（`Vec2` 上显式报错）。
+    pub z: fn(&'a dyn Pod, spec: ComponentSpec) -> Handle,
+
+    /// `rotate3(v, axis, angle)`：罗德里格斯旋转（`Curve::Orbit` 的算子化形态）。
+    pub rotate3: fn(&'a dyn Pod, spec: Rotate3Spec) -> Handle,
 
     /// `Lt { a = ..., b = ... }`：`a < b`（数值 → `Bool`）。
     pub lt: fn(&'a dyn Pod, spec: LtSpec) -> Handle,
@@ -399,9 +493,12 @@ pub struct MathApi<'a> {
 // 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
 
 /// `zela.math` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
-pub const MATH_API_VERSION: &str = "8";
-/// `zela.math` 的 `hash(signatures())` 基线（H 批 `expr.select` 后更新）。
-pub const MATH_API_FINGERPRINT: u64 = 8_308_800_684_048_990_846;
+///
+/// `@10`（第 2 批）：`Channel` 增加结构化 `ty`，`Read` 去掉 `ty` 字符串。
+/// 指纹只 hash **函数签名**，类型形状变化不在其中 ⇒ 常量不变（版本照升）。
+pub const MATH_API_VERSION: &str = "10";
+/// `zela.math` 的 `hash(signatures())` 基线。
+pub const MATH_API_FINGERPRINT: u64 = 9_644_935_882_278_304_908;
 
 #[cfg(test)]
 mod fingerprint_tests {

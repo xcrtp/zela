@@ -94,14 +94,46 @@ impl Mono for SceneMono<'_> {
             object,
             channel: channel.clone(),
         })?;
-        anim_to_value(&value).ok_or_else(|| EvalError::MissingComponent {
+        let converted = anim_to_value(&value).ok_or_else(|| EvalError::MissingComponent {
             object,
             channel: channel.clone(),
-        })
+        })?;
+        // **第 2 批对账**：装配期推导的类型（`channel.ty`）vs 运行期实际返回的标签。
+        // `Unknown`（老 payload）不核对 —— 回放路径不做类型推导。
+        check_declared_type(channel, &converted)?;
+        Ok(converted)
     }
 
     fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
         ze_pod_func::eval_op(op, args)
+    }
+}
+
+/// 通道声明类型 vs 运行期值的标签（`Unknown` 跳过：老 payload / 未标注常量）。
+fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalError> {
+    use ze_func::ChannelType;
+    let expected = match channel.ty {
+        ChannelType::Unknown => return Ok(()),
+        ChannelType::Number => "number",
+        ChannelType::Bool => "bool",
+        ChannelType::Vec2 => "vec2",
+        ChannelType::Vec3 => "vec3",
+    };
+    let actual = match value {
+        Value::F64(_) => "number",
+        Value::Bool(_) => "bool",
+        Value::Vec2(_) => "vec2",
+        Value::Vec3(_) => "vec3",
+        Value::Text(_) => "text",
+    };
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(EvalError::ChannelTypeMismatch {
+            channel: channel.clone(),
+            expected,
+            actual,
+        })
     }
 }
 
@@ -236,6 +268,36 @@ mod tests {
         let channel = ChannelRef::new("zela.scene", "Circle.radius");
         let value = mono.read_object(&channel, id.to_packed()).unwrap();
         assert_eq!(value, Value::F64(2.5));
+    }
+
+    /// **第 2 批对账**：通道声明类型与运行期值的标签不符 ⇒ 显式错误。
+    #[test]
+    fn declared_channel_type_must_match_the_runtime_value() {
+        let mut world = World::new();
+        let id = {
+            let mut ws = WorldScene::new(&mut world);
+            ws.spawn_dyn(vec![Box::new(Circle::new((0.0, 0.0), 1.0))])
+                .expect("Circle 已登记")
+        };
+        let ws = WorldScene::new(&mut world);
+        let mono = SceneMono::new(0.0, 0, &ws);
+        // `Circle.radius` 实际是标量，却声明成 Vec2。
+        let channel = ChannelRef::new("zela.scene", "Circle.radius")
+            .with_type(ze_func::ChannelType::Vec2);
+        let err = mono
+            .read_object(&channel, id.to_packed())
+            .expect_err("类型不符必须显式失败");
+        assert!(
+            matches!(
+                err,
+                EvalError::ChannelTypeMismatch {
+                    expected: "vec2",
+                    actual: "number",
+                    ..
+                }
+            ),
+            "错误应点名类型，实际 {err}"
+        );
     }
 
     /// **管道验收**：`Reveal.current_pos` 是只读派生量 —— 读端经 `SceneRead`

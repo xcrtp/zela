@@ -23,7 +23,7 @@ use ze_pod_core::{
     Capability, ErasedFn, Field, FunctionId, QualifiedName, RegistryPod, ScalarKind, ScalarValue,
     ServiceRequirement, SyncPod, TypeSpec, Pod, PodError, PodId,
 };
-use ze_pod_binding::{BindingPlan, ValueCodec, invoke, short_name};
+use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, invoke, short_name};
 
 use crate::{ENTRY_SERVICE, FINISH_PATH, FloatList, PythonApi, RESET_PATH, RUN_PATH};
 
@@ -471,6 +471,20 @@ fn attach_channels(
         let value = PyDict::new(py);
         value.set_item("namespace", channel.namespace)?;
         value.set_item("name", channel.address)?;
+        // 第 2 批：类型随常量过边界（结构化枚举值，不再是脚本手写字符串）。
+        value.set_item(
+            "ty",
+            Py::new(
+                py,
+                PyPodValue {
+                    value: ze_pod_core::PodValue::Enum(
+                        "zela.math.ChannelType",
+                        channel_type_variant(channel.ty),
+                        Vec::new(),
+                    ),
+                },
+            )?,
+        )?;
         for module in [this.module.bind(py), service_module] {
             let Ok(ctor) = module.getattr(channel.component) else {
                 continue;

@@ -27,7 +27,7 @@ use boa_engine::{
     object::{FunctionObjectBuilder, ObjectInitializer, builtins::JsArray},
     property::Attribute,
 };
-use ze_pod_binding::{BindingPlan, ValueCodec, short_name};
+use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, short_name};
 use ze_pod_core::{Capability, ErasedFn, Field, Pod, PodError, PodValue, ScalarKind, ScalarValue, TypeSpec};
 
 /// JS 侧令牌的隐藏属性名（不参与用户可见 API）。
@@ -327,6 +327,16 @@ fn attach_channels(ctx: &mut Context, service_index: usize) -> Result<(), PodErr
                 object
             }
         };
+        // 第 2 批：类型随常量过边界（结构化枚举值，不再是脚本手写字符串）。
+        let ty = pod_to_js_result(
+            ctx,
+            &PodValue::Enum(
+                "zela.math.ChannelType",
+                channel_type_variant(channel.ty),
+                Vec::new(),
+            ),
+        )
+        .map_err(js_err_to_pod)?;
         let value: JsValue = ObjectInitializer::new(ctx)
             .property(
                 JsString::from("namespace"),
@@ -338,6 +348,7 @@ fn attach_channels(ctx: &mut Context, service_index: usize) -> Result<(), PodErr
                 JsString::from(channel.address),
                 Attribute::all(),
             )
+            .property(JsString::from("ty"), ty, Attribute::all())
             .build()
             .into();
         channel_ns

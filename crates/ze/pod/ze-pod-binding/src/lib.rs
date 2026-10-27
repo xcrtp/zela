@@ -33,3 +33,24 @@ pub use docs::{
     reachable_types,
 };
 pub use plan::{BindingPlan, collect_types, short_name};
+
+/// 通道类型（`FieldSpec.ty`）→ `zela.math.ChannelType` 的**变体名**。
+///
+/// 第 2 批：类型随通道常量过边界，三个语言绑定都用这个函数把 `TypeSpec` 变成
+/// 结构化枚举值。F 批的字段类型是封闭集（标量 / `Vec2` / `Vec3` / `bool`）；
+/// 其它一律 `Unknown` —— **不静默当 `Number`**（否则脚本边界又出现一次隐式退化，
+/// 装配期 `infer` 会把 `Unknown` 显式报成"缺少类型信息"）。
+pub fn channel_type_variant(spec: &ze_pod_core::TypeSpec) -> &'static str {
+    use ze_pod_core::{ScalarKind, TypeSpec};
+    match spec {
+        TypeSpec::Scalar(ScalarKind::Bool) => "Bool",
+        TypeSpec::Scalar(_) => "Number",
+        TypeSpec::Struct {
+            name: "zela.Vec2", ..
+        } => "Vec2",
+        TypeSpec::Struct {
+            name: "zela.Vec3", ..
+        } => "Vec3",
+        _ => "Unknown",
+    }
+}

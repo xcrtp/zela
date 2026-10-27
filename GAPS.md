@@ -998,6 +998,21 @@
 
 ---
 
+## AK. 算子补齐与老 API 退役批次记账（2026-10-27）
+
+> 计划《算子补齐与老 API 退役执行计划》（6 批：1 算子 → 2 类型去字符串化 → 3 类型扩展 → 4 函数级版本 → 5a 逐脚本迁移对拍 → 5b 退役重录）。
+> 口径：**先证明等价、再删**；第 1–4 批是纯增量，36 条像素基线必须逐位不变。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AK-01 | **算子补齐已落地（第 1 批）** | 表达式层 | **已关闭（1）** | `zela.math@8 → @9`：新增 `mix(a,b,t)`（`Num \| Vector` 同型；`Ramp` / `Ramp2` 的算子化形态）、`clamp(x,lo,hi)`、`vec2(x,y)` / `vec3(x,y,z)`（显式构造，不做隐式提升）、`x\|y\|z(v)`（`Vec2` 上取 z ⇒ 显式错误）、`rotate3(v,axis,angle)`（罗德里格斯；轴先归一化，零轴退回 `Y` —— 与旧 `Curve::Orbit` 同口径）。签名全部进 [`signature.rs`](crates/ze/pod/ze-pod-func/src/signature.rs)（`signatures_cover_every_op_once` 门禁覆盖），`MATH_API_FINGERPRINT = 9644935882278304908`。**验收**：`mix_interpolates_numbers_and_vectors`、`clamp_bounds_both_ends`、`vector_constructors_and_components`、`rotate3_matches_the_orbit_convention`；既有算子语义未动 ⇒ 36 条像素基线不受影响（只有 `expr_demo` / `expr_read` / `sine_trace` 三件表达式作品的 payload 因库版本变化重录） |
+
+| AK-02 | **类型去字符串化 + 可调用语法糖（第 2 批）** | 表达式 / 绑定 / 三语言 | **已关闭（2，Lua 糖）** | `zela.math@9 → @10`：`Channel` 增加结构化 `ty`（`zela.math.ChannelType`：`Unknown/Number/Bool/Vec2/Vec3`），`Read` 删除 `ty` 字符串；`ChannelTypeSpec → ChannelType` 一一映射，**没有默认分支**（未知不再静默当 `Number`）。三个语言绑定都用 [`channel_type_variant`](crates/ze/pod/ze-pod-binding/src/lib.rs) 把 `FieldSpec.ty` 写进常量（封闭集之外 ⇒ `Unknown`，不是 `Number`）。**Lua 常量可调用**：`Reveal.channel.current_pos(curve)` ≡ `expr.read { channel, object }`（调用时才解析 `expr.read`，不依赖 capability 装配顺序）。**对账**：`SceneMono::read_object` 用 `channel.ty` 核对运行期 `Value` 标签，不符 ⇒ `EvalError::ChannelTypeMismatch`；`Unknown` 跳过（老 payload 不做推导，硬约束 7）。**偏差**：JS / Python 常量已带 `ty`，但可调用糖只做了 Lua（两件作品都是 Lua）—— 记为后续项。**验收**：`read_builds_a_read_leaf`（类型来自常量）、`declared_channel_type_must_match_the_runtime_value`、`expr_read.lua` / `sine_trace.lua` 用糖编译通过；36 条基线不变（仅 3 件表达式作品 payload 重录） |
+
+**AK 段小计**：已关闭 2（AK-01、AK-02）· 待处理 0（第 3–5b 批尚未开始）。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
