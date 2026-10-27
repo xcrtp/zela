@@ -64,10 +64,12 @@ pub mod graph_view;
 pub mod pass;
 pub mod program;
 pub mod reference;
+pub mod walk;
 
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use expr::{ChannelRef, ChannelType, Expr, ExprError, Id, Literal, Node, OpRef};
 pub use graph_view::ExprGraphView;
+pub use walk::ExprVisitor;
 pub use pass::{
     AnalysisPass, Lower, LoweredEval, PassInfo, PassKind, PassRegistry, PassRegistryError,
     ReferenceEval, Semantics, TransformPass, Validate, kernel_registry,

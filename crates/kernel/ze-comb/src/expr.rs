@@ -18,6 +18,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use ze_type::{Blame, NameKind, ReflectError, ScalarKind, TypeSpec};
 
+use crate::walk::ExprVisitor;
+
 /// 表达式局部作用域里的节点名（`Def { id = "h1", ... }` 的对应物）。
 pub type Id = String;
 
@@ -447,7 +449,7 @@ impl Expr {
         collect_defs(self, &mut defs)?;
         check_dangling(self, &defs)?;
         check_cycles(self)?;
-        check_recursive_leaves(self, false)
+        check_recursive_leaves(self)
     }
 
     /// 是否含**离散层**节点（`NatRec` / `RecPrev` / `RecIndex`）。
@@ -494,70 +496,127 @@ pub enum ExprError {
 /// 这条检查让"合法递归结构"与"非法环"在装配期就分开：
 /// - `Ref` 成环 ⇒ [`ExprError::Cycle`]；
 /// - 递归叶子越界 ⇒ [`ExprError::OrphanRec`]。
-fn check_recursive_leaves(expr: &Expr, in_step: bool) -> Result<(), ExprError> {
-    match &expr.node {
-        Node::RecPrev if !in_step => return Err(ExprError::OrphanRec("rec_prev")),
-        Node::RecIndex if !in_step => return Err(ExprError::OrphanRec("rec_index")),
-        Node::NatRec { count, init, step } => {
-            // count / init 在递归之外；只有 step 允许递归叶子。
-            check_recursive_leaves(count, in_step)?;
-            check_recursive_leaves(init, in_step)?;
-            check_recursive_leaves(step, true)?;
-            Ok(())
-        }
-        _ => {
-            for child in expr.node.children() {
-                check_recursive_leaves(child, in_step)?;
+fn check_recursive_leaves(expr: &Expr) -> Result<(), ExprError> {
+    /// `NatRec.step` 的词法作用域栈（`Vec` 而不是 `HashSet`：作用域是嵌套的）。
+    struct RecLeaves {
+        in_step: Vec<bool>,
+    }
+
+    impl<'a> ExprVisitor<'a> for RecLeaves {
+        type Error = ExprError;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            parent: Option<&'a Node>,
+        ) -> Result<bool, ExprError> {
+            let inherited = *self.in_step.last().unwrap_or(&false);
+            // 只有 `NatRec.step` 这一条边打开递归作用域；`count` / `init` 继承外层。
+            let in_step = match parent {
+                Some(Node::NatRec { step, .. }) if std::ptr::eq(step.as_ref(), expr) => true,
+                Some(_) => inherited,
+                None => false,
+            };
+            match &expr.node {
+                Node::RecPrev if !in_step => return Err(ExprError::OrphanRec("rec_prev")),
+                Node::RecIndex if !in_step => return Err(ExprError::OrphanRec("rec_index")),
+                _ => {}
             }
+            self.in_step.push(in_step);
+            Ok(true)
+        }
+
+        fn leave(&mut self, _expr: &'a Expr) -> Result<(), ExprError> {
+            self.in_step.pop();
             Ok(())
         }
     }
+
+    expr.walk(&mut RecLeaves {
+        in_step: Vec::new(),
+    })
 }
 
 /// 收集全部带 `id` 的节点（**调用方必须先 `validate`**；重名时后写覆盖）。
 pub(crate) fn definitions(expr: &Expr) -> BTreeMap<&str, &Expr> {
-    fn walk<'a>(expr: &'a Expr, out: &mut BTreeMap<&'a str, &'a Expr>) {
-        if let Some(id) = expr.id.as_deref() {
-            out.insert(id, expr);
-        }
-        for child in expr.node.children() {
-            walk(child, out);
+    struct Defs<'a> {
+        out: BTreeMap<&'a str, &'a Expr>,
+    }
+
+    impl<'a> ExprVisitor<'a> for Defs<'a> {
+        type Error = std::convert::Infallible;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a Node>,
+        ) -> Result<bool, Self::Error> {
+            if let Some(id) = expr.id.as_deref() {
+                self.out.insert(id, expr);
+            }
+            Ok(true)
         }
     }
-    let mut out = BTreeMap::new();
-    walk(expr, &mut out);
-    out
+
+    let mut visitor = Defs {
+        out: BTreeMap::new(),
+    };
+    let _ = expr.walk(&mut visitor);
+    visitor.out
 }
 
+/// 收集定义并**拒绝重名**（`NodeId` 冲突归 [`ReflectError`] 统一诊断）。
 fn collect_defs<'a>(
     expr: &'a Expr,
     defs: &mut BTreeMap<&'a str, &'a Expr>,
 ) -> Result<(), ExprError> {
-    if let Some(id) = expr.id.as_deref() {
-        if defs.insert(id, expr).is_some() {
-            return Err(ExprError::DuplicateId(ReflectError::duplicate(
-                NameKind::NodeId,
-                id,
-                Blame::Assembly,
-            )));
+    struct Collector<'d, 'a> {
+        defs: &'d mut BTreeMap<&'a str, &'a Expr>,
+    }
+
+    impl<'d, 'a> ExprVisitor<'a> for Collector<'d, 'a> {
+        type Error = ExprError;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a Node>,
+        ) -> Result<bool, ExprError> {
+            if let Some(id) = expr.id.as_deref() {
+                if self.defs.insert(id, expr).is_some() {
+                    return Err(ExprError::DuplicateId(ReflectError::duplicate(
+                        NameKind::NodeId,
+                        id,
+                        Blame::Assembly,
+                    )));
+                }
+            }
+            Ok(true)
         }
     }
-    for child in expr.node.children() {
-        collect_defs(child, defs)?;
-    }
-    Ok(())
+
+    expr.walk(&mut Collector { defs })
 }
 
 fn check_dangling(expr: &Expr, defs: &BTreeMap<&str, &Expr>) -> Result<(), ExprError> {
-    if let Node::Ref { to } = &expr.node {
-        if !defs.contains_key(to.as_str()) {
-            return Err(ExprError::DanglingRef(to.clone()));
+    struct Dangling<'d, 'a> {
+        defs: &'d BTreeMap<&'a str, &'a Expr>,
+    }
+
+    impl<'d, 'a> ExprVisitor<'_> for Dangling<'d, 'a> {
+        type Error = ExprError;
+
+        fn enter(&mut self, expr: &Expr, _parent: Option<&Node>) -> Result<bool, ExprError> {
+            if let Node::Ref { to } = &expr.node {
+                if !self.defs.contains_key(to.as_str()) {
+                    return Err(ExprError::DanglingRef(to.clone()));
+                }
+            }
+            Ok(true)
         }
     }
-    for child in expr.node.children() {
-        check_dangling(child, defs)?;
-    }
-    Ok(())
+
+    expr.walk(&mut Dangling { defs })
 }
 
 /// 用表达式图视图 + `ze-graph-core::find_cycle` 检测 `Ref` 环。
