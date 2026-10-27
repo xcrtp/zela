@@ -43,9 +43,10 @@ pub fn strongly_connected<T: Topology>(graph: &T) -> Vec<Vec<T::Id>> {
     components
 }
 
-/// 找到**一个**环（SCC 大小 > 1 或自环）；返回分量内升序节点。
+/// 找到**一个**环，返回**按边顺序**的路径（`v0 → v1 → … → v0`，不重复首节点）。
 ///
-/// 多个环时取"最小 id 最小的那个分量" —— 输出确定。
+/// 多个环时取"最小 id 最小的那个分量"；分量内从最小 id 出发走一条回到自身的路径。
+/// 输出确定：与图内存储顺序无关。
 pub fn find_cycle<T: Topology>(graph: &T) -> Option<Vec<T::Id>> {
     let components = strongly_connected(graph);
     let mut candidates: Vec<Vec<T::Id>> = Vec::new();
@@ -60,7 +61,75 @@ pub fn find_cycle<T: Topology>(graph: &T) -> Option<Vec<T::Id>> {
         }
     }
     candidates.sort_unstable_by(|left, right| left[0].cmp(&right[0]));
-    candidates.into_iter().next()
+    let component = candidates.into_iter().next()?;
+    Some(cycle_path(graph, &component))
+}
+
+/// 在强连通分量内找一条从 `start` 回到 `start` 的路径（不含重复的终点）。
+fn cycle_path<T: Topology>(graph: &T, component: &[T::Id]) -> Vec<T::Id> {
+    let start = component[0];
+    let members: BTreeSet<T::Id> = component.iter().copied().collect();
+    let mut neighbors: BTreeMap<T::Id, Vec<T::Id>> = BTreeMap::new();
+    for &node in &members {
+        let mut targets: Vec<T::Id> = graph
+            .successors(node)
+            .into_iter()
+            .filter(|target| members.contains(target))
+            .collect();
+        targets.sort_unstable();
+        targets.dedup();
+        neighbors.insert(node, targets);
+    }
+
+    // 自环。
+    if neighbors
+        .get(&start)
+        .is_some_and(|targets| targets.contains(&start))
+    {
+        return vec![start];
+    }
+
+    // 取 start 的第一条出边，再 BFS 回到 start（强连通 ⇒ 必然存在）。
+    for &first in neighbors.get(&start).expect("邻接表完整") {
+        let mut parent: BTreeMap<T::Id, T::Id> = BTreeMap::new();
+        let mut visited: BTreeSet<T::Id> = BTreeSet::new();
+        let mut queue: Vec<T::Id> = vec![first];
+        visited.insert(first);
+        let mut cursor = 0;
+        while cursor < queue.len() {
+            let node = queue[cursor];
+            cursor += 1;
+            if node == start {
+                break;
+            }
+            for &next in neighbors.get(&node).expect("邻接表完整") {
+                if visited.insert(next) {
+                    parent.insert(next, node);
+                    queue.push(next);
+                }
+            }
+        }
+        if !visited.contains(&start) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut node = start;
+        loop {
+            path.push(node);
+            let Some(&previous) = parent.get(&node) else {
+                break;
+            };
+            node = previous;
+        }
+        path.reverse();
+        // 旋转到从最小 id 开始：`[start, first, …, last]`。
+        if let Some(last) = path.pop() {
+            path.insert(0, last);
+        }
+        return path;
+    }
+    // 理论上不可达：分量强连通。
+    component.to_vec()
 }
 
 /// 邻接表（去重、升序）；`reverse = true` 时用 `predecessors`。

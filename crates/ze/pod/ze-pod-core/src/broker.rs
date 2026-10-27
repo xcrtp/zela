@@ -690,65 +690,57 @@ fn build_edges(
     Ok((dependencies, edges.into_iter().collect(), optional_missing))
 }
 
-/// DFS 拓扑排序；遇到灰色节点 ⇒ 明确环错误（含参与链）。
+/// 装配顺序图：边 = **先在者 → 后在者**（provider → consumer）。
+///
+/// 只投影 `dependencies`，算法全部复用 `ze-graph-core`（一处实现、一处确定性承诺）。
+struct AssemblyGraph<'a> {
+    nodes: &'a [NodeSpec],
+    dependencies: &'a [BTreeSet<usize>],
+}
+
+impl ze_graph_core::Topology for AssemblyGraph<'_> {
+    type Id = usize;
+
+    fn nodes(&self) -> Vec<usize> {
+        (0..self.nodes.len()).collect()
+    }
+
+    /// provider 的出边 = 依赖它的 consumer。
+    fn successors(&self, node: usize) -> Vec<usize> {
+        self.dependencies
+            .iter()
+            .enumerate()
+            .filter(|(_, providers)| providers.contains(&node))
+            .map(|(consumer, _)| consumer)
+            .collect()
+    }
+
+    /// consumer 的入边 = 它依赖的 provider。
+    fn predecessors(&self, node: usize) -> Vec<usize> {
+        self.dependencies[node].iter().copied().collect()
+    }
+}
+
+/// 拓扑排序（provider 在前）；成环 ⇒ 明确环错误（含参与链，首尾相同）。
 fn topological_order(
     nodes: &[NodeSpec],
     dependencies: &[BTreeSet<usize>],
 ) -> Result<Vec<usize>, BrokerError> {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Mark {
-        White,
-        Gray,
-        Black,
-    }
-
-    fn visit(
-        index: usize,
-        nodes: &[NodeSpec],
-        dependencies: &[BTreeSet<usize>],
-        marks: &mut [Mark],
-        stack: &mut Vec<usize>,
-        order: &mut Vec<usize>,
-    ) -> Result<(), BrokerError> {
-        match marks[index] {
-            Mark::Black => return Ok(()),
-            Mark::Gray => {
-                let start = stack.iter().position(|&item| item == index).unwrap_or(0);
-                let mut chain: Vec<String> = stack[start..]
-                    .iter()
-                    .map(|&item| nodes[item].name.clone())
-                    .collect();
-                chain.push(nodes[index].name.clone());
-                return Err(BrokerError::Cycle { chain });
+    let graph = AssemblyGraph { nodes, dependencies };
+    match ze_graph_core::topo_sort(&graph) {
+        Ok(order) => Ok(order),
+        Err(_) => {
+            let mut chain: Vec<String> = ze_graph_core::find_cycle(&graph)
+                .unwrap_or_default()
+                .iter()
+                .map(|&index| nodes[index].name.clone())
+                .collect();
+            if let Some(first) = chain.first().cloned() {
+                chain.push(first);
             }
-            Mark::White => {}
+            Err(BrokerError::Cycle { chain })
         }
-
-        marks[index] = Mark::Gray;
-        stack.push(index);
-        for &dependency in &dependencies[index] {
-            visit(dependency, nodes, dependencies, marks, stack, order)?;
-        }
-        stack.pop();
-        marks[index] = Mark::Black;
-        order.push(index);
-        Ok(())
     }
-
-    let mut marks = vec![Mark::White; nodes.len()];
-    let mut stack = Vec::new();
-    let mut order = Vec::new();
-    for index in 0..nodes.len() {
-        visit(
-            index,
-            nodes,
-            dependencies,
-            &mut marks,
-            &mut stack,
-            &mut order,
-        )?;
-    }
-    Ok(order)
 }
 
 #[cfg(test)]

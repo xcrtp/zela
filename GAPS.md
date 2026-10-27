@@ -1075,7 +1075,7 @@
 |---|---|---|---|---|
 | AO-01 | **阶段 0：记账归位 + 顶层文档** | kernel / 文档 | **已关闭（0）** | ① `NodeInteraction` 仍定义在 `ze-node-core::presentation`（schema 宏与 UI 共用），本批只离开 trait 签名——已知偏差，不进一步拆；② 重名白名单精确为 **37 条**（`Curve` 已登记，是已声明的债）；③ AN-04 第 5 处定位为 `zela_scene_ecs::transform_hierarchy::world_of`（`TransformHierarchyError(Option<String>)`，`visiting: HashSet<ObjectId>`）；④ 根 `README.md` / `ARCHITECTURE.md` 补 `ze-type` / `ze-reflect` / `ze-graph-core`。 |
 | AO-02 | **阶段 1：遍历器抽象 + Expr 图视图** | kernel | **已关闭（1）** | `ze-graph-core::visitor` 提供 `Visitor` / `traverse` / `preorder` / `postorder`（确定性：根与后继按 id 升序、共享节点只访问一次、`enter` 可剪枝、无 HashMap）；`ze_comb::ExprGraphView` 实现 `Topology`：`Def` 算一个节点、`Ref` 算一条边（W-C），字符串 id 只用于解析 Ref，投影副产品含 `definitions` / `duplicate_ids` / `unresolved_refs`。生产边新增 `ze-comb → ze-graph-core`。单测覆盖共享 Def、后序、确定性、重复 id、悬空 Ref。 |
-| AO-03 | **阶段 2：环检测收敛（完整路径）** | kernel / scene / pod | **未执行（2）** | 待执行：ze-comb / ze-time / ze-scene-core / ze-pod-core / transform_hierarchy 接入 `find_cycle`，诊断携带完整链。 |
+| AO-03 | **阶段 2：环检测收敛（完整路径）** | kernel / scene / pod | **已关闭（2）** | 5 处全部给出**完整环路径**：① `ze-comb::expr::check_cycles` 改走 `ExprGraphView` + `ze_graph_core::find_cycle`，`ExprError::Cycle(Vec<Id>)`；② `ze-pod-core::broker::topological_order` 删手写 DFS，改 `AssemblyGraph: Topology` + `topo_sort`/`find_cycle`（`BrokerError::Cycle { chain }` 首尾相同），生产边新增 `ze-pod-core → ze-graph-core`；③ `ze-scene-core::surface::resolve_surface` 完整链 `ParentCycle { chain }`；④ `zela_scene_ecs::transform_hierarchy::world_of` `visiting: Vec`，错误串带完整链；⑤ `ze-time::clock::set_parent` `CycleDetected { chain }`（自环 = `[a, a]`）。**偏差（诚实）**：③④⑤ 是「沿 parent 链的单点增量检查」，直接走上溯链即天然拿到完整路径，不建全图、不调 `find_cycle`；只有 ①② 是图算法接入点。 |
 | AO-04 | **阶段 3：pass 迁移到遍历器（11 处）** | kernel / scene / pod | **未执行（3）** | 清单见下。 |
 | AO-05 | **阶段 4：新能力 + HashMap 门禁** | kernel / xtask | **未执行（4）** | 待执行：Expr 上跑 SCC / reachable / dirty；求值/装配/遍历路径禁用 HashMap 的静态门禁。 |
 
@@ -1095,7 +1095,7 @@
 | 10 | `ze_pod_func::expr_pod` 三语言注册 | 绑定生成 |
 | 11 | `ze_pod_func::infer` 类型推导 | L2 推导 |
 
-**AO 段小计**：已关闭 2（AO-01、AO-02）· 未执行 3（AO-03…AO-05）。
+**AO 段小计**：已关闭 3（AO-01、AO-02、AO-03）· 未执行 2（AO-04、AO-05）。
 
 ---
 

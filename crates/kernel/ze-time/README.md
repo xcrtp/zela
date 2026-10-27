@@ -78,8 +78,8 @@ let id = forest.insert(looper).unwrap();
 ```
 
 **环检测**：`insert` 天然不可能成环（新 id 不在任何已有节点的祖先链上）；
-`set_parent` 沿祖先链检测，遇环返回 `Err(TimeError::CycleDetected)` 且
-林结构保持不变（测试锁定：失败后求值行为不受影响）。
+`set_parent` 沿祖先链检测，遇环返回 `Err(TimeError::CycleDetected { chain })`
+（`chain` 为完整环路径，首尾相同）且林结构保持不变（测试锁定：失败后求值行为不受影响）。
 
 ---
 

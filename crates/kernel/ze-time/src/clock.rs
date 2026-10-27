@@ -132,7 +132,7 @@ impl ClockForest {
     /// 重新挂载父节点（re-parent）。
     ///
     /// 沿 `new_parent` 的祖先链向上检测，若遇到 `id` 自身则成环，
-    /// 返回 [`TimeError::CycleDetected`] 且林结构保持不变。
+    /// 返回 [`TimeError::CycleDetected`]（**完整环路径**）且林结构保持不变。
     pub fn set_parent(
         &mut self,
         id: ClockId,
@@ -145,11 +145,13 @@ impl ClockForest {
             if !self.nodes.contains_key(&p) {
                 return Err(TimeError::ClockNotFound(p));
             }
-            // 沿 new_parent 的祖先链向上走，遇到 id 即成环。
+            // 沿 new_parent 的祖先链向上走，遇到 id 即成环；保留整条链。
+            let mut chain = vec![id];
             let mut cur = p;
             loop {
+                chain.push(cur);
                 if cur == id {
-                    return Err(TimeError::CycleDetected(id));
+                    return Err(TimeError::CycleDetected { chain });
                 }
                 match self.nodes.get(&cur).and_then(|n| n.parent) {
                     Some(next) => cur = next,
@@ -421,7 +423,10 @@ mod tests {
 
         assert_eq!(
             forest.set_parent(a, Some(b)),
-            Err(TimeError::CycleDetected(a))
+            Err(TimeError::CycleDetected {
+                chain: vec![a, b, a]
+            }),
+            "诊断必须携带完整环路径"
         );
 
         // 林结构未被破坏：A 仍为根，B 仍挂在 A 下，求值正常
@@ -438,7 +443,7 @@ mod tests {
         // 自挂载成环
         assert_eq!(
             forest.set_parent(a, Some(a)),
-            Err(TimeError::CycleDetected(a))
+            Err(TimeError::CycleDetected { chain: vec![a, a] })
         );
         // 不存在的节点
         assert!(matches!(

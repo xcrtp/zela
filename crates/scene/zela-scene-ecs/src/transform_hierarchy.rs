@@ -26,7 +26,7 @@
 // - 环路写入 `TransformHierarchyError`（明确字符串），并跳过该子树（返回 local）。
 //   不静默截断：错误 Resource 可由测试 / 宿主读取。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use ze_notion::Transform3D;
 use ze_scene_core::Transform;
@@ -90,7 +90,7 @@ impl System for TransformHierarchySystem {
         ids.dedup();
 
         let mut out: HashMap<ObjectId, Transform3D> = HashMap::with_capacity(ids.len());
-        let mut visiting: HashSet<ObjectId> = HashSet::new();
+        let mut visiting: Vec<ObjectId> = Vec::new();
         let mut error: Option<String> = None;
         for id in ids {
             let _ = world_of(id, &locals, &parents, &mut out, &mut visiting, &mut error);
@@ -110,18 +110,22 @@ fn world_of(
     locals: &HashMap<ObjectId, Transform3D>,
     parents: &HashMap<ObjectId, ObjectId>,
     out: &mut HashMap<ObjectId, Transform3D>,
-    visiting: &mut HashSet<ObjectId>,
+    visiting: &mut Vec<ObjectId>,
     error: &mut Option<String>,
 ) -> Transform3D {
     if let Some(world) = out.get(&id) {
         return *world;
     }
-    if !visiting.insert(id) {
+    if let Some(start) = visiting.iter().position(|visited| *visited == id) {
         if error.is_none() {
-            *error = Some(format!("父子变换环路：ObjectId {id:?} 在祖先链上重复"));
+            // 完整环路径：从首次出现的节点到当前节点。
+            let mut chain: Vec<ObjectId> = visiting[start..].to_vec();
+            chain.push(id);
+            *error = Some(format!("父子变换环路：{chain:?}（v0 → … → v0）"));
         }
         return Transform3D::identity();
     }
+    visiting.push(id);
 
     let local = locals
         .get(&id)
@@ -135,7 +139,7 @@ fn world_of(
         None => local,
     };
 
-    visiting.remove(&id);
+    visiting.pop();
     out.insert(id, world);
     world
 }
@@ -267,7 +271,12 @@ mod tests {
 
         let (_, error) = run(world);
         assert!(error.is_err(), "环路必须产生明确错误");
-        assert!(error.message().unwrap().contains("环路"));
+        let message = error.message().unwrap();
+        assert!(message.contains("环路"));
+        assert!(
+            message.contains(&format!("{a_id:?}")) && message.contains(&format!("{b_id:?}")),
+            "诊断必须携带完整环路径，实测：{message}"
+        );
     }
 
     #[test]

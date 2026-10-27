@@ -6629,6 +6629,7 @@ name = "ze-pod-core"
 version = "0.1.1"
 dependencies = [
  "criterion",
+ "ze-graph-core",
  "ze-pod-macro",
  "ze-reflect",
  "ze-type",

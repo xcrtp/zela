@@ -11,12 +11,15 @@ description = "Pod 统一抽象：不透明状态机 + capability 协商 + 函�
 #   ❌ hecs / egui / wgpu / 任何 zela-* / 任何外部依赖 —— 绝对禁止（纯 std，必须能编译到 wasm32）。
 #   ✅ ze-type / ze-reflect —— 同仓 kernel 层；类型代数与句柄机制只允许一处定义。
 #      两者都是纯 std（ze-type 是 no_std + alloc），不引入宿主依赖。
+#   ✅ ze-graph-core —— 同仓 kernel 层，纯 std（BTreeMap/BTreeSet）拓扑算法；
+#      装配顺序与环检测只允许一处实现，禁止在本 crate 里再写 DFS。
 #   需要 proc-macro 的 `#[capability]` 留在独立的 ze-pod-macro（Rust 硬性要求）。
 #   `ze-pod-core` 不得依赖 `ze-node-core`：类型名机制与 `ze-node-core::TypeTag::type_name()` 形态同构，
 #   但零依赖约束下只能内建（见 §6 交付说明）。
 [dependencies]
 ze-type = { path = "../../../kernel/ze-type" }
 ze-reflect = { path = "../../../kernel/ze-reflect" }
+ze-graph-core = { path = "../../../kernel/ze-graph-core" }
 
 [dev-dependencies]
 # 仅 doctest：用 `#[derive(PodType)]` 证明「事件不能当命令提交」是**编译错误**。

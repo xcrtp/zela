@@ -7,9 +7,7 @@
 // - **不存 `surface_id`**：归属沿 `Parent` 链向上找最近的 `Surface` 祖先，
 //   避免"关系"出现第二份真源；
 // - 找不到 `SurfaceRenderer` ⇒ **显式错误**（不静默取默认策略）；
-// - 沿 `Parent` 链用 visited 集合做**树的环检测**（不需要图算法依赖）。
-
-use std::collections::HashSet;
+// - 沿 `Parent` 链做**树的环检测**并保留完整链（诊断不降级）。
 
 use serde::{Deserialize, Serialize};
 use ze_notion::{Rect2D, Vec2};
@@ -174,8 +172,8 @@ pub enum SurfaceError {
     MissingRenderer(ObjectId),
     #[error("Surface 对象 {0:?} 的 Renderer2D 未声明 SurfaceTexture（尺寸/过滤/mipmap 必须显式）")]
     MissingTexture(ObjectId),
-    #[error("Parent 链存在环（归属判定在 {0:?} 处中止）")]
-    ParentCycle(ObjectId),
+    #[error("Parent 链存在环：{chain:?}（归属判定中止）")]
+    ParentCycle { chain: Vec<ObjectId> },
     #[error("SurfaceTexture 尺寸非法：{width}x{height}（必须非零）")]
     InvalidTexelSize { width: u32, height: u32 },
     #[error("Surface.bounds 退化（宽高必须 > 0）")]
@@ -228,11 +226,15 @@ pub fn resolve_surface(
     id: ObjectId,
 ) -> Result<Option<SurfaceOwner>, SurfaceError> {
     let mut current = Some(id);
-    let mut visited: HashSet<ObjectId> = HashSet::new();
+    // 保留**完整链**（不只是"是否访问过"）：诊断要能给出环上全部节点。
+    let mut chain: Vec<ObjectId> = Vec::new();
     while let Some(node) = current {
-        if !visited.insert(node) {
-            return Err(SurfaceError::ParentCycle(node));
+        if let Some(start) = chain.iter().position(|visited| *visited == node) {
+            return Err(SurfaceError::ParentCycle {
+                chain: chain[start..].to_vec(),
+            });
         }
+        chain.push(node);
         if !scene.contains(node) {
             return Ok(None);
         }
@@ -441,10 +443,11 @@ mod tests {
         let b = id(2);
         scene.spawn(a).parent = Some(Parent(b));
         scene.spawn(b).parent = Some(Parent(a));
-        assert!(matches!(
-            resolve_surface(&scene, a),
-            Err(SurfaceError::ParentCycle(_))
-        ));
+        let error = resolve_surface(&scene, a).expect_err("成环必须显式失败");
+        let SurfaceError::ParentCycle { chain } = error else {
+            panic!("期望 ParentCycle，实得 {error:?}");
+        };
+        assert_eq!(chain, vec![a, b], "诊断必须携带完整环路径");
     }
 
     /// `Parent(DANGLING)` 视为链结束。

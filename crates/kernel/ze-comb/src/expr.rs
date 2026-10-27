@@ -446,7 +446,7 @@ impl Expr {
         let mut defs: BTreeMap<&str, &Expr> = BTreeMap::new();
         collect_defs(self, &mut defs)?;
         check_dangling(self, &defs)?;
-        check_cycles(&defs)?;
+        check_cycles(self)?;
         check_recursive_leaves(self, false)
     }
 
@@ -477,8 +477,10 @@ pub enum ExprError {
     #[error("悬空的 Ref：`{0}` 没有定义")]
     DanglingRef(Id),
     /// `Ref` 成环（`a → b → a`）—— 自引用是递归，本层不支持。
-    #[error("Ref 成环：{0}")]
-    Cycle(String),
+    ///
+    /// **完整路径**：按边顺序给出环上节点（不与诊断降级成拼字符串）。
+    #[error("Ref 成环：{0:?}（按边顺序 v0 → v1 → … → v0）")]
+    Cycle(Vec<Id>),
     /// 节点类型只有序列化格式、尚未实现求值（`Select`，提案 #6 D）。
     #[error("节点 `{0}` 尚未实现求值（格式已保留）")]
     UnsupportedNode(&'static str),
@@ -558,67 +560,22 @@ fn check_dangling(expr: &Expr, defs: &BTreeMap<&str, &Expr>) -> Result<(), ExprE
     Ok(())
 }
 
-const WHITE: u8 = 0;
-const GRAY: u8 = 1;
-const BLACK: u8 = 2;
-
-fn check_cycles(defs: &BTreeMap<&str, &Expr>) -> Result<(), ExprError> {
-    let mut state: BTreeMap<&str, u8> = BTreeMap::new();
-    for id in defs.keys() {
-        if state.get(id).copied().unwrap_or(WHITE) == WHITE {
-            let mut stack = Vec::new();
-            visit(id, defs, &mut state, &mut stack)?;
-        }
-    }
-    Ok(())
-}
-
-fn visit<'a>(
-    id: &'a str,
-    defs: &BTreeMap<&'a str, &'a Expr>,
-    state: &mut BTreeMap<&'a str, u8>,
-    stack: &mut Vec<&'a str>,
-) -> Result<(), ExprError> {
-    match state.get(id).copied().unwrap_or(WHITE) {
-        BLACK => return Ok(()),
-        GRAY => {
-            let start = stack.iter().position(|item| *item == id).unwrap_or(0);
-            let mut cycle: Vec<String> = stack[start..].iter().map(|item| (*item).to_string()).collect();
-            cycle.push(id.to_string());
-            return Err(ExprError::Cycle(cycle.join(" → ")));
-        }
-        _ => {}
-    }
-    state.insert(id, GRAY);
-    stack.push(id);
-    let Some(expr) = defs.get(id) else {
-        stack.pop();
-        state.insert(id, BLACK);
+/// 用表达式图视图 + `ze-graph-core::find_cycle` 检测 `Ref` 环。
+///
+/// 收益不只是少写 DFS：诊断第一次带上**完整环路径**（按边顺序）。
+fn check_cycles(expr: &Expr) -> Result<(), ExprError> {
+    let view = crate::graph_view::ExprGraphView::build(expr);
+    let Some(component) = ze_graph_core::find_cycle(&view) else {
         return Ok(());
     };
-    for target in refs_in(expr) {
-        if defs.contains_key(target) {
-            visit(target, defs, state, stack)?;
-        }
+    let path: Vec<Id> = component
+        .iter()
+        .filter_map(|&index| view.expr(index).and_then(|node| node.id.clone()))
+        .collect();
+    if path.is_empty() {
+        return Err(ExprError::Cycle(vec!["<root>".to_string()]));
     }
-    stack.pop();
-    state.insert(id, BLACK);
-    Ok(())
-}
-
-/// 收集子树里的全部 `Ref` 目标（只向下走子节点，不跨 `Ref`）。
-fn refs_in<'a>(expr: &'a Expr) -> Vec<&'a str> {
-    let mut out = Vec::new();
-    fn walk<'a>(expr: &'a Expr, out: &mut Vec<&'a str>) {
-        if let Node::Ref { to } = &expr.node {
-            out.push(to.as_str());
-        }
-        for child in expr.node.children() {
-            walk(child, out);
-        }
-    }
-    walk(expr, &mut out);
-    out
+    Err(ExprError::Cycle(path))
 }
 
 #[cfg(test)]
@@ -844,9 +801,13 @@ mod tests {
         let b = Expr::call(math("sum"), [Expr::reference("a")]).with_id("b");
         let root = Expr::call(math("sum"), [a, b]);
         let err = root.validate().unwrap_err();
-        assert!(
-            matches!(err, ExprError::Cycle(ref path) if path.contains("a") && path.contains("b")),
-            "期望环错误，实得 {err:?}"
+        let ExprError::Cycle(path) = err else {
+            panic!("期望环错误，实得 {err:?}");
+        };
+        assert_eq!(
+            path,
+            vec!["a".to_string(), "b".to_string()],
+            "诊断必须携带按边顺序的完整环路径"
         );
     }
 
