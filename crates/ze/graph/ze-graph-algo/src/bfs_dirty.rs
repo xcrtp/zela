@@ -1,6 +1,6 @@
 //! Breadth-first dirty propagation.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use ze_node_core::algo::DirtyTracker;
 use ze_node_core::graph::Graph;
@@ -9,7 +9,8 @@ use ze_node_core::id::{NodeId, OutputSocketId};
 /// Dirty tracker that propagates marks along downstream edges via BFS.
 #[derive(Debug, Default)]
 pub struct BfsDirtyTracker {
-    dirty: HashSet<NodeId>,
+    /// `BTreeSet`：输出顺序由 `NodeId` 决定，不随哈希种子漂移。
+    dirty: BTreeSet<NodeId>,
 }
 
 impl BfsDirtyTracker {
@@ -26,7 +27,7 @@ impl DirtyTracker for BfsDirtyTracker {
     fn mark_socket_dirty(&mut self, graph: &dyn Graph, socket: OutputSocketId) {
         // Walk downstream: output -> inputs -> their nodes -> their outputs -> ...
         let mut queue: VecDeque<OutputSocketId> = VecDeque::new();
-        let mut visited: HashSet<OutputSocketId> = HashSet::new();
+        let mut visited: BTreeSet<OutputSocketId> = BTreeSet::new();
         queue.push_back(socket);
         visited.insert(socket);
 
@@ -55,8 +56,9 @@ impl DirtyTracker for BfsDirtyTracker {
         self.dirty.remove(&node);
     }
 
-    fn collect_dirty(&self) -> HashSet<NodeId> {
-        self.dirty.clone()
+    fn collect_dirty(&self) -> Vec<NodeId> {
+        // `BTreeSet` 的迭代顺序即升序 ⇒ 与哈希种子无关。
+        self.dirty.iter().copied().collect()
     }
 }
 
@@ -140,5 +142,17 @@ mod tests {
         assert!(t.is_dirty(b));
         assert!(t.is_dirty(c));
         assert!(!t.is_dirty(a)); // source not marked, only downstream
+    }
+
+    /// 同一个 tracker 两次收集必须逐位相同，且升序（硬约束 1）。
+    #[test]
+    fn collect_dirty_is_sorted_and_repeatable() {
+        let mut t = BfsDirtyTracker::new();
+        for id in [3u64, 1, 2] {
+            t.mark_dirty(NodeId(id));
+        }
+        let first = t.collect_dirty();
+        assert_eq!(first, vec![NodeId(1), NodeId(2), NodeId(3)]);
+        assert_eq!(first, t.collect_dirty());
     }
 }

@@ -1,0 +1,20 @@
+[package]
+name = "ze-graph-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+description = "纯拓扑图算法：Topology / 拓扑排序 / SCC / 可达 / 脏传播（只认节点 id + 边）"
+
+# 依赖铁律：`ze-graph-core` 是**纯拓扑层**（计划 §3.1 / 硬约束 2）。
+#   ❌ 任何 crate 依赖 —— 它不认识 Node / socket / type_name / 编辑器概念。
+#   ✅ 只 std；算法输出一律有序（硬约束 1）。
+[dependencies]
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "graph_bench"
+harness = false

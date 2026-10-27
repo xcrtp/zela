@@ -1058,12 +1058,12 @@
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
 | AN-01 | **阶段 0：接口欠账 + crate 能力表 + 重名门禁** | kernel / pod / scene / xtask | **已关闭（0）** | `OpDef` 合并为单一目录（`ze-func::OP_DEFS`，签名 + pointwise/targets）；Pod 侧 `ChannelSpec → ChannelDecl`；`seek_kind` 纳入离散层（`CompiledExpr::requires_replay`）；本文件补 AL/AM/AN 与 crate 能力表；xtask 新增"新 crate 必须登记"与"跨 crate 同名 `pub struct/enum` 白名单"两道门禁。 |
-| AN-02 | **阶段 1：ze-graph-core 纯拓扑层 + 确定性收口** | kernel | **未执行（1）** | 待执行：`Topology` / `topo_sort` / `scc` / `cycle` / `reachable` / `bfs_dirty`；输出一律有序；同一图两次结果逐位相同；基础算法补基准。 |
+| AN-02 | **阶段 1：ze-graph-core 纯拓扑层 + 确定性收口** | kernel | **已关闭（1）** | 新建 [`ze-graph-core`](crates/kernel/ze-graph-core/src/lib.rs)：`Topology` / `topo_sort` / `strongly_connected` / `find_cycle` / `reachable` / `dirty_downstream`，全部输出有序（`BTree*`，同一张图两次逐位相同）。`DirtyTracker::collect_dirty` 由 `HashSet` 改 `Vec`（升序）；`ze-graph-algo` 的 Kahn / Tarjan / BFS 全部改 `BTree*` 并补确定性用例。基准 `graph_bench`（quick，128/1024/8192）：topo_sort 22 µs / 332 µs / 4.0 ms，SCC 45 µs / 708 µs / 9.0 ms，reachable 9.2 µs / 106 µs / 1.35 ms。 |
 | AN-03 | **阶段 2：NodeMeta 拆家 + Node&lt;D&gt; 泛型化 + socket 外置** | graph / ui | **未执行（2）** | 待执行：core 只留 `{ type_name, version }`；展示数据进 UI side table；socket 查询走注册表。 |
 | AN-04 | **阶段 3：算法降层 + eval 切换 + 7 处环检测收敛** | kernel / graph / ui | **未执行（3）** | 待执行：`ze-graph-algo` 只依赖 `Topology`；7 处手写环检测迁到同一实现，并补等价性用例。 |
 | AN-05 | **阶段 4：TypeTag / NodeValue 收敛到 ze-type** | kernel / graph | **未执行（4）** | 待执行：全仓 `clone_box` 由 5 处降到 1 处。 |
 
-**AN 段小计**：已关闭 1（AN-01）· 未执行 4（AN-02…AN-05）。
+**AN 段小计**：已关闭 2（AN-01、AN-02）· 未执行 3（AN-03…AN-05）。
 
 ---
 
@@ -1076,6 +1076,7 @@
 |---|---|---|
 | ze-type | 纯代数类型层 | `TypeSpec` / `Layout` / `unify` / `ReflectError` / 单态化上界（no_std） |
 | ze-reflect | 运行时反射 | `SlotTable` / `SymbolTable` / `TypeRegistry` / `Codec` / `MonoCache` |
+| ze-graph-core | 纯拓扑图算法 | `Topology` / `topo_sort` / `scc` / `reachable` / `dirty_downstream`（只认节点 id + 边） |
 | ze-notion | 数学与几何基元 | `Path2D` / `Transform` / `Vec` 运算 |
 | ze-render-ir | 渲染 IR 契约 | `DrawOp` / `Paint` / `UniformLayout` |
 | ze-scene-contract | 场景契约 | `ObjectId` / `Describable` / `Scene` 契约 |

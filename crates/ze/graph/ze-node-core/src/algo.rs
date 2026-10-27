@@ -6,8 +6,6 @@
 //! SCC) live in the separate `zela-graph-algo` crate and can be swapped without
 //! touching the core.
 
-use std::collections::HashSet;
-
 use crate::graph::Graph;
 use crate::id::{NodeId, OutputSocketId};
 
@@ -37,7 +35,10 @@ pub trait DirtyTracker: Send + Sync + 'static {
     /// Clear the dirty flag for a node.
     fn clear_dirty(&mut self, node: NodeId);
     /// Collect every dirty node in the graph.
-    fn collect_dirty(&self) -> HashSet<NodeId>;
+    ///
+    /// **Deterministic**: sorted ascending by `NodeId` (hard constraint 1 —
+    /// graph algorithm outputs are part of the product promise).
+    fn collect_dirty(&self) -> Vec<NodeId>;
 }
 
 /// Optional cycle detection (used by editors for live warnings).

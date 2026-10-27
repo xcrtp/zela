@@ -32,6 +32,7 @@ use xtask::{
 const KERNEL_CRATES: &[&str] = &[
     "ze-type",
     "ze-reflect",
+    "ze-graph-core",
     "ze-notion",
     "ze-render-ir",
     "ze-scene-contract",

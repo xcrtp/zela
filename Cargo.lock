@@ -6528,6 +6528,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-graph-core"
+version = "0.1.1"
+dependencies = [
+ "criterion",
+]
+
+[[package]]
 name = "ze-graph-eval"
 version = "0.1.1"
 dependencies = [
