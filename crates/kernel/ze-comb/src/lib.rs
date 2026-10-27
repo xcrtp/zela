@@ -71,13 +71,13 @@ pub use analysis::{affected_consumers, reference_groups, shared_definitions, unr
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use expr::{ChannelRef, ChannelType, Expr, ExprError, Id, Literal, Node, OpRef};
 pub use graph_view::ExprGraphView;
-pub use walk::ExprVisitor;
 pub use pass::{
     AnalysisPass, Lower, LoweredEval, PassInfo, PassKind, PassRegistry, PassRegistryError,
     ReferenceEval, Semantics, TransformPass, Validate, kernel_registry,
 };
 pub use program::{CompiledExpr, EvalError, Mono, RecCache, Step, Value, ValueBytes, REC_MAX_STEPS, hash_values};
 pub use reference::{ReferenceEvaluator, eval_reference};
+pub use walk::ExprVisitor;
 
 /// 表达式 payload 的 schema 版本。
 ///
