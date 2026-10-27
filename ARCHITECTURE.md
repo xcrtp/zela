@@ -1804,7 +1804,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 > 一句话：**对象用句柄、通道用数据**。`expr.bind{ object = dot, target = expr.channel("Circle.radius") }`；
 > `find_named` 退场，`Channel` 枚举退场。
 
-- **通道是数据**：`ze_func::Channel`（封闭枚举）→ `ChannelRef { namespace, name }`（[`expr.rs`](crates/kernel/ze-func/src/expr.rs)）。
+- **通道是数据**：`ze_func::Channel`（封闭枚举）→ `ChannelRef { namespace, name }`（[`expr.rs`](crates/kernel/ze-comb/src/expr.rs)）。
   空 namespace = 宿主基础通道（`time` / `frame`）；组件字段 = `"zela.scene" + 地址`。
   `SCHEMA_VERSION 1 → 2`，受影响作品只有 `expr_demo`。
 - **按句柄绑定**：`BindSpec.object` 从对象名改为 pod `Handle`；`SceneScript::bind_expr(handle, …)`
