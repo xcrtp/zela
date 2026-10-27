@@ -12,6 +12,22 @@
 # · GAPS 编号必须是 GAPS.md 里**真实存在的表格行**（`| W1-01 |` / `| AG-02 |`），否则检查失败
 # · 该能力一旦被作品覆盖，这一行就会变成"豁免过期"⇒ 检查失败，必须删掉
 #
-# 当前清单为**空**：F 批新增的字段通道由 `cap_channels2d.lua` / `cap_channels3d.lua`
-# 逐条驱动（一个通道一条绑定），G/H 批的读端与值分支由 `expr_read.lua` 覆盖；
-# 原 AG-02 的 4 条单字段选择键也已被 `cap_channels2d.lua` 直接使用 ⇒ 全部清零。
+# 当前清单：第 5a 批（AK-05）把 manifest 作品全部迁到 `expr.bind` 后，旧动画 API
+# 与 `Curve` 变体**暂时没有作品使用**（删除留到 5b）。通道本身仍由常量驱动。
+scene:clip -> AK-05
+scene:clip_transform -> AK-05
+scene:animate -> AK-05
+scene:parallel -> AK-05
+scene:wait -> AK-05
+Curve:Const -> AK-05
+Curve:Sin -> AK-05
+Curve:Phase -> AK-05
+Curve:Ramp -> AK-05
+Curve:Ramp2 -> AK-05
+Curve:Orbit -> AK-05
+Curve:Keyframes -> AK-05
+TransformChannel:Position -> AK-05
+TransformChannel:Rotation -> AK-05
+TransformChannel:Scale -> AK-05
+Target:Camera2DFraming -> AK-05
+Target:RevealRange -> AK-05

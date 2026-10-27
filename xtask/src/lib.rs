@@ -920,6 +920,8 @@ pub fn collect_channel_capabilities(sources: &[(&str, &str)]) -> Vec<Capability>
                     // 作者侧的常量路径（`Gradient.channel.from`）也算使用：
                     // 表达式 API 只能经常量引用通道（没有裸地址字符串入口）。
                     spellings.push(format!("{struct_name}.channel.{field}"));
+                    // Lua 里 `end` 等是关键字 ⇒ 常量用下标写法 `Reveal.channel["end"]`。
+                    spellings.push(format!("{struct_name}.channel[\"{field}\"]"));
                     out.push(Capability {
                         kind: "Target".to_string(),
                         name,

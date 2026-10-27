@@ -26,6 +26,43 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+-- `Ramp` 的算子化形态（显式时钟；`t` 是时钟局部时间）。
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- 动画值域是 f32，而表达式层是 f64：`round_f32` 在**旧曲线的同一位置**落位，
+-- 使迁移后的每一帧与旧 `Curve` 逐位相同（第 5a 批的等价要求）。
+local function f32(v)
+    return RoundF32 { of = v }
+end
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+local function sin_curve(base, amp, omega)
+    local angle = Mul(f32(expr.pure(omega)), clock.time())
+    local s = f32(Sin { of = angle })
+    local prod = f32(Mul(f32(expr.pure(amp)), s))
+    return f32(Add { a = f32(expr.pure(base)), b = prod })
+end
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+local function in_segment(dur)
+    return Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(dur) },
+        },
+    }
+end
+
 -- 2D 相机（渲染器要求 Framing2D；世界中心对准钟摆）。
 scene.spawn({
     Camera2D { center = Vec2 { x = 0.0, y = 1.4 }, scale = 55.0 },
@@ -77,48 +114,50 @@ local ring = scene.spawn({
     Parent { parent = swing },
 })
 
--- 段 1（0–6s）：摆起 + 轨迹书写 + 内环呼吸 + 三对象淡入（同一 Play 的并行轨道）。
-scene.animate(
-    swing,
-    scene.clip_transform(TransformChannel.Rotation, Curve.Sin {
-        base = 0.0,
-        amp = AMP1,
-        omega = q(TAU / 2.0),
-    }),
-    T1
-)
-scene.parallel(
-    trace,
-    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = T1 })
-)
-scene.parallel(
-    ring,
-    scene.clip("CircleRadius", Curve.Sin { base = 0.34, amp = 0.06, omega = 3.0 })
-)
-scene.parallel(
-    trace,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
-)
-scene.parallel(
-    bob,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
-)
-scene.parallel(
-    ring,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.6 })
-)
+-- 段 1（0–6s）：摆起 + 轨迹书写 + 内环呼吸 + 三对象淡入（同一区间的并行绑定）。
+expr.bind {
+    object = swing,
+    target = Transform.channel.rotation,
+    root = sin_curve(0.0, AMP1, q(TAU / 2.0)),
+    clock = clock.scale(1.0),
+    predicate = in_segment(T1),
+}
+expr.bind {
+    object = trace,
+    target = Reveal.channel["end"],
+    root = ramp(0.0, 1.0, T1),
+    clock = clock.scale(1.0),
+    predicate = in_segment(T1),
+}
+expr.bind {
+    object = ring,
+    target = Circle.channel.radius,
+    root = sin_curve(0.34, 0.06, 3.0),
+    clock = clock.scale(1.0),
+    predicate = in_segment(T1),
+}
+for _, object in ipairs({ trace, bob, ring }) do
+    expr.bind {
+        object = object,
+        target = Opacity.channel.value,
+        root = ramp(0.0, 1.0, 0.6),
+        clock = clock.scale(1.0),
+        predicate = in_segment(T1),
+    }
+end
 
--- 段 2（6–10s）：摆幅收小（阻尼）+ 内环呼吸变慢。
-scene.animate(
-    swing,
-    scene.clip_transform(TransformChannel.Rotation, Curve.Sin {
-        base = 0.0,
-        amp = AMP2,
-        omega = q(TAU / 2.5),
-    }),
-    T2
-)
-scene.parallel(
-    ring,
-    scene.clip("CircleRadius", Curve.Sin { base = 0.34, amp = 0.05, omega = 4.0 })
-)
+-- 段 2（6–10s）：摆幅收小（阻尼）+ 内环呼吸变慢（时钟整体后移 T1）。
+expr.bind {
+    object = swing,
+    target = Transform.channel.rotation,
+    root = sin_curve(0.0, AMP2, q(TAU / 2.5)),
+    clock = clock.shift(T1),
+    predicate = in_segment(T2),
+}
+expr.bind {
+    object = ring,
+    target = Circle.channel.radius,
+    root = sin_curve(0.34, 0.05, 4.0),
+    clock = clock.shift(T1),
+    predicate = in_segment(T2),
+}

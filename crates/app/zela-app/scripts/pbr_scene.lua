@@ -26,6 +26,57 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+-- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+local function f32(v)
+    return RoundF32 { of = v }
+end
+
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+local function sin_curve(base, amp, omega)
+    local angle = Mul(f32(expr.pure(omega)), clock.time())
+    local s = f32(Sin { of = angle })
+    local prod = f32(Mul(f32(expr.pure(amp)), s))
+    return f32(Add { a = f32(expr.pure(base)), b = prod })
+end
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+local function orbit2d(radius, speed, initial_angle)
+    local angle = Add {
+        a = Mul(f32(expr.pure(speed)), clock.time()),
+        b = f32(expr.pure(initial_angle)),
+    }
+    return Vec3FromVec2 {
+        v = Vec2Of {
+            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
+            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
+        },
+        z = expr.pure(0.0),
+    }
+end
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+local function in_segment(dur)
+    return Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(dur) },
+        },
+    }
+end
+
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
     Camera3D {
@@ -109,98 +160,92 @@ for i = 1, 5 do
     end
 end
 
--- 每幕起点：`animate(cubes[1])` 开新段，其余立方体与灯光动作并行挂入。
--- `dur` 必须等于该幕的段时长（巡游幕 ACT、终幕 FINALE）。
-local function spin_clip(i, a, dur)
-    local from = 0.0
-    if a > 1 then
-        from = turns[i][a - 1]
+-- ── 幕 1（0–4s）：红灯从左缘横扫入场 ─────────────────────────────────
+local function act(a, start)
+    for i = 1, 5 do
+        local from = 0.0
+        if a > 1 then
+            from = turns[i][a - 1]
+        end
+        expr.bind {
+            object = cubes[i],
+            target = Transform.channel.rotation,
+            root = ramp(from, turns[i][a], ACT),
+            clock = clock.shift(start),
+            predicate = in_segment(ACT),
+        }
     end
-    return scene.clip_transform(TransformChannel.Rotation, Curve.Ramp {
-        from = from,
-        to = turns[i][a],
-        dur = dur,
-    })
 end
 
--- ── 幕 1（0–4s）：红灯从左缘横扫入场 ─────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 1, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 1, ACT))
+-- 一盏点光的横扫入场（旧 `Ramp2`：xy 插值，**保留**光的 z 高度）。
+local function light_sweep(a, start)
+    expr.bind {
+        object = lights[a],
+        target = Transform.channel.position,
+        root = Vec3FromVec2 {
+            v = Mix {
+                a = Vec2Of {
+                    x = expr.pure(q(LIGHTS[a][1])),
+                    y = expr.pure(q(LIGHTS[a][2])),
+                },
+                b = Vec2Of {
+                    x = expr.pure(q(LIGHTS[a][3])),
+                    y = expr.pure(q(LIGHTS[a][4])),
+                },
+                t = Clamp {
+                    x = Scale { k = 1.0 / ACT, of = clock.time() },
+                    lo = expr.pure(0.0),
+                    hi = expr.pure(1.0),
+                },
+            },
+            z = expr.pure(LIGHTS[a][5]),
+        },
+        clock = clock.shift(start),
+        predicate = in_segment(ACT),
+    }
 end
-scene.parallel(
-    lights[1],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[1][1]), y = q(LIGHTS[1][2]) },
-        to = Vec2 { x = q(LIGHTS[1][3]), y = q(LIGHTS[1][4]) },
-        dur = ACT,
-    })
-)
+
+act(1, 0.0)
+light_sweep(1, 0.0)
 
 -- ── 幕 2（4–8s）：绿灯自左入场 ───────────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 2, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 2, ACT))
-end
-scene.parallel(
-    lights[2],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[2][1]), y = q(LIGHTS[2][2]) },
-        to = Vec2 { x = q(LIGHTS[2][3]), y = q(LIGHTS[2][4]) },
-        dur = ACT,
-    })
-)
+act(2, ACT)
+light_sweep(2, ACT)
 
 -- ── 幕 3（8–12s）：蓝灯自右缘入场 ────────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 3, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 3, ACT))
-end
-scene.parallel(
-    lights[3],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[3][1]), y = q(LIGHTS[3][2]) },
-        to = Vec2 { x = q(LIGHTS[3][3]), y = q(LIGHTS[3][4]) },
-        dur = ACT,
-    })
-)
+act(3, 2 * ACT)
+light_sweep(3, 2 * ACT)
 
 -- ── 幕 4（12–16s）：琥珀灯自右入场 ───────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 4, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 4, ACT))
-end
-scene.parallel(
-    lights[4],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[4][1]), y = q(LIGHTS[4][2]) },
-        to = Vec2 { x = q(LIGHTS[4][3]), y = q(LIGHTS[4][4]) },
-        dur = ACT,
-    })
-)
+act(4, 3 * ACT)
+light_sweep(4, 3 * ACT)
 
 -- ── 终幕（16–22s）：四光齐照，琥珀光转为公转，银立方体呼吸 ────────────
 -- 琥珀光的巡游终点 (-1.2, -0.9) 恰好落在半径 1.5 的圆上
 -- （初始角 = atan2(-0.9, -1.2) ≈ π + atan(0.75) ≈ 3.7851），
 -- 转轨时位置连续不跳变。
-scene.animate(cubes[1], spin_clip(1, 5, FINALE), FINALE)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 5, FINALE))
+local FINALE_START = 4 * ACT
+for i = 1, 5 do
+    expr.bind {
+        object = cubes[i],
+        target = Transform.channel.rotation,
+        root = ramp(turns[i][4], turns[i][5], FINALE),
+        clock = clock.shift(FINALE_START),
+        predicate = in_segment(FINALE),
+    }
 end
-scene.parallel(
-    lights[4],
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = 1.5,
-        speed = 1.2,
-        initial_angle = 3.7851,
-    })
-)
+expr.bind {
+    object = lights[4],
+    target = Transform.channel.position,
+    root = orbit2d(1.5, 1.2, 3.7851),
+    clock = clock.shift(FINALE_START),
+    predicate = in_segment(FINALE),
+}
 -- 银立方体（正中央）缩放呼吸。
-scene.parallel(
-    cubes[3],
-    scene.clip_transform(TransformChannel.Scale, Curve.Sin {
-        base = 1.0,
-        amp = 0.16,
-        omega = 1.4,
-    })
-)
+expr.bind {
+    object = cubes[3],
+    target = Transform.channel.scale,
+    root = sin_curve(1.0, 0.16, 1.4),
+    clock = clock.shift(FINALE_START),
+    predicate = in_segment(FINALE),
+}

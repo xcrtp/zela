@@ -20,8 +20,8 @@ use ze_func::{EvalError, OpRef, Value};
 /// 它们是**值算子**，与 `sin` 等同层。Bool 结果不进 `anim_value`（root 侧语义不变）。
 pub const OPS: &[&str] = &[
     "sin", "cos", "add", "mul", "scale", "sum", "mix", "clamp", "vec2", "vec3", "x", "y", "z",
-    "rotate3", "splat", "vec3_from_vec2", "vec2_from_vec3", "length", "normalize", "lt", "gt",
-    "le", "ge", "eq", "ne", "and", "or", "not",
+    "rotate3", "splat", "vec3_from_vec2", "vec2_from_vec3", "length", "normalize", "round_f32",
+    "lt", "gt", "le", "ge", "eq", "ne", "and", "or", "not",
 ];
 
 /// `op` 是否属于本库（namespace 必须一致，名字在 [`OPS`] 里）。
@@ -68,8 +68,23 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
             let t = number(2)?;
             let a = args.first().ok_or_else(|| EvalError::op(op, "需要三个实参"))?;
             let b = args.get(1).ok_or_else(|| EvalError::op(op, "需要三个实参"))?;
+            // **端点返回原值**：`a + (b − a) × 1` 在 f32 上可能偏离 `b` 一个 ulp。
+            // 旧 `Curve::Keyframes` 在 `t ≤ t0 / t ≥ t1` 时直接返回端点 ⇒ 这里同口径
+            // （`Ramp` 的钳制保证端点会精确命中 0 / 1）。
+            if t == 0.0 {
+                return Ok(a.clone());
+            }
+            if t == 1.0 {
+                return Ok(b.clone());
+            }
             match (a, b) {
-                (Value::F64(a), Value::F64(b)) => Ok(Value::F64(a + (b - a) * t)),
+                // 标量走 **f32 插值**：与旧 `Curve::Keyframes`（`AnimValue::Scalar`）的
+                // `a + (b - a) * α` 逐位一致（第 5a 批「先证明等价」的硬要求）。
+                (Value::F64(a), Value::F64(b)) => Ok(Value::F64(f64::from(lerp_f32(
+                    *a as f32,
+                    *b as f32,
+                    t,
+                )))),
                 (Value::Vec2(a), Value::Vec2(b)) => Ok(Value::Vec2([
                     lerp_f32(a[0], b[0], t),
                     lerp_f32(a[1], b[1], t),
@@ -172,6 +187,12 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
                 _ => Err(EvalError::op(op, "第 0 个实参不是向量")),
             }
         }
+        // `round_f32(x)`：把数值落成 f32 再升回 f64。
+        //
+        // **为什么需要**：动画值域是 f32（`AnimValue::Scalar`），而表达式层是 f64。
+        // 旧曲线（`Sin` / `Phase` / `Orbit2D`）每一步都在 f32 上取整；要把它们
+        // **逐位**迁移过来，必须在同样的位置显式落位（第 5a 批的等价证明）。
+        "round_f32" => Ok(Value::F64(f64::from(number(0)? as f32))),
         "lt" => Ok(Value::Bool(number(0)? < number(1)?)),
         "gt" => Ok(Value::Bool(number(0)? > number(1)?)),
         "le" => Ok(Value::Bool(number(0)? <= number(1)?)),
@@ -199,9 +220,12 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     }
 }
 
-/// 标量线性插值（f64 计算，f32 落值）。
+/// 线性插值（**f32 域**）。
+///
+/// `α` 先落 f32 再参与运算，与 `ze-time` 的 `Curve::Keyframes` 同一精度口径：
+/// `a + (b - a) * α` 全部在 f32 上完成（第 5a 批的逐位等价要求）。
 fn lerp_f32(a: f32, b: f32, t: f64) -> f32 {
-    (f64::from(a) + (f64::from(b) - f64::from(a)) * t) as f32
+    a + (b - a) * (t as f32)
 }
 
 /// 取第 `index` 个 `Vec3` 实参（错误点名算子与位置）。
@@ -422,6 +446,13 @@ mod tests {
             .is_err()
         );
         assert!(eval(&math("length"), &[Value::F64(1.0)]).is_err());
+    }
+
+    /// 第 5a 批：`round_f32` 把数值落成 f32 再升回（逐位复刻旧曲线的精度口径）。
+    #[test]
+    fn round_f32_lands_on_the_f32_grid() {
+        let value = eval(&math("round_f32"), &[Value::F64(0.1 + 0.2)]).unwrap();
+        assert_eq!(value, Value::F64(f64::from((0.1_f64 + 0.2_f64) as f32)));
     }
 
     #[test]

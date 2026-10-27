@@ -3,7 +3,7 @@
 -- 目的：给 `#[derive(Channels)]` 批量注册的 2D 字段通道留**作品级证据**。
 -- 每个通道都有独立对象与独立绑定；动画期间字段值随曲线变化（不是静态占位）。
 --
--- 覆盖（括号里是 `scene.clip` 的 target）：
+-- 覆盖（每个通道都用 `<组件>.channel.<字段>` 常量选中）：
 --   2D 相机   —— 中心 / 缩放（`Framing2D.center` / `Framing2D.scale`）
 --   圆        —— 中心 / 半径（`Circle.center` / `Circle.radius`）
 --   箭头      —— 起点 / 终点 / 头长 / 头宽（`Arrow.from|to|head_length|head_width`）
@@ -27,6 +27,61 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+-- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
+local function f32(v)
+    return RoundF32 { of = v }
+end
+
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+local function ramp2(ax, ay, bx, by, dur)
+    return Mix {
+        a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
+        b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+local function sin_curve(base, amp, omega)
+    local angle = Mul(f32(expr.pure(omega)), clock.time())
+    local s = f32(Sin { of = angle })
+    local prod = f32(Mul(f32(expr.pure(amp)), s))
+    return f32(Add { a = f32(expr.pure(base)), b = prod })
+end
+
+local WINDOW = Predicate.Of {
+    expr = And {
+        a = Ge { a = clock.time(), b = expr.pure(0.0) },
+        b = Lt { a = clock.time(), b = expr.pure(T) },
+    },
+}
+
+-- 一条绑定一个通道（旧 `scene.animate` / `parallel` 的单段 [0, T)）。
+local function bind(object, target, root)
+    expr.bind {
+        object = object,
+        target = target,
+        root = root,
+        clock = clock.scale(1.0),
+        predicate = WINDOW,
+    }
+end
+
 -- 2D 相机：世界 ±5.5 × ±4.1 落在 640×480 里（scale = 58）。
 local cam = scene.spawn({
     Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 58.0 },
@@ -37,16 +92,8 @@ local ball = scene.spawn({
     Circle { x = -3.4, y = 2.2, r = 0.45 },
     Fill { color = rgba(96, 196, 255, 255) },
 })
-scene.animate(ball, scene.clip("Circle.center", Curve.Ramp2 {
-    from = Vec2 { x = -3.4, y = 2.2 },
-    to = Vec2 { x = -2.0, y = 2.2 },
-    dur = T,
-}), T)
-scene.parallel(ball, scene.clip("Circle.radius", Curve.Sin {
-    base = 0.45,
-    amp = 0.18,
-    omega = 3.0,
-}))
+bind(ball, Circle.channel.center, ramp2(-3.4, 2.2, -2.0, 2.2, T))
+bind(ball, Circle.channel.radius, sin_curve(0.45, 0.18, 3.0))
 
 -- ── 箭头：四个字段同时动 ──────────────────────────────────────────────
 local arrow = scene.spawn({
@@ -58,26 +105,10 @@ local arrow = scene.spawn({
     },
     Fill { color = rgba(255, 180, 80, 255) },
 })
-scene.parallel(arrow, scene.clip("Arrow.from", Curve.Ramp2 {
-    from = Vec2 { x = 0.4, y = -0.6 },
-    to = Vec2 { x = -0.4, y = -1.0 },
-    dur = T,
-}))
-scene.parallel(arrow, scene.clip("Arrow.to", Curve.Ramp2 {
-    from = Vec2 { x = 2.6, y = -0.6 },
-    to = Vec2 { x = 3.2, y = 0.2 },
-    dur = T,
-}))
-scene.parallel(arrow, scene.clip("Arrow.head_length", Curve.Ramp {
-    from = 0.24,
-    to = 0.42,
-    dur = T,
-}))
-scene.parallel(arrow, scene.clip("Arrow.head_width", Curve.Ramp {
-    from = 0.18,
-    to = 0.30,
-    dur = T,
-}))
+bind(arrow, Arrow.channel.from, ramp2(0.4, -0.6, -0.4, -1.0, T))
+bind(arrow, Arrow.channel.to, ramp2(2.6, -0.6, 3.2, 0.2, T))
+bind(arrow, Arrow.channel.head_length, ramp(0.24, 0.42, T))
+bind(arrow, Arrow.channel.head_width, ramp(0.18, 0.30, T))
 
 -- ── 书写：start / end / range 各一条（避免同一字段互相覆盖）────────────
 local function line(y)
@@ -94,31 +125,19 @@ local reveal_start = scene.spawn({
     Reveal { points = line(3.2), closed = false },
     Stroke { width = 2.5, color = ink },
 })
-scene.parallel(reveal_start, scene.clip("Reveal.start", Curve.Ramp {
-    from = 0.0,
-    to = 0.5,
-    dur = T,
-}))
+bind(reveal_start, Reveal.channel.start, ramp(0.0, 0.5, T))
 
 local reveal_end = scene.spawn({
     Reveal { points = line(-3.2), closed = false },
     Stroke { width = 2.5, color = rgba(180, 255, 210, 255) },
 })
-scene.parallel(reveal_end, scene.clip("Reveal.end", Curve.Ramp {
-    from = 1.0,
-    to = 0.6,
-    dur = T,
-}))
+bind(reveal_end, Reveal.channel["end"], ramp(1.0, 0.6, T))
 
 local reveal_range = scene.spawn({
     Reveal { points = line(-3.6), closed = false },
     Stroke { width = 2.5, color = rgba(255, 210, 150, 255) },
 })
-scene.parallel(reveal_range, scene.clip("Reveal.range", Curve.Ramp2 {
-    from = Vec2 { x = 0.0, y = 1.0 },
-    to = Vec2 { x = 0.3, y = 0.8 },
-    dur = T,
-}))
+bind(reveal_range, Reveal.channel.range, ramp2(0.0, 1.0, 0.3, 0.8, T))
 
 -- ── 虚线：周期 / 占空 / 相位 ──────────────────────────────────────────
 local dashed = scene.spawn({
@@ -126,21 +145,9 @@ local dashed = scene.spawn({
     Stroke { width = 4.0, color = rgba(160, 255, 200, 255) },
     Dash { period = 0.05, duty = 0.6, phase = 0.0 },
 })
-scene.parallel(dashed, scene.clip("Dash.period", Curve.Ramp {
-    from = 0.05,
-    to = 0.08,
-    dur = T,
-}))
-scene.parallel(dashed, scene.clip("Dash.duty", Curve.Ramp {
-    from = 0.6,
-    to = 0.3,
-    dur = T,
-}))
-scene.parallel(dashed, scene.clip("Dash.phase", Curve.Ramp {
-    from = 0.0,
-    to = 0.5,
-    dur = T,
-}))
+bind(dashed, Dash.channel.period, ramp(0.05, 0.08, T))
+bind(dashed, Dash.channel.duty, ramp(0.6, 0.3, T))
+bind(dashed, Dash.channel.phase, ramp(0.0, 0.5, T))
 
 -- ── 曲线窗口：lo / hi ────────────────────────────────────────────────
 local window = scene.spawn({
@@ -148,25 +155,18 @@ local window = scene.spawn({
     Fill { color = rgba(210, 150, 255, 255) },
     CurveWindow { lo = 0.0, hi = 4.0 },
 })
-scene.parallel(window, scene.clip("CurveWindow.lo", Curve.Ramp {
-    from = 0.0,
-    to = 0.5,
-    dur = T,
-}))
-scene.parallel(window, scene.clip("CurveWindow.hi", Curve.Ramp {
-    from = 4.0,
-    to = 2.0,
-    dur = T,
-}))
+bind(window, CurveWindow.channel.lo, ramp(0.0, 0.5, T))
+bind(window, CurveWindow.channel.hi, ramp(4.0, 2.0, T))
 
 -- ── 2D 相机：缩放 + 中心（存储组件是 Framing2D）──────────────────────
-scene.parallel(cam, scene.clip("Framing2D.scale", Curve.Ramp {
-    from = 58.0,
-    to = 54.0,
-    dur = T,
-}))
-scene.parallel(cam, scene.clip("Framing2D.center", Curve.Ramp2 {
-    from = Vec2 { x = 0.0, y = 0.0 },
-    to = Vec2 { x = 0.0, y = 0.15 },
-    dur = T,
-}))
+-- `Framing2D` 是存储组件（`Camera2D` 是派生视图，没有通道表）⇒ 显式构造键。
+bind(
+    cam,
+    Channel { namespace = "zela.scene", name = "Framing2D.scale", ty = ChannelType.Number },
+    ramp(58.0, 54.0, T)
+)
+bind(
+    cam,
+    Channel { namespace = "zela.scene", name = "Framing2D.center", ty = ChannelType.Vec2 },
+    ramp2(0.0, 0.0, 0.0, 0.15, T)
+)

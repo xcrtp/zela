@@ -346,7 +346,7 @@ fn bind_capability<C: Capability<'static>>(
     this.module.bind(py).setattr(service_name, &service_module)?;
     install_clock_alias(py, this, &service_module, plan.calls)?;
 
-    register_types(py, this, &service_module, &plan, service)?;
+    register_types(py, this, &service_module, namespace, &plan, service)?;
     this.modules
         .lock()
         .expect("Python 模块表锁中毒")
@@ -377,7 +377,9 @@ fn install_clock_alias(
         };
         clock.setattr(short, service_module.getattr(item.signature.name)?)?;
     }
-    this.module.bind(py).setattr("clock", clock)?;
+    // 两个入口同一份对象：根包（`zela.clock`）与能力模块（`zela.math.clock`）。
+    this.module.bind(py).setattr("clock", &clock)?;
+    service_module.setattr("clock", &clock)?;
     Ok(())
 }
 
@@ -388,6 +390,7 @@ fn register_types(
     py: Python<'_>,
     this: &PyPod,
     service_module: &Bound<'_, PyModule>,
+    namespace: &str,
     plan: &BindingPlan,
     service: Arc<dyn SyncPod>,
 ) -> PyResult<()> {
@@ -399,6 +402,11 @@ fn register_types(
             .unwrap_or("");
         let home_module = if home.is_empty() {
             None
+        } else if home == namespace {
+            // 类型自己的 home 就是本能力的模块（`zela.math.Mix` → `zela.math`）：
+            // 复用**已注册的服务模块**。若走 `ensure_package` 会新建同名包并覆盖
+            // `zela.math`，把 `bind` / `pure` 等函数从模块上抹掉。
+            Some(service_module.clone().unbind())
         } else {
             Some(ensure_package(py, this, home)?)
         };

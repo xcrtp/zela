@@ -27,6 +27,57 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+-- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+local function f32(v)
+    return RoundF32 { of = v }
+end
+
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+local function sin_curve(base, amp, omega)
+    local angle = Mul(f32(expr.pure(omega)), clock.time())
+    local s = f32(Sin { of = angle })
+    local prod = f32(Mul(f32(expr.pure(amp)), s))
+    return f32(Add { a = f32(expr.pure(base)), b = prod })
+end
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+local function orbit2d(radius, speed, initial_angle)
+    local angle = Add {
+        a = Mul(f32(expr.pure(speed)), clock.time()),
+        b = f32(expr.pure(initial_angle)),
+    }
+    return Vec3FromVec2 {
+        v = Vec2Of {
+            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
+            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
+        },
+        z = expr.pure(0.0),
+    }
+end
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+local function in_segment(dur)
+    return Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(dur) },
+        },
+    }
+end
+
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
     Camera3D {
@@ -149,51 +200,45 @@ end
 
 -- ── 主段（0–17s，单段并行）：转动 + 缩放 + 公转 + 点光巡游 ────────────
 -- 英雄立方体：1.5 圈自转 + 缩放呼吸。
-scene.animate(
-    hero,
-    scene.clip_transform(TransformChannel.Rotation, Curve.Ramp {
-        from = 0.0,
-        to = q(TAU * 1.5),
-        dur = MAIN,
-    }),
-    MAIN
-)
-scene.parallel(
-    hero,
-    scene.clip_transform(TransformChannel.Scale, Curve.Sin {
-        base = 1.0,
-        amp = 0.12,
-        omega = 1.1,
-    })
-)
+expr.bind {
+    object = hero,
+    target = Transform.channel.rotation,
+    root = ramp(0.0, q(TAU * 1.5), MAIN),
+    clock = clock.scale(1.0),
+    predicate = in_segment(MAIN),
+}
+expr.bind {
+    object = hero,
+    target = Transform.channel.scale,
+    root = sin_curve(1.0, 0.12, 1.1),
+    clock = clock.scale(1.0),
+    predicate = in_segment(MAIN),
+}
 -- 绕行立方体：沿各自高度公转。
 for i = 1, 4 do
-    scene.parallel(
-        minis[i],
-        scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-            radius = MINIS[i][1],
-            speed = MINIS[i][2],
-            initial_angle = MINIS[i][3],
-        })
-    )
+    expr.bind {
+        object = minis[i],
+        target = Transform.channel.position,
+        root = orbit2d(MINIS[i][1], MINIS[i][2], MINIS[i][3]),
+        clock = clock.scale(1.0),
+        predicate = in_segment(MAIN),
+    }
 end
 -- 4 盏点光：不同半径 / 速度 / 初始角公转，光色跟着扫过曲面。
 for i = 1, 4 do
-    scene.parallel(
-        lights[i],
-        scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-            radius = RIG[i][1],
-            speed = RIG[i][2],
-            initial_angle = RIG[i][3],
-        })
-    )
+    expr.bind {
+        object = lights[i],
+        target = Transform.channel.position,
+        root = orbit2d(RIG[i][1], RIG[i][2], RIG[i][3]),
+        clock = clock.scale(1.0),
+        predicate = in_segment(MAIN),
+    }
 end
 -- 哑面立方体：±90° 钟摆，展示粗糙 0.95 下高光几乎消失。
-scene.parallel(
-    matte,
-    scene.clip_transform(TransformChannel.Rotation, Curve.Sin {
-        base = 0.0,
-        amp = q(PI * 0.5),
-        omega = 0.8,
-    })
-)
+expr.bind {
+    object = matte,
+    target = Transform.channel.rotation,
+    root = sin_curve(0.0, q(PI * 0.5), 0.8),
+    clock = clock.scale(1.0),
+    predicate = in_segment(MAIN),
+}

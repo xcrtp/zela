@@ -35,6 +35,66 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+-- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+local function f32(v)
+    return RoundF32 { of = v }
+end
+
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+local function ramp2(ax, ay, bx, by, dur)
+    return Mix {
+        a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
+        b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+local function orbit2d(radius, speed, initial_angle)
+    local angle = Add {
+        a = Mul(f32(expr.pure(speed)), clock.time()),
+        b = f32(expr.pure(initial_angle)),
+    }
+    return Vec3FromVec2 {
+        v = Vec2Of {
+            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
+            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
+        },
+        z = expr.pure(0.0),
+    }
+end
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+local function in_segment(dur)
+    return Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(dur) },
+        },
+    }
+end
+
+-- 串行段起点（旧 `scene.animate` / `wait` 的全局游标）。
+local MAIN_START = FADE
+local ZOOM_IN_START = FADE + T
+local ZOOM_OUT_START = ZOOM_IN_START + ZOOM + HOLD
+
 local function amplitude(k)
     return 4.0 / (PI * k)
 end
@@ -183,70 +243,94 @@ scene.spawn({
     Parent { parent = arrows[#arrows] },
 })
 
--- ── 3. 曲线淡入（S6 Opacity）─────────────────────────────────────────
-scene.animate(
-    curve,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = FADE }),
-    FADE
-)
-scene.parallel(
-    pulse,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = FADE })
-)
+-- ── 3. 曲线淡入（S6 Opacity，段 [0, FADE)）────────────────────────────
+expr.bind {
+    object = curve,
+    target = Opacity.channel.value,
+    root = ramp(0.0, 1.0, FADE),
+    clock = clock.shift(0.0),
+    predicate = in_segment(FADE),
+}
+expr.bind {
+    object = pulse,
+    target = Opacity.channel.value,
+    root = ramp(0.0, 1.0, FADE),
+    clock = clock.shift(0.0),
+    predicate = in_segment(FADE),
+}
 
 -- ── 4. 主段：所有向量自转（S3 Rotation），相位点公转（S4 Orbit），脉冲书写
-local function rotation_clip(delta)
-    return scene.clip_transform(TransformChannel.Rotation, Curve.Ramp {
-        from = 0.0,
-        to = TAU * delta,
-        dur = T,
-    })
+local function rotation_expr(delta)
+    return ramp(0.0, TAU * delta, T)
 end
 
-scene.animate(arrows[1], rotation_clip(1), T)
+expr.bind {
+    object = arrows[1],
+    target = Transform.channel.rotation,
+    root = rotation_expr(1),
+    clock = clock.shift(MAIN_START),
+    predicate = in_segment(T),
+}
 for i = 2, #HARMONICS do
-    scene.parallel(arrows[i], rotation_clip(HARMONICS[i] - HARMONICS[i - 1]))
+    expr.bind {
+        object = arrows[i],
+        target = Transform.channel.rotation,
+        root = rotation_expr(HARMONICS[i] - HARMONICS[i - 1]),
+        clock = clock.shift(MAIN_START),
+        predicate = in_segment(T),
+    }
 end
-scene.parallel(
-    phase_dot,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = 0.18,
-        speed = TAU / T,
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    pulse,
-    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = T })
-)
+expr.bind {
+    object = phase_dot,
+    target = Transform.channel.position,
+    root = orbit2d(0.18, TAU / T, 0.0),
+    clock = clock.shift(MAIN_START),
+    predicate = in_segment(T),
+}
+expr.bind {
+    object = pulse,
+    target = Reveal.channel["end"],
+    root = ramp(0.0, 1.0, T),
+    clock = clock.shift(MAIN_START),
+    predicate = in_segment(T),
+}
 
 -- ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
-scene.animate(
-    camera,
-    scene.clip("Camera2DFraming", Curve.Ramp { from = 55.0, to = 90.0, dur = ZOOM }),
-    ZOOM
-)
-scene.parallel(
-    camera,
-    scene.clip("Camera2DFraming", Curve.Ramp2 {
-        from = Vec2 { x = 0.5, y = 0.0 },
-        to = Vec2 { x = -1.5, y = 0.0 },
-        dur = ZOOM,
-    })
-)
-
-scene.wait(HOLD)
-
-scene.animate(
-    camera,
-    scene.clip("Camera2DFraming", Curve.Ramp { from = 90.0, to = 55.0, dur = ZOOM }),
-    ZOOM
-)
-scene.parallel(
-    camera,
-    scene.clip("Camera2DFraming", Curve.Ramp2 {
-        from = Vec2 { x = -1.5, y = 0.0 },
-        to = Vec2 { x = 0.5, y = 0.0 },
-        dur = ZOOM,
-    })
-)
+local CAMERA_SCALE = Channel {
+    namespace = "zela.scene",
+    name = "Framing2D.scale",
+    ty = ChannelType.Number,
+}
+local CAMERA_CENTER = Channel {
+    namespace = "zela.scene",
+    name = "Framing2D.center",
+    ty = ChannelType.Vec2,
+}
+expr.bind {
+    object = camera,
+    target = CAMERA_SCALE,
+    root = ramp(55.0, 90.0, ZOOM),
+    clock = clock.shift(ZOOM_IN_START),
+    predicate = in_segment(ZOOM),
+}
+expr.bind {
+    object = camera,
+    target = CAMERA_CENTER,
+    root = ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
+    clock = clock.shift(ZOOM_IN_START),
+    predicate = in_segment(ZOOM),
+}
+expr.bind {
+    object = camera,
+    target = CAMERA_SCALE,
+    root = ramp(90.0, 55.0, ZOOM),
+    clock = clock.shift(ZOOM_OUT_START),
+    predicate = in_segment(ZOOM),
+}
+expr.bind {
+    object = camera,
+    target = CAMERA_CENTER,
+    root = ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
+    clock = clock.shift(ZOOM_OUT_START),
+    predicate = in_segment(ZOOM),
+}

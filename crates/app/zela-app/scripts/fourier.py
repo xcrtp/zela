@@ -21,6 +21,7 @@ import math
 
 import zela
 import zela.content as content
+import zela.math as expr
 import zela.scene as scene
 from zela import (
     Arrow,
@@ -28,7 +29,6 @@ from zela import (
     Camera2D,
     Circle,
     Color,
-    Curve,
     Fill,
     LineStyle,
     Name,
@@ -40,7 +40,6 @@ from zela import (
     Stroke,
     Text,
     Transform,
-    TransformChannel,
     Vec2,
 )
 
@@ -63,6 +62,66 @@ def q(v):
 
 def rgba(r, g, b, a):
     return Color(r=r, g=g, b=b, a=a)
+
+
+# 动画值域是 f32，而表达式层是 f64：`RoundF32` 在旧曲线的同一位置落位
+# （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+def f32(v):
+    return expr.RoundF32(of=v)
+
+
+def ramp(from_, to, dur):
+    return expr.Mix(
+        a=expr.pure(from_),
+        b=expr.pure(to),
+        t=expr.Clamp(
+            x=expr.Scale(k=1.0 / dur, of=expr.clock.time()),
+            lo=expr.pure(0.0),
+            hi=expr.pure(1.0),
+        ),
+    )
+
+
+def ramp2(ax, ay, bx, by, dur):
+    return expr.Mix(
+        a=expr.Vec2Of(x=expr.pure(ax), y=expr.pure(ay)),
+        b=expr.Vec2Of(x=expr.pure(bx), y=expr.pure(by)),
+        t=expr.Clamp(
+            x=expr.Scale(k=1.0 / dur, of=expr.clock.time()),
+            lo=expr.pure(0.0),
+            hi=expr.pure(1.0),
+        ),
+    )
+
+
+def orbit2d(radius, speed, initial_angle):
+    """`Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。"""
+    angle = expr.Add(
+        a=expr.Mul(f32(expr.pure(speed)), expr.clock.time()),
+        b=f32(expr.pure(initial_angle)),
+    )
+    return expr.Vec3FromVec2(
+        v=expr.Vec2Of(
+            x=f32(expr.Mul(f32(expr.pure(radius)), f32(expr.Cos(of=angle)))),
+            y=f32(expr.Mul(f32(expr.pure(radius)), f32(expr.Sin(of=angle)))),
+        ),
+        z=expr.pure(0.0),
+    )
+
+
+def in_segment(dur):
+    """旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。"""
+    return expr.Predicate.Of(
+        expr=expr.And(
+            a=expr.Ge(a=expr.clock.time(), b=expr.pure(0.0)),
+            b=expr.Lt(a=expr.clock.time(), b=expr.pure(dur)),
+        )
+    )
+
+
+MAIN_START = FADE
+ZOOM_IN_START = FADE + T
+ZOOM_OUT_START = ZOOM_IN_START + ZOOM + HOLD
 
 
 def amplitude(k):
@@ -208,74 +267,110 @@ scene.spawn(
     ]
 )
 
-# ── 3. 曲线淡入（S6 Opacity）─────────────────────────────────────────
-scene.animate(
-    curve,
-    scene.clip("OpacityValue", Curve.Ramp(0.0, 1.0, FADE)),
-    FADE,
+# ── 3. 曲线淡入（S6 Opacity，段 [0, FADE)）────────────────────────────
+expr.bind(
+    expr.Bind(
+        object=curve,
+        target=Opacity.channel.value,
+        root=ramp(0.0, 1.0, FADE),
+        clock=expr.clock.shift(0.0),
+        predicate=in_segment(FADE),
+    )
 )
-scene.parallel(
-    pulse,
-    scene.clip("OpacityValue", Curve.Ramp(0.0, 1.0, FADE)),
+expr.bind(
+    expr.Bind(
+        object=pulse,
+        target=Opacity.channel.value,
+        root=ramp(0.0, 1.0, FADE),
+        clock=expr.clock.shift(0.0),
+        predicate=in_segment(FADE),
+    )
 )
+
 
 # ── 4. 主段：所有向量自转（S3 Rotation），相位点公转（S4 Orbit），脉冲书写
-def rotation_clip(delta):
-    return scene.clip_transform(
-        TransformChannel.Rotation,
-        Curve.Ramp(0.0, TAU * delta, T),
-    )
+def rotation_expr(delta):
+    return ramp(0.0, TAU * delta, T)
 
 
-scene.animate(arrows[0], rotation_clip(1), T)
-for i in range(1, len(HARMONICS)):
-    scene.parallel(
-        arrows[i],
-        rotation_clip(HARMONICS[i] - HARMONICS[i - 1]),
+expr.bind(
+    expr.Bind(
+        object=arrows[0],
+        target=Transform.channel.rotation,
+        root=rotation_expr(1),
+        clock=expr.clock.shift(MAIN_START),
+        predicate=in_segment(T),
     )
-scene.parallel(
-    phase_dot,
-    scene.clip_transform(
-        TransformChannel.Position,
-        Curve.Orbit(radius=0.18, speed=TAU / T, initial_angle=0.0),
-    ),
 )
-scene.parallel(
-    pulse,
-    scene.clip("RevealRange", Curve.Ramp(0.0, 1.0, T)),
+for i in range(1, len(HARMONICS)):
+    expr.bind(
+        expr.Bind(
+            object=arrows[i],
+            target=Transform.channel.rotation,
+            root=rotation_expr(HARMONICS[i] - HARMONICS[i - 1]),
+            clock=expr.clock.shift(MAIN_START),
+            predicate=in_segment(T),
+        )
+    )
+expr.bind(
+    expr.Bind(
+        object=phase_dot,
+        target=Transform.channel.position,
+        root=orbit2d(0.18, TAU / T, 0.0),
+        clock=expr.clock.shift(MAIN_START),
+        predicate=in_segment(T),
+    )
+)
+expr.bind(
+    expr.Bind(
+        object=pulse,
+        target=Reveal.channel.end,
+        root=ramp(0.0, 1.0, T),
+        clock=expr.clock.shift(MAIN_START),
+        predicate=in_segment(T),
+    )
 )
 
 # ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
-scene.animate(
-    camera,
-    scene.clip(
-        "Camera2DFraming",
-        Curve.Ramp(55.0, 90.0, ZOOM),
-    ),
-    ZOOM,
+CAMERA_SCALE = expr.Channel(
+    namespace="zela.scene", name="Framing2D.scale", ty=expr.ChannelType.Number
 )
-scene.parallel(
-    camera,
-    scene.clip(
-        "Camera2DFraming",
-        Curve.Ramp2(Vec2(x=0.5, y=0.0), Vec2(x=-1.5, y=0.0), ZOOM),
-    ),
+CAMERA_CENTER = expr.Channel(
+    namespace="zela.scene", name="Framing2D.center", ty=expr.ChannelType.Vec2
 )
-
-scene.wait(HOLD)
-
-scene.animate(
-    camera,
-    scene.clip(
-        "Camera2DFraming",
-        Curve.Ramp(90.0, 55.0, ZOOM),
-    ),
-    ZOOM,
+expr.bind(
+    expr.Bind(
+        object=camera,
+        target=CAMERA_SCALE,
+        root=ramp(55.0, 90.0, ZOOM),
+        clock=expr.clock.shift(ZOOM_IN_START),
+        predicate=in_segment(ZOOM),
+    )
 )
-scene.parallel(
-    camera,
-    scene.clip(
-        "Camera2DFraming",
-        Curve.Ramp2(Vec2(x=-1.5, y=0.0), Vec2(x=0.5, y=0.0), ZOOM),
-    ),
+expr.bind(
+    expr.Bind(
+        object=camera,
+        target=CAMERA_CENTER,
+        root=ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
+        clock=expr.clock.shift(ZOOM_IN_START),
+        predicate=in_segment(ZOOM),
+    )
+)
+expr.bind(
+    expr.Bind(
+        object=camera,
+        target=CAMERA_SCALE,
+        root=ramp(90.0, 55.0, ZOOM),
+        clock=expr.clock.shift(ZOOM_OUT_START),
+        predicate=in_segment(ZOOM),
+    )
+)
+expr.bind(
+    expr.Bind(
+        object=camera,
+        target=CAMERA_CENTER,
+        root=ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
+        clock=expr.clock.shift(ZOOM_OUT_START),
+        predicate=in_segment(ZOOM),
+    )
 )

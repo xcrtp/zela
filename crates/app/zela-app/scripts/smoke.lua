@@ -32,12 +32,31 @@ local curve = scene.spawn({
     Stroke { width = 2.0, color = Color { r = 255, g = 220, b = 120, a = 255 } },
 })
 
-scene.animate(
-    dot,
-    scene.clip("CircleRadius", Curve.Ramp { from = 0.8, to = 1.6, dur = T }),
-    T
-)
-scene.parallel(
-    curve,
-    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = T })
-)
+-- 动画：`Ramp` 的算子化形态 —— `mix(from, to, clamp(t / dur, 0, 1))`。
+-- `t` 是**显式时钟**的局部时间（第 5a 批：不再有 `scene.animate` 的隐式游标）。
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+expr.bind {
+    object = dot,
+    target = Circle.channel.radius,
+    root = ramp(0.8, 1.6, T),
+    clock = clock.scale(1.0),
+    duration = T,
+}
+expr.bind {
+    object = curve,
+    target = Reveal.channel["end"],
+    root = ramp(0.0, 1.0, T),
+    clock = clock.scale(1.0),
+    duration = T,
+}

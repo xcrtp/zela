@@ -16,6 +16,36 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, T)`（段外由 Hold 钳到两端）。
+local WINDOW = Predicate.Of {
+    expr = And {
+        a = Ge { a = clock.time(), b = expr.pure(0.0) },
+        b = Lt { a = clock.time(), b = expr.pure(T) },
+    },
+}
+
+local function bind(object, target, root)
+    expr.bind {
+        object = object,
+        target = target,
+        root = root,
+        clock = clock.scale(1.0),
+        predicate = WINDOW,
+    }
+end
+
 -- 相机：略微俯视，两个立方体都在视野内。
 scene.spawn({
     Camera3D {
@@ -61,32 +91,12 @@ local to_metal = cube(-1.2, 0.0, 0.5, rgba(220, 226, 235, 255))
 local to_matte = cube(1.2, 0.9, 0.3, rgba(215, 120, 80, 255))
 
 -- 左：电介质 → 金属（metallic 0 → 1），同时抛光（roughness 0.5 → 0.15）。
-scene.animate(to_metal, scene.clip("Material3D.metallic", Curve.Ramp {
-    from = 0.0,
-    to = 1.0,
-    dur = T,
-}), T)
-scene.parallel(to_metal, scene.clip("Material3D.roughness", Curve.Ramp {
-    from = 0.5,
-    to = 0.15,
-    dur = T,
-}))
+bind(to_metal, Material3D.channel.metallic, ramp(0.0, 1.0, T))
+bind(to_metal, Material3D.channel.roughness, ramp(0.5, 0.15, T))
 
 -- 右：金属 → 电介质（metallic 0.9 → 0.1），同时变哑（roughness 0.3 → 0.8）。
-scene.parallel(to_matte, scene.clip("Material3D.metallic", Curve.Ramp {
-    from = 0.9,
-    to = 0.1,
-    dur = T,
-}))
-scene.parallel(to_matte, scene.clip("Material3D.roughness", Curve.Ramp {
-    from = 0.3,
-    to = 0.8,
-    dur = T,
-}))
+bind(to_matte, Material3D.channel.metallic, ramp(0.9, 0.1, T))
+bind(to_matte, Material3D.channel.roughness, ramp(0.3, 0.8, T))
 
 -- 点光：0.4 → 2.2（暗场到亮场）。
-scene.parallel(key, scene.clip("Light.intensity", Curve.Ramp {
-    from = 0.4,
-    to = 2.2,
-    dur = T,
-}))
+bind(key, Light.channel.intensity, ramp(0.4, 2.2, T))

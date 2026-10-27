@@ -183,6 +183,14 @@ const NORMALIZE: OpSig = OpSig {
     variadic: false,
 };
 
+/// `round_f32(x)`：`F64 → F64`（落成 f32 再升回；逐位复刻旧曲线用）。
+const ROUND_F32: OpSig = OpSig {
+    params: &[F64],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
 /// 比较：数值 → Bool。
 const CMP_NUM: OpSig = OpSig {
     params: &[F64, F64],
@@ -361,6 +369,13 @@ pub static SIGNATURES: &[OpDef] = &[
         sigs: &[NORMALIZE],
         since: 11,
         changed: 11,
+    },
+    OpDef {
+        name: "round_f32",
+        spec: "zela.math.RoundF32",
+        sigs: &[ROUND_F32],
+        since: 12,
+        changed: 12,
     },
     OpDef {
         name: "lt",

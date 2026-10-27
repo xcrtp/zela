@@ -26,6 +26,62 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+-- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+local function f32(v)
+    return RoundF32 { of = v }
+end
+
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+local function sin_curve(base, amp, omega)
+    local angle = Mul(f32(expr.pure(omega)), clock.time())
+    local s = f32(Sin { of = angle })
+    local prod = f32(Mul(f32(expr.pure(amp)), s))
+    return f32(Add { a = f32(expr.pure(base)), b = prod })
+end
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+local function orbit2d(radius, speed, initial_angle)
+    local angle = Add {
+        a = Mul(f32(expr.pure(speed)), clock.time()),
+        b = f32(expr.pure(initial_angle)),
+    }
+    return Vec3FromVec2 {
+        v = Vec2Of {
+            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
+            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
+        },
+        z = expr.pure(0.0),
+    }
+end
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+local function in_segment(dur)
+    return Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(dur) },
+        },
+    }
+end
+
+-- 串行段起点（旧 `scene.animate` 的全局游标）。
+local PRE_RUN = 1.2      -- 两条轨道环各写 1.2s
+local MAIN_START = 2.4   -- 预演段之后
+local COMET_START = MAIN_START + MAIN
+
 -- 2D 相机（渲染器要求 Framing2D；世界中心对准轨道原点）。
 scene.spawn({
     Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
@@ -90,83 +146,83 @@ local comet = scene.spawn({
 })
 
 -- ── 预演段（0–2.4s）：两条轨道环先后书写 ────────────────────────────
-scene.animate(
-    ring1,
-    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
-    1.2
-)
-scene.animate(
-    ring2,
-    scene.clip("RevealRange", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
-    1.2
-)
+expr.bind {
+    object = ring1,
+    target = Reveal.channel["end"],
+    root = ramp(0.0, 1.0, PRE_RUN),
+    clock = clock.shift(0.0),
+    predicate = in_segment(PRE_RUN),
+}
+expr.bind {
+    object = ring2,
+    target = Reveal.channel["end"],
+    root = ramp(0.0, 1.0, PRE_RUN),
+    clock = clock.shift(PRE_RUN),
+    predicate = in_segment(PRE_RUN),
+}
 
 -- ── 主段（2.4–10.4s）：太阳呼吸 + 行星 / 卫星公转 + 淡入（并行轨道）──
-scene.animate(
-    sun,
-    scene.clip_transform(TransformChannel.Scale, Curve.Sin {
-        base = 1.0,
-        amp = 0.12,
-        omega = 1.5,
-    }),
-    MAIN
-)
-scene.parallel(
-    planet1,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = q(R1),
-        speed = q(TAU / 3.0),
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    planet2,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = q(R2),
-        speed = q(TAU / 6.0),
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    moon,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = 0.32,
-        speed = q(TAU / 0.9),
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    ring1,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    ring2,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    planet1,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    planet2,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    moon,
-    scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
+expr.bind {
+    object = sun,
+    target = Transform.channel.scale,
+    root = sin_curve(1.0, 0.12, 1.5),
+    clock = clock.shift(MAIN_START),
+    predicate = in_segment(MAIN),
+}
+expr.bind {
+    object = planet1,
+    target = Transform.channel.position,
+    root = orbit2d(q(R1), q(TAU / 3.0), 0.0),
+    clock = clock.shift(MAIN_START),
+    predicate = in_segment(MAIN),
+}
+expr.bind {
+    object = planet2,
+    target = Transform.channel.position,
+    root = orbit2d(q(R2), q(TAU / 6.0), 0.0),
+    clock = clock.shift(MAIN_START),
+    predicate = in_segment(MAIN),
+}
+expr.bind {
+    object = moon,
+    target = Transform.channel.position,
+    root = orbit2d(0.32, q(TAU / 0.9), 0.0),
+    clock = clock.shift(MAIN_START),
+    predicate = in_segment(MAIN),
+}
+for _, object in ipairs({ ring1, ring2, planet1, planet2, moon }) do
+    expr.bind {
+        object = object,
+        target = Opacity.channel.value,
+        root = ramp(0.0, 1.0, 1.0),
+        clock = clock.shift(MAIN_START),
+        predicate = in_segment(MAIN),
+    }
+end
 
 -- ── 段 3（10.4–11.9s）：流星划过并淡出 ──────────────────────────────
-scene.animate(
-    comet,
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = 2.6, y = 1.9 },
-        to = Vec2 { x = -2.6, y = 1.9 },
-        dur = COMET_DUR,
-    }),
-    COMET_DUR
-)
-scene.parallel(
-    comet,
-    scene.clip("OpacityValue", Curve.Ramp { from = 1.0, to = 0.0, dur = COMET_DUR })
-)
+expr.bind {
+    object = comet,
+    target = Transform.channel.position,
+    root = Vec3FromVec2 {
+        v = Mix {
+            a = Vec2Of { x = expr.pure(2.6), y = expr.pure(1.9) },
+            b = Vec2Of { x = expr.pure(-2.6), y = expr.pure(1.9) },
+            t = Clamp {
+                x = Scale { k = 1.0 / COMET_DUR, of = clock.time() },
+                lo = expr.pure(0.0),
+                hi = expr.pure(1.0),
+            },
+        },
+        z = expr.pure(0.0),
+    },
+    clock = clock.shift(COMET_START),
+    predicate = in_segment(COMET_DUR),
+}
+expr.bind {
+    object = comet,
+    target = Opacity.channel.value,
+    root = ramp(1.0, 0.0, COMET_DUR),
+    clock = clock.shift(COMET_START),
+    predicate = in_segment(COMET_DUR),
+}

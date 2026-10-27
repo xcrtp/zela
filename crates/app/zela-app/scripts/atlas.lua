@@ -64,16 +64,24 @@ local plane = scene.spawn({
     },
 })
 
--- 动画：绕 Z 轴小幅摆动（Rotation 通道 = 绕 Z 的弧度），
+-- 动画：绕 Z 轴小幅摆动（`Transform.rotation` = 绕 Z 的弧度），
 -- 证明纹理随时间跟着 3D 载体走；幅度小到公式始终可读、不出画面。
-scene.animate(
-    plane,
-    scene.clip_transform(
-        TransformChannel.Rotation,
-        Curve.Ramp { from = -0.18, to = 0.18, dur = T }
-    ),
-    T
-)
+-- `Ramp` ⇒ `mix(from, to, clamp(t / T, 0, 1))`（显式时钟，无隐式游标）。
+expr.bind {
+    object = plane,
+    target = Transform.channel.rotation,
+    root = Mix {
+        a = expr.pure(-0.18),
+        b = expr.pure(0.18),
+        t = Clamp {
+            x = Scale { k = 1.0 / T, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    },
+    clock = clock.scale(1.0),
+    duration = T,
+}
 
 -- 光照 + 3D 相机（视线正对纸片；距离按可见宽度 ≥ 平面宽度取 9）。
 scene.spawn({

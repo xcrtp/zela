@@ -306,6 +306,13 @@ pub struct NormalizeSpec {
     pub v: Handle,
 }
 
+/// `round_f32(x)`：把数值落成 f32 再升回 f64（逐位复刻旧曲线的精度口径）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.RoundF32")]
+pub struct RoundF32Spec {
+    pub of: Handle,
+}
+
 /// `Sum { terms = { ... } }`。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Sum")]
@@ -392,7 +399,7 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "11",
+    version = "12",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -481,6 +488,9 @@ pub struct MathApi<'a> {
     /// `normalize(v)`：单位向量（零向量保持零）。
     pub normalize: fn(&'a dyn Pod, spec: NormalizeSpec) -> Handle,
 
+    /// `round_f32(x)`：落成 f32 再升回 f64（第 5a 批：旧曲线的逐位等价工具）。
+    pub round_f32: fn(&'a dyn Pod, spec: RoundF32Spec) -> Handle,
+
     /// `Lt { a = ..., b = ... }`：`a < b`（数值 → `Bool`）。
     pub lt: fn(&'a dyn Pod, spec: LtSpec) -> Handle,
 
@@ -553,9 +563,10 @@ pub struct MathApi<'a> {
 /// `@10`（第 2 批）：`Channel` 增加结构化 `ty`，`Read` 去掉 `ty` 字符串。
 /// `@11`（第 3 批）：新增转换算子族 `splat` / `vec3_from_vec2` / `vec2_from_vec3` /
 /// `length` / `normalize`。
-pub const MATH_API_VERSION: &str = "11";
+/// `@12`（第 5a 批）：新增 `round_f32`（旧曲线的 f32 精度落位，供逐位迁移）。
+pub const MATH_API_VERSION: &str = "12";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 6_327_976_336_490_177_055;
+pub const MATH_API_FINGERPRINT: u64 = 14_108_612_611_961_094_925;
 
 #[cfg(test)]
 mod fingerprint_tests {

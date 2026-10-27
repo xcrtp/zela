@@ -946,7 +946,7 @@ mod tests {
     struct BindRow {
         object: usize,
         offset: f64,
-        span: (f64, f64),
+        span: Option<(f64, f64)>,
         mode: String,
         target: String,
         curve: String,
@@ -1427,7 +1427,8 @@ mod tests {
             .iter()
             .map(|binding| {
                 let node = forest.get(binding.clock).expect("时钟节点在");
-                let span = node.span.expect("Timeline 编译的节点必有 span");
+                // 表达式绑定没有段 span（区间由 predicate 决定）⇒ `None` 是合法状态。
+                let span = node.span;
                 let object = ids
                     .iter()
                     .position(|id| *id == binding.target.target_id())
@@ -1442,6 +1443,58 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    /// 绑定的**布局行**（对象 / 起点 / target）：跨「旧 Play 段」与「表达式绑定」可比。
+    ///
+    /// 硬编码分镜仍是 `Timeline::play` 的段语义（`span` + `Curve`），而脚本版已迁移到
+    /// `expr.bind`（无 span、driver 是表达式树）—— 两者只能在前三项上全等。
+    fn binding_layout_rows(
+        forest: &ClockForest,
+        bindings: &BindingTable,
+        ids: &[zela_scene_ecs::contract::ObjectId],
+    ) -> Vec<(usize, f64, String)> {
+        bindings
+            .bindings
+            .iter()
+            .map(|binding| {
+                let node = forest.get(binding.clock).expect("时钟节点在");
+                let object = ids
+                    .iter()
+                    .position(|id| *id == binding.target.target_id())
+                    .expect("target 必须指向本场景对象");
+                // 旧组合目标 → 新单字段通道的**同一化**（只影响测试比较）：
+                // `RevealRange` = `Reveal.end`；`Camera2DFraming` 拆成
+                // `Framing2D.scale` / `Framing2D.center`（归一成同一标签）。
+                let target = match binding.target.name() {
+                    "RevealRange" => "Reveal.end",
+                    "Camera2DFraming" | "Framing2D.scale" | "Framing2D.center" => "Framing2D.*",
+                    other => other,
+                }
+                .to_string();
+                (object, node.local_offset, target)
+            })
+            .collect()
+    }
+
+    /// 布局行比较：对象 / target 必须全等，**起点允许 1e-9 的浮点累加差**
+    /// （硬编码参考按"逐段累加游标"算起点，脚本按 `3.5 + i × each` 算）。
+    fn assert_layout_matches(
+        a: &[(usize, f64, String)],
+        b: &[(usize, f64, String)],
+    ) {
+        assert_eq!(a.len(), b.len(), "绑定数必须一致");
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.0, y.0, "对象下标必须一致");
+            assert!(
+                (x.1 - y.1).abs() < 1e-9,
+                "起点不一致：{} vs {}（target {}）",
+                x.1,
+                y.1,
+                x.2
+            );
+            assert_eq!(x.2, y.2, "target 必须一致");
+        }
     }
 
     /// **W3 验收**：脚本版（全部 6 镜头）与硬编码版逐对象、逐绑定相等。
@@ -1480,9 +1533,14 @@ mod tests {
             .collect();
         assert_eq!(fingerprints_a, fingerprints_b, "组件类型与值必须逐对象相等");
 
-        let rows_a = binding_rows(&sb.forest, &sb.bindings, &ids_a);
-        let rows_b = binding_rows(&recipe.forest, &recipe.bindings, &ids_b);
-        assert_eq!(rows_a, rows_b, "时序 / 曲线 / target 必须全等");
+        // 硬编码参考仍是 `Timeline::play`（段语义），脚本已迁移到 `expr.bind`
+        // ⇒ 只比较「对象 / 起点 / target」；曲线等价由 36 条像素基线守住。
+        // 顺序不保证（组合目标拆成两条单字段绑定）⇒ 排序后比较。
+        let mut rows_a = binding_layout_rows(&sb.forest, &sb.bindings, &ids_a);
+        let mut rows_b = binding_layout_rows(&recipe.forest, &recipe.bindings, &ids_b);
+        rows_a.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        rows_b.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        assert_layout_matches(&rows_a, &rows_b);
 
         eprintln!(
             "[W3] 对象 {} / 绑定 {}；前 3 个对象指纹:\n{:#?}",
@@ -1530,9 +1588,12 @@ mod tests {
             .collect();
         assert_eq!(fingerprints_a, fingerprints_b, "组件类型与值必须逐对象相等");
 
-        let rows_a = binding_rows(&sb.forest, &sb.bindings, &ids_a);
-        let rows_b = binding_rows(&recipe.forest, &recipe.bindings, &ids_b);
-        assert_eq!(rows_a, rows_b, "时序 / 曲线 / target 必须全等");
+        // 同 `script_storyboard_matches_hardcoded`：硬编码参考仍是段语义。
+        let mut rows_a = binding_layout_rows(&sb.forest, &sb.bindings, &ids_a);
+        let mut rows_b = binding_layout_rows(&recipe.forest, &recipe.bindings, &ids_b);
+        rows_a.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        rows_b.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        assert_layout_matches(&rows_a, &rows_b);
 
         eprintln!(
             "[D-PY] 对象 {} / 绑定 {}",
@@ -1743,9 +1804,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             "逐对象组件指纹必须一致"
         );
         assert_eq!(
-            binding_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
-            binding_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
-            "时序 / 曲线 / target 必须一致"
+            binding_layout_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
+            binding_layout_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
+            "起点 / target 必须一致（表达式逐字节相等由上一行的 JSON 断言守住）"
         );
     }
 
@@ -1811,11 +1872,12 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
                 .collect::<Vec<_>>(),
             "逐对象 3D 组件指纹必须一致"
         );
-        // 3D 动画（Rotation / Position 并行 + Scale）：时序、曲线、target 必须一致。
+        // 3D 动画（Rotation / Position 并行 + Scale）：起点 / target 必须一致
+        // （表达式逐字节相等由上面的规范 JSON 断言守住）。
         assert_eq!(
-            binding_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
-            binding_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
-            "3D 动画时序 / 曲线 / target 必须一致"
+            binding_layout_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
+            binding_layout_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
+            "3D 动画起点 / target 必须一致"
         );
     }
 

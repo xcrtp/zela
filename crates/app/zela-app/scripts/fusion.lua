@@ -11,6 +11,19 @@
 
 local T = 3.0
 
+-- `Ramp` 的算子化形态：`mix(from, to, clamp(t / dur, 0, 1))`（显式时钟）。
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
 -- 半透明红色立方体（双面）。
 local red = scene.spawn({
     Cube { half_extent = 1.0, solid = true },
@@ -69,22 +82,27 @@ scene.spawn({
 })
 
 -- 两个透明体反向旋转（让相交区域的混合顺序变化可见）。
-scene.animate(
-    red,
-    scene.clip_transform(
-        TransformChannel.Rotation,
-        Curve.Ramp { from = 0.0, to = 6.28318530718, dur = T }
-    ),
-    T
-)
-scene.animate(
-    blue,
-    scene.clip_transform(
-        TransformChannel.Rotation,
-        Curve.Ramp { from = 6.28318530718, to = 0.0, dur = T }
-    ),
-    T
-)
+-- 旧 `scene.animate` 是**顺序**追加的段：红体在 [0, T)，蓝体在 [T, 2T)；
+-- 这里用显式时钟还原同一时间轴（蓝体的时钟整体后移 T，predicate 限定本段）。
+expr.bind {
+    object = red,
+    target = Transform.channel.rotation,
+    root = ramp(0.0, 6.28318530718, T),
+    clock = clock.scale(1.0),
+    duration = T,
+}
+expr.bind {
+    object = blue,
+    target = Transform.channel.rotation,
+    root = ramp(6.28318530718, 0.0, T),
+    clock = clock.shift(T),
+    predicate = Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(T) },
+        },
+    },
+}
 
 -- 方向光（方向 = 光传播方向，世界空间）。
 scene.spawn({

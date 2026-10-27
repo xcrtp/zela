@@ -21,6 +21,41 @@
 
 local T = 3.0 -- 唯一动画段时长（秒）
 
+-- 旧 `Step::Play` 区间 `[0, T)`（显式时钟；段外由 Hold 钳到两端）。
+local function in_segment(dur)
+    return Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(dur) },
+        },
+    }
+end
+
+-- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
+local function f32(v)
+    return RoundF32 { of = v }
+end
+
+-- `Phase { omega }`：`omega × t`（`t` 是时钟局部时间；与旧曲线的 f32 口径一致）。
+local function phase(omega)
+    return f32(Mul(f32(expr.pure(omega)), f32(clock.time())))
+end
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+local function orbit2d(radius, speed, initial_angle)
+    local angle = Add {
+        a = Mul(f32(expr.pure(speed)), clock.time()),
+        b = f32(expr.pure(initial_angle)),
+    }
+    return Vec3FromVec2 {
+        v = Vec2Of {
+            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
+            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
+        },
+        z = expr.pure(0.0),
+    }
+end
+
 local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
@@ -55,7 +90,19 @@ local morph = scene.spawn({
     Stroke { width = 6.0, color = rgba(120, 255, 160, 255) },
     layer,
 })
-scene.animate(morph, scene.clip("MorphT", Curve.Phase { omega = 0.3 }), T)
+-- ⑤ Morph：形变进度由 `MorphShape.t` 线性推进到 0.9（显式时钟，段 [0, T)）。
+expr.bind {
+    object = morph,
+    -- `Morph` 的存储组件是 `MorphShape`（通道挂在存储组件上，故显式构造键）。
+    target = Channel {
+        namespace = "zela.scene",
+        name = "MorphShape.t",
+        ty = ChannelType.Number,
+    },
+    root = phase(0.3),
+    clock = clock.scale(1.0),
+    predicate = in_segment(T),
+}
 
 -- ④ 相位目标：挂在右侧圆上；`phase` 每帧被写（无消费者 ⇒ 画面不变，见文件头）。
 local phase_dot = scene.spawn({
@@ -64,7 +111,13 @@ local phase_dot = scene.spawn({
     PhaseAnim { phase = 0.0, omega = 0.0 },
     layer,
 })
-scene.parallel(phase_dot, scene.clip("Phase", Curve.Phase { omega = 1.0 }))
+expr.bind {
+    object = phase_dot,
+    target = PhaseAnim.channel.phase,
+    root = phase(1.0),
+    clock = clock.scale(1.0),
+    predicate = in_segment(T),
+}
 
 -- ③ 常量曲线：整段保持 0.6（对照上面两条"随时间变化"的曲线）。
 local dim_dot = scene.spawn({
@@ -72,7 +125,13 @@ local dim_dot = scene.spawn({
     Fill { color = rgba(90, 190, 255, 255) },
     layer,
 })
-scene.parallel(dim_dot, scene.clip("OpacityValue", Curve.Const { value = 0.6 }))
+expr.bind {
+    object = dim_dot,
+    target = Opacity.channel.value,
+    root = expr.pure(0.6),
+    clock = clock.scale(1.0),
+    predicate = in_segment(T),
+}
 
 -- ⑥ 相机运镜：3D 相机在 XY 平面绕原点公转。
 --    `up = +Z` 不能省 —— 视线落在 XY 平面内，`up = +Y` 在 eye 转到 ±Y 轴时与视线
@@ -85,11 +144,14 @@ local cam3 = scene.spawn({
         fov_y = 0.7,
     },
 })
-scene.parallel(cam3, scene.clip("CameraEye", Curve.Orbit {
-    radius = 9.0,
-    speed = 0.5,
-    initial_angle = 0.0,
-}))
+-- ⑥ 相机运镜：`Orbit2D` 的算子化形态（f32 口径，与旧曲线逐位一致）。
+expr.bind {
+    object = cam3,
+    target = Camera3D.channel.eye,
+    root = orbit2d(9.0, 0.5, 0.0),
+    clock = clock.scale(1.0),
+    predicate = in_segment(T),
+}
 
 -- 立方体：Flat 着色不依赖光源 ⇒ 不需要 Light 组件。
 scene.spawn({

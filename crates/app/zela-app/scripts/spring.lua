@@ -22,6 +22,45 @@ local function rgba(r, g, b, a)
     return Color { r = r, g = g, b = b, a = a }
 end
 
+-- `Ramp` / `Ramp2` 的算子化形态（显式时钟；`t` 是时钟局部时间）。
+local function ramp(from, to, dur)
+    return Mix {
+        a = expr.pure(from),
+        b = expr.pure(to),
+        t = Clamp {
+            x = Scale { k = 1.0 / dur, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+end
+
+-- `Transform.position` 的字段类型是 `Vec3`；旧的 `Ramp2`（Vec2）在这里显式补 z。
+local function move2(ax, ay, bx, by, dur)
+    return Vec3FromVec2 {
+        v = Mix {
+            a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
+            b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
+            t = Clamp {
+                x = Scale { k = 1.0 / dur, of = clock.time() },
+                lo = expr.pure(0.0),
+                hi = expr.pure(1.0),
+            },
+        },
+        z = expr.pure(0.0),
+    }
+end
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+local function in_segment(dur)
+    return Predicate.Of {
+        expr = And {
+            a = Ge { a = clock.time(), b = expr.pure(0.0) },
+            b = Lt { a = clock.time(), b = expr.pure(dur) },
+        },
+    }
+end
+
 -- 地面线（始终可见）。
 scene.spawn({
     Polyline {
@@ -39,6 +78,9 @@ local camera = scene.spawn({
 })
 
 -- 一只小球的完整弹跳：下落（挤压）→ 弹起（拉伸）→ 回落归一。
+-- 旧 `scene.animate` 是顺序追加的段 ⇒ 这里显式维护同一个游标。
+local cursor = 0.0
+
 local function hop(x, color)
     local b = scene.spawn({
         Circle { x = 0.0, y = 0.0, r = 0.28 },
@@ -47,58 +89,77 @@ local function hop(x, color)
         Opacity { value = 0.0 },
     })
 
-    -- 下落 + 落地挤压 + 淡入（并行）。
-    scene.animate(
-        b,
-        scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-            from = Vec2 { x = x, y = q(HOP_HI) },
-            to = Vec2 { x = x, y = q(FLOOR_Y) },
-            dur = DOWN,
-        }),
-        DOWN
-    )
-    scene.parallel(
-        b,
-        scene.clip_transform(TransformChannel.Scale, Curve.Ramp { from = 1.0, to = 0.7, dur = DOWN })
-    )
-    scene.parallel(
-        b,
-        scene.clip("OpacityValue", Curve.Ramp { from = 0.0, to = 1.0, dur = 0.3 })
-    )
+    local down = cursor
+    local up = down + DOWN
+    local settle = up + UP
 
-    -- 弹起 + 离地拉伸（并行）。
-    scene.animate(
-        b,
-        scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-            from = Vec2 { x = x, y = q(FLOOR_Y) },
-            to = Vec2 { x = x, y = q(HOP_HI) },
-            dur = UP,
-        }),
-        UP
-    )
-    scene.parallel(
-        b,
-        scene.clip_transform(TransformChannel.Scale, Curve.Ramp { from = 0.7, to = 1.15, dur = UP })
-    )
+    -- 下落 + 落地挤压 + 淡入（同一段 [down, down+DOWN)）。
+    expr.bind {
+        object = b,
+        target = Transform.channel.position,
+        root = move2(x, q(HOP_HI), x, q(FLOOR_Y), DOWN),
+        clock = clock.shift(down),
+        predicate = in_segment(DOWN),
+    }
+    expr.bind {
+        object = b,
+        target = Transform.channel.scale,
+        root = ramp(1.0, 0.7, DOWN),
+        clock = clock.shift(down),
+        predicate = in_segment(DOWN),
+    }
+    expr.bind {
+        object = b,
+        target = Opacity.channel.value,
+        root = ramp(0.0, 1.0, 0.3),
+        clock = clock.shift(down),
+        predicate = in_segment(DOWN),
+    }
+
+    -- 弹起 + 离地拉伸（同一段 [up, up+UP)）。
+    expr.bind {
+        object = b,
+        target = Transform.channel.position,
+        root = move2(x, q(FLOOR_Y), x, q(HOP_HI), UP),
+        clock = clock.shift(up),
+        predicate = in_segment(UP),
+    }
+    expr.bind {
+        object = b,
+        target = Transform.channel.scale,
+        root = ramp(0.7, 1.15, UP),
+        clock = clock.shift(up),
+        predicate = in_segment(UP),
+    }
 
     -- 回落归一（只动 Scale，Position 不再写）。
-    scene.animate(
-        b,
-        scene.clip_transform(TransformChannel.Scale, Curve.Ramp { from = 1.15, to = 1.0, dur = SETTLE }),
-        SETTLE
-    )
+    expr.bind {
+        object = b,
+        target = Transform.channel.scale,
+        root = ramp(1.15, 1.0, SETTLE),
+        clock = clock.shift(settle),
+        predicate = in_segment(SETTLE),
+    }
+
+    cursor = settle + SETTLE
 end
 
--- 三只球错峰弹跳：wait 推全局游标，让每只球的段序列错开。
+-- 三只球错峰弹跳：旧 `scene.wait` 只推进游标（没有写入）。
 hop(-1.2, rgba(255, 120, 120, 255))
-scene.wait(0.4)
+cursor = cursor + 0.4
 hop(0.0, rgba(120, 220, 130, 255))
-scene.wait(0.4)
+cursor = cursor + 0.4
 hop(1.2, rgba(140, 170, 255, 255))
 
 -- 收尾推近（最后一段）。
-scene.animate(
-    camera,
-    scene.clip("Camera2DFraming", Curve.Ramp { from = 55.0, to = 74.0, dur = 1.3 }),
-    1.3
-)
+expr.bind {
+    object = camera,
+    target = Channel {
+        namespace = "zela.scene",
+        name = "Framing2D.scale",
+        ty = ChannelType.Number,
+    },
+    root = ramp(55.0, 74.0, 1.3),
+    clock = clock.shift(cursor),
+    predicate = in_segment(1.3),
+}

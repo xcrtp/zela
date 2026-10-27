@@ -1013,7 +1013,9 @@
 
 | AK-04 | **函数级版本标注（第 4 批）** | 表达式 / 产物 / 回放 | **已关闭（4）** | `OpDef` 增加 `since` / `changed`（revision 取算子库版本序号：既有 = 1、第 1 批 = 9、第 3 批 = 11）；`LibraryRef` 增加 `op_revisions: BTreeMap<String,(u32,u32)>`（`#[serde(default)]`：老 payload 解成空表 ⇒ 回放路径合法）。装配期由 `ze_pod_func::collect_op_revisions`（实现在函子库内，算子身份与 revision 同源）把**每条绑定实际用到的值算子**（含 predicate）写进产物；加载期 `zela-playback::build_bundle_runtime` 在 `bundle.script()` 之后逐个比对，不符 ⇒ `check_op_revisions` **点名算子**（不是笼统的库版本不符），也不整库作废。验收：`op_revisions_follow_the_batches`、`stale_op_revision_names_the_operator`（改 `changed` / 删算子都点名）。 |
 
-**AK 段小计**：已关闭 4（AK-01、AK-02、AK-03、AK-04）· 待处理 0（第 5a–5b 批尚未开始）。
+| AK-05 | **逐脚本迁移 + 旧/新帧哈希对拍（第 5a 批）** | 脚本 / 表达式 / 校验 | **已关闭（5）** | 15 个脚本改为 `expr.bind` + 显式 clock + predicate 区间：`smoke` / `atlas` / `fusion` / `storyboard` / `capability_gaps` / `demo3d` / `pendulum` / `spring` / `orbit` / `fourier` / `pbr_lights` / `pbr_materials` / `pbr_scene` / `cap_channels2d` / `cap_channels3d` / `expr_read`。映射口径：旧 `scene.animate` 是**顺序段** ⇒ `clock.shift(start)` + `in_segment(dur)`（段外由 `Hold` 求值 `last_active`，与旧 `eval_local` 的段外钳制同值）；`parallel` 同窗口；`wait` 只推进游标。**新增 `round_f32`**（`zela.math@11 → @12`）：旧曲线每步都在 f32 上取整，而表达式层是 f64 ⇒ `Sin` / `Phase` / `Orbit2D` 的迁移必须在同位置显式落位，否则差 1 ulp（pendulum 第 16 帧、spring 第 159 帧实测会翻 1 像素）。`mix` 的**端点返回原值**（旧 `Keyframes` 的端点早退），避免 `a+(b−a)×1` 的舍入。**对拍**：36 条序列哈希全绿（逐位不变）；非基线作品用「旧脚本 vs 新脚本」序列哈希比对（`expr_read` 去掉 always-on 读者后比 writer —— 两者相同）。**Python 绑定修复**：`zela.math` 的**类型 home 包**曾在 `register_types` 里覆盖服务模块（`bind` / `pure` 全部丢失）⇒ 同命名空间时复用服务模块；`clock` 同时挂到 `zela` 与 `zela.math`。**偏差**：`Framing2D` / `MorphShape` 是存储组件、没有脚本侧常量表 ⇒ 用显式 `Channel { namespace, name, ty }` 构造键（记录为后续项）。**未做**：老 API 未删、基线未重录（顺序铁律：留到 5b）。 |
+
+**AK 段小计**：已关闭 5（AK-01…AK-05）· 待处理 0（第 5b 批尚未开始）。
 
 ---
 

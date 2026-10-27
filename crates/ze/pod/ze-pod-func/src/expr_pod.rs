@@ -28,8 +28,8 @@ use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
     ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LengthSpec, LtSpec, MixSpec, MulSpec,
     NeSpec, NormalizeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec,
-    ScaleSpec, SelectSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec, Vec2OfSpec,
-    Vec3FromVec2Spec, Vec3OfSpec,
+    RoundF32Spec, ScaleSpec, SelectSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
+    Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
 
@@ -43,7 +43,8 @@ pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// `10`：**第 2 批**通道常量带结构化类型（`zela.math.Channel` 增加 `ty`），`Read` 去掉 `ty` 字符串。
 /// `11`：**第 3 批**转换算子族（`splat` / `vec3_from_vec2` / `vec2_from_vec3` /
 /// `length` / `normalize`）。
-pub const LIBRARY_VERSION: &str = "11";
+/// `12`：**第 5a 批**新增 `round_f32`（旧曲线的 f32 精度落位）。
+pub const LIBRARY_VERSION: &str = "12";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -189,6 +190,12 @@ impl ExprPod {
             "zela.math.Normalize",
             HANDLE,
             normalize_ctor,
+        );
+        registry.register_fn1_named::<RoundF32Spec, Handle>(
+            "zela.math::round_f32",
+            "zela.math.RoundF32",
+            HANDLE,
+            round_f32_ctor,
         );
         // 比较 / 布尔组合子（predicate 的原料；值语义，Bool 不进 `anim_value`）。
         registry.register_fn1_named::<LtSpec, Handle>("zela.math::lt", "zela.math.Lt", HANDLE, lt_ctor);
@@ -361,6 +368,7 @@ impl Pod for ExprPod {
             )),
             "length" => Box::new(length_ctor(self, arg::<LengthSpec>(args, 0)?.clone())),
             "normalize" => Box::new(normalize_ctor(self, arg::<NormalizeSpec>(args, 0)?.clone())),
+            "round_f32" => Box::new(round_f32_ctor(self, arg::<RoundF32Spec>(args, 0)?.clone())),
             "lt" => Box::new(lt_ctor(self, arg::<LtSpec>(args, 0)?.clone())),
             "gt" => Box::new(gt_ctor(self, arg::<GtSpec>(args, 0)?.clone())),
             "le" => Box::new(le_ctor(self, arg::<LeSpec>(args, 0)?.clone())),
@@ -574,6 +582,10 @@ fn length_ctor(pod: &dyn Pod, spec: LengthSpec) -> Handle {
 
 fn normalize_ctor(pod: &dyn Pod, spec: NormalizeSpec) -> Handle {
     call1(pod, "normalize", spec.v)
+}
+
+fn round_f32_ctor(pod: &dyn Pod, spec: RoundF32Spec) -> Handle {
+    call1(pod, "round_f32", spec.of)
 }
 
 fn lt_ctor(pod: &dyn Pod, spec: LtSpec) -> Handle {
