@@ -25,11 +25,13 @@ pub mod conflict;
 // `gen` 在 edition 2024 是保留字：模块用 raw identifier 声明。
 pub mod r#gen;
 pub mod layout;
+pub mod tag;
 pub mod ty;
 pub mod unify;
 
 pub use conflict::{Blame, NameKind, ReflectError};
 pub use r#gen::{MonoInstance, MAX_INSTANCES};
+pub use tag::{CastError, DefaultTypeCast, NamedTypeTag, TypeCast, TypeTag};
 pub use layout::{
     ENDIAN, Endian, FieldLayout, FieldTy, Layout, LayoutError, Record, Scalar, Transcode,
     VEC2_FIELDS, VEC3_FIELDS,
