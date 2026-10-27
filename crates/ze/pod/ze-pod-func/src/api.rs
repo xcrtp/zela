@@ -265,6 +265,47 @@ pub struct Rotate3Spec {
     pub angle: Handle,
 }
 
+// ─── 第 3 批（类型系统扩展）：转换算子族 ────────────────────────────────
+//
+// 这五个是**纯结构转换**（不引入新语义），补齐 `Curve` 变体里需要的
+// 标量 ↔ 向量升降维与向量归一化。
+
+/// `splat(v)`：一个标量铺成三个分量（`F64 → Vec3`）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Splat")]
+pub struct SplatSpec {
+    pub v: Handle,
+}
+
+/// `vec3_from_vec2(v, z)`：二维升三维（显式补 z）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Vec3FromVec2")]
+pub struct Vec3FromVec2Spec {
+    pub v: Handle,
+    pub z: Handle,
+}
+
+/// `vec2_from_vec3(v)`：三维降二维（**显式**丢弃 z）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Vec2FromVec3")]
+pub struct Vec2FromVec3Spec {
+    pub v: Handle,
+}
+
+/// `length(v)`：向量模长（`Vector → F64`）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Length")]
+pub struct LengthSpec {
+    pub v: Handle,
+}
+
+/// `normalize(v)`：单位化（零向量保持零，见 `ops::eval`）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Normalize")]
+pub struct NormalizeSpec {
+    pub v: Handle,
+}
+
 /// `Sum { terms = { ... } }`。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Sum")]
@@ -351,7 +392,7 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "10",
+    version = "11",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -425,6 +466,21 @@ pub struct MathApi<'a> {
     /// `rotate3(v, axis, angle)`：罗德里格斯旋转（`Curve::Orbit` 的算子化形态）。
     pub rotate3: fn(&'a dyn Pod, spec: Rotate3Spec) -> Handle,
 
+    /// `splat(v)`：标量铺成 `Vec3`（三个分量同值）。
+    pub splat: fn(&'a dyn Pod, spec: SplatSpec) -> Handle,
+
+    /// `vec3_from_vec2(v, z)`：`Vec2` 升维到 `Vec3`（显式补 z）。
+    pub vec3_from_vec2: fn(&'a dyn Pod, spec: Vec3FromVec2Spec) -> Handle,
+
+    /// `vec2_from_vec3(v)`：`Vec3` 降维到 `Vec2`（**显式**丢弃 z）。
+    pub vec2_from_vec3: fn(&'a dyn Pod, spec: Vec2FromVec3Spec) -> Handle,
+
+    /// `length(v)`：向量模长（`Vector → F64`）。
+    pub length: fn(&'a dyn Pod, spec: LengthSpec) -> Handle,
+
+    /// `normalize(v)`：单位向量（零向量保持零）。
+    pub normalize: fn(&'a dyn Pod, spec: NormalizeSpec) -> Handle,
+
     /// `Lt { a = ..., b = ... }`：`a < b`（数值 → `Bool`）。
     pub lt: fn(&'a dyn Pod, spec: LtSpec) -> Handle,
 
@@ -495,10 +551,11 @@ pub struct MathApi<'a> {
 /// `zela.math` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
 ///
 /// `@10`（第 2 批）：`Channel` 增加结构化 `ty`，`Read` 去掉 `ty` 字符串。
-/// 指纹只 hash **函数签名**，类型形状变化不在其中 ⇒ 常量不变（版本照升）。
-pub const MATH_API_VERSION: &str = "10";
+/// `@11`（第 3 批）：新增转换算子族 `splat` / `vec3_from_vec2` / `vec2_from_vec3` /
+/// `length` / `normalize`。
+pub const MATH_API_VERSION: &str = "11";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 9_644_935_882_278_304_908;
+pub const MATH_API_FINGERPRINT: u64 = 6_327_976_336_490_177_055;
 
 #[cfg(test)]
 mod fingerprint_tests {

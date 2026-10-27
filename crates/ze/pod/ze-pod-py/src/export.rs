@@ -360,6 +360,7 @@ fn py_expr_returns(op: &OpDef, components: &BTreeSet<&'static str>) -> String {
                     add("Vec2".to_string());
                     add("Vec3".to_string());
                 }
+                RetType::Kind(Kind::Path) => add("Path".to_string()),
             }
         }
     }

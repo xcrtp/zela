@@ -26,9 +26,10 @@ use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, Qualifi
 
 use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
-    ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LtSpec, MixSpec, MulSpec, NeSpec,
-    NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, ScaleSpec, SelectSpec,
-    SinSpec, SumSpec, Vec2OfSpec, Vec3OfSpec,
+    ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LengthSpec, LtSpec, MixSpec, MulSpec,
+    NeSpec, NormalizeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec,
+    ScaleSpec, SelectSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec, Vec2OfSpec,
+    Vec3FromVec2Spec, Vec3OfSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
 
@@ -40,7 +41,9 @@ pub const LIBRARY_NAMESPACE: &str = "zela.math";
 /// `8`：**H 批**新增 `select`（值分支；`zela.math::select`）。
 /// `9`：**算子补齐批**新增 `mix` / `clamp` / `vec2` / `vec3` / `x` / `y` / `z` / `rotate3`。
 /// `10`：**第 2 批**通道常量带结构化类型（`zela.math.Channel` 增加 `ty`），`Read` 去掉 `ty` 字符串。
-pub const LIBRARY_VERSION: &str = "10";
+/// `11`：**第 3 批**转换算子族（`splat` / `vec3_from_vec2` / `vec2_from_vec3` /
+/// `length` / `normalize`）。
+pub const LIBRARY_VERSION: &str = "11";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -155,6 +158,37 @@ impl ExprPod {
             "zela.math.Rotate3",
             HANDLE,
             rotate3_ctor,
+        );
+        // 第 3 批（类型系统扩展）：转换算子族（显式升降维 + 长度 / 单位化）。
+        registry.register_fn1_named::<SplatSpec, Handle>(
+            "zela.math::splat",
+            "zela.math.Splat",
+            HANDLE,
+            splat_ctor,
+        );
+        registry.register_fn1_named::<Vec3FromVec2Spec, Handle>(
+            "zela.math::vec3_from_vec2",
+            "zela.math.Vec3FromVec2",
+            HANDLE,
+            vec3_from_vec2_ctor,
+        );
+        registry.register_fn1_named::<Vec2FromVec3Spec, Handle>(
+            "zela.math::vec2_from_vec3",
+            "zela.math.Vec2FromVec3",
+            HANDLE,
+            vec2_from_vec3_ctor,
+        );
+        registry.register_fn1_named::<LengthSpec, Handle>(
+            "zela.math::length",
+            "zela.math.Length",
+            HANDLE,
+            length_ctor,
+        );
+        registry.register_fn1_named::<NormalizeSpec, Handle>(
+            "zela.math::normalize",
+            "zela.math.Normalize",
+            HANDLE,
+            normalize_ctor,
         );
         // 比较 / 布尔组合子（predicate 的原料；值语义，Bool 不进 `anim_value`）。
         registry.register_fn1_named::<LtSpec, Handle>("zela.math::lt", "zela.math.Lt", HANDLE, lt_ctor);
@@ -316,6 +350,17 @@ impl Pod for ExprPod {
             "y" => Box::new(component_y_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
             "z" => Box::new(component_z_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
             "rotate3" => Box::new(rotate3_ctor(self, arg::<Rotate3Spec>(args, 0)?.clone())),
+            "splat" => Box::new(splat_ctor(self, arg::<SplatSpec>(args, 0)?.clone())),
+            "vec3_from_vec2" => Box::new(vec3_from_vec2_ctor(
+                self,
+                arg::<Vec3FromVec2Spec>(args, 0)?.clone(),
+            )),
+            "vec2_from_vec3" => Box::new(vec2_from_vec3_ctor(
+                self,
+                arg::<Vec2FromVec3Spec>(args, 0)?.clone(),
+            )),
+            "length" => Box::new(length_ctor(self, arg::<LengthSpec>(args, 0)?.clone())),
+            "normalize" => Box::new(normalize_ctor(self, arg::<NormalizeSpec>(args, 0)?.clone())),
             "lt" => Box::new(lt_ctor(self, arg::<LtSpec>(args, 0)?.clone())),
             "gt" => Box::new(gt_ctor(self, arg::<GtSpec>(args, 0)?.clone())),
             "le" => Box::new(le_ctor(self, arg::<LeSpec>(args, 0)?.clone())),
@@ -507,6 +552,28 @@ fn component_z_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
 
 fn rotate3_ctor(pod: &dyn Pod, spec: Rotate3Spec) -> Handle {
     call3(pod, "rotate3", spec.v, spec.axis, spec.angle)
+}
+
+// ─── 第 3 批（类型系统扩展）：转换算子族 ──────────────────────────────
+
+fn splat_ctor(pod: &dyn Pod, spec: SplatSpec) -> Handle {
+    call1(pod, "splat", spec.v)
+}
+
+fn vec3_from_vec2_ctor(pod: &dyn Pod, spec: Vec3FromVec2Spec) -> Handle {
+    call2(pod, "vec3_from_vec2", spec.v, spec.z)
+}
+
+fn vec2_from_vec3_ctor(pod: &dyn Pod, spec: Vec2FromVec3Spec) -> Handle {
+    call1(pod, "vec2_from_vec3", spec.v)
+}
+
+fn length_ctor(pod: &dyn Pod, spec: LengthSpec) -> Handle {
+    call1(pod, "length", spec.v)
+}
+
+fn normalize_ctor(pod: &dyn Pod, spec: NormalizeSpec) -> Handle {
+    call1(pod, "normalize", spec.v)
 }
 
 fn lt_ctor(pod: &dyn Pod, spec: LtSpec) -> Handle {

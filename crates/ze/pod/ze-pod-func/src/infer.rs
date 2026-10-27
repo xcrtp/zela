@@ -261,6 +261,7 @@ fn kind_of(ty: ChannelType) -> Kind {
         ChannelType::Number | ChannelType::Unknown => Kind::Num,
         ChannelType::Vec2 | ChannelType::Vec3 => Kind::Vector,
         ChannelType::Bool => Kind::Bool,
+        ChannelType::Path => Kind::Path,
     }
 }
 

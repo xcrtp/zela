@@ -100,7 +100,7 @@ pub struct Variant {
 
 /// 类型变量的 **kind**（L2 的封闭小集合）。
 ///
-/// 只有这三种：数值 / 向量 / 布尔。第三方扩展走单态重载列表兜底（U4：不开放注册）。
+/// 数值 / 向量 / 布尔 / 路径。第三方扩展走单态重载列表兜底（U4：不开放注册）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// 数值（F32 / F64）。
@@ -109,6 +109,8 @@ pub enum Kind {
     Vector,
     /// 布尔。
     Bool,
+    /// 二维路径（第 3 批：类型系统扩展，暂未接通道 —— 计划 W1）。
+    Path,
 }
 
 impl Kind {
@@ -117,6 +119,7 @@ impl Kind {
             Kind::Num => "Num",
             Kind::Vector => "Vector",
             Kind::Bool => "Bool",
+            Kind::Path => "Path",
         }
     }
 }

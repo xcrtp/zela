@@ -139,6 +139,48 @@ const ROTATE3: OpSig = OpSig {
     variadic: false,
 };
 
+// ─── 第 3 批（类型系统扩展）：转换算子族 ────────────────────────────────
+
+/// `splat(v)`：`F64 → Vec3`（三个分量同值）。
+const SPLAT: OpSig = OpSig {
+    params: &[F64],
+    ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `vec3_from_vec2(v, z)`：`Vec2, F64 → Vec3`。
+const VEC3_FROM_VEC2: OpSig = OpSig {
+    params: &[VEC2, F64],
+    ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `vec2_from_vec3(v)`：`Vec3 → Vec2`（显式丢弃 z）。
+const VEC2_FROM_VEC3: OpSig = OpSig {
+    params: &[VEC3],
+    ret: VEC2,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `length(v)`：`Vector → F64`。
+const LENGTH: OpSig = OpSig {
+    params: &[VAR_A],
+    ret: F64,
+    vars: VEC_A,
+    variadic: false,
+};
+
+/// `normalize(v)`：`Vector → Vector`（零向量保持零）。
+const NORMALIZE: OpSig = OpSig {
+    params: &[VAR_A],
+    ret: VAR_A,
+    vars: VEC_A,
+    variadic: false,
+};
+
 /// 比较：数值 → Bool。
 const CMP_NUM: OpSig = OpSig {
     params: &[F64, F64],
@@ -249,6 +291,31 @@ pub static SIGNATURES: &[OpDef] = &[
         name: "rotate3",
         spec: "zela.math.Rotate3",
         sigs: &[ROTATE3],
+    },
+    OpDef {
+        name: "splat",
+        spec: "zela.math.Splat",
+        sigs: &[SPLAT],
+    },
+    OpDef {
+        name: "vec3_from_vec2",
+        spec: "zela.math.Vec3FromVec2",
+        sigs: &[VEC3_FROM_VEC2],
+    },
+    OpDef {
+        name: "vec2_from_vec3",
+        spec: "zela.math.Vec2FromVec3",
+        sigs: &[VEC2_FROM_VEC3],
+    },
+    OpDef {
+        name: "length",
+        spec: "zela.math.Length",
+        sigs: &[LENGTH],
+    },
+    OpDef {
+        name: "normalize",
+        spec: "zela.math.Normalize",
+        sigs: &[NORMALIZE],
     },
     OpDef {
         name: "lt",

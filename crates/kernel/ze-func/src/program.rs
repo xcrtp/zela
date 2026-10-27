@@ -25,6 +25,9 @@ use std::collections::BTreeMap;
 use crate::expr::{ChannelRef, Expr, ExprError, Literal, Node, OpRef};
 
 /// 运行时值（跨通道 / 算子的最小集）。
+///
+/// **第 3 批**：`Path` 用**纯数据**表示（点列 + `closed`），而不是
+/// `ze_notion::Path2D` —— `ze-func` 的依赖铁律不允许引入 ze-notion / glam。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     F64(f64),
@@ -32,6 +35,8 @@ pub enum Value {
     Text(String),
     Vec2([f32; 2]),
     Vec3([f32; 3]),
+    /// 二维路径（点列 + 是否闭合）；本批只扩类型，不接通道（计划 W1）。
+    Path { points: Vec<[f32; 2]>, closed: bool },
 }
 
 impl Value {
@@ -88,6 +93,15 @@ pub enum EvalError {
         channel: ChannelRef,
         expected: &'static str,
         actual: &'static str,
+    },
+    /// 组件的值类型没有表达式层表示（如 `Color`）。
+    ///
+    /// 以前是 `anim_to_value → None → 被当成 MissingComponent`（**错误的静默**）；
+    /// 现在显式点名"这个值类型不支持读"。
+    #[error("通道 `{channel}` 的值类型 {kind} 没有表达式层表示")]
+    UnsupportedValue {
+        channel: ChannelRef,
+        kind: &'static str,
     },
 }
 
@@ -190,6 +204,7 @@ fn value_kind(value: &Value) -> &'static str {
         Value::Text(_) => "text",
         Value::Vec2(_) => "vec2",
         Value::Vec3(_) => "vec3",
+        Value::Path { .. } => "path",
     }
 }
 

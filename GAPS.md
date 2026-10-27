@@ -1009,7 +1009,9 @@
 
 | AK-02 | **类型去字符串化 + 可调用语法糖（第 2 批）** | 表达式 / 绑定 / 三语言 | **已关闭（2，Lua 糖）** | `zela.math@9 → @10`：`Channel` 增加结构化 `ty`（`zela.math.ChannelType`：`Unknown/Number/Bool/Vec2/Vec3`），`Read` 删除 `ty` 字符串；`ChannelTypeSpec → ChannelType` 一一映射，**没有默认分支**（未知不再静默当 `Number`）。三个语言绑定都用 [`channel_type_variant`](crates/ze/pod/ze-pod-binding/src/lib.rs) 把 `FieldSpec.ty` 写进常量（封闭集之外 ⇒ `Unknown`，不是 `Number`）。**Lua 常量可调用**：`Reveal.channel.current_pos(curve)` ≡ `expr.read { channel, object }`（调用时才解析 `expr.read`，不依赖 capability 装配顺序）。**对账**：`SceneMono::read_object` 用 `channel.ty` 核对运行期 `Value` 标签，不符 ⇒ `EvalError::ChannelTypeMismatch`；`Unknown` 跳过（老 payload 不做推导，硬约束 7）。**偏差**：JS / Python 常量已带 `ty`，但可调用糖只做了 Lua（两件作品都是 Lua）—— 记为后续项。**验收**：`read_builds_a_read_leaf`（类型来自常量）、`declared_channel_type_must_match_the_runtime_value`、`expr_read.lua` / `sine_trace.lua` 用糖编译通过；36 条基线不变（仅 3 件表达式作品 payload 重录） |
 
-**AK 段小计**：已关闭 2（AK-01、AK-02）· 待处理 0（第 3–5b 批尚未开始）。
+| AK-03 | **类型系统扩展 + 转换算子族（第 3 批）** | 表达式 / 类型系统 | **已关闭（3）** | `zela.math@10 → @11`：三处类型补 `Path` —— `Value::Path { points, closed }`（纯数据点列，不把 `ze_notion::Path2D` 拉进 kernel 层）、`ChannelType::Path`、`Kind::Path`；**Path 通道本批不接**（计划 W1：脚本侧零使用，只扩类型系统）。`anim_to_value` 的 `None` 改为显式 `EvalError::UnsupportedValue { channel, kind }`：`Color` / `Path` 不再伪装成 `MissingComponent`（硬约束 4）。新增转换算子 `splat(v)`（`F64 → Vec3`）、`vec3_from_vec2(v, z)`、`vec2_from_vec3(v)`（**显式**丢 z）、`length(v)` / `normalize(v)`（`Vector → F64` / `Vector`；零向量保持零，不产出 NaN）。签名全部进 [`signature.rs`](crates/ze/pod/ze-pod-func/src/signature.rs)，`MATH_API_FINGERPRINT = 6327976336490177055`。**验收**：`conversion_operators_are_explicit`、`unsupported_component_value_types_are_explicit`；36 条像素基线逐位不变（5 件表达式作品 payload 因 `LIBRARY_VERSION` 变化重录） |
+
+**AK 段小计**：已关闭 3（AK-01、AK-02、AK-03）· 待处理 0（第 4–5b 批尚未开始）。
 
 ---
 

@@ -94,10 +94,7 @@ impl Mono for SceneMono<'_> {
             object,
             channel: channel.clone(),
         })?;
-        let converted = anim_to_value(&value).ok_or_else(|| EvalError::MissingComponent {
-            object,
-            channel: channel.clone(),
-        })?;
+        let converted = anim_to_value(channel, &value)?;
         // **第 2 批对账**：装配期推导的类型（`channel.ty`）vs 运行期实际返回的标签。
         // `Unknown`（老 payload）不核对 —— 回放路径不做类型推导。
         check_declared_type(channel, &converted)?;
@@ -118,6 +115,7 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
         ChannelType::Bool => "bool",
         ChannelType::Vec2 => "vec2",
         ChannelType::Vec3 => "vec3",
+        ChannelType::Path => "path",
     };
     let actual = match value {
         Value::F64(_) => "number",
@@ -125,6 +123,7 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
         Value::Vec2(_) => "vec2",
         Value::Vec3(_) => "vec3",
         Value::Text(_) => "text",
+        Value::Path { .. } => "path",
     };
     if expected == actual {
         Ok(())
@@ -137,26 +136,36 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
     }
 }
 
-/// `AnimValue` → 表达式值（Scalar→F64、Vec2→[f32;2]、Vec3→[f32;3]；Color/Path
-/// 没有 `Value` 表示 —— 组件字段通道不会有它们，理论不可达）。
-fn anim_to_value(value: &AnimValue) -> Option<Value> {
+/// `AnimValue` → 表达式值（Scalar→F64、Vec2→[f32;2]、Vec3→[f32;3]）。
+///
+/// **第 3 批**：`Color` / `Path` 以前返回 `None`（被当成 `MissingComponent`，
+/// 是一次"看起来像缺组件"的静默）；现在**显式点名**值类型不支持读。
+fn anim_to_value(channel: &ChannelRef, value: &AnimValue) -> Result<Value, EvalError> {
     match value {
-        AnimValue::Scalar(value) => Some(Value::F64(*value as f64)),
-        AnimValue::Vec2(value) => Some(Value::Vec2([value.x, value.y])),
-        AnimValue::Vec3(value) => Some(Value::Vec3([value.x, value.y, value.z])),
-        AnimValue::Color(_) | AnimValue::Path(_) => None,
+        AnimValue::Scalar(value) => Ok(Value::F64(*value as f64)),
+        AnimValue::Vec2(value) => Ok(Value::Vec2([value.x, value.y])),
+        AnimValue::Vec3(value) => Ok(Value::Vec3([value.x, value.y, value.z])),
+        AnimValue::Color(_) => Err(EvalError::UnsupportedValue {
+            channel: channel.clone(),
+            kind: "color",
+        }),
+        AnimValue::Path(_) => Err(EvalError::UnsupportedValue {
+            channel: channel.clone(),
+            kind: "path",
+        }),
     }
 }
 
 /// 求值结果 → 绑定目标可写的值。
 ///
-/// `Bool` / `Text` 没有对应的组件字段通道 ⇒ 返回 `None`（调用方显式记录，不静默写 0）。
+/// `Bool` / `Text` / `Path` 没有对应的组件字段通道 ⇒ 返回 `None`
+/// （调用方显式记录，不静默写 0）。
 pub fn anim_value(value: &Value) -> Option<AnimValue> {
     match value {
         Value::F64(value) => Some(AnimValue::Scalar(*value as f32)),
         Value::Vec2(value) => Some(AnimValue::Vec2((*value).into())),
         Value::Vec3(value) => Some(AnimValue::Vec3((*value).into())),
-        Value::Bool(_) | Value::Text(_) => None,
+        Value::Bool(_) | Value::Text(_) | Value::Path { .. } => None,
     }
 }
 
@@ -297,6 +306,32 @@ mod tests {
                 }
             ),
             "错误应点名类型，实际 {err}"
+        );
+    }
+
+    /// **第 3 批**：`Color` / `Path` 没有表达式层表示 —— 读端**显式点名**值类型，
+    /// 不再伪装成 `MissingComponent`（那是错误的静默）。
+    #[test]
+    fn unsupported_component_value_types_are_explicit() {
+        let channel = ChannelRef::new("zela.scene", "Shape.fill");
+        let err = anim_to_value(&channel, &AnimValue::Color([0.1, 0.2, 0.3, 1.0]))
+            .expect_err("Color 不支持读");
+        assert_eq!(
+            err,
+            EvalError::UnsupportedValue {
+                channel: channel.clone(),
+                kind: "color",
+            }
+        );
+
+        let path = ze_notion::Path2D::from_polyline(&[ze_notion::Vec2::new(0.0, 0.0)], false);
+        let err = anim_to_value(&channel, &AnimValue::Path(path)).expect_err("Path 不支持读");
+        assert_eq!(
+            err,
+            EvalError::UnsupportedValue {
+                channel,
+                kind: "path",
+            }
         );
     }
 

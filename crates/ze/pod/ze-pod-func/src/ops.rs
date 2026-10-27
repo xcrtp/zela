@@ -20,7 +20,8 @@ use ze_func::{EvalError, OpRef, Value};
 /// 它们是**值算子**，与 `sin` 等同层。Bool 结果不进 `anim_value`（root 侧语义不变）。
 pub const OPS: &[&str] = &[
     "sin", "cos", "add", "mul", "scale", "sum", "mix", "clamp", "vec2", "vec3", "x", "y", "z",
-    "rotate3", "lt", "gt", "le", "ge", "eq", "ne", "and", "or", "not",
+    "rotate3", "splat", "vec3_from_vec2", "vec2_from_vec3", "length", "normalize", "lt", "gt",
+    "le", "ge", "eq", "ne", "and", "or", "not",
 ];
 
 /// `op` 是否属于本库（namespace 必须一致，名字在 [`OPS`] 里）。
@@ -132,6 +133,45 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
             let angle = number(2)?;
             Ok(Value::Vec3(rotate_rodrigues(v, axis, angle)))
         }
+        // ─── 第 3 批（类型系统扩展）：转换算子族 ───────────────────────
+        // `splat(v)`：一个标量铺成三个分量（`F64 → Vec3`）。
+        "splat" => {
+            let v = number(0)? as f32;
+            Ok(Value::Vec3([v, v, v]))
+        }
+        // `vec3_from_vec2(v, z)`：显式补 z（不猜 0）。
+        "vec3_from_vec2" => match args.first() {
+            Some(Value::Vec2(v)) => Ok(Value::Vec3([v[0], v[1], number(1)? as f32])),
+            _ => Err(EvalError::op(op, "第 0 个实参不是 Vec2")),
+        },
+        // `vec2_from_vec3(v)`：**显式**丢弃 z（不是静默截断 —— 算子名写明了）。
+        "vec2_from_vec3" => match args.first() {
+            Some(Value::Vec3(v)) => Ok(Value::Vec2([v[0], v[1]])),
+            _ => Err(EvalError::op(op, "第 0 个实参不是 Vec3")),
+        },
+        // `length(v)`：向量模长；`normalize(v)`：单位向量（零向量保持零，不产出 NaN）。
+        "length" | "normalize" => {
+            let normalized = op.name == "normalize";
+            match args.first() {
+                Some(Value::Vec2(v)) => {
+                    let length = (v[0] * v[0] + v[1] * v[1]).sqrt();
+                    if normalized {
+                        Ok(Value::Vec2(unit2(*v, length)))
+                    } else {
+                        Ok(Value::F64(f64::from(length)))
+                    }
+                }
+                Some(Value::Vec3(v)) => {
+                    let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                    if normalized {
+                        Ok(Value::Vec3(unit3(*v, length)))
+                    } else {
+                        Ok(Value::F64(f64::from(length)))
+                    }
+                }
+                _ => Err(EvalError::op(op, "第 0 个实参不是向量")),
+            }
+        }
         "lt" => Ok(Value::Bool(number(0)? < number(1)?)),
         "gt" => Ok(Value::Bool(number(0)? > number(1)?)),
         "le" => Ok(Value::Bool(number(0)? <= number(1)?)),
@@ -169,6 +209,24 @@ fn vec3_arg(op: &OpRef, args: &[Value], index: usize) -> Result<[f64; 3], EvalEr
     match args.get(index) {
         Some(Value::Vec3(v)) => Ok([f64::from(v[0]), f64::from(v[1]), f64::from(v[2])]),
         _ => Err(EvalError::op(op, format!("第 {index} 个实参不是 Vec3"))),
+    }
+}
+
+/// `Vec2` 单位化：零长度保持零（与 `glam::normalize_or_zero` 同一约定，不产出 NaN）。
+fn unit2(v: [f32; 2], length: f32) -> [f32; 2] {
+    if length > 1e-12 {
+        [v[0] / length, v[1] / length]
+    } else {
+        [0.0, 0.0]
+    }
+}
+
+/// `Vec3` 单位化：零长度保持零。
+fn unit3(v: [f32; 3], length: f32) -> [f32; 3] {
+    if length > 1e-12 {
+        [v[0] / length, v[1] / length, v[2] / length]
+    } else {
+        [0.0, 0.0, 0.0]
     }
 }
 
@@ -322,6 +380,48 @@ mod tests {
             panic!("rotate3 必须返回 Vec3");
         };
         assert!((v[0] - 5.0).abs() < 1e-4 && v[1].abs() < 1e-4 && v[2].abs() < 1e-4, "{v:?}");
+    }
+
+    /// 第 3 批（类型系统扩展）：转换算子族 —— 升降维是**显式**的，长度/单位化覆盖两种向量。
+    #[test]
+    fn conversion_operators_are_explicit() {
+        assert_eq!(
+            eval(&math("splat"), &[Value::F64(2.0)]).unwrap(),
+            Value::Vec3([2.0, 2.0, 2.0])
+        );
+        assert_eq!(
+            eval(
+                &math("vec3_from_vec2"),
+                &[Value::Vec2([1.0, 2.0]), Value::F64(3.0)]
+            )
+            .unwrap(),
+            Value::Vec3([1.0, 2.0, 3.0])
+        );
+        assert_eq!(
+            eval(&math("vec2_from_vec3"), &[Value::Vec3([4.0, 5.0, 6.0])]).unwrap(),
+            Value::Vec2([4.0, 5.0]),
+            "vec2_from_vec3 显式丢弃 z"
+        );
+
+        let length = eval(&math("length"), &[Value::Vec3([3.0, 4.0, 0.0])]).unwrap();
+        assert_eq!(length, Value::F64(5.0));
+        let unit = eval(&math("normalize"), &[Value::Vec2([0.0, 3.0])]).unwrap();
+        assert_eq!(unit, Value::Vec2([0.0, 1.0]));
+        // 零向量保持零（不产出 NaN）。
+        assert_eq!(
+            eval(&math("normalize"), &[Value::Vec3([0.0, 0.0, 0.0])]).unwrap(),
+            Value::Vec3([0.0, 0.0, 0.0])
+        );
+
+        // 类型不符是显式错误（不做隐式升降维）。
+        assert!(
+            eval(
+                &math("vec3_from_vec2"),
+                &[Value::Vec3([1.0, 2.0, 3.0]), Value::F64(0.0)]
+            )
+            .is_err()
+        );
+        assert!(eval(&math("length"), &[Value::F64(1.0)]).is_err());
     }
 
     #[test]

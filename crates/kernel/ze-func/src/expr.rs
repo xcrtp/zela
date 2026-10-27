@@ -153,10 +153,12 @@ pub enum ChannelType {
     Vec2,
     /// 三维向量。
     Vec3,
+    /// 二维路径（第 3 批：只扩类型，暂不接通道 —— 计划 W1）。
+    Path,
 }
 
 impl ChannelType {
-    /// 文档 / 诊断里的短名（`F64` / `Bool` / `Vec2` / `Vec3`）。
+    /// 文档 / 诊断里的短名（`F64` / `Bool` / `Vec2` / `Vec3` / `Path`）。
     pub const fn name(self) -> &'static str {
         match self {
             Self::Unknown => "Unknown",
@@ -164,6 +166,7 @@ impl ChannelType {
             Self::Bool => "Bool",
             Self::Vec2 => "Vec2",
             Self::Vec3 => "Vec3",
+            Self::Path => "Path",
         }
     }
 }
