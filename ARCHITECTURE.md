@@ -263,6 +263,16 @@ graph TD
 > `{ type_name, version }`，展示数据进 `zela-node-editor::PresentationTable`；
 > `TypeTag` / `TypeCast` 收敛到 `ze-type::tag`。生产边新增
 > `ze-graph-algo → ze-graph-core` 与 `ze-comb → ze-graph-core`（Expr 图视图）。
+>
+> **2026-10-28 续（遍历器与环检测收敛）**：`Expr::walk`（前序 `enter` 可剪枝 + 后序
+> `leave`）与 `Expr::map_children` 成为表达式树**唯一**遍历骨架，节点自省收敛到
+> `Node::{channel,read,literal,call,rec_leaf}`；`ze-comb::analysis` 把 `ze-graph-core`
+> 的 SCC / reachable / dirty 接到表达式 DAG（`shared_definitions` / `affected_consumers` /
+> `unreachable` / `reference_groups`）。5 处环检测全部给出**完整环路径**
+> （`ze-comb` / `ze-pod-core` 直接接 `find_cycle`，生产边新增
+> `ze-pod-core → ze-graph-core`）。xtask `structure` 新增确定性门禁：
+> 表达式图路径禁用 `HashMap` / `HashSet`（`infer` 的 `memo` / `visiting` 已迁
+> `BTreeMap` / `BTreeSet`）。
 
 | Package | FanIn | FanOut | Instability |
 |---------|-------|--------|-------------|
