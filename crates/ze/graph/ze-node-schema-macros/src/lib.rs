@@ -126,24 +126,25 @@ fn expand(item: &ItemStruct) -> syn::Result<TokenStream2> {
     // Interaction policy overrides (only emitted when explicitly set).
     let mut interaction_overrides: Vec<TokenStream2> = Vec::new();
     if let Some(v) = node_attr.draggable {
-        interaction_overrides.push(quote! { meta.interaction.draggable = #v; });
+        interaction_overrides.push(quote! { interaction.draggable = #v; });
     }
     if let Some(v) = node_attr.selectable {
-        interaction_overrides.push(quote! { meta.interaction.selectable = #v; });
+        interaction_overrides.push(quote! { interaction.selectable = #v; });
     }
     if let Some(v) = node_attr.resizable {
-        interaction_overrides.push(quote! { meta.interaction.resizable = #v; });
+        interaction_overrides.push(quote! { interaction.resizable = #v; });
     }
-    let meta_init = if interaction_overrides.is_empty() {
-        quote! { ::ze_node_core::NodeMeta::new(#type_name, #display, 1) }
-    } else {
-        quote! {
-            {
-                let mut meta = ::ze_node_core::NodeMeta::new(#type_name, #display, 1);
-                #(#interaction_overrides)*
-                meta
-            }
+    // `NodeMeta` 只留 core 字段；展示数据生成到 `NodePresentation`（UI side table 的值）。
+    let meta_init = quote! { ::ze_node_core::NodeMeta::new(#type_name, 1) };
+    let interaction_tokens = quote! {
+        {
+            let mut interaction = ::ze_node_core::NodeInteraction::default();
+            #(#interaction_overrides)*
+            interaction
         }
+    };
+    let presentation_tokens = quote! {
+        ::ze_node_core::NodePresentation::new(#display, #interaction_tokens)
     };
     let inputs_init = build_socket_vec(&node_attr.inputs, true);
     let outputs_init = build_socket_vec(&node_attr.outputs, false);
@@ -246,6 +247,9 @@ fn expand(item: &ItemStruct) -> syn::Result<TokenStream2> {
         }
 
         impl ::ze_node_schema::NodeSpec for #struct_name {
+            fn presentation(&self) -> ::ze_node_core::NodePresentation {
+                #presentation_tokens
+            }
             fn properties(
                 &self,
             ) -> ::std::vec::Vec<(::std::string::String, ::ze_node_schema::Property)> {

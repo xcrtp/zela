@@ -6524,6 +6524,7 @@ dependencies = [
 name = "ze-graph-algo"
 version = "0.1.1"
 dependencies = [
+ "ze-graph-core",
  "ze-node-core",
 ]
 

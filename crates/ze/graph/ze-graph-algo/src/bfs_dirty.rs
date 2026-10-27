@@ -1,10 +1,12 @@
 //! Breadth-first dirty propagation.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 
 use ze_node_core::algo::DirtyTracker;
 use ze_node_core::graph::Graph;
 use ze_node_core::id::{NodeId, OutputSocketId};
+
+use crate::GraphTopology;
 
 /// Dirty tracker that propagates marks along downstream edges via BFS.
 #[derive(Debug, Default)]
@@ -25,26 +27,20 @@ impl DirtyTracker for BfsDirtyTracker {
     }
 
     fn mark_socket_dirty(&mut self, graph: &dyn Graph, socket: OutputSocketId) {
-        // Walk downstream: output -> inputs -> their nodes -> their outputs -> ...
-        let mut queue: VecDeque<OutputSocketId> = VecDeque::new();
-        let mut visited: BTreeSet<OutputSocketId> = BTreeSet::new();
-        queue.push_back(socket);
-        visited.insert(socket);
-
-        while let Some(out) = queue.pop_front() {
-            for input in graph.downstream(out) {
-                let node = input.node();
-                self.dirty.insert(node);
-                // enqueue every output of the now-dirty node
-                if let Some(n) = graph.get_node(node) {
-                    for i in 0..n.outputs().len() {
-                        let next = OutputSocketId::new(node, i as u32);
-                        if visited.insert(next) {
-                            queue.push_back(next);
-                        }
-                    }
-                }
-            }
+        // 直接下游（socket 级）→ 节点级脏传播（`ze-graph-core`，确定性升序）。
+        let mut seeds: Vec<NodeId> = graph
+            .downstream(socket)
+            .into_iter()
+            .map(|input| input.node())
+            .collect();
+        seeds.sort_unstable();
+        seeds.dedup();
+        for &node in &seeds {
+            self.dirty.insert(node);
+        }
+        let topology = GraphTopology::new(graph);
+        for node in ze_graph_core::dirty_downstream(&topology, &seeds) {
+            self.dirty.insert(node);
         }
     }
 
@@ -110,7 +106,7 @@ mod tests {
     fn mk(n_in: usize, n_out: usize) -> N {
         let tag: Box<dyn ze_node_core::TypeTag> = Box::new(NamedTypeTag::new("f32"));
         N {
-            meta: NodeMeta::new("t", "t", 1),
+            meta: NodeMeta::new("t", 1),
             inputs: (0..n_in)
                 .map(|i| InputSocket::new(tag.clone()).with_index(i as u32))
                 .collect(),

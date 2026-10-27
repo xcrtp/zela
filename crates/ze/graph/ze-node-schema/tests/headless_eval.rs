@@ -48,7 +48,7 @@ struct ConstantF32 {
 impl ConstantF32 {
     fn new(value: f32) -> Self {
         Self {
-            meta: NodeMeta::new("demo.constant.f32", "Constant", 1),
+            meta: NodeMeta::new("demo.constant.f32", 1),
             outputs: vec![OutputSocket::new(f32_tag()).with_index(0)],
             value,
         }
@@ -113,7 +113,7 @@ struct AddF32 {
 impl AddF32 {
     fn new(b: f32) -> Self {
         Self {
-            meta: NodeMeta::new("demo.add.f32", "Add", 1),
+            meta: NodeMeta::new("demo.add.f32", 1),
             inputs: vec![InputSocket::new(f32_tag()).with_index(0)],
             outputs: vec![OutputSocket::new(f32_tag()).with_index(0)],
             b,
@@ -178,7 +178,7 @@ struct DisplayF32 {
 impl DisplayF32 {
     fn new(label: impl Into<String>) -> Self {
         Self {
-            meta: NodeMeta::new("demo.display.f32", "Display", 1),
+            meta: NodeMeta::new("demo.display.f32", 1),
             inputs: vec![InputSocket::new(f32_tag()).with_index(0)],
             label: label.into(),
         }

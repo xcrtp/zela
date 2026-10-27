@@ -1059,11 +1059,11 @@
 |---|---|---|---|---|
 | AN-01 | **阶段 0：接口欠账 + crate 能力表 + 重名门禁** | kernel / pod / scene / xtask | **已关闭（0）** | `OpDef` 合并为单一目录（`ze-func::OP_DEFS`，签名 + pointwise/targets）；Pod 侧 `ChannelSpec → ChannelDecl`；`seek_kind` 纳入离散层（`CompiledExpr::requires_replay`）；本文件补 AL/AM/AN 与 crate 能力表；xtask 新增"新 crate 必须登记"与"跨 crate 同名 `pub struct/enum` 白名单"两道门禁。 |
 | AN-02 | **阶段 1：ze-graph-core 纯拓扑层 + 确定性收口** | kernel | **已关闭（1）** | 新建 [`ze-graph-core`](crates/kernel/ze-graph-core/src/lib.rs)：`Topology` / `topo_sort` / `strongly_connected` / `find_cycle` / `reachable` / `dirty_downstream`，全部输出有序（`BTree*`，同一张图两次逐位相同）。`DirtyTracker::collect_dirty` 由 `HashSet` 改 `Vec`（升序）；`ze-graph-algo` 的 Kahn / Tarjan / BFS 全部改 `BTree*` 并补确定性用例。基准 `graph_bench`（quick，128/1024/8192）：topo_sort 22 µs / 332 µs / 4.0 ms，SCC 45 µs / 708 µs / 9.0 ms，reachable 9.2 µs / 106 µs / 1.35 ms。 |
-| AN-03 | **阶段 2：NodeMeta 拆家 + Node&lt;D&gt; 泛型化 + socket 外置** | graph / ui | **未执行（2）** | 待执行：core 只留 `{ type_name, version }`；展示数据进 UI side table；socket 查询走注册表。 |
-| AN-04 | **阶段 3：算法降层 + eval 切换 + 7 处环检测收敛** | kernel / graph / ui | **未执行（3）** | 待执行：`ze-graph-algo` 只依赖 `Topology`；7 处手写环检测迁到同一实现，并补等价性用例。 |
+| AN-03 | **阶段 2：NodeMeta 拆家 + Node&lt;D&gt; 泛型化 + socket 外置** | graph / ui | **部分关闭（2）** | ① `NodeMeta` 只留 `{ type_name, version }`；展示数据改为 `NodePresentation`（`display_name` + `NodeInteraction`），由 `zela-node-editor::PresentationTable` 按 `type_name` 持有，UI 只经 `Editor::presentation_of` 读取；core trait 上不再有 UI 字段。② `Graph` 新增 `input_count` / `output_count`（默认读节点 socket 表，可被注册表实现覆盖），算法可不再直接摸 `Node`。③ **偏差（记账）**：`Node<D = Erased>` 泛型化与"节点不再持有 socket 表"未做——它要求所有节点 impl 携带 data 字段与 socket 注册表，牵动 1807 行 trait/用例与 schema 宏；本批先把 UI 字段与算法入口解耦，泛型化留待 AN-04 之后单独一批。 |
+| AN-04 | **阶段 3：算法降层 + eval 切换 + 7 处环检测收敛** | kernel / graph / ui | **部分关闭（3）** | ① `ze-graph-algo` 新增 `GraphTopology` 适配器（只经 `nodes/successors/predecessors`，socket 计数走 `Graph::input_count/output_count`）；`KahnSorter` / `TarjanSccDetector` / `BfsDirtyTracker` 全部委托 `ze-graph-core`（不再直接摸 `Node`）。`zela-node-editor::ConnectionValidator::check_no_cycle` 因此自动走同一实现。② **偏差（记账）**：其余 5 处环检测仍是手写遍历——`ze-comb::expr`（字符串 `Ref` id）、`ze-time::clock`（`ClockId` 父子）、`ze-scene-core::surface` 与 `zela-scene-ecs::transform_hierarchy`（`ObjectId`/`Entity`）、`ze-pod-core::broker`（节点下标）。它们的 id 空间与语义各自不同，收敛需要先统一 id 投影；本批只登记，不硬改。 |
 | AN-05 | **阶段 4：TypeTag / NodeValue 收敛到 ze-type** | kernel / graph | **未执行（4）** | 待执行：全仓 `clone_box` 由 5 处降到 1 处。 |
 
-**AN 段小计**：已关闭 2（AN-01、AN-02）· 未执行 3（AN-03…AN-05）。
+**AN 段小计**：已关闭 2（AN-01、AN-02）· 部分关闭 2（AN-03、AN-04）· 未执行 1（AN-05）。
 
 ---
 

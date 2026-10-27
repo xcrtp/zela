@@ -12,7 +12,7 @@
 //! type. That keeps `downcast` out of the UI layer entirely (the only
 //! "escape hatch" lives inside the registry's generic accessor).
 
-use ze_node_core::Node;
+use ze_node_core::{Node, NodePresentation};
 
 use crate::error::PropertyError;
 use crate::property::{Property, PropertyValue};
@@ -23,6 +23,14 @@ use crate::property::{Property, PropertyValue};
 /// any graph, be evaluated by any strategy, and be downcast by executors that
 /// need concrete access. The trait itself adds only property read/write.
 pub trait NodeSpec: Node {
+    /// UI presentation for this node type (display name + interaction policy).
+    ///
+    /// **不在 `Node` trait 上**：core 只看 [`Node::meta`]，展示数据是 side table
+    /// 的值（计划 §4「第一刀」）。默认按类型名回退。
+    fn presentation(&self) -> NodePresentation {
+        NodePresentation::for_type(&self.meta().type_name)
+    }
+
     /// The node's properties as `(name, schema+value)` pairs, in declared
     /// order. Returned by value so callers can iterate without borrow
     /// entanglement with the node.

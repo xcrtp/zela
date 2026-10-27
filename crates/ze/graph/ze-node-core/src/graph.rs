@@ -88,6 +88,20 @@ pub trait Graph: Send + Sync + fmt::Debug {
     /// detection. `None` if no such edge.
     fn edge_version(&self, source: OutputSocketId, target: InputSocketId) -> Option<u64>;
 
+    /// Input socket descriptor count for `node`.
+    ///
+    /// **Default is compatibility**: read the node's own socket table. A graph
+    /// that stores socket layouts in a registry (计划 §4「第二刀」) overrides it;
+    /// algorithms then no longer reach into `Node`.
+    fn input_count(&self, node: NodeId) -> Option<usize> {
+        self.get_node(node).map(|node| node.inputs().len())
+    }
+
+    /// Output socket descriptor count for `node`.
+    fn output_count(&self, node: NodeId) -> Option<usize> {
+        self.get_node(node).map(|node| node.outputs().len())
+    }
+
     /// The type caster used for connect-time compatibility checks.
     fn type_cast(&self) -> &dyn crate::type_tag::TypeCast;
 }

@@ -310,7 +310,7 @@ mod tests {
         fn new() -> Self {
             let tag: Box<dyn crate::type_tag::TypeTag> = Box::new(NamedTypeTag::new("f32"));
             Self {
-                meta: NodeMeta::new("test.passthrough", "Passthrough", 1),
+                meta: NodeMeta::new("test.passthrough", 1),
                 inputs: vec![InputSocket::new(tag.clone()).with_index(0)],
                 outputs: vec![OutputSocket::new(tag).with_index(0)],
             }
@@ -414,7 +414,7 @@ mod tests {
             }
         }
         let int_out = IntOut {
-            meta: NodeMeta::new("test.intout", "IntOut", 1),
+            meta: NodeMeta::new("test.intout", 1),
             inputs: vec![],
             outputs: vec![OutputSocket::new(Box::new(NamedTypeTag::new("i32")))],
         };
@@ -455,7 +455,7 @@ mod tests {
         }
         let tag: Box<dyn crate::type_tag::TypeTag> = Box::new(NamedTypeTag::new("f32"));
         let src = LimitedOut {
-            meta: NodeMeta::new("test.limited", "Limited", 1),
+            meta: NodeMeta::new("test.limited", 1),
             inputs: vec![],
             outputs: vec![OutputSocket::new(tag.clone()).with_max_connections(1)],
         };
