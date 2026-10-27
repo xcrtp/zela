@@ -70,7 +70,7 @@ pub use pass::{
     AnalysisPass, Lower, LoweredEval, PassInfo, PassKind, PassRegistry, PassRegistryError,
     ReferenceEval, Semantics, TransformPass, Validate, kernel_registry,
 };
-pub use program::{CompiledExpr, EvalError, Mono, Step, Value, hash_values};
+pub use program::{CompiledExpr, EvalError, Mono, Step, Value, ValueBytes, hash_values};
 pub use reference::{ReferenceEvaluator, eval_reference};
 
 /// 表达式 payload 的 schema 版本。

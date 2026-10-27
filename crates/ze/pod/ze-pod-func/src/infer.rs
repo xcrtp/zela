@@ -74,6 +74,9 @@ pub fn infer_root(expr: &Expr) -> Result<ChannelType, TypeError> {
         ChannelType::Bool => Err(TypeError::new(
             "绑定根表达式是 Bool；动画通道只接受数值或向量（Bool 只用于 predicate）",
         )),
+        ChannelType::I64 => Err(TypeError::new(
+            "绑定根表达式是 I64；动画通道只接受数值或向量（I64 只用于离散索引）",
+        )),
         ty => Ok(ty),
     }
 }
@@ -274,10 +277,10 @@ fn short(name: &str) -> &str {
 /// 具体类型 → kind（`Unknown` 只可能来自未接线的通道，推导前已拒绝）。
 fn kind_of(ty: ChannelType) -> Kind {
     match ty {
-        ChannelType::Number | ChannelType::Unknown => Kind::Num,
+        ChannelType::Number | ChannelType::I64 | ChannelType::Unknown => Kind::Num,
         ChannelType::Vec2 | ChannelType::Vec3 => Kind::Vector,
         ChannelType::Bool => Kind::Bool,
-        ChannelType::Path => Kind::Path,
+        ChannelType::Bytes => Kind::Bytes,
     }
 }
 
@@ -433,6 +436,7 @@ impl<'a> Infer<'a> {
 fn literal_type(value: &Literal) -> Result<ChannelType, TypeError> {
     match value {
         Literal::F32(_) | Literal::F64(_) | Literal::I32(_) => Ok(ChannelType::Number),
+        Literal::I64(_) => Ok(ChannelType::I64),
         Literal::Bool(_) => Ok(ChannelType::Bool),
         Literal::Vec2(_) => Ok(ChannelType::Vec2),
         Literal::Vec3(_) => Ok(ChannelType::Vec3),
@@ -540,6 +544,14 @@ mod tests {
     fn root_cannot_be_bool() {
         let compare = call("lt", vec![num(0.0), num(1.0)]);
         assert!(infer_root(&compare).is_err());
+    }
+
+    /// **阶段 1**：`I64` 可推导为整数类型，但不能作为动画根（只用于离散索引）。
+    #[test]
+    fn i64_is_an_integer_and_cannot_be_an_animation_root() {
+        let expr = Expr::pure(7_i64);
+        assert_eq!(infer(&expr).expect("I64 可推导"), ChannelType::I64);
+        assert!(infer_root(&expr).is_err(), "I64 不能作为动画根");
     }
 
     #[test]

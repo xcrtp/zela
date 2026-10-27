@@ -26,17 +26,50 @@ use crate::expr::{ChannelRef, Expr, ExprError, Literal, Node, OpRef};
 
 /// 运行时值（跨通道 / 算子的最小集）。
 ///
-/// **第 3 批**：`Path` 用**纯数据**表示（点列 + `closed`），而不是
-/// `ze_notion::Path2D` —— `ze-comb` 的依赖铁律不允许引入 ze-notion / glam。
+/// `Path` 已**迁移出核心**（阶段 1）：路径是 `Bytes` + 命名类型 `zela.Path`，
+/// 内核只认识"带类型名的字节块"，不认识"路径"这个领域概念。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     F64(f64),
+    /// 64 位整数（递归索引 / 帧号；**不经过 f64**）。
+    I64(i64),
     Bool(bool),
     Text(String),
     Vec2([f32; 2]),
     Vec3([f32; 3]),
-    /// 二维路径（点列 + 是否闭合）；本批只扩类型，不接通道（计划 W1）。
-    Path { points: Vec<[f32; 2]>, closed: bool },
+    /// **字节块 + 命名类型**（`zela.Path` / 第三方私有类型）。
+    ///
+    /// 命名类型与布局描述在 `ze-func::layout` 的注册表里；本 crate 只搬运字节。
+    Bytes(ValueBytes),
+}
+
+/// 带类型名的字节块。
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct ValueBytes {
+    /// 命名类型（`zela.Path` / `acme.Tensor` …）。
+    pub ty: String,
+    pub bytes: Vec<u8>,
+}
+
+impl ValueBytes {
+    pub fn new(ty: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            ty: ty.into(),
+            bytes: bytes.into(),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
 }
 
 impl Value {
@@ -44,6 +77,14 @@ impl Value {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::F64(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// 取整数（**只有** `I64`；不把 f64 静默取整）。
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Value::I64(value) => Some(*value),
             _ => None,
         }
     }
@@ -62,6 +103,10 @@ impl Value {
             Value::F64(value) => {
                 out.push(0);
                 out.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            Value::I64(value) => {
+                out.push(6);
+                out.extend_from_slice(&value.to_le_bytes());
             }
             Value::Bool(value) => {
                 out.push(1);
@@ -83,14 +128,12 @@ impl Value {
                     out.extend_from_slice(&component.to_bits().to_le_bytes());
                 }
             }
-            Value::Path { points, closed } => {
+            Value::Bytes(bytes) => {
                 out.push(5);
-                out.push(u8::from(*closed));
-                out.extend_from_slice(&(points.len() as u32).to_le_bytes());
-                for point in points {
-                    out.extend_from_slice(&point[0].to_bits().to_le_bytes());
-                    out.extend_from_slice(&point[1].to_bits().to_le_bytes());
-                }
+                out.extend_from_slice(&(bytes.ty.len() as u32).to_le_bytes());
+                out.extend_from_slice(bytes.ty.as_bytes());
+                out.extend_from_slice(&(bytes.bytes.len() as u32).to_le_bytes());
+                out.extend_from_slice(&bytes.bytes);
             }
         }
         out
@@ -263,11 +306,12 @@ impl CompiledExpr {
 pub(crate) fn value_kind(value: &Value) -> &'static str {
     match value {
         Value::F64(_) => "scalar",
+        Value::I64(_) => "i64",
         Value::Bool(_) => "bool",
         Value::Text(_) => "text",
         Value::Vec2(_) => "vec2",
         Value::Vec3(_) => "vec3",
-        Value::Path { .. } => "path",
+        Value::Bytes(_) => "bytes",
     }
 }
 
@@ -276,6 +320,7 @@ pub(crate) fn literal_value(literal: &Literal) -> Value {
         Literal::F32(value) => Value::F64(f64::from(*value)),
         Literal::F64(value) => Value::F64(*value),
         Literal::I32(value) => Value::F64(f64::from(*value)),
+        Literal::I64(value) => Value::I64(*value),
         Literal::Bool(value) => Value::Bool(*value),
         Literal::Text(value) => Value::Text(value.clone()),
         Literal::Vec2(value) => Value::Vec2(*value),
@@ -593,6 +638,30 @@ mod tests {
             },
             "默认 read_object ⇒ 显式 MissingChannel"
         );
+    }
+
+    /// **阶段 1**：`I64` 不经过 f64（递归索引不能撞刀刃取整）。
+    #[test]
+    fn i64_stays_integer_and_is_not_silently_cast() {
+        let value = Value::I64(7);
+        assert_eq!(value.as_i64(), Some(7));
+        assert_eq!(value.as_f64(), None, "I64 不得静默转 f64");
+        assert_eq!(value.kind(), "i64");
+        assert_ne!(
+            hash_values(&[Value::I64(7)]),
+            hash_values(&[Value::F64(7.0)]),
+            "整数与浮点必须是不同的值序列"
+        );
+    }
+
+    /// **阶段 1**：`Value::Path` 已消失；路径是 `Bytes + zela.Path`。
+    #[test]
+    fn bytes_carry_a_named_type() {
+        let bytes = Value::Bytes(ValueBytes::new("zela.Path", vec![1, 2, 3, 4]));
+        assert_eq!(bytes.kind(), "bytes");
+        let canonical = bytes.canonical_bytes();
+        assert_eq!(canonical[0], 5, "Bytes 的规范标签");
+        assert!(canonical.windows("zela.Path".len()).any(|w| w == b"zela.Path"));
     }
 
     /// **G 批**：宿主覆写 `read_object` 后，`Read` 返回注入值。

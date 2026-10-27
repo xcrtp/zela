@@ -346,9 +346,9 @@ fn lua_expr_returns(op: &ze_pod_core::OpDef) -> String {
                         }
                     }
                 }
-                RetType::Kind(Kind::Path) => {
-                    if !types.contains(&"Path") {
-                        types.push("Path");
+                RetType::Kind(Kind::Bytes) => {
+                    if !types.contains(&"Bytes") {
+                        types.push("Bytes");
                     }
                 }
             }

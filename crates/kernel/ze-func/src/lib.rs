@@ -20,9 +20,14 @@
 //!   `ze-comb::Value::Bytes` + 命名类型（阶段 1）。
 //! - 全部现有算子声明为 `pointwise`（连续层）；离散层（`NatRec`）在阶段 3 引入。
 
+pub mod layout;
 pub mod op;
 pub mod ops;
 
+pub use layout::{
+    ENDIAN, Endian, FieldLayout, Layout, LayoutError, Record, Scalar, Transcode, TypeRegistry,
+    decode_path, decode_record, encode_path, encode_record,
+};
 pub use op::{
     DEFS as OP_DEFS, LIBRARY_NAMESPACE, OpDef, Target, is_pointwise, op_def, op_revision, targets,
 };

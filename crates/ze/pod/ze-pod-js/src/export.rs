@@ -295,7 +295,7 @@ fn ts_expr_returns(op: &OpDef) -> String {
                     add("Vec2".to_string());
                     add("Vec3".to_string());
                 }
-                RetType::Kind(Kind::Path) => add("Path".to_string()),
+                RetType::Kind(Kind::Bytes) => add("Bytes".to_string()),
             }
         }
     }

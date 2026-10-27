@@ -109,8 +109,10 @@ pub enum Kind {
     Vector,
     /// 布尔。
     Bool,
-    /// 二维路径（第 3 批：类型系统扩展，暂未接通道 —— 计划 W1）。
-    Path,
+    /// 字节块 + 命名类型（`zela.Path` / 第三方私有类型）。
+    ///
+    /// 内核不知道路径是什么：`zela.Path` 只是类型注册表里的一个名字。
+    Bytes,
 }
 
 impl Kind {
@@ -119,7 +121,7 @@ impl Kind {
             Kind::Num => "Num",
             Kind::Vector => "Vector",
             Kind::Bool => "Bool",
-            Kind::Path => "Path",
+            Kind::Bytes => "Bytes",
         }
     }
 }

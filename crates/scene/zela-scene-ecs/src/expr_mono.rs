@@ -112,18 +112,20 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
     let expected = match channel.ty {
         ChannelType::Unknown => return Ok(()),
         ChannelType::Number => "number",
+        ChannelType::I64 => "i64",
         ChannelType::Bool => "bool",
         ChannelType::Vec2 => "vec2",
         ChannelType::Vec3 => "vec3",
-        ChannelType::Path => "path",
+        ChannelType::Bytes => "bytes",
     };
     let actual = match value {
         Value::F64(_) => "number",
+        Value::I64(_) => "i64",
         Value::Bool(_) => "bool",
         Value::Vec2(_) => "vec2",
         Value::Vec3(_) => "vec3",
         Value::Text(_) => "text",
-        Value::Path { .. } => "path",
+        Value::Bytes(_) => "bytes",
     };
     if expected == actual {
         Ok(())
@@ -138,8 +140,9 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
 
 /// `AnimValue` → 表达式值（Scalar→F64、Vec2→[f32;2]、Vec3→[f32;3]）。
 ///
-/// **第 3 批**：`Color` / `Path` 以前返回 `None`（被当成 `MissingComponent`，
-/// 是一次"看起来像缺组件"的静默）；现在**显式点名**值类型不支持读。
+/// **阶段 1（Path 迁移）**：`AnimValue::Path` 不再报"不支持读"，而是走
+/// `ze-func::layout` 的**慢路径**编码成 `Value::Bytes { ty = "zela.Path" }`。
+/// 路径是变长结构、没有 Layout ⇒ 零拷贝不适用（硬约束 4 的安全缺省）。
 fn anim_to_value(channel: &ChannelRef, value: &AnimValue) -> Result<Value, EvalError> {
     match value {
         AnimValue::Scalar(value) => Ok(Value::F64(*value as f64)),
@@ -149,23 +152,49 @@ fn anim_to_value(channel: &ChannelRef, value: &AnimValue) -> Result<Value, EvalE
             channel: channel.clone(),
             kind: "color",
         }),
-        AnimValue::Path(_) => Err(EvalError::UnsupportedValue {
-            channel: channel.clone(),
-            kind: "path",
-        }),
+        AnimValue::Path(path) => Ok(Value::Bytes(encode_path_value(path))),
     }
+}
+
+/// `Path2D` → `zela.Path` 字节块（曲线按固定容差展平；慢路径，不进零拷贝）。
+fn encode_path_value(path: &ze_notion::Path2D) -> ze_comb::ValueBytes {
+    let closed = matches!(
+        path.commands.last(),
+        Some(ze_notion::PathCommand::Close)
+    );
+    let points: Vec<[f32; 2]> = path
+        .flatten(ze_notion::MORPH_TOLERANCE)
+        .into_iter()
+        .map(|point| [point.x, point.y])
+        .collect();
+    ze_func::layout::encode_path(&points, closed)
+}
+
+/// `zela.Path` 字节块 → `Path2D`（折线重建；与 [`encode_path_value`] 成对）。
+fn decode_path_value(bytes: &ze_comb::ValueBytes) -> Option<ze_notion::Path2D> {
+    if bytes.ty != ze_func::layout::PATH_TYPE {
+        return None;
+    }
+    let (points, closed) = ze_func::layout::decode_path(&bytes.bytes).ok()?;
+    let points: Vec<ze_notion::Vec2> = points
+        .into_iter()
+        .map(|point| ze_notion::Vec2::new(point[0], point[1]))
+        .collect();
+    Some(ze_notion::Path2D::from_polyline(&points, closed))
 }
 
 /// 求值结果 → 绑定目标可写的值。
 ///
-/// `Bool` / `Text` / `Path` 没有对应的组件字段通道 ⇒ 返回 `None`
-/// （调用方显式记录，不静默写 0）。
+/// `Bool` / `Text` / `I64` 没有对应的组件字段通道 ⇒ 返回 `None`
+/// （调用方显式记录，不静默写 0）。`Value::Bytes` 只在命名类型是
+/// `zela.Path` 时解码回路径；其它命名类型同样显式跳过。
 pub fn anim_value(value: &Value) -> Option<AnimValue> {
     match value {
         Value::F64(value) => Some(AnimValue::Scalar(*value as f32)),
         Value::Vec2(value) => Some(AnimValue::Vec2((*value).into())),
         Value::Vec3(value) => Some(AnimValue::Vec3((*value).into())),
-        Value::Bool(_) | Value::Text(_) | Value::Path { .. } => None,
+        Value::Bytes(bytes) => decode_path_value(bytes).map(AnimValue::Path),
+        Value::I64(_) | Value::Bool(_) | Value::Text(_) => None,
     }
 }
 
@@ -309,10 +338,10 @@ mod tests {
         );
     }
 
-    /// **第 3 批**：`Color` / `Path` 没有表达式层表示 —— 读端**显式点名**值类型，
-    /// 不再伪装成 `MissingComponent`（那是错误的静默）。
+    /// **阶段 1**：`Color` 仍然没有表达式层表示（显式点名）；`Path` 已迁移为
+    /// `Bytes + zela.Path`，读端编码、写端解码，**往返一致**。
     #[test]
-    fn unsupported_component_value_types_are_explicit() {
+    fn color_is_unsupported_but_path_round_trips_through_bytes() {
         let channel = ChannelRef::new("zela.scene", "Shape.fill");
         let err = anim_to_value(&channel, &AnimValue::Color([0.1, 0.2, 0.3, 1.0]))
             .expect_err("Color 不支持读");
@@ -324,15 +353,31 @@ mod tests {
             }
         );
 
-        let path = ze_notion::Path2D::from_polyline(&[ze_notion::Vec2::new(0.0, 0.0)], false);
-        let err = anim_to_value(&channel, &AnimValue::Path(path)).expect_err("Path 不支持读");
-        assert_eq!(
-            err,
-            EvalError::UnsupportedValue {
-                channel,
-                kind: "path",
-            }
-        );
+        let points = [
+            ze_notion::Vec2::new(0.0, 0.0),
+            ze_notion::Vec2::new(1.0, 2.0),
+        ];
+        let path = ze_notion::Path2D::from_polyline(&points, true);
+        let value = anim_to_value(&channel, &AnimValue::Path(path)).expect("Path 迁移为 Bytes");
+        let ze_comb::Value::Bytes(bytes) = &value else {
+            panic!("Path 必须编码成 Value::Bytes，实际 {value:?}");
+        };
+        assert_eq!(bytes.ty, ze_func::layout::PATH_TYPE);
+
+        let AnimValue::Path(decoded) = anim_value(&value).expect("zela.Path 可写回") else {
+            panic!("zela.Path 必须解码回 AnimValue::Path");
+        };
+        // 闭合折线展平后会重复首点；比较前 N 个点 + 闭合标记。
+        let flattened = decoded.flatten(ze_notion::MORPH_TOLERANCE);
+        assert_eq!(&flattened[..points.len()], &points[..]);
+        assert!(matches!(
+            decoded.commands.last(),
+            Some(ze_notion::PathCommand::Close)
+        ));
+
+        // 其它私有类型字节块不会被误当成路径（显式跳过，不写 0）。
+        let foreign = ze_comb::Value::Bytes(ze_comb::ValueBytes::new("acme.Tensor", vec![1, 2, 3]));
+        assert_eq!(anim_value(&foreign), None);
     }
 
     /// **管道验收**：`Reveal.current_pos` 是只读派生量 —— 读端经 `SceneRead`

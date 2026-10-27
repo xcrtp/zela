@@ -79,6 +79,8 @@ pub enum Literal {
     F32(f32),
     F64(f64),
     I32(i32),
+    /// 64 位整数（**离散层索引**：走 F64 会撞刀刃取整，见硬约束 6）。
+    I64(i64),
     Bool(bool),
     Text(String),
     Vec2([f32; 2]),
@@ -100,6 +102,12 @@ impl From<f64> for Literal {
 impl From<i32> for Literal {
     fn from(value: i32) -> Self {
         Literal::I32(value)
+    }
+}
+
+impl From<i64> for Literal {
+    fn from(value: i64) -> Self {
+        Literal::I64(value)
     }
 }
 
@@ -147,26 +155,32 @@ pub enum ChannelType {
     Unknown,
     /// 数值（`time` / `frame` / 标量字段）。
     Number,
+    /// 64 位整数（递归索引 / 帧号；**不做 f64 转换**）。
+    I64,
     /// 布尔。
     Bool,
     /// 二维向量。
     Vec2,
     /// 三维向量。
     Vec3,
-    /// 二维路径（第 3 批：只扩类型，暂不接通道 —— 计划 W1）。
-    Path,
+    /// **字节块 + 命名类型**（`Value::Bytes`）。
+    ///
+    /// 内核不知道"路径"是什么：`zela.Path` 只是宿主注册表里的一个名字
+    /// （阶段 1：`Value::Path` 已迁移出去）。
+    Bytes,
 }
 
 impl ChannelType {
-    /// 文档 / 诊断里的短名（`F64` / `Bool` / `Vec2` / `Vec3` / `Path`）。
+    /// 文档 / 诊断里的短名（`F64` / `I64` / `Bool` / `Vec2` / `Vec3` / `Bytes`）。
     pub const fn name(self) -> &'static str {
         match self {
             Self::Unknown => "Unknown",
             Self::Number => "F64",
+            Self::I64 => "I64",
             Self::Bool => "Bool",
             Self::Vec2 => "Vec2",
             Self::Vec3 => "Vec3",
-            Self::Path => "Path",
+            Self::Bytes => "Bytes",
         }
     }
 }
@@ -714,6 +728,28 @@ mod tests {
             matches!(err, ExprError::Cycle(ref path) if path.contains("a") && path.contains("b")),
             "期望环错误，实得 {err:?}"
         );
+    }
+
+    /// **阶段 1**：`I64` 是**追加**的字面量标签，老 payload 解码路径不动。
+    #[test]
+    fn i64_literal_is_additive_and_distinct_from_f64() {
+        let expr = Expr::pure(7_i64);
+        let raw = serde_json::to_value(&expr).expect("必须可序列化");
+        assert_eq!(
+            raw,
+            json!({
+                "node": {
+                    "type": "pure",
+                    "data": { "value": { "type": "i64", "data": 7 } }
+                }
+            })
+        );
+        let decoded: Expr = serde_json::from_value(raw).expect("格式必须可解码");
+        assert_eq!(decoded, expr);
+
+        // 老 payload（只有 i32 / f32 / f64 …）仍然可解码。
+        let legacy = v2_payload();
+        serde_json::from_value::<Expr>(legacy).expect("老 payload 不受新增标签影响");
     }
 
     #[test]
