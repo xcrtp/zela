@@ -21,7 +21,7 @@
 use std::any::Any;
 use std::sync::Mutex;
 
-use ze_comb::{ChannelRef, ChannelType, CompiledExpr, Expr, Literal, Node, OpRef};
+use ze_comb::{ChannelRef, ChannelType, CompiledExpr, Expr, Literal, OpRef};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
@@ -698,26 +698,35 @@ fn expression(pod: &dyn Pod, root: Handle) -> String {
 /// 装配期校验：结构合法 + 只读已注入的通道 + 算子都在本库。
 fn validate_binding(expr: &Expr) -> Result<(), String> {
     CompiledExpr::compile(expr).map_err(|error| error.to_string())?;
-    fn walk(expr: &Expr) -> Result<(), String> {
-        match &expr.node {
-            Node::Channel { channel } => {
-                let injected = channel.is_builtin()
-                    && matches!(channel.name.as_str(), "time" | "frame");
+
+    /// 命中即用 `String` 提前结束遍历（`walk` 的错误通道）。
+    struct Check;
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Check {
+        type Error = String;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, String> {
+            if let Some(channel) = expr.node.channel() {
+                let injected =
+                    channel.is_builtin() && matches!(channel.name.as_str(), "time" | "frame");
                 if !injected {
                     return Err(format!("通道 `{channel}` 尚未由宿主注入"));
                 }
             }
-            Node::Call { op, .. } if !crate::ops::is_known(op) => {
-                return Err(format!("未知算子 `{op}`"));
+            if let Some((op, _)) = expr.node.call() {
+                if !crate::ops::is_known(op) {
+                    return Err(format!("未知算子 `{op}`"));
+                }
             }
-            _ => {}
+            Ok(true)
         }
-        for child in expr.node.children() {
-            walk(child)?;
-        }
-        Ok(())
     }
-    walk(expr)
+
+    expr.walk(&mut Check)
 }
 
 fn bind(pod: &dyn Pod, spec: BindSpec) {

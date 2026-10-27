@@ -115,6 +115,23 @@ impl Node {
             _ => None,
         }
     }
+
+    /// `Call` 节点：`(算子, 实参)`。
+    pub fn call(&self) -> Option<(&OpRef, &[Expr])> {
+        match self {
+            Node::Call { op, args } => Some((op, args)),
+            _ => None,
+        }
+    }
+
+    /// 递归叶子：返回它在错误消息里的名字（`rec_prev` / `rec_index`）。
+    pub fn rec_leaf(&self) -> Option<&'static str> {
+        match self {
+            Node::RecPrev => Some("rec_prev"),
+            Node::RecIndex => Some("rec_index"),
+            _ => None,
+        }
+    }
 }
 
 /// 字面量（跨边界前的最后一层：过了 Pod 边界就只剩这些值）。
@@ -559,9 +576,8 @@ fn check_recursive_leaves(expr: &Expr) -> Result<(), ExprError> {
                 Some(_) => inherited,
                 None => false,
             };
-            match &expr.node {
-                Node::RecPrev if !in_step => return Err(ExprError::OrphanRec("rec_prev")),
-                Node::RecIndex if !in_step => return Err(ExprError::OrphanRec("rec_index")),
+            match expr.node.rec_leaf() {
+                Some(name) if !in_step => return Err(ExprError::OrphanRec(name)),
                 _ => {}
             }
             self.in_step.push(in_step);
