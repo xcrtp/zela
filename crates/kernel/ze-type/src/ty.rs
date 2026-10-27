@@ -225,7 +225,34 @@ pub enum RetType {
     Kind(Kind),
 }
 
-/// 一个算子的全部重载。
+/// 算子出口能力（代码生成 / 仅宿主 / 需运行时）。
+///
+/// **单一定义**：它随 `OpDef` 一起住在 `ze-type`，`ze-func` 不再有第二份。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// 可代码生成（未来：WGSL / C）。
+    Codegen,
+    /// 只能由宿主实现。
+    HostOnly,
+    /// 需要运行时支持（如查表 / 环境）。
+    Runtime,
+}
+
+impl Target {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Target::Codegen => "codegen",
+            Target::HostOnly => "host_only",
+            Target::Runtime => "runtime",
+        }
+    }
+}
+
+/// 一个算子的**完整**描述：签名 + 语义元数据（计划 §0.1 的合并）。
+///
+/// 合并前有两张 `OpDef`：`ze-type` 持 `spec/sigs`，`ze-func` 持
+/// `pointwise/targets`，两边靠"名字相同"隐式对应 —— 任何一边漏登记另一边都不会报错。
+/// 现在只有一个结构、一张表。
 #[derive(Clone, Copy, Debug)]
 pub struct OpDef {
     pub name: &'static str,
@@ -239,6 +266,10 @@ pub struct OpDef {
     pub since: u32,
     /// 语义最后一次变更的 revision（**签名不变但实现变了也要 bump**）。
     pub changed: u32,
+    /// 连续层声明：逐点求值（`f: ℝⁿ → V`）。
+    pub pointwise: bool,
+    /// 出口能力（占位）。
+    pub targets: &'static [Target],
 }
 
 impl OpDef {

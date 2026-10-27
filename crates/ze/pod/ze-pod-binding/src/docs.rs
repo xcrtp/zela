@@ -32,7 +32,7 @@ pub struct CapabilityDocs {
     pub docs: &'static [FnDoc],
     pub meta: CapabilityMeta,
     /// 该能力挂到组件构造器上的**通道常量**（`Circle.channel.radius` …；默认空）。
-    pub channels: &'static [ze_pod_core::ChannelSpec],
+    pub channels: &'static [ze_pod_core::ChannelDecl],
     /// 该能力的**算子签名表**（L2 类型化；只有 `zela.math` 非空）。
     pub ops: &'static [ze_pod_core::OpDef],
 }

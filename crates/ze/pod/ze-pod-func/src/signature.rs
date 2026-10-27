@@ -1,477 +1,16 @@
-//! **算子签名表**（L2 类型化的数据面）。
+//! **算子签名表的接线层**：数据面在 `ze-func`（单一 [`OpDef`] 真源）。
 //!
-//! 每条 [`OpSig`] 是 rank-1 多态 + kind 约束（`Num` / `Vector` / `Bool`）。
-//! 为什么需要它：`mul` 的 `Vec2 × F64 → Vec2` 里**返回类型等于第一个参数的类型**，
-//! L0 的单态重载列表必须穷举所有几何组合；有了类型变量 + kind，一行就够。
+//! 计划 §0.1：签名与语义元数据曾经分居两张表，靠"名字相同"隐式对应。
+//! 现在 `ze-func::OP_DEFS` 是**唯一**目录，本模块只保留 Pod 侧的两件事：
+//! - 产物里的函数级 revision 记录 / 加载期点名比对；
+//! - 装配期 pass 登记。
 //!
-//! 本文件只放**数据**：
-//! - 文档生成器把 [`OpDef::render_lines`] 打进声明文件（`Sin: (F64) -> F64`）；
-//! - 装配期（B 批）逐条尝试合一，多条成功 ⇒ **显式歧义错误**（硬约束 4）。
-//!
-//! 签名里 [`TypeSpec::Var`] 的名字只是 `vars` 的键，**不是**自由命名空间。
+//! 签名与元数据的查询直接转发到 `ze-func`（同一张表、同一个符号索引）。
 
 use std::collections::BTreeMap;
 
-use ze_pod_core::{Kind, OpDef, OpSig, ScalarKind, TypeSpec};
-
-const F64: &TypeSpec = &TypeSpec::Scalar(ScalarKind::F64);
-const BOOL: &TypeSpec = &TypeSpec::Scalar(ScalarKind::Bool);
-const VAR_A: &TypeSpec = &TypeSpec::Var("a");
-
-const NUM_A: &[(&str, Kind)] = &[("a", Kind::Num)];
-const VEC_A: &[(&str, Kind)] = &[("a", Kind::Vector)];
-const NO_VARS: &[(&str, Kind)] = &[];
-
-/// 一元数值：`sin` / `cos`。
-const UNARY_NUM: OpSig = OpSig {
-    params: &[F64],
-    ret: F64,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// 二元同类型：`add` 的两种（数值 / 向量）。
-const SAME_NUM: OpSig = OpSig {
-    params: &[VAR_A, VAR_A],
-    ret: VAR_A,
-    vars: NUM_A,
-    variadic: false,
-};
-const SAME_VEC: OpSig = OpSig {
-    params: &[VAR_A, VAR_A],
-    ret: VAR_A,
-    vars: VEC_A,
-    variadic: false,
-};
-
-/// `mul` / `scale`：数值×数值、向量×数值、数值×向量（**返回值绑在向量那一侧**）。
-const SCALE_NUM: OpSig = OpSig {
-    params: &[F64, F64],
-    ret: F64,
-    vars: NO_VARS,
-    variadic: false,
-};
-const SCALE_VEC_LEFT: OpSig = OpSig {
-    params: &[VAR_A, F64],
-    ret: VAR_A,
-    vars: VEC_A,
-    variadic: false,
-};
-const SCALE_VEC_RIGHT: OpSig = OpSig {
-    params: &[F64, VAR_A],
-    ret: VAR_A,
-    vars: VEC_A,
-    variadic: false,
-};
-
-/// `sum`：任意多项同类型求和（变参）。
-const SUM_NUM: OpSig = OpSig {
-    params: &[VAR_A],
-    ret: VAR_A,
-    vars: NUM_A,
-    variadic: true,
-};
-const SUM_VEC: OpSig = OpSig {
-    params: &[VAR_A],
-    ret: VAR_A,
-    vars: VEC_A,
-    variadic: true,
-};
-
-// ─── 第 1 批（算子补齐）────────────────────────────────────────────────
-
-const VEC2: &TypeSpec = &TypeSpec::Struct {
-    name: "zela.Vec2",
-    layout: None,
-    fields: &[],
-};
-const VEC3: &TypeSpec = &TypeSpec::Struct {
-    name: "zela.Vec3",
-    layout: None,
-    fields: &[],
-};
-
-/// `mix(a, b, t)`：`(T, T, F64) → T`，`T ∈ Num | Vector`。
-const MIX_NUM: OpSig = OpSig {
-    params: &[VAR_A, VAR_A, F64],
-    ret: VAR_A,
-    vars: NUM_A,
-    variadic: false,
-};
-const MIX_VEC: OpSig = OpSig {
-    params: &[VAR_A, VAR_A, F64],
-    ret: VAR_A,
-    vars: VEC_A,
-    variadic: false,
-};
-
-/// `clamp(x, lo, hi)`：`(F64, F64, F64) → F64`。
-const CLAMP: OpSig = OpSig {
-    params: &[F64, F64, F64],
-    ret: F64,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// `vec2(x, y)` / `vec3(x, y, z)`：标量 → 向量（显式构造，不做隐式提升）。
-const TO_VEC2: OpSig = OpSig {
-    params: &[F64, F64],
-    ret: VEC2,
-    vars: NO_VARS,
-    variadic: false,
-};
-const TO_VEC3: OpSig = OpSig {
-    params: &[F64, F64, F64],
-    ret: VEC3,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// `x(v)` / `y(v)` / `z(v)`：向量分量（`Vector → F64`）。
-const COMPONENT: OpSig = OpSig {
-    params: &[VAR_A],
-    ret: F64,
-    vars: VEC_A,
-    variadic: false,
-};
-
-/// `rotate3(v, axis, angle)`：罗德里格斯旋转（`Vec3, Vec3, F64 → Vec3`）。
-const ROTATE3: OpSig = OpSig {
-    params: &[VEC3, VEC3, F64],
-    ret: VEC3,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-// ─── 第 3 批（类型系统扩展）：转换算子族 ────────────────────────────────
-
-/// `splat(v)`：`F64 → Vec3`（三个分量同值）。
-const SPLAT: OpSig = OpSig {
-    params: &[F64],
-    ret: VEC3,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// `vec3_from_vec2(v, z)`：`Vec2, F64 → Vec3`。
-const VEC3_FROM_VEC2: OpSig = OpSig {
-    params: &[VEC2, F64],
-    ret: VEC3,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// `vec2_from_vec3(v)`：`Vec3 → Vec2`（显式丢弃 z）。
-const VEC2_FROM_VEC3: OpSig = OpSig {
-    params: &[VEC3],
-    ret: VEC2,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// `length(v)`：`Vector → F64`。
-const LENGTH: OpSig = OpSig {
-    params: &[VAR_A],
-    ret: F64,
-    vars: VEC_A,
-    variadic: false,
-};
-
-/// `normalize(v)`：`Vector → Vector`（零向量保持零）。
-const NORMALIZE: OpSig = OpSig {
-    params: &[VAR_A],
-    ret: VAR_A,
-    vars: VEC_A,
-    variadic: false,
-};
-
-/// `round_f32(x)`：`F64 → F64`（落成 f32 再升回；逐位复刻旧曲线用）。
-const ROUND_F32: OpSig = OpSig {
-    params: &[F64],
-    ret: F64,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// 比较：数值 → Bool。
-const CMP_NUM: OpSig = OpSig {
-    params: &[F64, F64],
-    ret: BOOL,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// 相等：数值或布尔。
-const EQ_NUM: OpSig = OpSig {
-    params: &[F64, F64],
-    ret: BOOL,
-    vars: NO_VARS,
-    variadic: false,
-};
-const EQ_BOOL: OpSig = OpSig {
-    params: &[BOOL, BOOL],
-    ret: BOOL,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// 布尔组合子：**只吃 Bool**（最严）。
-const AND: OpSig = OpSig {
-    params: &[BOOL, BOOL],
-    ret: BOOL,
-    vars: NO_VARS,
-    variadic: false,
-};
-const NOT: OpSig = OpSig {
-    params: &[BOOL],
-    ret: BOOL,
-    vars: NO_VARS,
-    variadic: false,
-};
-
-/// `zela.math` 全部算子的签名表（顺序与 [`crate::OPS`] 一致）。
-///
-/// `spec` 是构造器 PodType 的完整名：存根生成器据此把签名挂到
-/// `Sin` / `Mul` … 上（`Sin(...) -> Expr<number>`）。
-///
-/// `since` / `changed` 是**函数级版本**（第 4 批）：revision 取算子库版本的序号
-/// （`1` = 追踪开始前的既有算子，`9` = 第 1 批，`11` = 第 3 批）。改某个算子的
-/// **语义**（签名不变也算）时只 bump 它的 `changed` —— 用到它的 payload 会在加载时
-/// 被**点名**拒绝，而不是整库作废。
-pub static SIGNATURES: &[OpDef] = &[
-    OpDef {
-        name: "sin",
-        spec: "zela.math.Sin",
-        sigs: &[UNARY_NUM],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "cos",
-        spec: "zela.math.Cos",
-        sigs: &[UNARY_NUM],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "add",
-        spec: "zela.math.Add",
-        sigs: &[SAME_NUM, SAME_VEC],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "mul",
-        spec: "zela.math.Mul",
-        sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "scale",
-        spec: "zela.math.Scale",
-        sigs: &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "sum",
-        spec: "zela.math.Sum",
-        sigs: &[SUM_NUM, SUM_VEC],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "mix",
-        spec: "zela.math.Mix",
-        sigs: &[MIX_NUM, MIX_VEC],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "clamp",
-        spec: "zela.math.Clamp",
-        sigs: &[CLAMP],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "vec2",
-        spec: "zela.math.Vec2Of",
-        sigs: &[TO_VEC2],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "vec3",
-        spec: "zela.math.Vec3Of",
-        sigs: &[TO_VEC3],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "x",
-        spec: "zela.math.Component",
-        sigs: &[COMPONENT],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "y",
-        spec: "zela.math.Component",
-        sigs: &[COMPONENT],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "z",
-        spec: "zela.math.Component",
-        sigs: &[COMPONENT],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "rotate3",
-        spec: "zela.math.Rotate3",
-        sigs: &[ROTATE3],
-        since: 9,
-        changed: 9,
-    },
-    OpDef {
-        name: "splat",
-        spec: "zela.math.Splat",
-        sigs: &[SPLAT],
-        since: 11,
-        changed: 11,
-    },
-    OpDef {
-        name: "vec3_from_vec2",
-        spec: "zela.math.Vec3FromVec2",
-        sigs: &[VEC3_FROM_VEC2],
-        since: 11,
-        changed: 11,
-    },
-    OpDef {
-        name: "vec2_from_vec3",
-        spec: "zela.math.Vec2FromVec3",
-        sigs: &[VEC2_FROM_VEC3],
-        since: 11,
-        changed: 11,
-    },
-    OpDef {
-        name: "length",
-        spec: "zela.math.Length",
-        sigs: &[LENGTH],
-        since: 11,
-        changed: 11,
-    },
-    OpDef {
-        name: "normalize",
-        spec: "zela.math.Normalize",
-        sigs: &[NORMALIZE],
-        since: 11,
-        changed: 11,
-    },
-    OpDef {
-        name: "round_f32",
-        spec: "zela.math.RoundF32",
-        sigs: &[ROUND_F32],
-        since: 12,
-        changed: 12,
-    },
-    OpDef {
-        name: "lt",
-        spec: "zela.math.Lt",
-        sigs: &[CMP_NUM],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "gt",
-        spec: "zela.math.Gt",
-        sigs: &[CMP_NUM],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "le",
-        spec: "zela.math.Le",
-        sigs: &[CMP_NUM],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "ge",
-        spec: "zela.math.Ge",
-        sigs: &[CMP_NUM],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "eq",
-        spec: "zela.math.Eq",
-        sigs: &[EQ_NUM, EQ_BOOL],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "ne",
-        spec: "zela.math.Ne",
-        sigs: &[EQ_NUM, EQ_BOOL],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "and",
-        spec: "zela.math.And",
-        sigs: &[AND],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "or",
-        spec: "zela.math.Or",
-        sigs: &[AND],
-        since: 1,
-        changed: 1,
-    },
-    OpDef {
-        name: "not",
-        spec: "zela.math.Not",
-        sigs: &[NOT],
-        since: 1,
-        changed: 1,
-    },
-];
-
-/// 查一个算子的签名（未知算子返回 `None`；**O(1)**，符号表只建一次）。
-pub fn signature_of(name: &str) -> Option<&'static OpDef> {
-    index().resolve(name).map(|(_, def)| *def)
-}
-
-fn index() -> &'static ze_reflect::SymbolTable<&'static str, &'static OpDef> {
-    use std::sync::OnceLock;
-
-    static INDEX: OnceLock<ze_reflect::SymbolTable<&'static str, &'static OpDef>> =
-        OnceLock::new();
-    INDEX.get_or_init(|| {
-        let mut table = ze_reflect::SymbolTable::new();
-        for def in SIGNATURES {
-            table
-                .intern(def.name, def, ze_reflect::Blame::Assembly)
-                .expect("SIGNATURES 的名字唯一（顺序测试已钉住）");
-        }
-        table
-    })
-}
-
-/// 某算子的 `(since, changed)`（产物记录 / 加载比对用）。
-///
-/// **事实来源是 `ze-func::op`**：本表的 `since/changed` 字段只是给文档导出器
-/// 保留的投影，两者由 `signatures_agree_with_the_functor_library` 钉住。
-pub fn op_revision(name: &str) -> Option<(u32, u32)> {
-    ze_func::op_revision(name)
-}
+pub use ze_func::{OP_DEFS as SIGNATURES, op_revision, signature_of};
+pub use ze_pod_core::OpDef;
 
 /// 表达式树里用到的**值算子** `(since, changed)`（产物记录用）。
 ///
@@ -548,6 +87,40 @@ mod tests {
         assert_eq!(names.as_slice(), crate::ops::OPS);
     }
 
+    /// **阶段 0 判据**：只有一个 `OpDef`、只有一张表 —— 两个名字指向同一份数据。
+    #[test]
+    fn one_table_backs_both_names() {
+        assert!(
+            std::ptr::eq(ze_func::OP_DEFS, super::SIGNATURES),
+            "SIGNATURES 必须是 OP_DEFS 的别名，不是第二张表"
+        );
+        for def in super::SIGNATURES {
+            assert_eq!(
+                (def.since, def.changed),
+                ze_func::op_revision(def.name).expect("同一张表"),
+                "算子 `{}` 的 revision 漂移",
+                def.name
+            );
+        }
+    }
+
+    /// 文档行用构造器名（`Sin`），与脚本侧的 `Sin { … }` 一致。
+    #[test]
+    fn signature_renders_for_docs() {
+        let sin = super::signature_of("sin").expect("sin 已登记");
+        assert_eq!(sin.render_lines(), vec!["Sin: (F64) -> F64"]);
+
+        let mul = super::signature_of("mul").expect("mul 已登记");
+        assert_eq!(
+            mul.render_lines(),
+            vec![
+                "Mul: (F64, F64) -> F64",
+                "Mul: (Vector, F64) -> Vector",
+                "Mul: (F64, Vector) -> Vector",
+            ]
+        );
+    }
+
     /// **阶段 4**：向量实例由 kind **lift** 生成，算子表里不出现 `cos_vec2` 之类条目。
     #[test]
     fn vector_instances_are_lifted_not_enumerated() {
@@ -589,40 +162,6 @@ mod tests {
         assert_eq!(vector[0].ret.type_name(), Some("zela.Vec2"));
     }
 
-    /// **阶段 0 切分证据**：签名表里的 `since/changed` 与基础函子库的
-    /// `OpDef` 元数据逐条一致（事实来源在 `ze-func`，这里只是投影）。
-    #[test]
-    fn signatures_agree_with_the_functor_library() {
-        for def in super::SIGNATURES {
-            assert_eq!(
-                (def.since, def.changed),
-                ze_func::op_revision(def.name).expect("元数据表必须覆盖签名表"),
-                "算子 `{}` 的 revision 漂移",
-                def.name
-            );
-        }
-        let meta: Vec<&str> = ze_func::OP_DEFS.iter().map(|def| def.name).collect();
-        let sigs: Vec<&str> = super::SIGNATURES.iter().map(|def| def.name).collect();
-        assert_eq!(meta, sigs, "两张表必须同名同序");
-    }
-
-    /// 文档行用构造器名（`Sin`），与脚本侧的 `Sin { … }` 一致。
-    #[test]
-    fn signature_renders_for_docs() {
-        let sin = super::signature_of("sin").expect("sin 已登记");
-        assert_eq!(sin.render_lines(), vec!["Sin: (F64) -> F64"]);
-
-        let mul = super::signature_of("mul").expect("mul 已登记");
-        assert_eq!(
-            mul.render_lines(),
-            vec![
-                "Mul: (F64, F64) -> F64",
-                "Mul: (Vector, F64) -> Vector",
-                "Mul: (F64, Vector) -> Vector",
-            ]
-        );
-    }
-
     /// 第 4 批：函数级 revision 与批次对应（既有 = 1、第 1 批 = 9、第 3 批 = 11）。
     #[test]
     fn op_revisions_follow_the_batches() {
@@ -647,9 +186,5 @@ mod tests {
         assert!(error.contains("`tan`"), "{error}");
 
         assert!(super::check_op_revisions(&BTreeMap::new()).is_ok());
-        let mut current = BTreeMap::new();
-        current.insert("sin".to_string(), super::op_revision("sin").unwrap());
-        assert!(super::check_op_revisions(&current).is_ok());
     }
 }
-

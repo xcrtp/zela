@@ -177,13 +177,13 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
 /// （`Circle.channel.radius`）。
 ///
 /// 常量就是普通表 `{ namespace = ..., name = ... }` —— 与 `expr.bind` 的
-/// `ChannelSpec` 同形，三种语言不需要专用令牌。
+/// `ChannelDecl` 同形，三种语言不需要专用令牌。
 ///
 /// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
 /// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
 fn attach_channels(
     lua: &Lua,
-    channels: &'static [ze_pod_core::ChannelSpec],
+    channels: &'static [ze_pod_core::ChannelDecl],
 ) -> mlua::Result<()> {
     for channel in channels {
         let Value::Table(ctor) = lua.globals().get::<Value>(channel.component)? else {

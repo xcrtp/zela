@@ -134,7 +134,7 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                 ));
                 // 通道常量收在 `X.channel.*` 下（TS：function + namespace 合并）；
                 // 多一层是因为组件字段可能与地址同名（`Opacity.value`）。
-                let channels: Vec<&ze_pod_core::ChannelSpec> = capabilities
+                let channels: Vec<&ze_pod_core::ChannelDecl> = capabilities
                     .iter()
                     .flat_map(|capability| capability.channels)
                     .filter(|channel| channel.component == name)

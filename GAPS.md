@@ -1019,6 +1019,113 @@
 
 ---
 
+## AL. 计算内核独立化批次记账（ze-type / ze-func 切分，2026-10-26/27）
+
+> 计划《表达式层 S0–S4》。口径：**先证明等价、再删**；36 条像素基线逐位不变。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AL-01 | **阶段 0：切分 ze-comb 与 ze-func** | kernel | **已关闭（0）** | 表达式内核（`ze-comb`，只 serde + thiserror）与基础函子库（`ze-func`：算子语义 + 元数据）分离；两者均过 wasm gate。 |
+| AL-02 | **阶段 1：类型地基（I64 / Layout / Path）** | kernel | **已关闭（1）** | `I64` 离散索引、`Layout` 注册、`zela.Path` 迁出 `Value`；36 条基线不变。 |
+| AL-03 | **阶段 2：多维连续变量与 pointwise 传播** | kernel | **已关闭（2）** | `Vec2` / `Vec3` 通道、区间代数、`PointwiseReport` 的污染源传播。 |
+| AL-04 | **阶段 3：离散层 NatRec + 显式 Cache** | kernel | **已关闭（3）** | `NatRec` 求值 + 可序列化缓存 + 递归/环区分；上界进产物。 |
+| AL-05 | **阶段 4：跨语言 fixture 门禁** | kernel / 三语言 | **已关闭（4）** | `ze-func/tests/fixtures` 跨语言对拍；符号化简与 targets 占位。 |
+
+**AL 段小计**：已关闭 5（AL-01…AL-05）。
+
+---
+
+## AM. 统一解析协议批次记账（ze-type / ze-reflect，2026-10-27）
+
+> 计划《ze-type / ze-reflect 执行计划》。核心：把可序列化的慢形式一次性解析成进程内快形式，用 generation 保证不失效。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AM-01 | **阶段 0：代数层迁至 ze-type** | kernel | **已关闭（0）** | `typespec.rs` 的十一个类型迁入 [`ze-type`](crates/kernel/ze-type/src/lib.rs)（`no_std + alloc`）；`ze-pod-core` 只 re-export，`ErasedFn` 留在 pod 层（运行时绑定入口，避免反向边）。 |
+| AM-02 | **阶段 1：合并类型描述** | kernel | **已关闭（1）** | `Layout` 收进 `TypeSpec::Struct.layout`、`Array { elem, len }`；`ChannelType` 降级为 `TypeSpec` 视图（`from_type_spec`）；同名不同布局 = 冲突。 |
+| AM-03 | **阶段 2：冲突检测统一** | kernel | **已关闭（2）** | [`ReflectError`](crates/kernel/ze-type/src/conflict.rs) 收敛重名 / 类型 / 布局 / 版本 / 能力五类诊断并带污染源；`ExprError::DuplicateId` / `PassRegistryError::Duplicate` / `TypeRegistry::register` 全部改走它。 |
+| AM-04 | **阶段 3：符号表与句柄统一** | kernel / pod / scene | **已关闭（3）** | `HandleCore` + `SlotTable`（`HandleTable` 变薄包装）；`FunctionId` 补 owner + generation；`OPS` / `SIGNATURES` / `TARGETS` 装配期解析一次、查询 O(1)。 |
+| AM-05 | **阶段 4：单态化上界 + Codec 归位** | kernel | **已关闭（4）** | `ze-type::r#gen` 按需单态化（`MAX_INSTANCES`）、`ze-reflect::MonoCache`、`Codec` 给慢路径正式名分；基准见 `ze-func/benches/lookup_bench.rs` 等。 |
+
+**AM 段小计**：已关闭 5（AM-01…AM-05）。
+
+---
+
+## AN. 图算法独立化批次（ze-graph-core，2026-10-27）
+
+> 计划《图算法独立执行计划》。纪律：每阶段可测试；阶段 0 先还接口欠账，阶段 1 先修确定性。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AN-01 | **阶段 0：接口欠账 + crate 能力表 + 重名门禁** | kernel / pod / scene / xtask | **已关闭（0）** | `OpDef` 合并为单一目录（`ze-func::OP_DEFS`，签名 + pointwise/targets）；Pod 侧 `ChannelSpec → ChannelDecl`；`seek_kind` 纳入离散层（`CompiledExpr::requires_replay`）；本文件补 AL/AM/AN 与 crate 能力表；xtask 新增"新 crate 必须登记"与"跨 crate 同名 `pub struct/enum` 白名单"两道门禁。 |
+| AN-02 | **阶段 1：ze-graph-core 纯拓扑层 + 确定性收口** | kernel | **未执行（1）** | 待执行：`Topology` / `topo_sort` / `scc` / `cycle` / `reachable` / `bfs_dirty`；输出一律有序；同一图两次结果逐位相同；基础算法补基准。 |
+| AN-03 | **阶段 2：NodeMeta 拆家 + Node&lt;D&gt; 泛型化 + socket 外置** | graph / ui | **未执行（2）** | 待执行：core 只留 `{ type_name, version }`；展示数据进 UI side table；socket 查询走注册表。 |
+| AN-04 | **阶段 3：算法降层 + eval 切换 + 7 处环检测收敛** | kernel / graph / ui | **未执行（3）** | 待执行：`ze-graph-algo` 只依赖 `Topology`；7 处手写环检测迁到同一实现，并补等价性用例。 |
+| AN-05 | **阶段 4：TypeTag / NodeValue 收敛到 ze-type** | kernel / graph | **未执行（4）** | 待执行：全仓 `clone_box` 由 5 处降到 1 处。 |
+
+**AN 段小计**：已关闭 1（AN-01）· 未执行 4（AN-02…AN-05）。
+
+---
+
+## 附录. crate 能力表（阶段 0.5 门禁）
+
+> **门禁 1**：`crates/**/Cargo.toml` 的每个 crate 必须在本表登记（新增 crate 未登记 ⇒ `cargo verify --step structure` 失败）。
+> **门禁 2**：跨 crate 同名 `pub struct/enum` 不在白名单 ⇒ 失败（一个概念只允许一处定义；重复必须登记理由）。
+
+| crate | 职责 | 可复用能力（领域无关者显式标记） |
+|---|---|---|
+| ze-type | 纯代数类型层 | `TypeSpec` / `Layout` / `unify` / `ReflectError` / 单态化上界（no_std） |
+| ze-reflect | 运行时反射 | `SlotTable` / `SymbolTable` / `TypeRegistry` / `Codec` / `MonoCache` |
+| ze-notion | 数学与几何基元 | `Path2D` / `Transform` / `Vec` 运算 |
+| ze-render-ir | 渲染 IR 契约 | `DrawOp` / `Paint` / `UniformLayout` |
+| ze-scene-contract | 场景契约 | `ObjectId` / `Describable` / `Scene` 契约 |
+| ze-content | 内容编译 | `ContentIr` / SVG / 笔画 |
+| ze-prerender | 预排版 | `PrerenderCache` / Typst 适配（feature-gated） |
+| ze-time | 时钟与曲线 | `ClockId` / `Curve` / `Timeline` 纯数据 |
+| ze-comb | 组合子表达式内核 | `Expr` / `CompiledExpr` / `PassRegistry` / `Value` |
+| ze-func | 基础函子库 | 算子目录 `OP_DEFS` / `eval` / `TypeRegistry` 门面 |
+| ze-vertex | 顶点格式 | `VertexLayout` / `VertexInputDesc` |
+| ze-resource | GPU 资源抽象 | `GpuResourceId` / `ResourceCache` |
+| ze-macro | 通用派生宏 | `#[derive(Describable)]` |
+| ze-pod-core | Pod 抽象 | `Pod` / `Handle` / `FunctionId` / `ChannelDecl` |
+| ze-pod-binding | 语言无关绑定驱动 | 能力计划 / JSON 文档 |
+| ze-pod-macro | Pod 派生宏 | `#[capability]` / `#[derive(PodType)]` |
+| ze-pod-func | `zela.math` Pod | 三语言接线 + 装配期类型推导 |
+| ze-pod | Pod 门面 | re-export core + binding + macro |
+| ze-pod-lua | Lua 适配器 | Lua 绑定生成（平台相关） |
+| ze-pod-py | Python 适配器 | Python 绑定生成（平台相关） |
+| ze-pod-js | JS 适配器 | boa 绑定（native + wasm） |
+| ze-pod-tests | Pod 测试与基准 | 集成用例 / criterion 基准（publish = false） |
+| ze-scene-core | 场景核心 | 组件 / 动画 target 表 `TARGETS` / 脚本数据 |
+| ze-scene-api | 场景 Pod 能力层 | `SceneApi` / `ContentApi` |
+| ze-scene-macros | 场景派生宏 | `#[derive(Channels)]` / `#[derive(SceneComponent)]` |
+| ze-scene-hecs | 场景 ECS 契约 | 只依赖 hecs 的薄层 |
+| ze-node-core | 节点图 trait 层 | `Graph` / `Node` / `NodeMeta` / socket |
+| ze-graph-algo | 图算法实现 | Kahn / Tarjan / BFS dirty |
+| ze-graph-eval | 图求值策略 | `LazyPullEval` |
+| ze-node-schema | 动态节点与属性 | `DynamicNode` / `Property` |
+| ze-node-schema-macros | 动态节点派生宏 | `#[derive(NodeSchema)]` |
+| ze-node | 节点图门面 | re-export core + schema + algo + eval |
+| zela-scene-ecs | 场景 ECS 实现 | 系统 / 绑定应用 / 表达式单子 |
+| zela-scene-bundle | 产物与输入流 | ZSB 编解码 / 帧哈希 / 输入流 |
+| zela-schedule | ECS 调度框架 | `Scheduler` / `Resource` / telemetry |
+| zela-render | 渲染抽象 | 绘制队列 / 三角化 / 视口 |
+| zela-render-backends | wgpu 后端 | 2D / 3D / 合成器 |
+| zela-render-vector | 矢量后端 | 移植自 manimgx（native-only） |
+| zela-egui | egui 前端 | 画面宿主 / 健康检查 |
+| zela-node-editor | 节点编辑器状态机 | 命中测试 / 布局 / undo |
+| zela-node-egui | 节点编辑器 egui 视图 | canvas / painter |
+| zela-node-egui-ui | 节点编辑器 UI 组件 | 菜单 / 视图 |
+| zela-app | 应用组装 | 唯一可执行入口 / 导出 |
+| zela-authored | 内置作品 | demo3d / storyboard / capability demo |
+| zela-playback | 回放 | 输入流 / 矢量帧 |
+| zela-gui | GUI 入口 | eframe 宿主 |
+| zela-compile | 编译入口 | Lua/Python/JS → ZSB |
+| zela-web | wasm 门面 | 浏览器入口 |
+| zela | 应用层门面 | re-export ze-pod + ze-node |
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后

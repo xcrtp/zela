@@ -105,8 +105,8 @@ pub use registry::{ErasedCall, RegistryPod};
 pub use topic::{PublishReport, publish as publish_topic};
 pub use type_name::{IntoPodTypeName, PodTypeName};
 pub use typespec::{
-    ErasedFn, Field, FnIo, HANDLE_SPEC, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, TypeSpec,
-    UNIT_SPEC, Variant,
+    ErasedFn, Field, FnIo, HANDLE_SPEC, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, Target,
+    TypeSpec, UNIT_SPEC, Variant,
 };
 // Layout 已收进 `TypeSpec::Struct`（计划 §3.1）；仍在此 re-export，
 // 因为 derive 生成的 schema 需要直接构造它（`layout: Some(...)`）。
@@ -119,4 +119,4 @@ pub use value::{
     PodBytes, ScalarValue, PodType, PodValue, PodValueError, describe, expect_enum, expect_struct,
     field,
 };
-pub use pod::{ChannelSpec, FunctionId, Pod, SyncPod, negotiate_dyn};
+pub use pod::{ChannelDecl, FunctionId, Pod, SyncPod, negotiate_dyn};

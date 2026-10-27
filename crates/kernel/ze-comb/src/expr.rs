@@ -449,6 +449,22 @@ impl Expr {
         check_cycles(&defs)?;
         check_recursive_leaves(self, false)
     }
+
+    /// 是否含**离散层**节点（`NatRec` / `RecPrev` / `RecIndex`）。
+    ///
+    /// 这是 `infer::PointwiseReport`（`ze-pod-func`）在 kernel 侧的投影，用于
+    /// 绑定层推导 `SeekKind`：含离散层 ⇒ 不能按"单帧纯函数"寻址（`Replay`）。
+    /// 连续层只是读通道 / 调算子，仍是 O1。
+    pub fn requires_replay(&self) -> bool {
+        match self.node {
+            Node::NatRec { .. } | Node::RecPrev | Node::RecIndex => true,
+            _ => self
+                .node
+                .children()
+                .into_iter()
+                .any(|child| child.requires_replay()),
+        }
+    }
 }
 
 /// 表达式层的装配期错误 —— 全部显式，不静默跳过。

@@ -9,12 +9,15 @@ use crate::handle::PodId;
 use crate::qualified::QualifiedName;
 use crate::typespec::TypeSpec;
 
-/// 一个可被脚本选择的**通道常量**（提案 #6）。
+/// 一个可被脚本选择的**通道声明**（提案 #6）。
 ///
 /// Pod 自述"我有哪些字段地址"，语言绑定据此在组件构造器上挂常量
 /// （`Circle.channel.radius`）。与 [`Pod::functions`] 一样是**自述面**，不参与协商。
+///
+/// **命名**：脚本侧的通道**值**类型叫 `ChannelSpec`（`ze-pod-func`）；
+/// 这里是**声明**，故叫 `ChannelDecl`（计划 §0.2：同名 `pub struct` 只允许一处）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ChannelSpec {
+pub struct ChannelDecl {
     /// 命名词汇表的 namespace（如 `zela.scene`）。
     pub namespace: &'static str,
     /// 所属组件（`Circle`）。
@@ -157,7 +160,7 @@ pub trait Pod: 'static {
     ///
     /// 语言绑定用它把 `Circle.channel.radius` 挂到组件构造器上；端点（写方向）仍由
     /// 各语言的地址表/宿主校验决定。
-    fn channels(&self) -> &'static [ChannelSpec] {
+    fn channels(&self) -> &'static [ChannelDecl] {
         &[]
     }
 

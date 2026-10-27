@@ -47,7 +47,7 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
     let typed_expr = has_ops(capabilities);
     // 组件短名 → 通道常量（`Circle.channel.radius`），收在构造器的 `channel` 字段下。
     // 常量因此能作为字段声明出来（否则 `Circle.channel.radius` 会被诊断成 undefined-field）。
-    let mut channels: BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelSpec>> =
+    let mut channels: BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelDecl>> =
         BTreeMap::new();
     for capability in capabilities {
         for channel in capability.channels {

@@ -312,6 +312,11 @@ pub enum Step {
 pub struct CompiledExpr {
     steps: Vec<Step>,
     root: usize,
+    /// 是否含**离散层**节点（`NatRec` / `RecPrev` / `RecIndex`）。
+    ///
+    /// 这是 `infer::PointwiseReport` 在 kernel 侧的投影：含离散层 ⇒ 求值需要历史
+    /// 或整段重放，不能按"单帧纯函数"寻址（`SeekKind::Replay`）。
+    requires_replay: bool,
 }
 
 impl CompiledExpr {
@@ -322,7 +327,16 @@ impl CompiledExpr {
         let mut steps = Vec::new();
         let mut memo = BTreeMap::new();
         let root = compile_node(expr, &defs, &mut memo, &mut steps);
-        Ok(Self { steps, root })
+        Ok(Self {
+            steps,
+            root,
+            requires_replay: expr.requires_replay(),
+        })
+    }
+
+    /// 是否含离散层节点（`NatRec` 及其递归叶子）。
+    pub fn requires_replay(&self) -> bool {
+        self.requires_replay
     }
 
     /// 程序步数（共享节点只计一次）。
@@ -582,7 +596,11 @@ fn compile_branch<'a>(expr: &'a Expr, defs: &BTreeMap<&'a str, &'a Expr>) -> Com
     let mut steps = Vec::new();
     let mut memo = BTreeMap::new();
     let root = compile_node(expr, defs, &mut memo, &mut steps);
-    CompiledExpr { steps, root }
+    CompiledExpr {
+        steps,
+        root,
+        requires_replay: expr.requires_replay(),
+    }
 }
 
 #[cfg(test)]

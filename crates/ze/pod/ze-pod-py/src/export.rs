@@ -215,8 +215,8 @@ fn push_imports(out: &mut String, imports: &BTreeMap<String, BTreeSet<String>>) 
 /// 组件短名 → 通道常量（`Circle.channel.radius`）。
 fn channels_by_component(
     capabilities: &[CapabilityDocs],
-) -> BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelSpec>> {
-    let mut out: BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelSpec>> = BTreeMap::new();
+) -> BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelDecl>> {
+    let mut out: BTreeMap<&'static str, Vec<&'static ze_pod_core::ChannelDecl>> = BTreeMap::new();
     for capability in capabilities {
         for channel in capability.channels {
             out.entry(channel.component).or_default().push(channel);
@@ -230,7 +230,7 @@ fn render_type(
     full_name: &'static str,
     spec: &'static TypeSpec,
     components: &BTreeSet<&'static str>,
-    channels: &[&'static ze_pod_core::ChannelSpec],
+    channels: &[&'static ze_pod_core::ChannelDecl],
     capabilities: &[CapabilityDocs],
     typed_expr: bool,
 ) {

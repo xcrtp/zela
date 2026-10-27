@@ -830,6 +830,197 @@ fn step_wasm(root: &Path) -> Result<(), String> {
 
 // ─── step: structure ────────────────────────────────────────────────────────
 
+/// **门禁 1（阶段 0.5）**：`crates/**/Cargo.toml` 的每个 crate 必须在 GAPS 的
+/// crate 能力表里登记；表里出现仓库没有的名字同样失败（打错字也是缺口）。
+fn check_crate_registry(root: &Path) -> Result<(), String> {
+    let mut crates: Vec<(String, PathBuf)> = Vec::new();
+    collect_crates(&root.join("crates"), &mut crates)?;
+    let text = fs::read_to_string(root.join("GAPS.md"))
+        .map_err(|error| format!("读取 GAPS.md 失败：{error}"))?;
+    let start = text.find("## 附录. crate 能力表").ok_or_else(|| {
+        "GAPS.md 缺少 `## 附录. crate 能力表`（阶段 0.5 的登记表）".to_string()
+    })?;
+    let body = text[start..]
+        .split("\n## ")
+        .next()
+        .unwrap_or(&text[start..]);
+
+    let mut registered = std::collections::BTreeSet::new();
+    for line in body.lines() {
+        let cells = table_cells(line);
+        if cells.len() < 3 {
+            continue;
+        }
+        let first = cells[0].trim().trim_matches('`');
+        if first.is_empty() || first == "crate" || first.starts_with('-') {
+            continue;
+        }
+        registered.insert(first.to_string());
+    }
+
+    let known: std::collections::BTreeSet<&str> =
+        crates.iter().map(|(name, _)| name.as_str()).collect();
+    let mut missing: Vec<&str> = crates
+        .iter()
+        .filter(|(name, _)| !registered.contains(name))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    missing.sort_unstable();
+    if !missing.is_empty() {
+        return Err(format!(
+            "以下 crate 未在 GAPS「crate 能力表」登记（新增 crate 必须登记）：{}",
+            missing.join(", ")
+        ));
+    }
+    let mut unknown: Vec<&str> = registered
+        .iter()
+        .filter(|name| !known.contains(name.as_str()))
+        .map(String::as_str)
+        .collect();
+    unknown.sort_unstable();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "GAPS「crate 能力表」登记了仓库里不存在的 crate（拼写错误？）：{}",
+            unknown.join(", ")
+        ));
+    }
+    println!(
+        "[xtask] OK: crate 能力表覆盖 {} 个 crate",
+        crates.len()
+    );
+    Ok(())
+}
+
+/// **跨 crate 重名白名单**（计划 §0.5 / 硬约束 4）。
+///
+/// 只登记**允许存在**的同名 `pub struct/enum`，每条必须写清理由；
+/// 新出现的同名类型必须在 `cargo verify --step structure` 里显式登记后才通过。
+const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
+    ("OpDef", "已收敛到 ze-type；保留条目让『再次出现第二份』立刻失败"),
+    ("ChannelSpec", "Pod 声明是 ChannelDecl，脚本值类型是 ChannelSpec —— 角色不同"),
+    ("NodeSpec", "装配计划（ze-pod-core）与节点 schema 各自的领域类型"),
+    // ── 历史领域重复（本批只登记，收敛属后续领域去重批次）────────────────
+    ("Arrow", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("Axes2D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("BackgroundStroke", "render-ir 的绘制参数 vs scene-api 的组件视图"),
+    ("Camera2D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("Camera3D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("Circle", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("ContentHandle", "pre-render 的句柄 vs scene-core 的内容句柄"),
+    ("Curve", "scene-api 的曲线参数 vs ze-time 的曲线内核"),
+    ("CurveWindow", "render-ir 的绘制参数 vs scene-api 的组件视图"),
+    ("Dash", "render-ir 的绘制参数 vs scene-api 的组件视图"),
+    ("EvalError", "ze-comb 的表达式错误 vs ze-node-core 的图求值错误"),
+    ("Gradient", "render-ir 的绘制参数 vs scene-api 的组件视图"),
+    ("Group", "scene-api 的 Pod 侧包装 vs scene-contract 的契约类型"),
+    ("Handle", "pod-core 的资源句柄 vs scene-core 的脚本局部句柄"),
+    ("Light", "scene-api / scene-core 的组件 vs render-vector 的 GPU 光照"),
+    ("LightKind", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("LineStyle", "scene-api 的组件视图 vs playback 的矢量线样式"),
+    ("Material3D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("Name", "scene-api 的 Pod 侧包装 vs scene-contract 的契约类型"),
+    ("Opacity", "render-ir 的绘制参数 vs scene-api 的组件视图"),
+    ("Parent", "scene-api 的 Pod 侧包装 vs scene-contract 的契约类型"),
+    ("Path", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("PhaseAnim", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("Rect", "scene-core 的几何组件 vs node-editor 的编辑框"),
+    ("Reveal", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("SecondPaint", "render-ir 的绘制参数 vs scene-api 的组件视图"),
+    ("ShaderVariant", "render-ir 的着色参数 vs scene-api 的组件视图"),
+    ("Surface", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("SurfaceMapping", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("SurfaceRenderer", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("TextureFilter", "render-ir 的采样参数 vs scene-api 的组件视图"),
+    ("Transform", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("Transform3D", "ze-notion 的数学变换 vs scene-api 的组件视图"),
+    ("TransformChannel", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+];
+
+/// 测试专用 crate 不参与跨 crate 重名门禁（ publish = false，不进生产图）。
+const DUPLICATE_SCAN_EXCLUDED_CRATES: &[&str] = &["ze-pod-tests"];
+
+/// **门禁 2（阶段 0.5）**：跨 crate 同名 `pub struct/enum` 必须在白名单里。
+fn check_duplicate_public_names(root: &Path) -> Result<(), String> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut crates: Vec<(String, PathBuf)> = Vec::new();
+    collect_crates(&root.join("crates"), &mut crates)?;
+    let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for (crate_name, path) in &crates {
+        if DUPLICATE_SCAN_EXCLUDED_CRATES.contains(&crate_name.as_str()) {
+            continue;
+        }
+        let mut files = Vec::new();
+        collect_rs_files(&path.join("src"), &mut files)?;
+        for file in files {
+            let text = match fs::read_to_string(&file) {
+                Ok(text) => text,
+                Err(_) => continue,
+            };
+            for line in text.lines() {
+                let trimmed = line.trim_start();
+                let rest = trimmed
+                    .strip_prefix("pub struct ")
+                    .or_else(|| trimmed.strip_prefix("pub enum "));
+                let Some(rest) = rest else { continue };
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if name.is_empty() {
+                    continue;
+                }
+                seen.entry(name).or_default().insert(crate_name.clone());
+            }
+        }
+    }
+
+    let allow: BTreeSet<&str> = DUPLICATE_PUB_NAME_ALLOWLIST
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+    let mut conflicts: Vec<String> = Vec::new();
+    for (name, crates) in &seen {
+        if crates.len() > 1 && !allow.contains(name.as_str()) {
+            conflicts.push(format!(
+                "{name}: {}",
+                crates.iter().cloned().collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+    if !conflicts.is_empty() {
+        conflicts.sort();
+        return Err(format!(
+            "跨 crate 同名 `pub struct/enum`（一个概念只允许一处定义；确属不同角色请登记白名单）：\n  {}",
+            conflicts.join("\n  ")
+        ));
+    }
+    println!(
+        "[xtask] OK: 跨 crate 同名 pub 类型（{} 个名字，{} 条白名单）",
+        seen.len(),
+        DUPLICATE_PUB_NAME_ALLOWLIST.len()
+    );
+    Ok(())
+}
+
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_files(&path, out)?;
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
 /// GAPS 各托管段的"小计"必须与表格里的条目状态一致（B7 Step 0.2）。
 ///
 /// 为什么要有这条检查：手写小计已连续错三次（B6 写 16 实际 17、B9 写 12 实际 11、
@@ -848,7 +1039,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
-        "## AD.", "## AE.",
+        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -885,7 +1076,10 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("X5-")
                     || id.starts_with("X6-")
                     || id.starts_with("X7-")
-                    || id.starts_with("X8-"));
+                    || id.starts_with("X8-")
+                    || id.starts_with("AL-")
+                    || id.starts_with("AM-")
+                    || id.starts_with("AN-"));
             if !is_item {
                 continue;
             }
@@ -1369,6 +1563,10 @@ fn step_coverage(root: &Path) -> Result<(), String> {
 }
 
 fn step_structure(root: &Path) -> Result<(), String> {
+    // 阶段 0.5 门禁：新 crate 必须登记 / 跨 crate 同名 pub 类型必须进白名单。
+    // 这两条不依赖 jq，先跑。
+    check_crate_registry(root)?;
+    check_duplicate_public_names(root)?;
     // B7 Step 0.2：GAPS 的小计必须与条目状态一致（不依赖 jq，先跑）。
     check_gaps_subtotals(root)?;
     // B12 Step 0.3：GAPS 里的 crate 限定语义锚点必须能在源码里找到定义。

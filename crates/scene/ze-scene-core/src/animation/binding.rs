@@ -174,11 +174,8 @@ impl BindingTable {
         active: Option<MultiIntervalSet>,
         reset: ResetBehavior,
     ) {
-        let seek_kind = if predicate.is_some() && reset == ResetBehavior::Hold && active.is_none() {
-            SeekKind::Replay
-        } else {
-            SeekKind::O1
-        };
+        let seek_kind =
+            seek_kind_for(program.requires_replay(), predicate.is_some(), reset, active.is_some());
         self.add(Binding {
             clock,
             driver: BindingDriver::Expr(program),
@@ -193,5 +190,89 @@ impl BindingTable {
 
     pub fn is_empty(&self) -> bool {
         self.bindings.is_empty()
+    }
+}
+
+/// `SeekKind` 推导（计划 §0.4：`pointwise` 报告终于接到这里）。
+///
+/// 两条独立的历史依赖来源：
+/// 1. **离散层**（`NatRec` / 递归叶子）⇒ 需要整段重放（由 `CompiledExpr` 的
+///    `requires_replay` 提供，是 `infer::PointwiseReport` 在 kernel 侧的投影）；
+/// 2. `Hold + 不可分析的 predicate` ⇒ 运行期逐帧求值，保守记 `Replay`。
+///
+/// 连续层的读通道 / 算子调用仍是 O1（单帧纯函数）。
+fn seek_kind_for(
+    requires_replay: bool,
+    predicate_present: bool,
+    reset: ResetBehavior,
+    active_known: bool,
+) -> SeekKind {
+    if requires_replay
+        || (predicate_present && reset == ResetBehavior::Hold && !active_known)
+    {
+        SeekKind::Replay
+    } else {
+        SeekKind::O1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn continuous_expressions_stay_o1() {
+        assert_eq!(
+            seek_kind_for(false, false, ResetBehavior::Hold, false),
+            SeekKind::O1
+        );
+        assert_eq!(
+            seek_kind_for(false, true, ResetBehavior::Hold, true),
+            SeekKind::O1,
+            "可分析的 Hold 是纯函数"
+        );
+    }
+
+    #[test]
+    fn discrete_layer_requires_replay() {
+        assert_eq!(
+            seek_kind_for(true, false, ResetBehavior::Hold, false),
+            SeekKind::Replay,
+            "含 NatRec 的绑定必须重放"
+        );
+    }
+
+    #[test]
+    fn unanalyzable_hold_stays_replay() {
+        assert_eq!(
+            seek_kind_for(false, true, ResetBehavior::Hold, false),
+            SeekKind::Replay
+        );
+        assert_eq!(
+            seek_kind_for(false, true, ResetBehavior::Skip, false),
+            SeekKind::O1,
+            "非 Hold 的失效行为不需要历史"
+        );
+    }
+
+    /// 结构判据：`NatRec` 编译产物携带 `requires_replay`，普通表达式不携带。
+    #[test]
+    fn compiled_program_knows_about_discrete_nodes() {
+        let continuous = ze_comb::Expr::call(
+            ze_comb::OpRef::new("zela.math", "sin"),
+            [ze_comb::Expr::pure(1.0)],
+        );
+        assert!(!ze_comb::CompiledExpr::compile(&continuous)
+            .expect("可编译")
+            .requires_replay());
+
+        let discrete = ze_comb::Expr::new(ze_comb::Node::NatRec {
+            count: Box::new(ze_comb::Expr::pure(3i64)),
+            init: Box::new(ze_comb::Expr::pure(0.0)),
+            step: Box::new(ze_comb::Expr::rec_prev()),
+        });
+        assert!(ze_comb::CompiledExpr::compile(&discrete)
+            .expect("NatRec 可编译")
+            .requires_replay());
     }
 }

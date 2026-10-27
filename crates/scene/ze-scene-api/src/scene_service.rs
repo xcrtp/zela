@@ -306,7 +306,7 @@ impl Pod for SceneServicePod {
     }
 
     /// 场景地址表 → 可挂到组件构造器上的**通道常量**（提案 #6 B）。
-    fn channels(&self) -> &'static [ze_pod_core::ChannelSpec] {
+    fn channels(&self) -> &'static [ze_pod_core::ChannelDecl] {
         channels()
     }
 
@@ -342,8 +342,8 @@ fn service(pod: &dyn Pod) -> &SceneServicePod {
 /// （`Camera2DFraming` / `RevealRange`）没有单一的 `(组件, 字段)`，不能当常量挂。
 ///
 /// 声明文件生成器也调它（不需要构造 Pod 实例）。
-pub fn channels() -> &'static [ze_pod_core::ChannelSpec] {
-    static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelSpec>> = OnceLock::new();
+pub fn channels() -> &'static [ze_pod_core::ChannelDecl] {
+    static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelDecl>> = OnceLock::new();
     CHANNELS.get_or_init(|| {
         use ze_scene_core::animation::{READ_ONLY_SPECS, TARGETS};
         // 可写目标（单字段） + 只读派生量（`Reveal.current_pos`）：两者都挂成常量，
@@ -354,7 +354,7 @@ pub fn channels() -> &'static [ze_pod_core::ChannelSpec] {
             .filter(|spec| !spec.is_composite);
         writable
             .chain(READ_ONLY_SPECS.iter().copied())
-            .map(|spec| ze_pod_core::ChannelSpec {
+            .map(|spec| ze_pod_core::ChannelDecl {
                 namespace: "zela.scene",
                 component: spec.component,
                 name: spec.field,

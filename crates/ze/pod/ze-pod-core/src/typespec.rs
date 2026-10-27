@@ -17,7 +17,7 @@
 //! 两者数据模型同构，但用途不同，故不复用。
 
 pub use ze_type::{
-    Field, FnIo, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, TypeSpec, Variant,
+    Field, FnIo, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, Target, TypeSpec, Variant,
     HANDLE_SPEC, UNIT_SPEC,
 };
 

@@ -35,6 +35,6 @@ pub use layout::{
     VEC2_FIELDS, VEC3_FIELDS,
 };
 pub use ty::{
-    Field, FnIo, HANDLE_SPEC, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, TypeSpec,
+    Field, FnIo, HANDLE_SPEC, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, Target, TypeSpec,
     UNIT_SPEC, VEC2_SPEC, VEC3_SPEC, Variant,
 };

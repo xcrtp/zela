@@ -465,7 +465,7 @@ fn register_types(
 /// （`Circle.channel.radius`）。
 ///
 /// 常量是普通 dict `{ "namespace": ..., "name": ... }` —— 与 `expr.bind` 的
-/// `ChannelSpec` 同形；三种语言不需要专用令牌。
+/// `ChannelDecl` 同形；三种语言不需要专用令牌。
 ///
 /// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
 /// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。

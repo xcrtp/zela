@@ -763,6 +763,8 @@ mod tests {
             sigs: DUPLICATED,
             since: 1,
             changed: 1,
+            pointwise: true,
+            targets: &[ze_pod_core::Target::HostOnly],
         };
         let error = unify_overloads(&def, &[ChannelType::Number]).expect_err("必须报歧义");
         assert!(error.to_string().contains("歧义"), "{error}");
