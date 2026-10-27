@@ -1,0 +1,44 @@
+{
+  "name": "linear",
+  "expr": {
+    "node": {
+      "type": "call",
+      "data": {
+        "op": { "namespace": "zela.math", "name": "add" },
+        "args": [
+          {
+            "node": {
+              "type": "call",
+              "data": {
+                "op": { "namespace": "zela.math", "name": "mul" },
+                "args": [
+                  {
+                    "node": {
+                      "type": "channel",
+                      "data": { "channel": { "namespace": "", "name": "time" } }
+                    }
+                  },
+                  {
+                    "node": {
+                      "type": "pure",
+                      "data": { "value": { "type": "f64", "data": 2.0 } }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "type": "pure",
+              "data": { "value": { "type": "f64", "data": 1.0 } }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "channels": { "time": [0.0, 0.5, 1.0] },
+  "expect": [1.0, 2.0, 3.0],
+  "expect_hash": "0xe6e03fe83aece806"
+}

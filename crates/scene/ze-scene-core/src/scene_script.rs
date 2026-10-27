@@ -42,7 +42,7 @@
 
 use std::sync::Arc;
 
-use ze_func::{ChannelRef, CompiledExpr, Expr, Node, OpRef};
+use ze_comb::{ChannelRef, CompiledExpr, Expr, Node, OpRef};
 use ze_scene_contract::{
     Components, ObjectId, Parent, Scene as SceneContract, Visibility, VisibilityTag,
 };
@@ -780,7 +780,7 @@ impl From<SceneEncoder> for SceneScript {
 /// 正确顺序（写者 start ≤ 读者 start）静默通过。
 fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(), ExprBindError> {
     use crate::animation::binding::BindingDriver;
-    use ze_func::{ChannelRef, CompiledExpr, Step};
+    use ze_comb::{ChannelRef, CompiledExpr, Step};
 
     /// 收集程序里的读集（含 `Select` 分支内的读 —— 分支子程序是独立值表，
     /// 必须递归，否则漏检）。
@@ -820,4 +820,16 @@ fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// **阶段 0**：帧内定序检查也是装配期分析 pass。
+pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
+    registry
+        .register(ze_comb::PassInfo {
+            name: "scene.read_order",
+            kind: ze_comb::PassKind::Analysis,
+            semantics: ze_comb::Semantics::Preserving,
+            owner: "ze-scene-core",
+        })
+        .expect("read order pass 名唯一");
 }

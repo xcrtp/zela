@@ -23,4 +23,4 @@ sha2.workspace = true
 # 测试构造一个最小装配产物（Circle 组件）。
 ze-scene-core = { path = "../../scene/ze-scene-core" }
 # 输入流用例构造带函子库身份的表达式绑定。
-ze-func = { path = "../../kernel/ze-func" }
+ze-comb = { path = "../../kernel/ze-comb" }

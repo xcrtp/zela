@@ -27,7 +27,7 @@
 
 use std::sync::Arc;
 
-use ze_func::{CompiledExpr, Expr, Node};
+use ze_comb::{CompiledExpr, Expr, Node};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, ClockProgram, Curve, PlayMode};
 
@@ -356,7 +356,7 @@ impl Timeline {
 
     /// **G 批**：把 Expr 树里 `Node::Read.object`（脚本局部句柄下标）重写为
     /// `ObjectId` 打包值（`index:u32<<32 | generation:u32`），供 `commit` 编译后
-    /// 运行期 [`ze_func::Mono::read_object`] 解包读组件。
+    /// 运行期 [`ze_comb::Mono::read_object`] 解包读组件。
     ///
     /// 产物序列化发生在重写**之前**（persist 走未编译的 `Timeline`），
     /// 故 payload 里 `Read.object` 仍是脚本句柄下标（与 `handle_ref` 惯例一致）。

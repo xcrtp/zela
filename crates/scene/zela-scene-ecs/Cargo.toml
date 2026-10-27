@@ -20,7 +20,7 @@ ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 # `DriverCommand` / `DriverEvent` 的 schema（`#[pod_type]` 派生）。
 ze-pod-macro = { path = "../../ze/pod/ze-pod-macro" }
 # S3：表达式求值的宿主单子 M（通道来自 TimeState，算子语义来自 `zela.math` 函子库）。
-ze-func = { path = "../../kernel/ze-func" }
+ze-comb = { path = "../../kernel/ze-comb" }
 ze-pod-func = { path = "../../ze/pod/ze-pod-func" }
 # 渲染 IR（样式组件）：ECS 里存的 `StrokeSolid` / `FillSolid` 组件来自此处。
 ze-render-ir = { path = "../../kernel/ze-render-ir" }

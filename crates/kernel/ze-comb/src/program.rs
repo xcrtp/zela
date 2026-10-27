@@ -27,7 +27,7 @@ use crate::expr::{ChannelRef, Expr, ExprError, Literal, Node, OpRef};
 /// 运行时值（跨通道 / 算子的最小集）。
 ///
 /// **第 3 批**：`Path` 用**纯数据**表示（点列 + `closed`），而不是
-/// `ze_notion::Path2D` —— `ze-func` 的依赖铁律不允许引入 ze-notion / glam。
+/// `ze_notion::Path2D` —— `ze-comb` 的依赖铁律不允许引入 ze-notion / glam。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     F64(f64),
@@ -47,6 +47,69 @@ impl Value {
             _ => None,
         }
     }
+
+    /// 值种类名（错误消息 / 诊断用）。
+    pub fn kind(&self) -> &'static str {
+        value_kind(self)
+    }
+
+    /// **规范字节编码**：跨进程 / 跨语言对拍用的稳定表示。
+    ///
+    /// 浮点按 IEEE-754 位模式（小端）编码 —— 逐位可比，不做 `to_string` 的精度转换。
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        match self {
+            Value::F64(value) => {
+                out.push(0);
+                out.extend_from_slice(&value.to_bits().to_le_bytes());
+            }
+            Value::Bool(value) => {
+                out.push(1);
+                out.push(u8::from(*value));
+            }
+            Value::Text(text) => {
+                out.push(2);
+                out.extend_from_slice(&(text.len() as u32).to_le_bytes());
+                out.extend_from_slice(text.as_bytes());
+            }
+            Value::Vec2(value) => {
+                out.push(3);
+                out.extend_from_slice(&value[0].to_bits().to_le_bytes());
+                out.extend_from_slice(&value[1].to_bits().to_le_bytes());
+            }
+            Value::Vec3(value) => {
+                out.push(4);
+                for component in value {
+                    out.extend_from_slice(&component.to_bits().to_le_bytes());
+                }
+            }
+            Value::Path { points, closed } => {
+                out.push(5);
+                out.push(u8::from(*closed));
+                out.extend_from_slice(&(points.len() as u32).to_le_bytes());
+                for point in points {
+                    out.extend_from_slice(&point[0].to_bits().to_le_bytes());
+                    out.extend_from_slice(&point[1].to_bits().to_le_bytes());
+                }
+            }
+        }
+        out
+    }
+}
+
+/// 一串值的**规范哈希**（FNV-1a 64；fixture 的"期望值序列哈希"）。
+///
+/// 选择 FNV-1a 不是为了抗碰撞，而是为了**零依赖、跨语言十行可复现**：
+/// JS / Lua 的 fixture runner 用同一份常量即可得到同一个数。
+pub fn hash_values(values: &[Value]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for value in values {
+        for byte in value.canonical_bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    hash
 }
 
 /// 单子 `M`：宿主注入的**唯一效果入口**。
@@ -62,7 +125,7 @@ pub trait Mono {
     /// 读**某对象**上的组件字段（G 批通道读端）。
     ///
     /// `object` 是 `ObjectId` 的打包值（`index:u32<<32 | generation:u32`；
-    /// ze-func 是 kernel 层，不依赖 `ze-scene-contract`）。默认实现**显式失败**
+    /// ze-comb 是 kernel 层，不依赖 `ze-scene-contract`）。默认实现**显式失败**
     /// （`MissingChannel`）：宿主没实现读端就不该静默返回 0 ——
     /// 既有 `Mono` 实现（如测试里的 `ScalarMono`）保持默认，不破。
     fn read_object(&self, channel: &ChannelRef, _object: u64) -> Result<Value, EvalError> {
@@ -197,7 +260,7 @@ impl CompiledExpr {
 }
 
 /// 值种类名（错误消息用；与 Pod 层词汇一致）。
-fn value_kind(value: &Value) -> &'static str {
+pub(crate) fn value_kind(value: &Value) -> &'static str {
     match value {
         Value::F64(_) => "scalar",
         Value::Bool(_) => "bool",
@@ -208,7 +271,7 @@ fn value_kind(value: &Value) -> &'static str {
     }
 }
 
-fn literal_value(literal: &Literal) -> Value {
+pub(crate) fn literal_value(literal: &Literal) -> Value {
     match literal {
         Literal::F32(value) => Value::F64(f64::from(*value)),
         Literal::F64(value) => Value::F64(*value),

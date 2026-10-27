@@ -6490,6 +6490,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-comb"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "ze-content"
 version = "0.1.1"
 dependencies = [
@@ -6504,6 +6513,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "ze-comb",
 ]
 
 [[package]]
@@ -6612,6 +6622,7 @@ name = "ze-pod-func"
 version = "0.1.1"
 dependencies = [
  "serde_json",
+ "ze-comb",
  "ze-func",
  "ze-pod-binding",
  "ze-pod-core",
@@ -6744,8 +6755,8 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "ze-comb",
  "ze-content",
- "ze-func",
  "ze-macro",
  "ze-notion",
  "ze-pod-core",
@@ -7023,7 +7034,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "ze-func",
+ "ze-comb",
  "ze-render-ir",
  "ze-scene-core",
  "zela-scene-ecs",
@@ -7041,8 +7052,8 @@ dependencies = [
  "serde_json",
  "smart-default",
  "thiserror 2.0.20",
+ "ze-comb",
  "ze-content",
- "ze-func",
  "ze-macro",
  "ze-notion",
  "ze-pod-core",

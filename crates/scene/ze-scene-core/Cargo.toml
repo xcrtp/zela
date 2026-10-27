@@ -25,7 +25,7 @@ ze-scene-macros = { path = "../ze-scene-macros" }
 # 动画曲线 / 时钟（Binding / Timeline 的纯数据来源）。
 ze-time = { path = "../../kernel/ze-time" }
 # S3：表达式绑定（只做结构 + 求值程序；效果值经宿主 M 注入）。
-ze-func = { path = "../../kernel/ze-func" }
+ze-comb = { path = "../../kernel/ze-comb" }
 # 内置数学函数由 Pod 提供（math_pod）；核心层不依赖任何 zela-*。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 # 内容编译的宿主侧适配（content.rs）：排版引擎 → IR → 世界坐标轮廓。

@@ -1,0 +1,60 @@
+{
+  "name": "boolean_gate",
+  "expr": {
+    "node": {
+      "type": "call",
+      "data": {
+        "op": { "namespace": "zela.math", "name": "and" },
+        "args": [
+          {
+            "node": {
+              "type": "call",
+              "data": {
+                "op": { "namespace": "zela.math", "name": "lt" },
+                "args": [
+                  {
+                    "node": {
+                      "type": "channel",
+                      "data": { "channel": { "namespace": "", "name": "time" } }
+                    }
+                  },
+                  {
+                    "node": {
+                      "type": "pure",
+                      "data": { "value": { "type": "f64", "data": 2.0 } }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "type": "call",
+              "data": {
+                "op": { "namespace": "zela.math", "name": "gt" },
+                "args": [
+                  {
+                    "node": {
+                      "type": "channel",
+                      "data": { "channel": { "namespace": "", "name": "time" } }
+                    }
+                  },
+                  {
+                    "node": {
+                      "type": "pure",
+                      "data": { "value": { "type": "f64", "data": 0.0 } }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "channels": { "time": [0.0, 1.0, 2.0] },
+  "expect": [false, true, false],
+  "expect_hash": "0x92a32fcf8cfc4c13"
+}

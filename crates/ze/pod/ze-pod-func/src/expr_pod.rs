@@ -21,7 +21,7 @@
 use std::any::Any;
 use std::sync::Mutex;
 
-use ze_func::{ChannelRef, ChannelType, CompiledExpr, Expr, Literal, Node, OpRef};
+use ze_comb::{ChannelRef, ChannelType, CompiledExpr, Expr, Literal, Node, OpRef};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
@@ -33,8 +33,8 @@ use crate::api::{
 };
 use crate::infer::{infer_predicate, infer_root};
 
-/// 函子库 namespace（进产物）。
-pub const LIBRARY_NAMESPACE: &str = "zela.math";
+/// 函子库 namespace（进产物；与基础函子库同一份常量）。
+pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// 函子库版本（进产物；加算子递增它，`zela.scene` 不受影响）。
 ///
 /// `7`：**G 批**新增 `read`（读某对象的组件字段；`zela.math::read`）。
@@ -288,7 +288,7 @@ impl ExprPod {
     pub fn export(&self, root: Handle) -> Result<String, PodError> {
         let expr = self.tree(root)?;
         Ok(serde_json::json!({
-            "schema_version": ze_func::SCHEMA_VERSION,
+            "schema_version": ze_comb::SCHEMA_VERSION,
             "library": {
                 "namespace": LIBRARY_NAMESPACE,
                 "version": LIBRARY_VERSION,
@@ -809,7 +809,7 @@ fn push_binding_error(this: &ExprPod, message: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ze_func::{Node, OpRef};
+    use ze_comb::{Node, OpRef};
 
     fn pod() -> ExprPod {
         ExprPod::new()
@@ -857,7 +857,7 @@ mod tests {
             serde_json::from_str(&this.export(h).unwrap()).expect("合法 JSON");
         assert_eq!(
             json["schema_version"].as_u64(),
-            Some(u64::from(ze_func::SCHEMA_VERSION))
+            Some(u64::from(ze_comb::SCHEMA_VERSION))
         );
         assert_eq!(json["library"]["namespace"], LIBRARY_NAMESPACE);
         assert_eq!(json["library"]["version"], LIBRARY_VERSION);

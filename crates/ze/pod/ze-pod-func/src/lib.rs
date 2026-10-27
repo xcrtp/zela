@@ -3,7 +3,7 @@
 //! # 层次
 //!
 //! ```text
-//! 脚本 ──只提交结构──► Expr（ze-func）──► 产物（expression JSON）
+//! 脚本 ──只提交结构──► Expr（ze-comb）──► 产物（expression JSON）
 //!                          ▲
 //!               expr.sin / expr.mul …（本 Pod 的 capability）
 //! ```
@@ -41,9 +41,18 @@ pub use ops::OPS;
 pub use signature::{
     SIGNATURES, check_op_revisions, collect_op_revisions, op_revision, signature_of,
 };
-pub use ze_func::ChannelType;
+pub use ze_comb::ChannelType;
 
 /// 本函子库在 Broker 里的 Service 名（脚本侧全局表名也是它：`expr.*`）。
 ///
 /// 与 namespace 分开：Service 是**装配协议**的名字，namespace 是**能力身份**。
 pub const SERVICE: &str = "expr";
+
+/// **阶段 0**：把本 Pod 的装配期分析登记到 pass 约定里。
+///
+/// 内核注册表（`ze_comb::kernel_registry`）由 `ze-comb` 提供；这里只追加
+/// `infer` / `infer.root` / `infer.predicate` / `op_revisions` 四条。
+pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
+    infer::register_passes(registry);
+    signature::register_passes(registry);
+}

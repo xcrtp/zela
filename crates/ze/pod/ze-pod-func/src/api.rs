@@ -44,7 +44,7 @@ pub enum ChannelTypeSpec {
 /// - 组件字段：`{ namespace = "zela.scene", name = "Circle.radius", ty = Number }`
 ///   （G 批起 `Read` 用它读回组件字段）。
 ///
-/// 它与 `ze-func` 的 `ChannelRef` **同形**：Pod 边界上只是数据，跨层不需要转换规则。
+/// 它与 `ze-comb` 的 `ChannelRef` **同形**：Pod 边界上只是数据，跨层不需要转换规则。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Channel")]
 pub struct ChannelSpec {

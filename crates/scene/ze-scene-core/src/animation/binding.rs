@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use ze_func::CompiledExpr;
+use ze_comb::CompiledExpr;
 use ze_time::{AnimValue, ClockId, Curve};
 
 use crate::animation::predicate::IntervalSet;

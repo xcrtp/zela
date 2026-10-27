@@ -16,7 +16,7 @@
 //! 不可分析（event / 组件状态 / 非字面量边界）⇒ [`analyze`] 返回 `None`，
 //! 运行期回退到原来的逐帧 predicate 求值（并保守地保留 `SeekKind::Replay`）。
 
-use ze_func::{Expr, Literal, Node};
+use ze_comb::{Expr, Literal, Node};
 
 /// 区间端点：值 + 是否闭合。
 ///
@@ -283,6 +283,18 @@ pub fn analyze(expr: &Expr) -> Option<IntervalSet> {
     }
 }
 
+/// **阶段 0**：区间代数登记为装配期分析 pass（只读 IR、写 side table）。
+pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
+    registry
+        .register(ze_comb::PassInfo {
+            name: "scene.predicate.analyze",
+            kind: ze_comb::PassKind::Analysis,
+            semantics: ze_comb::Semantics::Preserving,
+            owner: "ze-scene-core",
+        })
+        .expect("predicate pass 名唯一");
+}
+
 /// `lt` / `le` / `gt` / `ge`：`time` 与字面量比较（两侧顺序都接受）。
 fn compare(args: &[Expr], inclusive: bool, greater: bool) -> Option<IntervalSet> {
     let (time_is_left, value) = time_and_number(args)?;
@@ -337,7 +349,7 @@ fn number(expr: &Expr) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ze_func::{ChannelRef, OpRef};
+    use ze_comb::{ChannelRef, OpRef};
 
     fn op(name: &str) -> OpRef {
         OpRef::new("zela.math", name)

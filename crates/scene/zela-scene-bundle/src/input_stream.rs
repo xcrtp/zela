@@ -299,7 +299,7 @@ impl Recorder {
 mod tests {
     use super::*;
     use crate::MetaInput;
-    use ze_func::{ChannelRef, Expr, OpRef};
+    use ze_comb::{ChannelRef, Expr, OpRef};
     use ze_scene_core::Circle;
     use zela_scene_ecs::animation::LibraryRef;
     use zela_scene_ecs::domain::ids;

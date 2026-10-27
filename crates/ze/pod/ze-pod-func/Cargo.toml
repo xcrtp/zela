@@ -8,12 +8,14 @@ description = "Expression functor pod (zela.math namespace): leaf operators as a
 
 # 依赖铁律（与 `crates/ze/pod` 其余成员一致）：
 #   ✅ ze-pod-core / ze-pod-macro — Pod / capability 机制
-#   ✅ ze-func — 组合子表达式内核（kernel 层，不含宿主状态）
+#   ✅ ze-comb — 组合子表达式内核（kernel 层，不含宿主状态）
+#   ✅ ze-func — 基础函子库（算子语义 + OpDef 元数据）；本 crate 只剩接线 + infer
 #   ✅ serde_json — 表达式导出（产物侧证据）
 #   ❌ 任何 zela-* —— 由 `cargo verify --step structure` 的 JQ_POD_LAYER 判据守住
 [dependencies]
 ze-pod-core = { path = "../ze-pod-core" }
 ze-pod-macro = { path = "../ze-pod-macro" }
+ze-comb = { path = "../../../kernel/ze-comb" }
 ze-func = { path = "../../../kernel/ze-func" }
 serde_json.workspace = true
 

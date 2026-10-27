@@ -4,15 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-description = "Combinator expression kernel: structural nodes, stable tags, no host state"
+description = "基础函子库：zela.math 算子语义 + OpDef 元数据（pointwise / targets / revision）+ 类型注册与 Layout"
 
-# 依赖铁律：ze-func 在 kernel 层，只做「表达」，不做「取数」
-#   ✅ serde — 表达式必须**整体可序列化**（节点图拓扑可序列化而节点内容不可，是本 crate 要补的不对称）
-#   ✅ thiserror — 装配期错误（悬空 Ref / 环 / 重名 id）
-#   ❌ glam / ze-notion — 数学入口在 ze-notion；本 crate 不解释数值，也不依赖任何向量类型
-#   ❌ 任何宿主 crate（ze-time / zela-* / hecs / egui / wgpu）— 时间 / 帧 / 事件只经 M 注入，
-#      不是编译期依赖
+# 依赖铁律：ze-func 是**基础函子库**，在 kernel 层。
+#   ✅ ze-comb — 表达式内核（Expr / Value / Mono / Pass）；本 crate 只解释算子
+#   ✅ serde / thiserror — Layout / 注册表需要可序列化描述与显式错误
+#   ❌ ze-pod-core / 任何 zela-* / 任何宿主 crate — 算子身份是数据，接线留在 pod 层
 [dependencies]
+ze-comb = { path = "../ze-comb" }
 serde.workspace = true
 thiserror.workspace = true
 

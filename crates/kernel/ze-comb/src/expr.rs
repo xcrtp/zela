@@ -135,7 +135,7 @@ impl From<[f32; 3]> for Literal {
 
 /// 通道承载的值类型（**kernel 侧最小封闭集**）。
 ///
-/// 与 `ze_pod_core::TypeSpec` 同构但**不依赖它**：`ze-func` 是 kernel 层，
+/// 与 `ze_pod_core::TypeSpec` 同构但**不依赖它**：`ze-comb` 是 kernel 层，
 /// 不能反向依赖 pod 机制（分层铁律）。装配期由 pod 把这里翻译成 `TypeSpec` 做合一。
 ///
 /// 它是**元数据**：通道引用的该字段 `#[serde(skip)]` ⇒ 不进 payload
@@ -176,7 +176,7 @@ impl ChannelType {
 /// # 为什么不是封闭枚举
 ///
 /// 旧形态是 `enum Channel { Time, Frame, Event, … }` —— 场景词汇被钉在通用层，
-/// 每加一个可读字段都要改 `ze-func`。提案 #6 后组件字段本身就是地址
+/// 每加一个可读字段都要改 `ze-comb`。提案 #6 后组件字段本身就是地址
 /// （`Circle.radius`），与 `time` / `frame` 是同一机制的两种写法：
 ///
 /// - **空 namespace** = 宿主基础通道（`time` / `frame`）；
@@ -627,7 +627,7 @@ mod tests {
             "ty 不能进 payload"
         );
 
-        // 组件字段通道的容器给了类型名，但 ze-func 只认内核的小封闭集。
+        // 组件字段通道的容器给了类型名，但 ze-comb 只认内核的小封闭集。
         let component = ChannelRef::new("zela.scene", "Circle.radius")
             .with_type(ChannelType::Number);
         assert_eq!(component.ty, ChannelType::Number);

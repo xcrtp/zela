@@ -7,7 +7,7 @@
 // P0：目标由 `BindingTarget` 枚举改为 `Arc<dyn Target>` —— 本 System 只做
 // "遍历 + 求值 + 派发"，**不认识任何具体目标**（新增目标零 System 改动）。
 
-use ze_func::Value;
+use ze_comb::Value;
 use ze_time::{AnimValue, ClockForest};
 use zela_scene_ecs::TimeState;
 use zela_schedule::context::ExecutorContext;
@@ -617,7 +617,7 @@ mod tests {
     fn expression_reads_component_written_earlier_in_frame() {
         use crate::animation::target::{FieldTarget, target_entry};
         use std::sync::Arc;
-        use ze_func::{CompiledExpr, Expr};
+        use ze_comb::{CompiledExpr, Expr};
         use ze_scene_core::components::PhaseAnim;
         use ze_time::AnimValue;
 
@@ -649,12 +649,12 @@ mod tests {
             seek_kind: SeekKind::O1,
         });
         let read_expr = Expr::read(
-            ze_func::ChannelRef::new("zela.scene", "Circle.radius")
-                .with_type(ze_func::ChannelType::Number),
+            ze_comb::ChannelRef::new("zela.scene", "Circle.radius")
+                .with_type(ze_comb::ChannelType::Number),
             circle_id.to_packed(),
         );
         let program = CompiledExpr::compile(&Expr::call(
-            ze_func::OpRef::new("zela.math", "sin"),
+            ze_comb::OpRef::new("zela.math", "sin"),
             [read_expr],
         ))
         .expect("Read 是叶子，必然可编译");

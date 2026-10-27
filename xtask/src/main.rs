@@ -35,6 +35,7 @@ const KERNEL_CRATES: &[&str] = &[
     "ze-scene-contract",
     "ze-content",
     "ze-time",
+    "ze-comb",
     "ze-func",
     "ze-vertex",
     "ze-resource",

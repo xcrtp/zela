@@ -4,7 +4,7 @@
 //!
 //! 推导结果只服务装配期：显式拒绝类型错误的表达式、核对根表达式与目标通道。
 //! 运行期不需要类型（`Value` 自带标签），因此结果不进 payload —— 与
-//! [`ze_func::ChannelRef::ty`] 的 `#[serde(skip)]` 同一口径。
+//! [`ze_comb::ChannelRef::ty`] 的 `#[serde(skip)]` 同一口径。
 //!
 //! # 算法
 //!
@@ -24,7 +24,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
-use ze_func::{ChannelType, Expr, Literal, Node};
+use ze_comb::{ChannelType, Expr, Literal, Node};
 use ze_pod_core::{Kind, OpDef, OpSig, ScalarKind, TypeSpec};
 
 use crate::signature::signature_of;
@@ -88,6 +88,22 @@ pub fn infer_predicate(expr: &Expr) -> Result<(), TypeError> {
             "predicate 必须是 Bool 表达式，实际推导为 {}",
             ty.name()
         )))
+    }
+}
+
+/// **阶段 0**：把本 crate 已有的装配期分析收进 pass 约定。
+///
+/// 只登记元数据，不改变调用点（`infer` 仍由 `expr_pod` 在装配期直接调用）。
+pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
+    for name in ["expr.infer", "expr.infer.root", "expr.infer.predicate"] {
+        registry
+            .register(ze_comb::PassInfo {
+                name,
+                kind: ze_comb::PassKind::Analysis,
+                semantics: ze_comb::Semantics::Preserving,
+                owner: "ze-pod-func",
+            })
+            .expect("infer pass 名唯一");
     }
 }
 
@@ -443,8 +459,8 @@ fn definitions(expr: &Expr) -> BTreeMap<&str, &Expr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ze_func::ChannelRef;
-    use ze_func::OpRef;
+    use ze_comb::ChannelRef;
+    use ze_comb::OpRef;
 
     fn op(name: &str) -> OpRef {
         OpRef::new("zela.math", name)

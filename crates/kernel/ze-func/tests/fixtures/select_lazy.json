@@ -1,0 +1,79 @@
+{
+  "name": "select_lazy",
+  "expr": {
+    "node": {
+      "type": "select",
+      "data": {
+        "cond": {
+          "node": {
+            "type": "call",
+            "data": {
+              "op": { "namespace": "zela.math", "name": "lt" },
+              "args": [
+                {
+                  "node": {
+                    "type": "channel",
+                    "data": { "channel": { "namespace": "", "name": "frame" } }
+                  }
+                },
+                {
+                  "node": {
+                    "type": "pure",
+                    "data": { "value": { "type": "f64", "data": 2.0 } }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "then": {
+          "node": {
+            "type": "call",
+            "data": {
+              "op": { "namespace": "zela.math", "name": "vec2" },
+              "args": [
+                {
+                  "node": {
+                    "type": "pure",
+                    "data": { "value": { "type": "f64", "data": 1.0 } }
+                  }
+                },
+                {
+                  "node": {
+                    "type": "pure",
+                    "data": { "value": { "type": "f64", "data": 2.0 } }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "else": {
+          "node": {
+            "type": "call",
+            "data": {
+              "op": { "namespace": "zela.math", "name": "vec2" },
+              "args": [
+                {
+                  "node": {
+                    "type": "pure",
+                    "data": { "value": { "type": "f64", "data": 3.0 } }
+                  }
+                },
+                {
+                  "node": {
+                    "type": "pure",
+                    "data": { "value": { "type": "f64", "data": 4.0 } }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "channels": { "frame": [0.0, 1.0, 2.0, 3.0] },
+  "expect": [[1.0, 2.0], [1.0, 2.0], [3.0, 4.0], [3.0, 4.0]],
+  "expect_hash": "0xa5308069cd115da3"
+}

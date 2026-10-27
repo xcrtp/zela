@@ -448,8 +448,11 @@ pub fn signature_of(name: &str) -> Option<&'static OpDef> {
 }
 
 /// 某算子的 `(since, changed)`（产物记录 / 加载比对用）。
+///
+/// **事实来源是 `ze-func::op`**：本表的 `since/changed` 字段只是给文档导出器
+/// 保留的投影，两者由 `signatures_agree_with_the_functor_library` 钉住。
 pub fn op_revision(name: &str) -> Option<(u32, u32)> {
-    signature_of(name).map(|def| (def.since, def.changed))
+    ze_func::op_revision(name)
 }
 
 /// 表达式树里用到的**值算子** `(since, changed)`（产物记录用）。
@@ -457,9 +460,9 @@ pub fn op_revision(name: &str) -> Option<(u32, u32)> {
 /// 只记本库（`zela.math`）的 `Call` 节点；`Read` / `Select` / 通道叶子没有算子
 /// revision（它们不是 [`SIGNATURES`] 里的值算子）。`Ref` 的子树是另一份 `Expr`，
 /// 照常遍历。
-pub fn collect_op_revisions(expr: &ze_func::Expr) -> BTreeMap<String, (u32, u32)> {
-    fn walk(expr: &ze_func::Expr, out: &mut BTreeMap<String, (u32, u32)>) {
-        if let ze_func::Node::Call { op, .. } = &expr.node {
+pub fn collect_op_revisions(expr: &ze_comb::Expr) -> BTreeMap<String, (u32, u32)> {
+    fn walk(expr: &ze_comb::Expr, out: &mut BTreeMap<String, (u32, u32)>) {
+        if let ze_comb::Node::Call { op, .. } = &expr.node {
             if op.namespace == "zela.math" {
                 if let Some(revision) = op_revision(&op.name) {
                     out.insert(op.name.clone(), revision);
@@ -504,6 +507,18 @@ pub fn check_op_revisions(revisions: &BTreeMap<String, (u32, u32)>) -> Result<()
     }
 }
 
+/// **阶段 0**：算子 revision 收集也是装配期分析 pass（只读 IR、写 side table）。
+pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
+    registry
+        .register(ze_comb::PassInfo {
+            name: "expr.op_revisions",
+            kind: ze_comb::PassKind::Analysis,
+            semantics: ze_comb::Semantics::Preserving,
+            owner: "ze-pod-func",
+        })
+        .expect("op revision pass 名唯一");
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -513,6 +528,23 @@ mod tests {
     fn signatures_cover_every_op_once() {
         let names: Vec<&str> = super::SIGNATURES.iter().map(|def| def.name).collect();
         assert_eq!(names.as_slice(), crate::ops::OPS);
+    }
+
+    /// **阶段 0 切分证据**：签名表里的 `since/changed` 与基础函子库的
+    /// `OpDef` 元数据逐条一致（事实来源在 `ze-func`，这里只是投影）。
+    #[test]
+    fn signatures_agree_with_the_functor_library() {
+        for def in super::SIGNATURES {
+            assert_eq!(
+                (def.since, def.changed),
+                ze_func::op_revision(def.name).expect("元数据表必须覆盖签名表"),
+                "算子 `{}` 的 revision 漂移",
+                def.name
+            );
+        }
+        let meta: Vec<&str> = ze_func::OP_DEFS.iter().map(|def| def.name).collect();
+        let sigs: Vec<&str> = super::SIGNATURES.iter().map(|def| def.name).collect();
+        assert_eq!(meta, sigs, "两张表必须同名同序");
     }
 
     /// 文档行用构造器名（`Sin`），与脚本侧的 `Sin { … }` 一致。

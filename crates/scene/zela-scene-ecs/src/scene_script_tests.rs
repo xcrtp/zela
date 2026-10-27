@@ -447,7 +447,7 @@ mod tests {
     /// （`ExprBindError::ReadOrderConflict`），不留给运行期读到旧值。
     #[test]
     fn read_after_write_passes_but_write_after_read_is_rejected() {
-        use ze_func::{ChannelRef, ChannelType, Expr, OpRef};
+        use ze_comb::{ChannelRef, ChannelType, Expr, OpRef};
         use ze_scene_core::animation::LibraryRef;
         use ze_time::ClockProgram;
 

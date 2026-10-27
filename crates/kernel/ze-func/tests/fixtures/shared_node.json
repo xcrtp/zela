@@ -1,0 +1,45 @@
+{
+  "name": "shared_node",
+  "expr": {
+    "node": {
+      "type": "call",
+      "data": {
+        "op": { "namespace": "zela.math", "name": "add" },
+        "args": [
+          {
+            "id": "h1",
+            "node": {
+              "type": "call",
+              "data": {
+                "op": { "namespace": "zela.math", "name": "mul" },
+                "args": [
+                  {
+                    "node": {
+                      "type": "channel",
+                      "data": { "channel": { "namespace": "", "name": "time" } }
+                    }
+                  },
+                  {
+                    "node": {
+                      "type": "channel",
+                      "data": { "channel": { "namespace": "", "name": "time" } }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "type": "ref",
+              "data": { "to": "h1" }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "channels": { "time": [0.0, 1.0, 2.0] },
+  "expect": [0.0, 2.0, 8.0],
+  "expect_hash": "0x9dc645895419f437"
+}

@@ -6,6 +6,7 @@ members = [
     "crates/kernel/ze-content",
     "crates/kernel/ze-prerender",
     "crates/kernel/ze-time",
+    "crates/kernel/ze-comb",
     "crates/kernel/ze-func",
     "crates/kernel/ze-vertex",
     "crates/kernel/ze-resource",

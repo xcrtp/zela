@@ -2,14 +2,14 @@
 //!
 //! # 它是唯一的不纯入口
 //!
-//! `ze-func` 的组合子树只描述结构；值必须由宿主注入。本模块把
+//! `ze-comb` 的组合子树只描述结构；值必须由宿主注入。本模块把
 //! `TimeState`（时间 + 帧号）+ [`SceneRead`]（组件字段读端）包成 [`Mono`]，
 //! 算子语义委托给函子库 `zela.math`（[`ze_pod_func::eval_op`]）——
 //! **同一份算子身份与语义**。
 //!
 //! # 当前通道
 //!
-//! 通道是 `(namespace, name)` 数据（[`ze_func::ChannelRef`]），不再是封闭枚举：
+//! 通道是 `(namespace, name)` 数据（[`ze_comb::ChannelRef`]），不再是封闭枚举：
 //!
 //! | 通道 | 状态 |
 //! |---|---|
@@ -26,7 +26,7 @@
 //! 不引入新的量化。若将来需要 f64 时间轴，应把 `TimeState` 一起升级，而不是在
 //! 求值器里偷偷改精度。
 
-use ze_func::{ChannelRef, EvalError, Mono, OpRef, Value};
+use ze_comb::{ChannelRef, EvalError, Mono, OpRef, Value};
 use ze_scene_contract::ObjectId;
 use ze_scene_core::animation::target::{read_only_entry, target_entry};
 use ze_scene_core::scene_write::SceneRead;
@@ -108,7 +108,7 @@ impl Mono for SceneMono<'_> {
 
 /// 通道声明类型 vs 运行期值的标签（`Unknown` 跳过：老 payload / 未标注常量）。
 fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalError> {
-    use ze_func::ChannelType;
+    use ze_comb::ChannelType;
     let expected = match channel.ty {
         ChannelType::Unknown => return Ok(()),
         ChannelType::Number => "number",
@@ -174,7 +174,7 @@ mod tests {
     use super::*;
     use crate::contract::WorldScene;
     use hecs::World;
-    use ze_func::{CompiledExpr, Expr};
+    use ze_comb::{CompiledExpr, Expr};
     use ze_scene_contract::Scene as _;
     use ze_scene_core::Circle;
 
@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn evaluation_uses_the_host_monad_and_functor_library() {
         let expr = Expr::call(
-            ze_func::OpRef::new("zela.math", "sin"),
+            ze_comb::OpRef::new("zela.math", "sin"),
             [Expr::channel(ChannelRef::builtin(TIME_CHANNEL))],
         );
         let program = CompiledExpr::compile(&expr).unwrap();
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn frame_channel_is_independent_of_time() {
         let expr = Expr::call(
-            ze_func::OpRef::new("zela.math", "sin"),
+            ze_comb::OpRef::new("zela.math", "sin"),
             [Expr::channel(ChannelRef::builtin(FRAME_CHANNEL))],
         );
         let program = CompiledExpr::compile(&expr).unwrap();
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn comparisons_evaluate_to_bool_but_are_not_animatable() {
         let expr = Expr::call(
-            ze_func::OpRef::new("zela.math", "lt"),
+            ze_comb::OpRef::new("zela.math", "lt"),
             [
                 Expr::channel(ChannelRef::builtin(TIME_CHANNEL)),
                 Expr::pure(2.0),
@@ -292,7 +292,7 @@ mod tests {
         let mono = SceneMono::new(0.0, 0, &ws);
         // `Circle.radius` 实际是标量，却声明成 Vec2。
         let channel = ChannelRef::new("zela.scene", "Circle.radius")
-            .with_type(ze_func::ChannelType::Vec2);
+            .with_type(ze_comb::ChannelType::Vec2);
         let err = mono
             .read_object(&channel, id.to_packed())
             .expect_err("类型不符必须显式失败");

@@ -7,7 +7,7 @@
 //!
 //! 提案 #6 B：对象用**句柄**（`spawn` 的返回值），不再依赖 `Name{}` 组件。
 
-use ze_func::{ChannelRef, Expr, OpRef};
+use ze_comb::{ChannelRef, Expr, OpRef};
 use ze_scene_core::animation::LibraryRef;
 use ze_scene_core::object::Circle;
 use ze_scene_core::scene_script::{ExprBindError, SceneEncoder, SceneScript};
@@ -566,7 +566,7 @@ fn registered_component_channels_are_allowed_but_unregistered_rejected() {
         "CircleRadius",
         Expr::channel(
             ChannelRef::new("zela.scene", "Circle.radius")
-                .with_type(ze_func::ChannelType::Number),
+                .with_type(ze_comb::ChannelType::Number),
         ),
         library(),
         global_clock(),
@@ -615,7 +615,7 @@ fn unknown_object_fails_at_assembly() {
 /// **G 批**：`Node::Read.object`（脚本局部句柄下标）越界 ⇒ 装配期 `UnknownObject`。
 #[test]
 fn read_with_out_of_bounds_object_fails_at_assembly() {
-    use ze_func::ChannelType;
+    use ze_comb::ChannelType;
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle()); // 只有句柄 0
     let expr = Expr::read(
