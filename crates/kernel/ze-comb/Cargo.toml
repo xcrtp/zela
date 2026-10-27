@@ -27,3 +27,7 @@ criterion.workspace = true
 [[bench]]
 name = "expr_bench"
 harness = false
+
+[[bench]]
+name = "eval_bench"
+harness = false
