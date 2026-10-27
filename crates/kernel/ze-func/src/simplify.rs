@@ -27,67 +27,60 @@ pub fn simplify(expr: &Expr) -> Expr {
     simplify_node(expr)
 }
 
+/// 自底向上：**子节点递归统一走 [`Expr::map_children`]**，本节点只做折叠判定。
 fn simplify_node(expr: &Expr) -> Expr {
-    let node = match &expr.node {
-        Node::Call { op, args } => {
-            let args: Vec<Expr> = args.iter().map(simplify_node).collect();
-            if let Some(literal) = fold_call(op, &args) {
-                Node::Pure { value: literal }
-            } else {
-                Node::Call {
-                    op: op.clone(),
-                    args,
-                }
-            }
-        }
+    fold(expr.map_children(simplify_node))
+}
+
+/// 折叠规则（对已化简的节点做一次判定，不递归子节点）。
+///
+/// 三条规则都只在**本节点**上判定：常量 `Call`、字面量 `Select`、闭合 `NatRec`。
+fn fold(expr: Expr) -> Expr {
+    let Expr { id, node } = expr;
+    match node {
+        Node::Call { op, args } => match fold_call(&op, &args) {
+            Some(value) => Expr {
+                id,
+                node: Node::Pure { value },
+            },
+            None => Expr {
+                id,
+                node: Node::Call { op, args },
+            },
+        },
         Node::Select { cond, then, r#else } => {
-            let cond = simplify_node(cond);
-            let then = simplify_node(then);
-            let r#else = simplify_node(r#else);
             // 带 id 的 Select 不折叠：单个 Expr 只带一个 id，折叠会丢引用目标。
-            if expr.id.is_none() {
+            if id.is_none() {
                 match &cond.node {
                     Node::Pure {
                         value: Literal::Bool(true),
-                    } => return then,
+                    } => return *then,
                     Node::Pure {
                         value: Literal::Bool(false),
-                    } => return r#else,
+                    } => return *r#else,
                     _ => {}
                 }
             }
-            Node::Select {
-                cond: Box::new(cond),
-                then: Box::new(then),
-                r#else: Box::new(r#else),
+            Expr {
+                id,
+                node: Node::Select { cond, then, r#else },
             }
         }
         Node::NatRec { count, init, step } => {
-            let count = simplify_node(count);
-            let init = simplify_node(init);
-            let step = simplify_node(step);
             let candidate = Expr {
-                id: expr.id.clone(),
-                node: Node::NatRec {
-                    count: Box::new(count),
-                    init: Box::new(init),
-                    step: Box::new(step),
-                },
+                id,
+                node: Node::NatRec { count, init, step },
             };
             // 层间迁移：闭合的 NatRec 在装配期展开成常量。
-            match eval_closed(&candidate, None) {
-                Some(value) => match value_to_literal(&value) {
-                    Some(literal) => Node::Pure { value: literal },
-                    None => candidate.node,
+            match eval_closed(&candidate, None).and_then(|value| value_to_literal(&value)) {
+                Some(value) => Expr {
+                    id: candidate.id.clone(),
+                    node: Node::Pure { value },
                 },
-                None => candidate.node,
+                None => candidate,
             }
         }
-        other => other.clone(),
-    };
-    Expr {
-        id: expr.id.clone(),
-        node,
+        other => Expr { id, node: other },
     }
 }
 
