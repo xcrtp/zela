@@ -56,14 +56,58 @@ impl fmt::Display for TypeError {
 
 impl std::error::Error for TypeError {}
 
+/// **点态性报告**（阶段 2）：连续层 = `pointwise`，离散层 = 非 pointwise。
+///
+/// 事实来源是算子声明（`ze-func::OpDef.pointwise`）+ **污染传播**：
+/// 读了非 pointwise 的东西 ⇒ 整棵表达式变非 pointwise（与 `Send` / `Sync` 同构）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PointwiseReport {
+    pub pointwise: bool,
+    /// 第一个"污染源"（诊断用；`pointwise = true` 时为 `None`）。
+    pub blocker: Option<String>,
+}
+
+impl PointwiseReport {
+    fn pointwise() -> Self {
+        Self {
+            pointwise: true,
+            blocker: None,
+        }
+    }
+
+    fn blocked(blocker: impl Into<String>) -> Self {
+        Self {
+            pointwise: false,
+            blocker: Some(blocker.into()),
+        }
+    }
+}
+
+/// 一次推导的完整结果：类型 + 点态性（**side table 语义**，不回写 IR）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Inference {
+    pub ty: ChannelType,
+    pub pointwise: PointwiseReport,
+}
+
 /// 推导整棵树，返回根节点的具体类型。
 pub fn infer(expr: &Expr) -> Result<ChannelType, TypeError> {
+    Ok(infer_full(expr)?.ty)
+}
+
+/// 推导整棵树，返回类型 + 点态性。
+pub fn infer_full(expr: &Expr) -> Result<Inference, TypeError> {
     let mut context = Infer {
         defs: definitions(expr),
         memo: HashMap::new(),
         visiting: HashSet::new(),
     };
     context.type_of(expr)
+}
+
+/// **阶段 2**：单独取点态性（类型错误仍然显式返回）。
+pub fn infer_pointwise(expr: &Expr) -> Result<PointwiseReport, TypeError> {
+    Ok(infer_full(expr)?.pointwise)
 }
 
 /// 绑定根：必须是可写动画值（数值 / 向量）。
@@ -362,62 +406,94 @@ fn display_name(name: &str) -> String {
 
 struct Infer<'a> {
     defs: BTreeMap<&'a str, &'a Expr>,
-    memo: HashMap<&'a str, ChannelType>,
+    memo: HashMap<&'a str, Inference>,
     visiting: HashSet<&'a str>,
 }
 
 impl<'a> Infer<'a> {
-    fn type_of(&mut self, expr: &'a Expr) -> Result<ChannelType, TypeError> {
+    fn type_of(&mut self, expr: &'a Expr) -> Result<Inference, TypeError> {
         match &expr.node {
-            Node::Pure { value } => literal_type(value),
+            Node::Pure { value } => Ok(Inference {
+                ty: literal_type(value)?,
+                pointwise: PointwiseReport::pointwise(),
+            }),
             Node::Channel { channel } => match channel.ty {
                 ChannelType::Unknown => Err(TypeError::new(format!(
                     "通道 `{channel}` 缺少类型信息（装配期无法推导；组件字段通道应带 `ty`）"
                 ))),
-                ty => Ok(ty),
+                // 连续变量：`f: ℝⁿ → V`，逐点可求值（连续层）。
+                ty => Ok(Inference {
+                    ty,
+                    pointwise: PointwiseReport::pointwise(),
+                }),
             },
             Node::Read { channel, .. } => match channel.ty {
                 ChannelType::Unknown => Err(TypeError::new(format!(
                     "读通道 `{channel}` 缺少类型信息（装配期无法推导；组件字段通道应带 `ty`）"
                 ))),
-                ty => Ok(ty),
+                // 组件字段是**当前状态的采样**，不是坐标的函数 ⇒ 非 pointwise。
+                ty => Ok(Inference {
+                    ty,
+                    pointwise: PointwiseReport::blocked(format!("read `{channel}`")),
+                }),
             },
             Node::Call { op, args } => {
-                let arg_types = args
+                let arg_infos = args
                     .iter()
                     .map(|arg| self.type_of(arg))
                     .collect::<Result<Vec<_>, _>>()?;
+                let arg_types: Vec<ChannelType> = arg_infos.iter().map(|info| info.ty).collect();
                 let def = signature_of(&op.name).ok_or_else(|| {
                     TypeError::new(format!("算子 `{op}` 没有类型签名（L2 表未登记）"))
                 })?;
-                unify_overloads(def, &arg_types)
+                let ty = unify_overloads(def, &arg_types)?;
+                // **污染传播**：算子自身非 pointwise，或任一实参非 pointwise ⇒ 整棵非 pointwise。
+                let op_pointwise = ze_func::is_pointwise(&op.name).unwrap_or(false);
+                let pointwise = if !op_pointwise {
+                    PointwiseReport::blocked(format!("算子 `{op}` 声明为非 pointwise"))
+                } else {
+                    arg_infos
+                        .into_iter()
+                        .find(|info| !info.pointwise.pointwise)
+                        .map(|info| info.pointwise)
+                        .unwrap_or_else(PointwiseReport::pointwise)
+                };
+                Ok(Inference { ty, pointwise })
             }
             Node::Ref { to } => self.ref_type(to.as_str()),
             Node::Select { cond, then, r#else } => {
-                let cond_ty = self.type_of(cond)?;
-                if cond_ty != ChannelType::Bool {
+                let cond_info = self.type_of(cond)?;
+                if cond_info.ty != ChannelType::Bool {
                     return Err(TypeError::new(format!(
                         "`Select.cond` 必须是 Bool，实际 {}",
-                        cond_ty.name()
+                        cond_info.ty.name()
                     )));
                 }
-                let then_ty = self.type_of(then)?;
-                let else_ty = self.type_of(r#else)?;
-                if then_ty != else_ty {
+                let then_info = self.type_of(then)?;
+                let else_info = self.type_of(r#else)?;
+                if then_info.ty != else_info.ty {
                     return Err(TypeError::new(format!(
                         "`Select` 两个分支类型不同：{} / {}",
-                        then_ty.name(),
-                        else_ty.name()
+                        then_info.ty.name(),
+                        else_info.ty.name()
                     )));
                 }
-                Ok(then_ty)
+                let pointwise = [cond_info, then_info.clone(), else_info]
+                    .into_iter()
+                    .find(|info| !info.pointwise.pointwise)
+                    .map(|info| info.pointwise)
+                    .unwrap_or_else(PointwiseReport::pointwise);
+                Ok(Inference {
+                    ty: then_info.ty,
+                    pointwise,
+                })
             }
         }
     }
 
-    fn ref_type(&mut self, to: &'a str) -> Result<ChannelType, TypeError> {
-        if let Some(ty) = self.memo.get(to) {
-            return Ok(*ty);
+    fn ref_type(&mut self, to: &'a str) -> Result<Inference, TypeError> {
+        if let Some(info) = self.memo.get(to) {
+            return Ok(info.clone());
         }
         if !self.visiting.insert(to) {
             return Err(TypeError::new(format!("类型推导遇到环：`{to}` 引用自身")));
@@ -426,10 +502,10 @@ impl<'a> Infer<'a> {
             .defs
             .get(to)
             .ok_or_else(|| TypeError::new(format!("悬空的 Ref：`{to}` 没有定义")))?;
-        let ty = self.type_of(target)?;
+        let info = self.type_of(target)?;
         self.visiting.remove(to);
-        self.memo.insert(to, ty);
-        Ok(ty)
+        self.memo.insert(to, info.clone());
+        Ok(info)
     }
 }
 
@@ -544,6 +620,42 @@ mod tests {
     fn root_cannot_be_bool() {
         let compare = call("lt", vec![num(0.0), num(1.0)]);
         assert!(infer_root(&compare).is_err());
+    }
+
+    /// **阶段 2**：点态性声明 + 污染传播。
+    #[test]
+    fn pointwise_propagates_from_reads() {
+        // `sin(time)`：连续层（逐点）。
+        let continuous = call("sin", vec![Expr::channel(ChannelRef::builtin("time"))]);
+        let report = infer_pointwise(&continuous).expect("可推导");
+        assert!(report.pointwise, "连续变量 + 逐点算子 ⇒ pointwise");
+        assert_eq!(report.blocker, None);
+
+        // `sin(read(...))`：读了组件当前值 ⇒ 整棵表达式非 pointwise。
+        let read = Expr::read(
+            ChannelRef::new("zela.scene", "Circle.radius").with_type(ChannelType::Number),
+            3,
+        );
+        let polluted = call("sin", vec![read]);
+        let report = infer_pointwise(&polluted).expect("可推导");
+        assert!(!report.pointwise, "读了非 pointwise ⇒ 整棵非 pointwise");
+        assert!(
+            report.blocker.as_deref().is_some_and(|text| text.contains("read")),
+            "必须点名污染源，实际 {:?}",
+            report.blocker
+        );
+    }
+
+    /// `Select` 的分支也参与污染：任一分支非 pointwise ⇒ 整棵非 pointwise。
+    #[test]
+    fn select_points_propagate_from_branches() {
+        let read = Expr::read(
+            ChannelRef::new("zela.scene", "Circle.radius").with_type(ChannelType::Number),
+            3,
+        );
+        let expr = Expr::select(Expr::pure(true), Expr::pure(1.0), read);
+        let report = infer_pointwise(&expr).expect("可推导");
+        assert!(!report.pointwise);
     }
 
     /// **阶段 1**：`I64` 可推导为整数类型，但不能作为动画根（只用于离散索引）。

@@ -35,7 +35,10 @@ pub use api::{
 pub use expr_pod::{
     ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding, SCENE_NAMESPACE,
 };
-pub use infer::TypeError;
+pub use infer::{
+    Inference, PointwiseReport, TypeError, infer, infer_full, infer_pointwise, infer_predicate,
+    infer_root,
+};
 pub use ops::eval as eval_op;
 pub use ops::OPS;
 pub use signature::{

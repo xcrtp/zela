@@ -193,8 +193,14 @@ fn record_expression(
     // 拒绝，而不是留到运行期靠"上一帧写过什么"（那会重新引入顺序耦合）。
     if reset == ResetBehavior::Hold {
         if let Some(predicate) = &predicate {
-            if crate::animation::predicate::analyze(predicate).is_none() {
-                return Err(ExprBindError::UnanalyzableHold);
+            // 阶段 2：`Hold` 的 `last_active` 只能按**时间**反算；predicate 若依赖
+            // 非时间连续量（`frame` / 组件字段读），显式拒绝（不静默当作恒真）。
+            match crate::animation::predicate::analyze(predicate) {
+                None => return Err(ExprBindError::UnanalyzableHold),
+                Some(active) if active.has_non_time_variable() => {
+                    return Err(ExprBindError::UnanalyzableHold)
+                }
+                Some(_) => {}
             }
         }
     }
@@ -646,6 +652,11 @@ impl SceneScript {
     /// 它**不是**"作品时长"：录多长由 `ExportSpec { fps, frames }` 决定。
     pub fn still_time(&self) -> Option<f64> {
         self.timeline.still_time()
+    }
+
+    /// **阶段 2**：区分"不可分析"与"含非时间依赖"的完整报告。
+    pub fn still_time_report(&self) -> crate::animation::StillTimeReport {
+        self.timeline.still_time_report()
     }
 
     /// 产物里出现的**函子库身份**（输入流配对校验用；见 [`Timeline::libraries`]）。

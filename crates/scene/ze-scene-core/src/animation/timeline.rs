@@ -44,6 +44,22 @@ pub struct Segment {
     pub duration: f64,
 }
 
+/// **静止时刻报告**（阶段 2）：把"推导不出来"的**原因**显式分开。
+///
+/// - `at = Some(t)`：可推导的静止时刻（`still_time()` 的返回值）；
+/// - `unanalyzable`：predicate 形状不在区间代数里（事件 / 非字面量边界 / 负速率时钟）；
+/// - `non_time_dependency`：predicate 依赖**非时间**连续变量（`x` / 组件字段读）；
+/// - `never_static`：恒生效（画面永远在变）。
+///
+/// 后两者都会让 `at = None`，但修法不同 —— 因此不得合并成一个 `Option`。
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct StillTimeReport {
+    pub at: Option<f64>,
+    pub unanalyzable: bool,
+    pub non_time_dependency: bool,
+    pub never_static: bool,
+}
+
 impl Segment {
     /// 区间右端（`start + duration`）。
     pub fn end(&self) -> f64 {
@@ -462,9 +478,15 @@ impl Timeline {
                     };
                     // **C 批**：predicate → 局部时间区间集。可分析时生效判定与 Hold
                     // 都是纯函数（AH-06 / AH-07）；不可分析才回退到逐帧求值。
-                    let active = predicate
-                        .as_ref()
-                        .and_then(crate::animation::predicate::analyze);
+                    //
+                    // **阶段 2**：含非时间变量（`frame` / 组件字段读）的区间集**不能**
+                    // 用来做逐帧生效判定 —— 它约束的是别的连续量。这类 predicate 仍
+                    // 回退到逐帧求值（`active = None`），但 `still_time_report` 会
+                    // 显式记为 `non_time_dependency`。
+                    let active = predicate.as_ref().and_then(|predicate| {
+                        crate::animation::predicate::analyze(predicate)
+                            .filter(|set| !set.has_non_time_variable())
+                    });
                     let predicate = match predicate {
                         Some(expr) => match CompiledExpr::compile(expr) {
                             Ok(program) => Some(program),
@@ -509,21 +531,30 @@ impl Timeline {
     /// `ExportSpec { fps, frames }` 决定。`None` = **不可推导**（含非时间依赖、
     /// 恒生效的 predicate，或负速率时钟），调用方必须显式说明，不能拿 0 冒充。
     ///
-    /// # 可分析性（AH-05 / AH-06）
+    /// # 可分析性（AH-05 / AH-06 / 阶段 2）
     ///
     /// - `Play` 段：`start + duration`；
-    /// - `Expr` 段：predicate 分析成**局部时间区间集**（`Lt/Gt/Le/Ge/Eq/Ne` +
-    ///   `And/Or/Not`），取最大有限右端，再按时钟仿射 `local = rate·t + shift`
-    ///   反解成全局时间；
+    /// - `Expr` 段：predicate 分析成**多维连续变量区间集**，取 `time` 投影的
+    ///   最大有限右端，再按时钟仿射 `local = rate·t + shift` 反解成全局时间；
     /// - **恒生效**（无 predicate）或区间延伸到 `+∞` ⇒ `None`（永远不会静止）；
-    /// - **不可分析**的 predicate（事件 / 组件状态 / 非字面量边界）**逐条跳过**
-    ///   （AH-05：可分析计入、不可分析跳过；全部不可分析才 `None`）。
+    /// - **不可分析**的 predicate（事件 / 非字面量边界）**逐条跳过**
+    ///   （AH-05：可分析计入、不可分析跳过；全部不可分析才 `None`）；
+    /// - **含非时间变量** ⇒ 跳过并在 [`StillTimeReport`] 里显式记账
+    ///   （不再把它误当成"时间恒生效"）。
     pub fn still_time(&self) -> Option<f64> {
+        self.still_time_report().at
+    }
+
+    /// **阶段 2**：`still_time` 的完整报告 —— 区分"不可分析"与"含非时间依赖"。
+    ///
+    /// 这两个原因都让 `at` 无法给出确定值，但它们的**修法不同**：
+    /// 前者要改 predicate 形状，后者要承认表达式依赖别的连续量。
+    pub fn still_time_report(&self) -> StillTimeReport {
         let mut cursor = 0.0f64;
         let mut end = 0.0f64;
         let mut has_play = false;
         let mut analyzable = false;
-        let mut unknown = false;
+        let mut report = StillTimeReport::default();
         for step in &self.steps {
             match step {
                 Step::Wait(d) => cursor += d,
@@ -542,19 +573,30 @@ impl Timeline {
                 }
                 Step::Expr { predicate: None, .. } => {
                     // 恒生效 ⇒ 画面永远在变，没有静止时刻。
-                    return None;
+                    report.never_static = true;
+                    return report;
                 }
                 Step::Expr {
                     predicate: Some(predicate),
                     clock,
                     ..
                 } => match crate::animation::predicate::analyze(predicate) {
-                    None => unknown = true,
-                    Some(active) => match active.finite_max_end() {
+                    None => report.unanalyzable = true,
+                    Some(active) if active.has_non_time_variable() => {
+                        // 依赖非时间连续量：不能拿时间投影冒充结论。
+                        report.non_time_dependency = true;
+                    }
+                    Some(active) => match active.time_finite_max_end() {
                         // 延伸到 +∞ ⇒ 永远生效。
-                        None => return None,
+                        None => {
+                            report.never_static = true;
+                            return report;
+                        }
                         Some(local_end) if local_end.is_finite() => {
-                            let (rate, shift) = clock_affine(clock)?;
+                            let Some((rate, shift)) = clock_affine(clock) else {
+                                report.unanalyzable = true;
+                                continue;
+                            };
                             end = end.max((local_end - shift) / rate);
                             analyzable = true;
                         }
@@ -565,12 +607,11 @@ impl Timeline {
             }
         }
         if has_play || analyzable {
-            return Some(end);
+            report.at = Some(end);
+        } else if !report.unanalyzable && !report.non_time_dependency {
+            report.at = Some(0.0);
         }
-        if unknown {
-            return None;
-        }
-        Some(0.0)
+        report
     }
 
     /// 把 `other` 的步骤**整体追加**到本编排之后（合并语义，§3.3）。
@@ -865,5 +906,75 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(b, c, "并行动作共享同一节点");
         assert_ne!(c, d, "后续段用新节点");
+    }
+
+    // ─── 阶段 2：still_time 的多维语义 ─────────────────────────────────
+
+    fn expr_timeline(predicate: Expr) -> Timeline {
+        use crate::animation::target::target_ctor_by_name;
+        let (make, _) = target_ctor_by_name("Circle.radius").expect("目标已登记");
+        let mut tl = Timeline::new();
+        tl.bind_expr_pending(
+            Expr::pure(1.0),
+            LibraryRef::default(),
+            ClockProgram::default(),
+            Some(predicate),
+            ResetBehavior::Skip,
+            make,
+            0,
+        );
+        tl
+    }
+
+    fn compare(op: &str, left: Expr, right: Expr) -> Expr {
+        Expr::call(
+            ze_comb::OpRef::new("zela.math", op),
+            [left, right],
+        )
+    }
+
+    /// 只依赖时间的窗口 ⇒ `at = Some(...)`，没有"非时间依赖"标记。
+    #[test]
+    fn still_time_report_distinguishes_a_time_window() {
+        let predicate = compare(
+            "lt",
+            Expr::channel(ze_comb::ChannelRef::builtin("time")),
+            Expr::pure(4.0),
+        );
+        let report = expr_timeline(predicate).still_time_report();
+        assert_eq!(report.at, Some(4.0));
+        assert!(!report.unanalyzable);
+        assert!(!report.non_time_dependency);
+    }
+
+    /// **阶段 2 验收**：依赖 `frame` ⇒ `at = None` 且 `non_time_dependency = true`
+    /// （不是"不可分析"，也不是 0）。
+    #[test]
+    fn still_time_report_names_non_time_dependency() {
+        let frame = Expr::channel(ze_comb::ChannelRef::builtin("frame"));
+        let predicate = Expr::call(
+            ze_comb::OpRef::new("zela.math", "and"),
+            [
+                compare("lt", frame.clone(), Expr::pure(4.0)),
+                compare("gt", frame, Expr::pure(1.0)),
+            ],
+        );
+        let report = expr_timeline(predicate).still_time_report();
+        assert_eq!(report.at, None, "非时间依赖 ⇒ 不得用 0 冒充");
+        assert!(report.non_time_dependency);
+        assert!(!report.unanalyzable, "它可分析，只是不是时间");
+        assert!(!report.never_static);
+    }
+
+    /// 非字面量边界（`time` 与 `time` 比较）⇒ `unanalyzable`
+    /// （与"非时间依赖"分开）。
+    #[test]
+    fn still_time_report_names_unanalyzable_shapes() {
+        let time = Expr::channel(ze_comb::ChannelRef::builtin("time"));
+        let predicate = compare("lt", time.clone(), time);
+        let report = expr_timeline(predicate).still_time_report();
+        assert_eq!(report.at, None);
+        assert!(report.unanalyzable);
+        assert!(!report.non_time_dependency);
     }
 }

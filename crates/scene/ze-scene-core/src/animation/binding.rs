@@ -15,7 +15,7 @@ use std::sync::Arc;
 use ze_comb::CompiledExpr;
 use ze_time::{AnimValue, ClockId, Curve};
 
-use crate::animation::predicate::IntervalSet;
+use crate::animation::predicate::MultiIntervalSet;
 use crate::animation::target::Target;
 
 /// predicate 失效时的行为（`Reset.hold` / `reset` / `skip`）。
@@ -106,7 +106,7 @@ pub struct Binding {
     pub predicate: Option<CompiledExpr>,
     /// predicate → **局部时间区间集**（AH-06）：`Some` 时生效判定与 Hold 反算都是
     /// 纯函数（不再逐帧求值 predicate）；`None` = 不可分析，运行期回退。
-    pub active: Option<IntervalSet>,
+    pub active: Option<MultiIntervalSet>,
     /// predicate 失效时的行为。
     pub reset: ResetBehavior,
     /// `reset = Reset` 的初值（`commit` 时从场景快照；`None` = 读不到 / 不需要）。
@@ -171,7 +171,7 @@ impl BindingTable {
         program: CompiledExpr,
         target: Arc<dyn Target>,
         predicate: Option<CompiledExpr>,
-        active: Option<IntervalSet>,
+        active: Option<MultiIntervalSet>,
         reset: ResetBehavior,
     ) {
         let seek_kind = if predicate.is_some() && reset == ResetBehavior::Hold && active.is_none() {

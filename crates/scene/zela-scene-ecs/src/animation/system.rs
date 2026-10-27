@@ -67,7 +67,7 @@ impl System for BindingApplySystem {
             // **C 批**：predicate 与 root **分开求值**（Bool 不经过 `anim_value`）。
             // 可分析（区间集）时生效判定是纯函数，不再逐帧求值 predicate。
             let active = match (&b.active, &b.predicate) {
-                (Some(set), _) => set.contains(lt),
+                (Some(set), _) => set.time_contains(lt),
                 (None, None) => true,
                 (None, Some(predicate)) => match predicate.eval(&SceneMono::new(lt, frame, &scene)) {
                     Ok(Value::Bool(value)) => value,
@@ -106,7 +106,7 @@ impl System for BindingApplySystem {
                         None
                     }
                     ResetBehavior::Skip => None,
-                    ResetBehavior::Hold => b.active.as_ref().and_then(|set| set.last_active(lt)),
+                    ResetBehavior::Hold => b.active.as_ref().and_then(|set| set.time_last_active(lt)),
                 }
             };
             let Some(eval_at) = eval_at else {

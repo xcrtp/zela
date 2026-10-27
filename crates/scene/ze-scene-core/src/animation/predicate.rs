@@ -251,12 +251,201 @@ impl IntervalSet {
     }
 }
 
+/// **连续变量**的规范名：宿主基础通道 `time`（空 namespace）。
+///
+/// 时间只是 n=1 的一个实例；其它连续变量（`frame` / 组件字段读）用
+/// [`ChannelRef::qualified`] 作为键。**不硬编码"时间"的语义**，只保留这个
+/// 默认变量的名字，供 `still_time` 反算用。
+pub const TIME_VARIABLE: &str = "time";
+
+/// **多维区间集合**：若干连续变量上的约束**合取**（product region）。
+///
+/// - `truth = false` ⇒ 空集（predicate 从不生效）；
+/// - `truth = true` 且 `vars` 为空 ⇒ 全集（所有变量都不受约束）；
+/// - 每个 `vars[k]` 是变量 `k` 上的一维区间集合。
+///
+/// `And` = 逐变量求交（不同变量合并成 product）；`Or` = 只有"同一单变量"
+/// 才能表示成并集，跨变量的析取**显式不可表示**（返回 `None`，不猜）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct MultiIntervalSet {
+    truth: bool,
+    vars: std::collections::BTreeMap<String, IntervalSet>,
+}
+
+impl Default for MultiIntervalSet {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+impl MultiIntervalSet {
+    /// 全集（所有连续变量都不受约束）。
+    pub fn all() -> Self {
+        Self {
+            truth: true,
+            vars: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// 空集（predicate 从不生效）。
+    pub fn never() -> Self {
+        Self {
+            truth: false,
+            vars: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// 单个变量上的约束；集合为空 ⇒ 整体空集。
+    pub fn on(variable: impl Into<String>, set: IntervalSet) -> Self {
+        if set.is_empty() {
+            return Self::never();
+        }
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert(variable.into(), set);
+        Self { truth: true, vars }
+    }
+
+    /// 是否为"恒真"（不约束任何变量）。
+    pub fn is_all(&self) -> bool {
+        self.truth && self.vars.is_empty()
+    }
+
+    /// 是否为空集。
+    pub fn is_empty(&self) -> bool {
+        !self.truth || self.vars.values().any(IntervalSet::is_empty)
+    }
+
+    /// 各变量上的约束（诊断 / 测试用）。
+    pub fn vars(&self) -> impl Iterator<Item = (&str, &IntervalSet)> {
+        self.vars.iter().map(|(name, set)| (name.as_str(), set))
+    }
+
+    /// 是否含**非时间**连续变量（`still_time` 必须显式说"不可推导"，不得用 0 冒充）。
+    pub fn has_non_time_variable(&self) -> bool {
+        self.vars.keys().any(|name| name != TIME_VARIABLE)
+    }
+
+    /// 非时间变量名（错误诊断 / 报告用）。
+    pub fn non_time_variables(&self) -> Vec<&str> {
+        self.vars
+            .keys()
+            .filter(|name| name.as_str() != TIME_VARIABLE)
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// 变量 `variable` 是否在 `value` 处满足约束（未出现的变量视为不受约束）。
+    pub fn contains_var(&self, variable: &str, value: f64) -> bool {
+        if !self.truth {
+            return false;
+        }
+        match self.vars.get(variable) {
+            Some(set) => set.contains(value),
+            None => true,
+        }
+    }
+
+    /// 时间投影上的包含判定（保留旧 API 的语义：只问 `time`）。
+    pub fn time_contains(&self, t: f64) -> bool {
+        self.contains_var(TIME_VARIABLE, t)
+    }
+
+    /// 时间投影上的 `sup { x ≤ t : predicate(x) }`。
+    ///
+    /// 时间不受约束 ⇒ 恒生效 ⇒ `Some(t)`；空集 ⇒ `None`。
+    pub fn time_last_active(&self, t: f64) -> Option<f64> {
+        if !self.truth {
+            return None;
+        }
+        match self.vars.get(TIME_VARIABLE) {
+            Some(set) => set.last_active(t),
+            None => Some(t),
+        }
+    }
+
+    /// 时间投影上最后一个区间的右端；`None` = 延伸到 `+∞`（永远生效）。
+    pub fn time_finite_max_end(&self) -> Option<f64> {
+        if !self.truth {
+            return Some(f64::NEG_INFINITY);
+        }
+        match self.vars.get(TIME_VARIABLE) {
+            Some(set) => set.finite_max_end(),
+            None => None,
+        }
+    }
+
+    /// 交集（不同变量合并成 product region；同一变量求交）。
+    pub fn intersect(&self, other: &Self) -> Self {
+        if !self.truth || !other.truth {
+            return Self::never();
+        }
+        let mut vars = self.vars.clone();
+        for (name, set) in &other.vars {
+            match vars.get(name) {
+                Some(existing) => {
+                    let merged = existing.intersect(set);
+                    if merged.is_empty() {
+                        return Self::never();
+                    }
+                    vars.insert(name.clone(), merged);
+                }
+                None => {
+                    vars.insert(name.clone(), set.clone());
+                }
+            }
+        }
+        Self { truth: true, vars }
+    }
+
+    /// 并集：只有"同一单变量"可表示；跨变量析取返回 `None`（显式不可分析）。
+    pub fn union(&self, other: &Self) -> Option<Self> {
+        if self.is_all() || other.is_all() {
+            return Some(Self::all());
+        }
+        if !self.truth {
+            return Some(other.clone());
+        }
+        if !other.truth {
+            return Some(self.clone());
+        }
+        if self.vars.len() == 1 && other.vars.len() == 1 {
+            let (left_name, left_set) = self.vars.iter().next().expect("len == 1");
+            let (right_name, right_set) = other.vars.iter().next().expect("len == 1");
+            if left_name == right_name {
+                return Some(Self::on(
+                    left_name.clone(),
+                    left_set.union(right_set),
+                ));
+            }
+        }
+        None
+    }
+
+    /// 补集：只有"不约束任何变量"或"单变量"可表示；多变量 product 的补集
+    /// 是跨变量析取 ⇒ 显式不可分析。
+    pub fn complement(&self) -> Option<Self> {
+        if !self.truth {
+            return Some(Self::all());
+        }
+        match self.vars.len() {
+            0 => Some(Self::never()),
+            1 => {
+                let (name, set) = self.vars.iter().next().expect("len == 1");
+                Some(Self::on(name.clone(), set.complement()))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// **predicate → 区间集合**（局部时间）。
 ///
-/// 只接受「`time` 与数值字面量比较」以及它们的 `And` / `Or` / `Not`；
-/// 其它形状（事件 / 组件状态 / 非字面量边界）返回 `None` —— 显式不可分析，
-/// 不猜。
-pub fn analyze(expr: &Expr) -> Option<IntervalSet> {
+/// 只接受「连续变量与数值字面量比较」以及它们的 `And` / `Or` / `Not`；
+/// 其它形状（事件 / 非字面量边界）返回 `None` —— 显式不可分析，不猜。
+///
+/// **阶段 2**：`time` 不再是唯一变量 —— 任意 `Channel` / `Read` 都是连续变量，
+/// 键分别是 `channel.qualified()` / `channel.qualified()#object`。
+pub fn analyze(expr: &Expr) -> Option<MultiIntervalSet> {
     let Node::Call { op, args } = &expr.node else {
         return None;
     };
@@ -269,18 +458,51 @@ pub fn analyze(expr: &Expr) -> Option<IntervalSet> {
         "gt" => compare(args, false, true),
         "ge" => compare(args, true, true),
         "eq" => {
-            let (_, value) = time_and_number(args)?;
-            Some(IntervalSet::point(value))
+            let (variable, value, _) = variable_and_number(args)?;
+            Some(MultiIntervalSet::on(variable, IntervalSet::point(value)))
         }
         "ne" => {
-            let (_, value) = time_and_number(args)?;
-            Some(IntervalSet::point(value).complement())
+            let (variable, value, _) = variable_and_number(args)?;
+            Some(MultiIntervalSet::on(
+                variable,
+                IntervalSet::point(value).complement(),
+            ))
         }
         "and" if args.len() == 2 => Some(analyze(&args[0])?.intersect(&analyze(&args[1])?)),
-        "or" if args.len() == 2 => Some(analyze(&args[0])?.union(&analyze(&args[1])?)),
-        "not" if args.len() == 1 => Some(analyze(&args[0])?.complement()),
+        "or" if args.len() == 2 => analyze(&args[0])?.union(&analyze(&args[1])?),
+        "not" if args.len() == 1 => analyze(&args[0])?.complement(),
         _ => None,
     }
+}
+
+/// `lt` / `le` / `gt` / `ge`：连续变量与字面量比较（两侧顺序都接受）。
+fn compare(args: &[Expr], inclusive: bool, greater: bool) -> Option<MultiIntervalSet> {
+    let (variable, value, variable_is_left) = variable_and_number(args)?;
+    let set = match (greater, variable_is_left) {
+        // `x > d` / `x ≥ d`
+        (true, true) => IntervalSet::above(value, inclusive),
+        // `d > x` ≡ `x < d`
+        (true, false) => IntervalSet::below(value, inclusive),
+        // `x < d` / `x ≤ d`
+        (false, true) => IntervalSet::below(value, inclusive),
+        // `d < x` ≡ `x > d`
+        (false, false) => IntervalSet::above(value, inclusive),
+    };
+    Some(MultiIntervalSet::on(variable, set))
+}
+
+/// `[a, b]` 里哪一侧是连续变量、另一侧的字面量是多少。
+fn variable_and_number(args: &[Expr]) -> Option<(String, f64, bool)> {
+    if args.len() != 2 {
+        return None;
+    }
+    if let Some(variable) = continuous_variable(&args[0]) {
+        return number(&args[1]).map(|value| (variable, value, true));
+    }
+    if let Some(variable) = continuous_variable(&args[1]) {
+        return number(&args[0]).map(|value| (variable, value, false));
+    }
+    None
 }
 
 /// **阶段 0**：区间代数登记为装配期分析 pass（只读 IR、写 side table）。
@@ -295,41 +517,15 @@ pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
         .expect("predicate pass 名唯一");
 }
 
-/// `lt` / `le` / `gt` / `ge`：`time` 与字面量比较（两侧顺序都接受）。
-fn compare(args: &[Expr], inclusive: bool, greater: bool) -> Option<IntervalSet> {
-    let (time_is_left, value) = time_and_number(args)?;
-    Some(match (greater, time_is_left) {
-        // `time > d` / `time ≥ d`
-        (true, true) => IntervalSet::above(value, inclusive),
-        // `d > time` ≡ `time < d`
-        (true, false) => IntervalSet::below(value, inclusive),
-        // `time < d` / `time ≤ d`
-        (false, true) => IntervalSet::below(value, inclusive),
-        // `d < time` ≡ `time > d`
-        (false, false) => IntervalSet::above(value, inclusive),
-    })
+/// 连续变量的身份：`Channel` / `Read` 都是"随帧采样的连续量"。
+fn continuous_variable(expr: &Expr) -> Option<String> {
+    match &expr.node {
+        Node::Channel { channel } => Some(channel.qualified()),
+        Node::Read { channel, object } => Some(format!("{}#{object}", channel.qualified())),
+        _ => None,
+    }
 }
 
-/// `[a, b]` 里哪一侧是时间通道、另一侧的字面量是多少。
-fn time_and_number(args: &[Expr]) -> Option<(bool, f64)> {
-    if args.len() != 2 {
-        return None;
-    }
-    if is_time(&args[0]) {
-        return number(&args[1]).map(|value| (true, value));
-    }
-    if is_time(&args[1]) {
-        return number(&args[0]).map(|value| (false, value));
-    }
-    None
-}
-
-fn is_time(expr: &Expr) -> bool {
-    matches!(
-        &expr.node,
-        Node::Channel { channel } if channel.is_builtin() && channel.name == "time"
-    )
-}
 
 fn number(expr: &Expr) -> Option<f64> {
     match &expr.node {
@@ -363,7 +559,7 @@ mod tests {
         Expr::call(op(name), args)
     }
 
-    fn window(start: f64, end: f64) -> IntervalSet {
+    fn window(start: f64, end: f64) -> MultiIntervalSet {
         analyze(&call(
             "and",
             vec![
@@ -377,18 +573,18 @@ mod tests {
     #[test]
     fn and_of_lt_and_gt_is_a_finite_window() {
         let set = window(1.0, 4.0);
-        assert!(!set.contains(0.5));
-        assert!(set.contains(2.0));
-        assert!(!set.contains(4.0), "右端开");
-        assert_eq!(set.finite_max_end(), Some(4.0));
+        assert!(!set.time_contains(0.5));
+        assert!(set.time_contains(2.0));
+        assert!(!set.time_contains(4.0), "右端开");
+        assert_eq!(set.time_finite_max_end(), Some(4.0));
     }
 
     #[test]
     fn last_active_takes_the_right_endpoint() {
         let set = window(1.0, 4.0);
-        assert_eq!(set.last_active(0.5), None, "还没生效过");
-        assert_eq!(set.last_active(2.0), Some(2.0), "区间内就是 t");
-        assert_eq!(set.last_active(9.0), Some(4.0), "空隙取前一段右端（U3）");
+        assert_eq!(set.time_last_active(0.5), None, "还没生效过");
+        assert_eq!(set.time_last_active(2.0), Some(2.0), "区间内就是 t");
+        assert_eq!(set.time_last_active(9.0), Some(4.0), "空隙取前一段右端（U3）");
     }
 
     #[test]
@@ -402,8 +598,8 @@ mod tests {
             ],
         )]))
         .expect("Not 可分析");
-        assert!(!outside.contains(2.0));
-        assert!(outside.contains(0.0));
+        assert!(!outside.time_contains(2.0));
+        assert!(outside.time_contains(0.0));
         assert!(outside.intersect(&inside).is_empty());
 
         let before_or_after = analyze(&call(
@@ -415,9 +611,9 @@ mod tests {
         ))
         .expect("Or 可分析");
         // `Not (1, 4)` 含端点（区间本身是开的）；`Lt(1) ∪ Gt(4)` 不含端点。
-        assert!(outside.contains(1.0) && outside.contains(4.0));
-        assert!(!before_or_after.contains(1.0) && !before_or_after.contains(4.0));
-        assert!(before_or_after.contains(0.0) && before_or_after.contains(5.0));
+        assert!(outside.time_contains(1.0) && outside.time_contains(4.0));
+        assert!(!before_or_after.time_contains(1.0) && !before_or_after.time_contains(4.0));
+        assert!(before_or_after.time_contains(0.0) && before_or_after.time_contains(5.0));
     }
 
     #[test]
@@ -427,24 +623,24 @@ mod tests {
             vec![time(), Expr::pure(2.0)],
         ))
         .expect("Eq 可分析");
-        assert!(at_two.contains(2.0));
-        assert!(!at_two.contains(2.0001));
+        assert!(at_two.time_contains(2.0));
+        assert!(!at_two.time_contains(2.0001));
 
         let not_two = analyze(&call(
             "ne",
             vec![time(), Expr::pure(2.0)],
         ))
         .expect("Ne 可分析");
-        assert!(!not_two.contains(2.0));
-        assert!(not_two.contains(1.0));
+        assert!(!not_two.time_contains(2.0));
+        assert!(not_two.time_contains(1.0));
     }
 
     #[test]
     fn flipped_operands_are_understood() {
         // `2 < time` ≡ `time > 2`。
         let set = analyze(&call("lt", vec![Expr::pure(2.0), time()])).expect("可分析");
-        assert!(set.contains(3.0));
-        assert!(!set.contains(1.0));
+        assert!(set.time_contains(3.0));
+        assert!(!set.time_contains(1.0));
     }
 
     #[test]
@@ -453,5 +649,70 @@ mod tests {
         assert!(analyze(&call("lt", vec![time(), time()])).is_none());
         // 含恒真（无 predicate）不是表达式，另行处理。
         assert!(analyze(&Expr::pure(true)).is_none());
+    }
+
+    fn variable(name: &str) -> Expr {
+        Expr::channel(ChannelRef::builtin(name))
+    }
+
+    /// **阶段 2 验收**：`And{Lt{x,4}, Gt{x,1}}` 可求交（同一个连续变量）。
+    #[test]
+    fn and_on_the_same_variable_intersects() {
+        let set = analyze(&call(
+            "and",
+            vec![
+                call("gt", vec![variable("x"), Expr::pure(1.0)]),
+                call("lt", vec![variable("x"), Expr::pure(4.0)]),
+            ],
+        ))
+        .expect("同一变量的 And 可分析");
+        assert!(set.contains_var("x", 2.0));
+        assert!(!set.contains_var("x", 0.5));
+        assert!(!set.contains_var("x", 4.0), "右端开");
+        // 时间没有出现在约束里 ⇒ 时间投影恒真（不是 0，也不是猜）。
+        assert!(set.time_contains(0.0) && set.time_contains(1e9));
+        assert!(set.has_non_time_variable());
+    }
+
+    /// 不同变量的 `And` 是 **product region**（两边的约束同时成立）。
+    #[test]
+    fn and_on_different_variables_is_a_product() {
+        let set = analyze(&call(
+            "and",
+            vec![
+                call("lt", vec![variable("x"), Expr::pure(4.0)]),
+                call("gt", vec![variable("y"), Expr::pure(1.0)]),
+            ],
+        ))
+        .expect("不同变量的 And 可分析");
+        assert!(set.contains_var("x", 3.0) && set.contains_var("y", 2.0));
+        assert!(!set.contains_var("x", 5.0));
+        assert!(!set.contains_var("y", 0.0));
+        assert_eq!(set.non_time_variables(), vec!["x", "y"]);
+    }
+
+    /// 跨变量析取 / 多变量补集**显式不可分析**（不静默猜成某种形状）。
+    #[test]
+    fn cross_variable_or_and_not_are_not_guessed() {
+        let or = call(
+            "or",
+            vec![
+                call("lt", vec![variable("x"), Expr::pure(1.0)]),
+                call("gt", vec![variable("y"), Expr::pure(2.0)]),
+            ],
+        );
+        assert!(analyze(&or).is_none(), "跨变量 Or 不可表示");
+
+        let product = call(
+            "and",
+            vec![
+                call("lt", vec![variable("x"), Expr::pure(4.0)]),
+                call("gt", vec![variable("y"), Expr::pure(1.0)]),
+            ],
+        );
+        assert!(
+            analyze(&call("not", vec![product])).is_none(),
+            "product 的补集是跨变量析取 ⇒ 不可表示"
+        );
     }
 }
