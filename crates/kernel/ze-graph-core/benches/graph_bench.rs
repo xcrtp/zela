@@ -8,7 +8,8 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ze_graph_core::{
-    Adjacency, dirty_downstream, find_cycle, reachable, strongly_connected, topo_sort,
+    Adjacency, dirty_downstream, find_cycle, postorder, preorder, reachable, strongly_connected,
+    topo_sort,
 };
 
 /// 分层 DAG：`i → i+1`、`i → i+3`（无环，规模可控）。
@@ -72,6 +73,17 @@ fn benchmarks(c: &mut Criterion) {
         group.throughput(Throughput::Elements(u64::from(size)));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
             b.iter(|| black_box(dirty_downstream(&dag, &[0])))
+        });
+        group.finish();
+
+        // 遍历器（阶段 1）：共享节点只访问一次；确定性来自排序，不是哈希。
+        let mut group = c.benchmark_group("traverse");
+        group.throughput(Throughput::Elements(u64::from(size)));
+        group.bench_with_input(BenchmarkId::new("preorder", size), &size, |b, _| {
+            b.iter(|| black_box(preorder(&dag, &[0])))
+        });
+        group.bench_with_input(BenchmarkId::new("postorder", size), &size, |b, _| {
+            b.iter(|| black_box(postorder(&dag, &[0])))
         });
         group.finish();
     }

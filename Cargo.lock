@@ -6493,6 +6493,7 @@ dependencies = [
 name = "ze-comb"
 version = "0.1.1"
 dependencies = [
+ "criterion",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

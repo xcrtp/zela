@@ -22,3 +22,8 @@ ze-graph-core = { path = "../ze-graph-core" }
 
 [dev-dependencies]
 serde_json.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "expr_bench"
+harness = false
