@@ -23,6 +23,7 @@
 pub mod layout;
 pub mod op;
 pub mod ops;
+pub mod simplify;
 
 pub use layout::{
     ENDIAN, Endian, FieldLayout, Layout, LayoutError, Record, Scalar, Transcode, TypeRegistry,
@@ -32,3 +33,4 @@ pub use op::{
     DEFS as OP_DEFS, LIBRARY_NAMESPACE, OpDef, Target, is_pointwise, op_def, op_revision, targets,
 };
 pub use ops::{OPS, eval};
+pub use simplify::{SIMPLIFY_REC_LIMIT, Simplify, simplify};

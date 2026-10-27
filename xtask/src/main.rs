@@ -264,6 +264,7 @@ fn run(options: &Options) -> Result<(), String> {
             Step::Demo => step_demo(&root)?,
             Step::Smoke => step_smoke(&root, options.skip_baseline)?,
             Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent)?,
+            Step::Fixtures => step_fixtures(&root)?,
         }
     }
 
@@ -2285,4 +2286,60 @@ fn cargo_capture(root: &Path, args: &[String]) -> Result<Output, String> {
         .current_dir(root)
         .output()
         .map_err(|error| format!("启动 cargo 失败：{error}"))
+}
+
+// ─── step: fixtures（阶段 4：跨语言同一套 fixture） ──────────────────────────
+
+/// 独立 fixture 驱动：Rust 内核 + JS / Lua 各跑同一套 JSON（表达式 + 输入 + 期望哈希）。
+///
+/// 解释器缺失时**显式打印跳过**（与 pyo3 缺失同一口径），不静默当作通过。
+fn step_fixtures(root: &Path) -> Result<(), String> {
+    let status = Command::new(cargo_program())
+        .args(["test", "-p", "ze-func", "--test", "fixtures"])
+        .current_dir(root)
+        .status()
+        .map_err(|error| format!("启动 cargo test 失败：{error}"))?;
+    if !status.success() {
+        return Err(format!("Rust fixture harness 失败（{status}）"));
+    }
+
+    let dir = root.join("crates/kernel/ze-func/tests/fixtures");
+    let mut fixtures: Vec<std::path::PathBuf> = fs::read_dir(&dir)
+        .map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    fixtures.sort();
+    if fixtures.is_empty() {
+        return Err(format!("fixture 目录为空：{}", dir.display()));
+    }
+    for (program, script) in [("node", "run.mjs"), ("lua", "run.lua")] {
+        println!("[xtask] fixtures: {program} {script}");
+        let output = Command::new(program)
+            .arg(dir.join(script))
+            .args(&fixtures)
+            .current_dir(root)
+            .output();
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stdout.is_empty() {
+                    print!("{stdout}");
+                }
+                if !output.status.success() {
+                    return Err(format!(
+                        "{program} fixture runner 失败（{}）：\n{stderr}",
+                        output.status
+                    ));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                println!("[xtask] fixtures: 未找到 `{program}`，显式跳过（不静默当作通过）");
+            }
+            Err(error) => return Err(format!("启动 {program} 失败：{error}")),
+        }
+    }
+    Ok(())
 }

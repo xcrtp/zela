@@ -16,9 +16,9 @@ use std::path::Path;
 /// 用法文本。
 pub const USAGE: &str = "\
 用法：
-  cargo verify               # full：check + test + wasm + structure + docs + coverage + demo + smoke + hashes
-  cargo verify --fast        # 开发循环：check + test + 短对拍（smoke）
-  cargo verify --step <name> # 单步：check | test | wasm | structure | docs | coverage | demo | smoke | hashes
+  cargo verify               # full：check + test + wasm + structure + docs + coverage + demo + smoke + hashes + fixtures
+  cargo verify --fast        # 开发循环：check + test + fixtures + 短对拍（smoke）
+  cargo verify --step <name> # 单步：check | test | wasm | structure | docs | coverage | demo | smoke | hashes | fixtures
   cargo verify --record --reason <text>
                              # 录制设备重录基线（基线策略 §九）：强制 reason、自动回填
                              # 上一槽 commit、轮换 slotA/slotB、写 device 行
@@ -47,10 +47,12 @@ pub enum Step {
     Demo,
     Smoke,
     Hashes,
+    /// **阶段 4**：独立 fixture（表达式 + 输入序列 + 期望值哈希）；JS / Lua 跑同一套 JSON。
+    Fixtures,
 }
 
 impl Step {
-    pub const ALL: [Step; 9] = [
+    pub const ALL: [Step; 10] = [
         Step::Check,
         Step::Test,
         Step::Wasm,
@@ -60,6 +62,7 @@ impl Step {
         Step::Demo,
         Step::Smoke,
         Step::Hashes,
+        Step::Fixtures,
     ];
 
     pub fn name(self) -> &'static str {
@@ -73,6 +76,7 @@ impl Step {
             Step::Demo => "demo",
             Step::Smoke => "smoke",
             Step::Hashes => "hashes",
+            Step::Fixtures => "fixtures",
         }
     }
 
@@ -180,7 +184,7 @@ impl Options {
     pub fn steps(&self) -> Vec<Step> {
         if self.fast {
             // 短对拍是 smoke test，不是完整基线的等价替代（见 smoke.lua 的注释）。
-            return vec![Step::Check, Step::Test, Step::Smoke];
+            return vec![Step::Check, Step::Test, Step::Fixtures, Step::Smoke];
         }
         match self.step {
             Some(step) => vec![step],

@@ -344,12 +344,27 @@ impl TypeRegistry {
             (Some(sender), Some(receiver)) if sender == &receiver => {
                 Ok((bytes.to_vec(), Transcode::ZeroCopy))
             }
+            // 两端都没有 Layout ⇒ 无法（也不需要）协商：按命名类型自己的慢路径原样搬运。
+            (None, None) => Ok((bytes.to_vec(), Transcode::Reencoded)),
             _ => {
                 let record = decode_record(ty, bytes, sender.copied())?;
                 let reencoded = encode_record(&record, receiver)?;
                 Ok((reencoded, Transcode::Reencoded))
             }
         }
+    }
+
+    /// [`TypeRegistry::negotiate`] 的 `Value::Bytes` 版本：命名类型与字节一起搬运。
+    ///
+    /// 这是"私有类型走同一机制"的入口 —— `zela.Path`（无 Layout）与
+    /// `acme.Tensor`（有 Layout）都从这里过。
+    pub fn negotiate_bytes(
+        &self,
+        value: &ValueBytes,
+        sender: Option<&Layout>,
+    ) -> Result<(ValueBytes, Transcode), LayoutError> {
+        let (bytes, how) = self.negotiate(&value.ty, &value.bytes, sender)?;
+        Ok((ValueBytes::new(value.ty.clone(), bytes), how))
     }
 }
 
@@ -560,6 +575,7 @@ mod tests {
         FieldLayout::new("y", 0, FieldTy::F32),
         FieldLayout::new("x", 4, FieldTy::F32),
     ];
+    const SWAPPED_LAYOUT: Layout = Layout::new(8, 4, SWAPPED_FIELDS);
 
     #[test]
     fn builtin_layouts_validate_and_match_their_sizes() {
@@ -616,6 +632,48 @@ mod tests {
         let (decoded, closed) = decode_path(&bytes.bytes).unwrap();
         assert_eq!(decoded, points);
         assert!(closed);
+
+        // 两端都没有 Layout（变长类型）⇒ 原样搬运，不尝试按固定布局解码。
+        let registry = TypeRegistry::builtin();
+        let (same, how) = registry.negotiate_bytes(&bytes, None).unwrap();
+        assert_eq!(how, Transcode::Reencoded, "没有 Layout ⇒ 慢路径");
+        assert_eq!(same, bytes);
+    }
+
+    /// `Value::Bytes` 走同一协商入口：同布局 ⇒ 零拷贝；不同布局 ⇒ 回退重编码。
+    #[test]
+    fn value_bytes_use_the_same_negotiation_entry() {
+        let registry = TypeRegistry::builtin();
+        let record = Record::new(
+            "zela.Vec2",
+            vec![
+                ("x".to_string(), Scalar::F32(-1.5)),
+                ("y".to_string(), Scalar::F32(2.25)),
+            ],
+        );
+        let canonical = ValueBytes::new(
+            "zela.Vec2",
+            encode_record(&record, Some(VEC2_LAYOUT)).unwrap(),
+        );
+        let (same, how) = registry.negotiate_bytes(&canonical, Some(&VEC2_LAYOUT)).unwrap();
+        assert_eq!(how, Transcode::ZeroCopy);
+        assert_eq!(same, canonical);
+
+        // 发送端用的是"字段顺序不同"的布局 ⇒ 回退重编码到本地布局。
+        let foreign = ValueBytes::new(
+            "zela.Vec2",
+            encode_record(&record, Some(SWAPPED_LAYOUT)).unwrap(),
+        );
+        let (reencoded, how) = registry.negotiate_bytes(&foreign, Some(&SWAPPED_LAYOUT)).unwrap();
+        assert_eq!(how, Transcode::Reencoded);
+        let decoded = decode_record(
+            "zela.Vec2",
+            &reencoded.bytes,
+            registry.layout("zela.Vec2"),
+        )
+        .unwrap();
+        assert_eq!(decoded.get("x"), Some(Scalar::F32(-1.5)));
+        assert_eq!(decoded.get("y"), Some(Scalar::F32(2.25)));
     }
 
     #[test]

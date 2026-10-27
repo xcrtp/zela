@@ -52,7 +52,7 @@ const GAPS: &str = r#"
 "#;
 
 fn capabilities() -> Vec<Capability> {
-    collect_capabilities(API, TYPES, TARGET).expect("夹具源码应抽得出全部类别")
+    collect_capabilities(API, TYPES, TARGET, &[]).expect("夹具源码应抽得出全部类别")
 }
 
 /// 方法名 / 枚举变体 / 构造器别名都从源码抽（顺序 = 源码顺序）。
@@ -175,7 +175,7 @@ fn exemption_format_is_enforced() {
 /// 整类能力抽不到（源码结构变了）⇒ 抽取阶段就显式报错，不得安静地少检查。
 #[test]
 fn missing_capability_class_is_an_explicit_error() {
-    let error = collect_capabilities(API, TYPES, "// 寻址表被挪走了\n")
+    let error = collect_capabilities(API, TYPES, "// 寻址表被挪走了\n", &[])
         .expect_err("抽不到 Target ⇒ fail");
     assert!(error.contains("Target"), "错误应点名缺失类别：{error}");
 }
