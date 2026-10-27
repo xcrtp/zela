@@ -1005,6 +1005,61 @@ fn check_duplicate_public_names(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// **阶段 4 门禁**：遍历 / 求值 / 装配路径禁用 `HashMap` / `HashSet`。
+///
+/// 为什么：这些路径的输出顺序会被下游继承（拓扑序、诊断次序、pass 结果），
+/// 一旦用哈希容器，顺序就随种子漂移 —— 而"确定性"是本项目的产物承诺。
+/// 名单只覆盖**表达式图**与拓扑算法；场景 ECS 的容器不在本门禁范围内。
+fn check_no_hashmap_in_graph_paths(root: &Path) -> Result<(), String> {
+    const NO_HASHMAP_PATHS: &[&str] = &[
+        "crates/kernel/ze-graph-core/src",
+        "crates/kernel/ze-comb/src",
+        "crates/kernel/ze-func/src/simplify.rs",
+        "crates/scene/ze-scene-core/src/scene_script.rs",
+        "crates/scene/ze-scene-core/src/animation/predicate.rs",
+        "crates/scene/ze-scene-core/src/animation/timeline.rs",
+        "crates/ze/pod/ze-pod-func/src/expr_pod.rs",
+        "crates/ze/pod/ze-pod-func/src/infer.rs",
+    ];
+
+    let mut offenders = Vec::new();
+    for entry in NO_HASHMAP_PATHS {
+        let path = root.join(entry);
+        let mut files = Vec::new();
+        if path.is_dir() {
+            collect_rs_files(&path, &mut files)?;
+        } else {
+            files.push(path);
+        }
+        for file in files {
+            let text = fs::read_to_string(&file)
+                .map_err(|error| format!("读取 {} 失败：{error}", file.display()))?;
+            for (index, line) in text.lines().enumerate() {
+                // 文档注释里出现 `HashMap` 是在**说明禁令**，不是使用。
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                if line.contains("HashMap") || line.contains("HashSet") {
+                    offenders.push(format!("{}:{}: {}", file.display(), index + 1, line.trim()));
+                }
+            }
+        }
+    }
+
+    if offenders.is_empty() {
+        println!("[xtask] OK: 遍历 / 求值 / 装配路径不含 HashMap / HashSet");
+        return Ok(());
+    }
+    offenders.sort();
+    eprintln!(
+        "[xtask] 遍历 / 求值 / 装配路径出现 HashMap / HashSet（输出顺序会随哈希种子漂移；请改 BTreeMap / BTreeSet / Vec）："
+    );
+    for offender in &offenders {
+        eprintln!("  {offender}");
+    }
+    Err("确定性门禁未通过：表达式图路径禁用 HashMap / HashSet".to_string())
+}
+
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -1569,6 +1624,8 @@ fn step_structure(root: &Path) -> Result<(), String> {
     // 这两条不依赖 jq，先跑。
     check_crate_registry(root)?;
     check_duplicate_public_names(root)?;
+    // 阶段 4：表达式图 / 拓扑路径的确定性门禁（禁用 HashMap / HashSet）。
+    check_no_hashmap_in_graph_paths(root)?;
     // B7 Step 0.2：GAPS 的小计必须与条目状态一致（不依赖 jq，先跑）。
     check_gaps_subtotals(root)?;
     // B12 Step 0.3：GAPS 里的 crate 限定语义锚点必须能在源码里找到定义。

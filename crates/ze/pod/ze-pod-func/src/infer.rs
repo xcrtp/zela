@@ -21,7 +21,7 @@
 //! 叶子（字面量 / 通道）都是具体的，调用结果的类型变量又被实参约束，因此
 //! 不会出现逃逸的自由变量。这使「根类型」可以直接交给绑定层使用。
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use ze_comb::{ChannelType, Expr, Literal, Node};
@@ -99,8 +99,8 @@ pub fn infer(expr: &Expr) -> Result<ChannelType, TypeError> {
 pub fn infer_full(expr: &Expr) -> Result<Inference, TypeError> {
     let mut context = Infer {
         defs: definitions(expr),
-        memo: HashMap::new(),
-        visiting: HashSet::new(),
+        memo: BTreeMap::new(),
+        visiting: BTreeSet::new(),
         rec: None,
     };
     context.type_of(expr)
@@ -392,8 +392,8 @@ fn display_name(name: &str) -> String {
 
 struct Infer<'a> {
     defs: BTreeMap<&'a str, &'a Expr>,
-    memo: HashMap<&'a str, Inference>,
-    visiting: HashSet<&'a str>,
+    memo: BTreeMap<&'a str, Inference>,
+    visiting: BTreeSet<&'a str>,
     /// `NatRec.step` 的**状态类型**（`RecPrev` 的类型）；嵌套时按词法作用域恢复。
     rec: Option<ChannelType>,
 }

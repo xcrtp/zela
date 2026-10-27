@@ -1076,26 +1076,26 @@
 | AO-01 | **阶段 0：记账归位 + 顶层文档** | kernel / 文档 | **已关闭（0）** | ① `NodeInteraction` 仍定义在 `ze-node-core::presentation`（schema 宏与 UI 共用），本批只离开 trait 签名——已知偏差，不进一步拆；② 重名白名单精确为 **37 条**（`Curve` 已登记，是已声明的债）；③ AN-04 第 5 处定位为 `zela_scene_ecs::transform_hierarchy::world_of`（`TransformHierarchyError(Option<String>)`，`visiting: HashSet<ObjectId>`）；④ 根 `README.md` / `ARCHITECTURE.md` 补 `ze-type` / `ze-reflect` / `ze-graph-core`。 |
 | AO-02 | **阶段 1：遍历器抽象 + Expr 图视图** | kernel | **已关闭（1）** | `ze-graph-core::visitor` 提供 `Visitor` / `traverse` / `preorder` / `postorder`（确定性：根与后继按 id 升序、共享节点只访问一次、`enter` 可剪枝、无 HashMap）；`ze_comb::ExprGraphView` 实现 `Topology`：`Def` 算一个节点、`Ref` 算一条边（W-C），字符串 id 只用于解析 Ref，投影副产品含 `definitions` / `duplicate_ids` / `unresolved_refs`。生产边新增 `ze-comb → ze-graph-core`。单测覆盖共享 Def、后序、确定性、重复 id、悬空 Ref。 |
 | AO-03 | **阶段 2：环检测收敛（完整路径）** | kernel / scene / pod | **已关闭（2）** | 5 处全部给出**完整环路径**：① `ze-comb::expr::check_cycles` 改走 `ExprGraphView` + `ze_graph_core::find_cycle`，`ExprError::Cycle(Vec<Id>)`；② `ze-pod-core::broker::topological_order` 删手写 DFS，改 `AssemblyGraph: Topology` + `topo_sort`/`find_cycle`（`BrokerError::Cycle { chain }` 首尾相同），生产边新增 `ze-pod-core → ze-graph-core`；③ `ze-scene-core::surface::resolve_surface` 完整链 `ParentCycle { chain }`；④ `zela_scene_ecs::transform_hierarchy::world_of` `visiting: Vec`，错误串带完整链；⑤ `ze-time::clock::set_parent` `CycleDetected { chain }`（自环 = `[a, a]`）。**偏差（诚实）**：③④⑤ 是「沿 parent 链的单点增量检查」，直接走上溯链即天然拿到完整路径，不建全图、不调 `find_cycle`；只有 ①② 是图算法接入点。 |
-| AO-04 | **阶段 3：pass 迁移到遍历器（11 处）** | kernel / scene / pod | **未执行（3）** | 清单见下。 |
-| AO-05 | **阶段 4：新能力 + HashMap 门禁** | kernel / xtask | **未执行（4）** | 待执行：Expr 上跑 SCC / reachable / dirty；求值/装配/遍历路径禁用 HashMap 的静态门禁。 |
+| AO-04 | **阶段 3：pass 迁移到遍历器（11 处）** | kernel / scene / pod | **部分关闭（3）** | 遍历骨架收敛到两处：`Expr::walk`（前序 `enter` 可剪枝 + 后序 `leave`，带词法父节点）与 `Expr::map_children`；节点自省收敛到 `Node::{channel,read,literal,call,rec_leaf}` + `Literal::as_real`。已迁移 7 处：`expr` 校验（`collect_defs` / `check_dangling` / `definitions` / `check_recursive_leaves`）、`simplify` 重写（子节点递归改 `map_children`）、`timeline::rewrite_reads`、`scene_script` 两处、`predicate` 两处、`expr_pod::validate_binding`。**剩余 4 处 `match &expr.node` 是派发型解释器**（`program::compile_node`、`reference::eval_node`、`simplify::eval_closed`、`infer::type_of`）：它们有短路 `Select`、memo、词法作用域，图/树遍历器无法表达而没有语义风险 ⇒ 保留 `match`，本批**未归零**（诚实偏差）。 |
+| AO-05 | **阶段 4：新能力 + HashMap 门禁** | kernel / xtask | **已关闭（4）** | ① `ze_comb::analysis` 把 `ze-graph-core` 三能力接到表达式 DAG：`shared_definitions`（入度 → 共享 Def 的消费者数）、`affected_consumers`（反向图 `dirty_downstream` → 谁要重算）、`unreachable`（`reachable` 补集）、`reference_groups`（SCC）；各一个不依赖渲染的 fixture（单元测试内联表达式）。② xtask `structure` 新增门禁 `check_no_hashmap_in_graph_paths`：表达式图与拓扑路径（ze-graph-core / ze-comb / simplify / scene_script / predicate / timeline / expr_pod / infer）禁用 `HashMap` / `HashSet`，注释行豁免；`infer` 的 `memo` / `visiting` 已先迁 `BTreeMap` / `BTreeSet`。 |
 
-### AO 遍历点清单（阶段 3 的迁移清单，按符号名定位）
+### AO 遍历点清单（阶段 3 的迁移清单与结果）
 
-| # | 位置（符号名） | 用途 |
-|---|---|---|
-| 1 | `ze_comb::expr::Expr::validate` | 结构校验遍历 |
-| 2 | `ze_comb::program::compile_node` | lowering 派发 |
-| 3 | `ze_comb::reference` 参考求值器 | 参考求值 |
-| 4 | `ze_func::simplify`（transform） | 化简重写 |
-| 5 | `ze_func::simplify`（eval） | 化简求值 |
-| 6 | `ze_scene_core::animation::predicate` 区间代数（分析） | 区间代数 |
-| 7 | `ze_scene_core::animation::predicate` 区间代数（求值） | 区间代数 |
-| 8 | `ze_scene_core::animation::timeline` 扫描 | 时间轴扫描 |
-| 9 | `ze_scene_core::scene_script` 注入通道检查 | 装配期校验 |
-| 10 | `ze_pod_func::expr_pod` 三语言注册 | 绑定生成 |
-| 11 | `ze_pod_func::infer` 类型推导 | L2 推导 |
+| # | 位置（符号名） | 用途 | 阶段 3 结果 |
+|---|---|---|---|
+| 1 | `ze_comb::expr::Expr::validate` | 结构校验遍历 | 已迁移（`Expr::walk`） |
+| 2 | `ze_comb::program::compile_node` | lowering 派发 | 派发型解释器，保留 `match` |
+| 3 | `ze_comb::reference` 参考求值器 | 参考求值 | 派发型解释器，保留 `match` |
+| 4 | `ze_func::simplify`（transform） | 化简重写 | 已迁移（`map_children` + 本节点折叠） |
+| 5 | `ze_func::simplify`（eval） | 化简求值 | 派发型解释器，保留 `match` |
+| 6 | `ze_scene_core::animation::predicate` 区间代数（分析） | 区间代数 | 已迁移（`Node` 访问器） |
+| 7 | `ze_scene_core::animation::predicate` 区间代数（求值） | 区间代数 | 已迁移（`Node` 访问器） |
+| 8 | `ze_scene_core::animation::timeline` 扫描 | 时间轴扫描 | 已迁移（`map_children`） |
+| 9 | `ze_scene_core::scene_script` 注入通道检查 | 装配期校验 | 已迁移（`Expr::walk`） |
+| 10 | `ze_pod_func::expr_pod` 三语言注册 | 绑定生成 | 已迁移（`Expr::walk`） |
+| 11 | `ze_pod_func::infer` 类型推导 | L2 推导 | 派发型解释器，保留 `match` |
 
-**AO 段小计**：已关闭 3（AO-01、AO-02、AO-03）· 未执行 2（AO-04、AO-05）。
+**AO 段小计**：已关闭 4（AO-01、AO-02、AO-03、AO-05）· 部分关闭 1（AO-04）· 未执行 0。
 
 ---
 

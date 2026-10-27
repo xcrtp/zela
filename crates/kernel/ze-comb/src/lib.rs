@@ -58,6 +58,7 @@
 //! }
 //! ```
 
+pub mod analysis;
 pub mod codata;
 pub mod expr;
 pub mod graph_view;
@@ -66,6 +67,7 @@ pub mod program;
 pub mod reference;
 pub mod walk;
 
+pub use analysis::{affected_consumers, reference_groups, shared_definitions, unreachable};
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use expr::{ChannelRef, ChannelType, Expr, ExprError, Id, Literal, Node, OpRef};
 pub use graph_view::ExprGraphView;
