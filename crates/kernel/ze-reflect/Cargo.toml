@@ -13,3 +13,10 @@ description = "运行时反射：generation 感知句柄机制 / 符号表 / 慢
 #      各领域类型在自己的 crate 里实现 `HandleCore`。
 [dependencies]
 ze-type = { path = "../ze-type" }
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "reflect_bench"
+harness = false

@@ -6511,6 +6511,7 @@ dependencies = [
 name = "ze-func"
 version = "0.1.1"
 dependencies = [
+ "criterion",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -6617,6 +6618,7 @@ dependencies = [
 name = "ze-pod-core"
 version = "0.1.1"
 dependencies = [
+ "criterion",
  "ze-pod-macro",
  "ze-reflect",
  "ze-type",
@@ -6715,6 +6717,7 @@ dependencies = [
 name = "ze-reflect"
 version = "0.1.1"
 dependencies = [
+ "criterion",
  "ze-type",
 ]
 
