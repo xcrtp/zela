@@ -1067,6 +1067,38 @@
 
 ---
 
+## AO. 图基础设施收敛批次（遍历器抽象与环检测收敛，2026-10-28）
+
+> 计划《图基础设施收敛执行计划》。顺序铁律：遍历器先于环检测（统一 id 投影是遍历的副产品）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AO-01 | **阶段 0：记账归位 + 顶层文档** | kernel / 文档 | **已关闭（0）** | ① `NodeInteraction` 仍定义在 `ze-node-core::presentation`（schema 宏与 UI 共用），本批只离开 trait 签名——已知偏差，不进一步拆；② 重名白名单精确为 **37 条**（`Curve` 已登记，是已声明的债）；③ AN-04 第 5 处定位为 `zela_scene_ecs::transform_hierarchy::world_of`（`TransformHierarchyError(Option<String>)`，`visiting: HashSet<ObjectId>`）；④ 根 `README.md` / `ARCHITECTURE.md` 补 `ze-type` / `ze-reflect` / `ze-graph-core`。 |
+| AO-02 | **阶段 1：遍历器抽象 + Expr 图视图** | kernel | **未执行（1）** | 待执行：`Visitor` / 前序后序遍历；`ExprGraphView: Topology`（`Def` 共享节点算一个）；无新增 HashMap。 |
+| AO-03 | **阶段 2：环检测收敛（完整路径）** | kernel / scene / pod | **未执行（2）** | 待执行：ze-comb / ze-time / ze-scene-core / ze-pod-core / transform_hierarchy 接入 `find_cycle`，诊断携带完整链。 |
+| AO-04 | **阶段 3：pass 迁移到遍历器（11 处）** | kernel / scene / pod | **未执行（3）** | 清单见下。 |
+| AO-05 | **阶段 4：新能力 + HashMap 门禁** | kernel / xtask | **未执行（4）** | 待执行：Expr 上跑 SCC / reachable / dirty；求值/装配/遍历路径禁用 HashMap 的静态门禁。 |
+
+### AO 遍历点清单（阶段 3 的迁移清单，按符号名定位）
+
+| # | 位置（符号名） | 用途 |
+|---|---|---|
+| 1 | `ze_comb::expr::Expr::validate` | 结构校验遍历 |
+| 2 | `ze_comb::program::compile_node` | lowering 派发 |
+| 3 | `ze_comb::reference` 参考求值器 | 参考求值 |
+| 4 | `ze_func::simplify`（transform） | 化简重写 |
+| 5 | `ze_func::simplify`（eval） | 化简求值 |
+| 6 | `ze_scene_core::animation::predicate` 区间代数（分析） | 区间代数 |
+| 7 | `ze_scene_core::animation::predicate` 区间代数（求值） | 区间代数 |
+| 8 | `ze_scene_core::animation::timeline` 扫描 | 时间轴扫描 |
+| 9 | `ze_scene_core::scene_script` 注入通道检查 | 装配期校验 |
+| 10 | `ze_pod_func::expr_pod` 三语言注册 | 绑定生成 |
+| 11 | `ze_pod_func::infer` 类型推导 | L2 推导 |
+
+**AO 段小计**：已关闭 1（AO-01）· 未执行 4（AO-02…AO-05）。
+
+---
+
 ## 附录. crate 能力表（阶段 0.5 门禁）
 
 > **门禁 1**：`crates/**/Cargo.toml` 的每个 crate 必须在本表登记（新增 crate 未登记 ⇒ `cargo verify --step structure` 失败）。

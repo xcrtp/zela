@@ -255,6 +255,14 @@ graph TD
 > - `typespec.rs` 的实现迁至 `ze-type`（`ze-pod-core` 只 re-export + 保留 `ErasedFn`），
 >   `ze-func::layout` 成为 `ze-type`（代数）+ `ze-reflect`（注册表）的门面；
 > - 两者均进 wasm gate。
+>
+> **2026-10-28 更新（图基础设施收敛）**：新增 `ze-graph-core`（kernel，零 crate 依赖）：
+> 纯拓扑层 `Topology` / `topo_sort` / `strongly_connected` / `find_cycle` /
+> `reachable` / `dirty_downstream`，输出一律有序。`ze-graph-algo` 的 Kahn / SCC /
+> BFS 与编辑器的环检测全部委托它（`GraphTopology` 适配器）；`NodeMeta` 只留
+> `{ type_name, version }`，展示数据进 `zela-node-editor::PresentationTable`；
+> `TypeTag` / `TypeCast` 收敛到 `ze-type::tag`。生产边新增
+> `ze-graph-algo → ze-graph-core` 与 `ze-comb → ze-graph-core`（Expr 图视图）。
 
 | Package | FanIn | FanOut | Instability |
 |---------|-------|--------|-------------|

@@ -69,6 +69,9 @@ workspace 采用分层目录结构 `crates/<layer>/`，通用基础 crate 用 `z
 ```text
 crates/
 ├── kernel/          # 纯数据层（ze-prerender 为例外：kernel 层唯一重 crate，重型依赖 feature-gated）
+│   ├── ze-type             纯代数类型层（TypeSpec / Layout / unify / 冲突诊断；no_std + alloc）
+│   ├── ze-reflect          运行时反射（SlotTable / SymbolTable / Codec / MonoCache）
+│   ├── ze-graph-core       纯拓扑图算法（Topology / 拓扑排序 / SCC / 可达 / 脏传播；零 crate 依赖）
 │   ├── ze-notion           理念层/数学元语（Color32 / Rect2D / Path2D / Path3D / 图元 / Transform2D）
 │   ├── ze-render-ir        渲染 IR（Shape2D / Style2D / ToShape2D / ResolveStyle；不认识 hecs）
 │   ├── ze-scene-contract   场景契约（Scene / ObjectId / Parent / Describable；hecs 只在实现方）
@@ -90,8 +93,8 @@ crates/
 │   │   ├── ze-pod-tests        集成测试 + 基准（publish = false）
 │   │   └── ze-pod              门面：core + binding + macro（不含 lua / py，保持 wasm32）
 │   └── graph/
-│       ├── ze-node-core        节点图内核（Node / Graph / Socket trait + NodeInteraction）
-│       ├── ze-graph-algo       图算法（TopoSort / SCC / 脏标记传播）
+│       ├── ze-node-core        节点图内核（Node / Graph / Socket trait + NodePresentation / TypeTag）
+│       ├── ze-graph-algo       图算法接线（委托 ze-graph-core；GraphTopology 适配器）
 │       ├── ze-graph-eval       惰性拉取求值（LazyPullEval）
 │       ├── ze-node-schema      属性模型（Property / NodeSpec / DynamicObject / NodeRegistry）
 │       ├── ze-node-schema-macros  #[derive(NodeSpec)] 过程宏
