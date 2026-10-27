@@ -17,6 +17,8 @@ serde.workspace = true
 thiserror.workspace = true
 # 冲突诊断只有一处定义（`ze-type::conflict`）：重名不再有第二套说法。
 ze-type = { path = "../ze-type" }
+# 纯拓扑层：Expr DAG 的图视图 / 遍历器（零 crate 依赖，不产生反向边）。
+ze-graph-core = { path = "../ze-graph-core" }
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -1074,7 +1074,7 @@
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
 | AO-01 | **阶段 0：记账归位 + 顶层文档** | kernel / 文档 | **已关闭（0）** | ① `NodeInteraction` 仍定义在 `ze-node-core::presentation`（schema 宏与 UI 共用），本批只离开 trait 签名——已知偏差，不进一步拆；② 重名白名单精确为 **37 条**（`Curve` 已登记，是已声明的债）；③ AN-04 第 5 处定位为 `zela_scene_ecs::transform_hierarchy::world_of`（`TransformHierarchyError(Option<String>)`，`visiting: HashSet<ObjectId>`）；④ 根 `README.md` / `ARCHITECTURE.md` 补 `ze-type` / `ze-reflect` / `ze-graph-core`。 |
-| AO-02 | **阶段 1：遍历器抽象 + Expr 图视图** | kernel | **未执行（1）** | 待执行：`Visitor` / 前序后序遍历；`ExprGraphView: Topology`（`Def` 共享节点算一个）；无新增 HashMap。 |
+| AO-02 | **阶段 1：遍历器抽象 + Expr 图视图** | kernel | **已关闭（1）** | `ze-graph-core::visitor` 提供 `Visitor` / `traverse` / `preorder` / `postorder`（确定性：根与后继按 id 升序、共享节点只访问一次、`enter` 可剪枝、无 HashMap）；`ze_comb::ExprGraphView` 实现 `Topology`：`Def` 算一个节点、`Ref` 算一条边（W-C），字符串 id 只用于解析 Ref，投影副产品含 `definitions` / `duplicate_ids` / `unresolved_refs`。生产边新增 `ze-comb → ze-graph-core`。单测覆盖共享 Def、后序、确定性、重复 id、悬空 Ref。 |
 | AO-03 | **阶段 2：环检测收敛（完整路径）** | kernel / scene / pod | **未执行（2）** | 待执行：ze-comb / ze-time / ze-scene-core / ze-pod-core / transform_hierarchy 接入 `find_cycle`，诊断携带完整链。 |
 | AO-04 | **阶段 3：pass 迁移到遍历器（11 处）** | kernel / scene / pod | **未执行（3）** | 清单见下。 |
 | AO-05 | **阶段 4：新能力 + HashMap 门禁** | kernel / xtask | **未执行（4）** | 待执行：Expr 上跑 SCC / reachable / dirty；求值/装配/遍历路径禁用 HashMap 的静态门禁。 |
@@ -1095,7 +1095,7 @@
 | 10 | `ze_pod_func::expr_pod` 三语言注册 | 绑定生成 |
 | 11 | `ze_pod_func::infer` 类型推导 | L2 推导 |
 
-**AO 段小计**：已关闭 1（AO-01）· 未执行 4（AO-02…AO-05）。
+**AO 段小计**：已关闭 2（AO-01、AO-02）· 未执行 3（AO-03…AO-05）。
 
 ---
 
