@@ -34,7 +34,8 @@ pub enum Node {
     Call { op: OpRef, args: Vec<Expr> },
     /// 引用本表达式内**已定义**的节点（非递归的 `let`）。
     ///
-    /// 自引用 = 递归 = 要 `fix` ⇒ 装配期禁环（[`Expr::validate`]）。
+    /// 自引用 = 环 = **非法** ⇒ 装配期禁环（[`Expr::validate`]）。
+    /// 合法递归是结构性的 [`Node::NatRec`]（阶段 3），不是 `Ref` 成环。
     Ref { to: Id },
     /// **值分支**（提案 #6 D：只留格式，尚未实现求值）。
     ///
@@ -54,6 +55,20 @@ pub enum Node {
     /// `commit` 时被场景层重写为 `ObjectId` 的**打包值**（`index:u32<<32 | generation:u32`，
     /// 见 `ze_scene_contract::ObjectId`），`u32` 装不下打包结果。
     Read { channel: ChannelRef, object: u64 },
+    /// **结构递归**（阶段 3，先只做 `NatRec`）：
+    /// `value(0) = init`，`value(k) = step(value(k−1), k)`，结果 = `value(count)`。
+    ///
+    /// `count` / `init` 在**递归之外**求值；只有 `step` 内允许 `RecPrev` / `RecIndex`。
+    /// 这是**合法递归**，与 `Node::Ref` 的非法环是两回事（见 [`Expr::validate`]）。
+    NatRec {
+        count: Box<Expr>,
+        init: Box<Expr>,
+        step: Box<Expr>,
+    },
+    /// `NatRec.step` 内：上一步的状态（`value(k−1)`）。在 step 之外出现是**显式错误**。
+    RecPrev,
+    /// `NatRec.step` 内：当前索引 `k`（`I64`，不经过 f64）。
+    RecIndex,
 }
 
 impl Node {
@@ -64,10 +79,13 @@ impl Node {
             Node::Select {
                 cond, then, r#else,
             } => vec![cond, then, r#else],
+            Node::NatRec { count, init, step } => vec![count, init, step],
             Node::Pure { .. }
             | Node::Channel { .. }
             | Node::Ref { .. }
-            | Node::Read { .. } => Vec::new(),
+            | Node::Read { .. }
+            | Node::RecPrev
+            | Node::RecIndex => Vec::new(),
         }
     }
 }
@@ -361,7 +379,7 @@ impl Expr {
         Self::new(Node::Ref { to: to.into() })
     }
 
-    /// 值分支（格式已定，求值未实现；见 [`Node::Select`]）。
+    /// 值分支（格式已定，求值见 [`crate::CompiledExpr`]）。
     pub fn select(cond: Expr, then: Expr, otherwise: Expr) -> Self {
         Self::new(Node::Select {
             cond: Box::new(cond),
@@ -370,15 +388,40 @@ impl Expr {
         })
     }
 
-    /// 装配期校验：重名 id / 悬空 `Ref` / 环。
+    /// **结构递归**（`NatRec`）：`value(0) = init`，
+    /// `value(k) = step(value(k−1), k)`，返回 `value(count)`。
+    pub fn nat_rec(count: Expr, init: Expr, step: Expr) -> Self {
+        Self::new(Node::NatRec {
+            count: Box::new(count),
+            init: Box::new(init),
+            step: Box::new(step),
+        })
+    }
+
+    /// `NatRec.step` 内的上一步状态。
+    pub fn rec_prev() -> Self {
+        Self::new(Node::RecPrev)
+    }
+
+    /// `NatRec.step` 内的当前索引（`I64`）。
+    pub fn rec_index() -> Self {
+        Self::new(Node::RecIndex)
+    }
+
+    /// 装配期校验：重名 id / 悬空 `Ref` / 环 / 递归叶子越界。
     ///
     /// 环检测沿用 `ze-time` 的 visited-set 形态（`clock.rs` 是全仓唯一递归环检测），
     /// 不新建一套算法。
+    ///
+    /// **阶段 3**：`NatRec` 是**合法**递归结构；`Node::Ref` 成环仍是非法环。
+    /// `RecPrev` / `RecIndex` 只能出现在某个 `NatRec.step` 内，否则显式报错
+    /// （结构守卫：递归调用不作用于任意子项，而只作用于"上一步状态"）。
     pub fn validate(&self) -> Result<(), ExprError> {
         let mut defs: BTreeMap<&str, &Expr> = BTreeMap::new();
         collect_defs(self, &mut defs)?;
         check_dangling(self, &defs)?;
-        check_cycles(&defs)
+        check_cycles(&defs)?;
+        check_recursive_leaves(self, false)
     }
 }
 
@@ -397,6 +440,34 @@ pub enum ExprError {
     /// 节点类型只有序列化格式、尚未实现求值（`Select`，提案 #6 D）。
     #[error("节点 `{0}` 尚未实现求值（格式已保留）")]
     UnsupportedNode(&'static str),
+    /// `RecPrev` / `RecIndex` 出现在 `NatRec.step` 之外。
+    #[error("递归叶子 `{0}` 只能出现在 `NatRec.step` 内（结构守卫）")]
+    OrphanRec(&'static str),
+}
+
+/// **结构守卫**：`RecPrev` / `RecIndex` 只在 `NatRec.step` 的**词法子树**里合法。
+///
+/// 这条检查让"合法递归结构"与"非法环"在装配期就分开：
+/// - `Ref` 成环 ⇒ [`ExprError::Cycle`]；
+/// - 递归叶子越界 ⇒ [`ExprError::OrphanRec`]。
+fn check_recursive_leaves(expr: &Expr, in_step: bool) -> Result<(), ExprError> {
+    match &expr.node {
+        Node::RecPrev if !in_step => return Err(ExprError::OrphanRec("rec_prev")),
+        Node::RecIndex if !in_step => return Err(ExprError::OrphanRec("rec_index")),
+        Node::NatRec { count, init, step } => {
+            // count / init 在递归之外；只有 step 允许递归叶子。
+            check_recursive_leaves(count, in_step)?;
+            check_recursive_leaves(init, in_step)?;
+            check_recursive_leaves(step, true)?;
+            Ok(())
+        }
+        _ => {
+            for child in expr.node.children() {
+                check_recursive_leaves(child, in_step)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// 收集全部带 `id` 的节点（**调用方必须先 `validate`**；重名时后写覆盖）。
@@ -750,6 +821,23 @@ mod tests {
         // 老 payload（只有 i32 / f32 / f64 …）仍然可解码。
         let legacy = v2_payload();
         serde_json::from_value::<Expr>(legacy).expect("老 payload 不受新增标签影响");
+    }
+
+    /// **阶段 3**：`NatRec` / 递归叶子的序列化形状钉死，且可 round-trip。
+    #[test]
+    fn nat_rec_format_round_trips() {
+        let expr = Expr::nat_rec(
+            Expr::pure(2_i64),
+            Expr::pure(1.0),
+            Expr::call(OpRef::new("zela.math", "add"), [Expr::rec_prev(), Expr::pure(1.0)]),
+        );
+        let raw = serde_json::to_value(&expr).expect("必须可序列化");
+        assert_eq!(raw["node"]["type"], "nat_rec");
+        let text = serde_json::to_string(&expr).unwrap();
+        assert!(text.contains("\"type\":\"rec_prev\""));
+        let decoded: Expr = serde_json::from_value(raw).expect("格式必须可解码");
+        assert_eq!(decoded, expr);
+        expr.validate().expect("递归叶子在 step 内 ⇒ 合法");
     }
 
     #[test]

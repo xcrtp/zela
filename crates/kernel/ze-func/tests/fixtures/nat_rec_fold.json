@@ -1,0 +1,42 @@
+{
+  "name": "nat_rec_fold",
+  "expr": {
+    "node": {
+      "type": "nat_rec",
+      "data": {
+        "count": {
+          "node": {
+            "type": "pure",
+            "data": { "value": { "type": "i64", "data": 4 } }
+          }
+        },
+        "init": {
+          "node": {
+            "type": "pure",
+            "data": { "value": { "type": "f64", "data": 1.0 } }
+          }
+        },
+        "step": {
+          "node": {
+            "type": "call",
+            "data": {
+              "op": { "namespace": "zela.math", "name": "add" },
+              "args": [
+                { "node": { "type": "rec_prev" } },
+                {
+                  "node": {
+                    "type": "pure",
+                    "data": { "value": { "type": "f64", "data": 2.0 } }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "channels": {},
+  "expect": [9.0],
+  "expect_hash": "0xe590b63a242d918d"
+}

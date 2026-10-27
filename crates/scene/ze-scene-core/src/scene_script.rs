@@ -803,6 +803,11 @@ fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(),
                     collect_reads(then, out);
                     collect_reads(r#else, out);
                 }
+                // 阶段 3：`NatRec` 的 init / step 子程序各自带值表，必须递归。
+                Step::NatRec { init, step, .. } => {
+                    collect_reads(init, out);
+                    collect_reads(step, out);
+                }
                 _ => {}
             }
         }

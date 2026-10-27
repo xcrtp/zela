@@ -18,28 +18,38 @@
 use std::collections::BTreeMap;
 
 use crate::expr::{definitions, Expr, Node};
-use crate::program::{literal_value, EvalError, Mono, Value};
+use crate::program::{
+    literal_value, value_kind, EvalError, Mono, Value, REC_MAX_STEPS,
+};
 
 /// 参考求值：`expr` 在宿主 `mono` 下的值。
 ///
 /// 先做一次 [`Expr::validate`]，因此悬空 `Ref` / 环 / 重名 id 都在这里显式失败，
 /// 不会在递归里栈溢出。
 pub fn eval_reference(expr: &Expr, mono: &dyn Mono) -> Result<Value, EvalError> {
-    // 校验错误不是运行期值错误；用 `ExprError` 包一层会污染 `EvalError`，
-    // 因此参考求值器要求调用方**已经**校验（见 `ReferenceEvaluator::prepare`）。
     let defs = definitions(expr);
-    let mut memo: BTreeMap<&str, Value> = BTreeMap::new();
-    eval_node(expr, &defs, &mut memo, mono)
+    let mut context = RefContext {
+        memo: BTreeMap::new(),
+        rec: None,
+    };
+    eval_node(expr, &defs, &mut context, mono)
+}
+
+/// 参考求值器的递归上下文（与 lowered 的 `EvalContext` 同构）。
+struct RefContext {
+    memo: BTreeMap<String, Value>,
+    /// 当前 `NatRec.step` 的 `(上一步状态, 索引)`。
+    rec: Option<(Value, i64)>,
 }
 
 fn eval_node<'a>(
     expr: &'a Expr,
     defs: &BTreeMap<&'a str, &'a Expr>,
-    memo: &mut BTreeMap<&'a str, Value>,
+    context: &mut RefContext,
     mono: &dyn Mono,
 ) -> Result<Value, EvalError> {
     if let Some(id) = expr.id.as_deref() {
-        if let Some(value) = memo.get(id) {
+        if let Some(value) = context.memo.get(id) {
             return Ok(value.clone());
         }
     }
@@ -51,7 +61,7 @@ fn eval_node<'a>(
         Node::Call { op, args } => {
             let mut values = Vec::with_capacity(args.len());
             for arg in args {
-                values.push(eval_node(arg, defs, memo, mono)?);
+                values.push(eval_node(arg, defs, context, mono)?);
             }
             mono.call(op, &values)?
         }
@@ -60,21 +70,65 @@ fn eval_node<'a>(
             let target = defs
                 .get(to.as_str())
                 .expect("参考求值前必须通过 Expr::validate");
-            eval_node(target, defs, memo, mono)?
+            eval_node(target, defs, context, mono)?
         }
-        Node::Select { cond, then, r#else } => match eval_node(cond, defs, memo, mono)? {
-            Value::Bool(true) => eval_node(then, defs, memo, mono)?,
-            Value::Bool(false) => eval_node(r#else, defs, memo, mono)?,
+        Node::Select { cond, then, r#else } => match eval_node(cond, defs, context, mono)? {
+            Value::Bool(true) => eval_node(then, defs, context, mono)?,
+            Value::Bool(false) => eval_node(r#else, defs, context, mono)?,
             other => {
                 return Err(EvalError::SelectCondition {
-                    actual: crate::program::value_kind(&other),
+                    actual: value_kind(&other),
                 })
             }
+        },
+        Node::NatRec { count, init, step } => {
+            let count = match eval_node(count, defs, context, mono)? {
+                Value::I64(value) if value >= 0 => value,
+                other => {
+                    return Err(EvalError::RecCount {
+                        actual: value_kind(&other),
+                    })
+                }
+            };
+            if count > REC_MAX_STEPS {
+                return Err(EvalError::RecBudget {
+                    count,
+                    max_steps: REC_MAX_STEPS,
+                });
+            }
+            let mut state = eval_node(init, defs, context, mono)?;
+            let state_kind = value_kind(&state);
+            for index in 1..=count {
+                // 每次迭代用**独立的 memo**（与 lowered 的子程序值表同构），
+                // 避免把依赖 RecPrev 的节点缓存到下一轮。
+                let mut step_context = RefContext {
+                    memo: BTreeMap::new(),
+                    rec: Some((state.clone(), index)),
+                };
+                let next = eval_node(step, defs, &mut step_context, mono)?;
+                if value_kind(&next) != state_kind {
+                    return Err(EvalError::RecStateType {
+                        expected: state_kind,
+                        actual: value_kind(&next),
+                        index,
+                    });
+                }
+                state = next;
+            }
+            state
+        }
+        Node::RecPrev => match &context.rec {
+            Some((prev, _)) => prev.clone(),
+            None => return Err(EvalError::RecContext { leaf: "rec_prev" }),
+        },
+        Node::RecIndex => match &context.rec {
+            Some((_, index)) => Value::I64(*index),
+            None => return Err(EvalError::RecContext { leaf: "rec_index" }),
         },
     };
 
     if let Some(id) = expr.id.as_deref() {
-        memo.insert(id, value.clone());
+        context.memo.insert(id.to_string(), value.clone());
     }
     Ok(value)
 }

@@ -28,7 +28,8 @@ use crate::expr::{ChannelRef, Expr, ExprError, Literal, Node, OpRef};
 ///
 /// `Path` 已**迁移出核心**（阶段 1）：路径是 `Bytes` + 命名类型 `zela.Path`，
 /// 内核只认识"带类型名的字节块"，不认识"路径"这个领域概念。
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Value {
     F64(f64),
     /// 64 位整数（递归索引 / 帧号；**不经过 f64**）。
@@ -44,7 +45,9 @@ pub enum Value {
 }
 
 /// 带类型名的字节块。
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct ValueBytes {
     /// 命名类型（`zela.Path` / `acme.Tensor` …）。
     pub ty: String,
@@ -209,6 +212,22 @@ pub enum EvalError {
         channel: ChannelRef,
         kind: &'static str,
     },
+    /// `NatRec.count` 不是非负 `I64`（硬约束 6：禁止刀刃取整）。
+    #[error("NatRec.count 必须是 I64，实际 {actual}")]
+    RecCount { actual: &'static str },
+    /// `NatRec` 的轮数超过**动态护栏**（库级默认；只有影响语义的才进产物）。
+    #[error("NatRec 轮数 {count} 超过上限 {max_steps}（不收敛/过大 ⇒ 显式错误）")]
+    RecBudget { count: i64, max_steps: i64 },
+    /// 递归叶子出现在没有 `NatRec` 上下文的地方（装配期应已拒绝）。
+    #[error("递归叶子 `{leaf}` 不在 NatRec.step 求值上下文里")]
+    RecContext { leaf: &'static str },
+    /// 递归状态类型在折叠过程中变了（静默换类型会让结果不可解释）。
+    #[error("NatRec 状态类型不一致：期望 {expected}，第 {index} 步得到 {actual}")]
+    RecStateType {
+        expected: &'static str,
+        actual: &'static str,
+        index: i64,
+    },
 }
 
 impl EvalError {
@@ -219,6 +238,38 @@ impl EvalError {
             message: message.into(),
         }
     }
+}
+
+/// `NatRec` 的**显式缓存**（阶段 3）：状态在参数里，可序列化、可清空。
+///
+/// `count` 是已经折叠到的索引（`0` = 只有 `init`）；`value` 是该索引处的状态。
+/// 清空缓存重算 = `None` ⇒ 从 `init` 开始逐位重放 —— "逐位相同"因此是**结构事实**，
+/// 而不是纪律。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RecCache {
+    /// 已折叠到的索引（非负）。
+    pub count: i64,
+    pub value: Value,
+}
+
+/// `NatRec` 轮数的**库级默认 + 动态护栏**（不进产物：它不改变语义，只拒绝失控）。
+pub const REC_MAX_STEPS: i64 = 1_000_000;
+
+/// 一次求值的递归上下文。
+#[derive(Clone, Debug, Default)]
+struct EvalContext {
+    /// 当前 `NatRec.step` 的 `(上一步状态, 索引)`。
+    rec: Option<RecFrame>,
+    /// 根级 `NatRec` 的显式缓存（只在外层程序使用）。
+    cache: Option<RecCache>,
+    /// 是否允许读写缓存（子程序内关闭，避免污染）。
+    cache_enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+struct RecFrame {
+    prev: Value,
+    index: i64,
 }
 
 /// 后序程序的一步。
@@ -242,6 +293,18 @@ pub enum Step {
         then: Box<CompiledExpr>,
         r#else: Box<CompiledExpr>,
     },
+    /// **结构递归**（阶段 3）：`count` 是外层程序里的索引（必须是 `I64`），
+    /// `init` / `step` 是独立子程序。`step` 内的 `RecPrev` / `RecIndex` 由
+    /// [`EvalContext`] 提供。
+    NatRec {
+        count: usize,
+        init: Box<CompiledExpr>,
+        step: Box<CompiledExpr>,
+    },
+    /// `NatRec.step` 内：上一步状态。
+    RecPrev,
+    /// `NatRec.step` 内：当前索引（`I64`）。
+    RecIndex,
 }
 
 /// 编译后的表达式（装配期一次，运行期线性扫描）。
@@ -276,6 +339,31 @@ impl CompiledExpr {
     ///
     /// 每次调用都从头扫描 ⇒ **帧内 memo 由程序结构决定，不跨帧**。
     pub fn eval(&self, mono: &dyn Mono) -> Result<Value, EvalError> {
+        let mut context = EvalContext::default();
+        self.eval_with(mono, &mut context)
+    }
+
+    /// **阶段 3**：带显式 `NatRec` 缓存的求值。
+    ///
+    /// - `cache = None` ⇒ 从 `init` 开始逐位重放；
+    /// - `cache = Some(RecCache { count, value })` 且 `count ≤ 目标轮数` ⇒ 从该状态续算；
+    /// - 缓存**可序列化**；清空后重算逐位相同（结构事实）。
+    pub fn eval_cached(
+        &self,
+        mono: &dyn Mono,
+        cache: &mut Option<RecCache>,
+    ) -> Result<Value, EvalError> {
+        let mut context = EvalContext {
+            rec: None,
+            cache: cache.take(),
+            cache_enabled: true,
+        };
+        let value = self.eval_with(mono, &mut context);
+        *cache = context.cache;
+        value
+    }
+
+    fn eval_with(&self, mono: &dyn Mono, context: &mut EvalContext) -> Result<Value, EvalError> {
         let mut values: Vec<Value> = Vec::with_capacity(self.steps.len());
         for step in &self.steps {
             let value = match step {
@@ -283,13 +371,79 @@ impl CompiledExpr {
                 Step::Channel(channel) => mono.read(channel)?,
                 Step::Read { channel, object } => mono.read_object(channel, *object)?,
                 Step::Select { cond, then, r#else } => match &values[*cond] {
-                    Value::Bool(true) => then.eval(mono)?,
-                    Value::Bool(false) => r#else.eval(mono)?,
+                    Value::Bool(true) => then.eval_with(mono, context)?,
+                    Value::Bool(false) => r#else.eval_with(mono, context)?,
                     other => {
                         return Err(EvalError::SelectCondition {
                             actual: value_kind(other),
                         })
                     }
+                },
+                Step::NatRec { count, init, step } => {
+                    let count = match &values[*count] {
+                        Value::I64(value) if *value >= 0 => *value,
+                        other => {
+                            return Err(EvalError::RecCount {
+                                actual: value_kind(other),
+                            })
+                        }
+                    };
+                    if count > REC_MAX_STEPS {
+                        return Err(EvalError::RecBudget {
+                            count,
+                            max_steps: REC_MAX_STEPS,
+                        });
+                    }
+                    // 根级显式缓存：**只有一个** NatRec 拥有它（第一个被求值的）。
+                    // 子程序内关闭，避免污染；拥有后立刻关闭，避免第二个 NatRec
+                    // 误用别人的状态。
+                    let owns_cache = context.cache_enabled;
+                    let cached = if owns_cache {
+                        context.cache_enabled = false;
+                        context.cache.take()
+                    } else {
+                        None
+                    };
+                    let (mut state, mut index) = match cached {
+                        Some(cache) if cache.count <= count => (cache.value, cache.count),
+                        _ => (init.eval_with(mono, &mut EvalContext::default())?, 0),
+                    };
+                    let state_kind = value_kind(&state);
+                    while index < count {
+                        index += 1;
+                        let mut step_context = EvalContext {
+                            rec: Some(RecFrame {
+                                prev: state.clone(),
+                                index,
+                            }),
+                            cache: None,
+                            cache_enabled: false,
+                        };
+                        let next = step.eval_with(mono, &mut step_context)?;
+                        if value_kind(&next) != state_kind {
+                            return Err(EvalError::RecStateType {
+                                expected: state_kind,
+                                actual: value_kind(&next),
+                                index,
+                            });
+                        }
+                        state = next;
+                    }
+                    if owns_cache {
+                        context.cache = Some(RecCache {
+                            count,
+                            value: state.clone(),
+                        });
+                    }
+                    state
+                }
+                Step::RecPrev => match &context.rec {
+                    Some(frame) => frame.prev.clone(),
+                    None => return Err(EvalError::RecContext { leaf: "rec_prev" }),
+                },
+                Step::RecIndex => match &context.rec {
+                    Some(frame) => Value::I64(frame.index),
+                    None => return Err(EvalError::RecContext { leaf: "rec_index" }),
                 },
                 Step::Call { op, args } => {
                     let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
@@ -389,6 +543,27 @@ fn compile_node<'a>(
                 then: Box::new(then),
                 r#else: Box::new(r#else),
             });
+            steps.len() - 1
+        }
+        // **阶段 3**：`count` 编进外层；`init` / `step` 各自独立子程序
+        // （`step` 内的 `RecPrev` / `RecIndex` 是普通叶子，编译成专用 `Step`）。
+        Node::NatRec { count, init, step } => {
+            let count = compile_node(count, defs, memo, steps);
+            let init = compile_branch(init, defs);
+            let step = compile_branch(step, defs);
+            steps.push(Step::NatRec {
+                count,
+                init: Box::new(init),
+                step: Box::new(step),
+            });
+            steps.len() - 1
+        }
+        Node::RecPrev => {
+            steps.push(Step::RecPrev);
+            steps.len() - 1
+        }
+        Node::RecIndex => {
+            steps.push(Step::RecIndex);
             steps.len() - 1
         }
     };
@@ -662,6 +837,208 @@ mod tests {
         let canonical = bytes.canonical_bytes();
         assert_eq!(canonical[0], 5, "Bytes 的规范标签");
         assert!(canonical.windows("zela.Path".len()).any(|w| w == b"zela.Path"));
+    }
+
+    // ─── 阶段 3：NatRec 离散层 ─────────────────────────────────────────
+
+    /// `value(k) = value(k−1) + 2`，`init = 1`，`count = 4` ⇒ `9`。
+    fn nat_rec_add_two(count: i64) -> Expr {
+        Expr::nat_rec(
+            Expr::pure(count),
+            Expr::pure(1.0),
+            Expr::call(math("add"), [Expr::rec_prev(), Expr::pure(2.0)]),
+        )
+    }
+
+    #[test]
+    fn nat_rec_matches_hand_unrolled_expansion() {
+        let expr = nat_rec_add_two(4);
+        expr.validate().expect("NatRec 是合法递归结构");
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let mono = ScalarMono::new(0.0, 0);
+        let lowered = program.eval(&mono).unwrap();
+        assert_eq!(lowered, Value::F64(9.0));
+        assert_eq!(
+            crate::reference::eval_reference(&expr, &mono).unwrap(),
+            lowered,
+            "参考求值器与 lowered 必须逐位一致"
+        );
+
+        // 手写展开：((((1+2)+2)+2)+2)。
+        let mut manual = Expr::pure(1.0);
+        for _ in 0..4 {
+            manual = Expr::call(math("add"), [manual, Expr::pure(2.0)]);
+        }
+        assert_eq!(
+            CompiledExpr::compile(&manual).unwrap().eval(&mono).unwrap(),
+            lowered
+        );
+    }
+
+    /// `RecIndex` 是 `I64`：`value(k) = k` ⇒ `value(count) = count`。
+    #[test]
+    fn rec_index_is_an_i64_state() {
+        let expr = Expr::nat_rec(
+            Expr::pure(3_i64),
+            Expr::pure(0_i64),
+            Expr::rec_index(),
+        );
+        let program = CompiledExpr::compile(&expr).unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
+            Value::I64(3)
+        );
+    }
+
+    /// 硬约束 6：`count` 不是 `I64` / 为负 ⇒ 显式错误（不取整、不静默 0 轮）。
+    #[test]
+    fn nat_rec_rejects_non_i64_counts() {
+        let program = CompiledExpr::compile(&Expr::nat_rec(
+            Expr::pure(4.0),
+            Expr::pure(1.0),
+            Expr::rec_prev(),
+        ))
+        .unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap_err(),
+            EvalError::RecCount { actual: "scalar" }
+        );
+
+        let program = CompiledExpr::compile(&Expr::nat_rec(
+            Expr::pure(-1_i64),
+            Expr::pure(1.0),
+            Expr::rec_prev(),
+        ))
+        .unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap_err(),
+            EvalError::RecCount { actual: "i64" }
+        );
+    }
+
+    /// 动态护栏：轮数超过库级上限 ⇒ 显式错误（不"跑满上限用最后一次"）。
+    #[test]
+    fn nat_rec_budget_is_explicit() {
+        let program = CompiledExpr::compile(&Expr::nat_rec(
+            Expr::pure(REC_MAX_STEPS + 1),
+            Expr::pure(1.0),
+            Expr::rec_prev(),
+        ))
+        .unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap_err(),
+            EvalError::RecBudget {
+                count: REC_MAX_STEPS + 1,
+                max_steps: REC_MAX_STEPS,
+            }
+        );
+    }
+
+    /// 状态类型在折叠过程中变化 ⇒ 显式错误（不静默换类型）。
+    #[test]
+    fn nat_rec_state_type_must_stay_stable() {
+        let program = CompiledExpr::compile(&Expr::nat_rec(
+            Expr::pure(1_i64),
+            Expr::pure(1.0),
+            Expr::rec_index(),
+        ))
+        .unwrap();
+        assert_eq!(
+            program.eval(&ScalarMono::new(0.0, 0)).unwrap_err(),
+            EvalError::RecStateType {
+                expected: "scalar",
+                actual: "i64",
+                index: 1,
+            }
+        );
+    }
+
+    /// **合法递归 vs 非法环**：`NatRec` 通过；`Ref` 成环仍然被拒绝。
+    #[test]
+    fn recursion_is_not_a_ref_cycle() {
+        nat_rec_add_two(2).validate().expect("NatRec 合法");
+
+        let a = Expr::call(math("add"), [Expr::reference("b")]).with_id("a");
+        let b = Expr::call(math("add"), [Expr::reference("a")]).with_id("b");
+        let root = Expr::call(math("add"), [a, b]);
+        assert!(matches!(
+            root.validate().unwrap_err(),
+            ExprError::Cycle(_)
+        ));
+    }
+
+    /// 递归叶子越界 ⇒ 结构守卫显式拒绝。
+    #[test]
+    fn recursive_leaves_outside_a_step_are_rejected() {
+        let expr = Expr::call(math("add"), [Expr::rec_prev(), Expr::pure(1.0)]);
+        assert_eq!(
+            expr.validate().unwrap_err(),
+            ExprError::OrphanRec("rec_prev")
+        );
+
+        let expr = Expr::nat_rec(
+            Expr::pure(1_i64),
+            Expr::rec_index(),
+            Expr::rec_prev(),
+        );
+        assert_eq!(
+            expr.validate().unwrap_err(),
+            ExprError::OrphanRec("rec_index")
+        );
+    }
+
+    /// **Cache 作显式参数**：可序列化、可清空；清空重算逐位相同。
+    #[test]
+    fn nat_rec_cache_is_serializable_and_replay_is_bit_identical() {
+        let program = CompiledExpr::compile(&nat_rec_add_two(5)).unwrap();
+        let mono = ScalarMono::new(0.0, 0);
+
+        let mut cache = None;
+        let first = program.eval_cached(&mono, &mut cache).unwrap();
+        assert_eq!(first, Value::F64(11.0));
+        let cache = cache.expect("根级 NatRec 必须产出缓存");
+        assert_eq!(cache.count, 5);
+
+        // 序列化 → 反序列化 → 复用。
+        let json = serde_json::to_string(&cache).expect("缓存可序列化");
+        let mut restored: Option<RecCache> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            program.eval_cached(&mono, &mut restored).unwrap(),
+            first,
+            "复用缓存必须逐位相同"
+        );
+
+        // 清空缓存 ⇒ 从 init 重放，仍逐位相同。
+        let mut cleared = None;
+        assert_eq!(program.eval_cached(&mono, &mut cleared).unwrap(), first);
+
+        // 部分缓存（count = 2）⇒ 从该状态续算到 5，与全量重放一致。
+        let partial_program = CompiledExpr::compile(&nat_rec_add_two(2)).unwrap();
+        let mut partial = None;
+        partial_program.eval_cached(&mono, &mut partial).unwrap();
+        assert_eq!(partial.as_ref().unwrap().count, 2);
+        let resumed = program.eval_cached(&mono, &mut partial).unwrap();
+        assert_eq!(resumed, first, "续算必须与全量重放逐位相同");
+    }
+
+    /// 多个 `NatRec` 时缓存只属于**第一个被求值**的那个（不串状态）。
+    #[test]
+    fn nat_rec_cache_is_owned_by_exactly_one_fold() {
+        let expr = Expr::call(
+            math("add"),
+            [nat_rec_add_two(2), nat_rec_add_two(3)],
+        );
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let mono = ScalarMono::new(0.0, 0);
+        let mut cache = None;
+        let value = program.eval_cached(&mono, &mut cache).unwrap();
+        assert_eq!(value, Value::F64(12.0), "5 + 7");
+        let cache = cache.expect("第一个 NatRec 产出缓存");
+        assert_eq!(cache.count, 2, "缓存属于第一个 fold");
+        assert_eq!(
+            program.eval_cached(&mono, &mut Some(cache)).unwrap(),
+            value
+        );
     }
 
     /// **G 批**：宿主覆写 `read_object` 后，`Read` 返回注入值。

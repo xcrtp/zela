@@ -714,6 +714,13 @@ fn rewrite_reads(expr: &Expr, resolve: &impl Fn(u64) -> u64) -> Expr {
             then: Box::new(rewrite_reads(then, resolve)),
             r#else: Box::new(rewrite_reads(r#else, resolve)),
         },
+        Node::NatRec { count, init, step } => Node::NatRec {
+            count: Box::new(rewrite_reads(count, resolve)),
+            init: Box::new(rewrite_reads(init, resolve)),
+            step: Box::new(rewrite_reads(step, resolve)),
+        },
+        Node::RecPrev => Node::RecPrev,
+        Node::RecIndex => Node::RecIndex,
     };
     Expr {
         id: expr.id.clone(),

@@ -70,7 +70,7 @@ pub use pass::{
     AnalysisPass, Lower, LoweredEval, PassInfo, PassKind, PassRegistry, PassRegistryError,
     ReferenceEval, Semantics, TransformPass, Validate, kernel_registry,
 };
-pub use program::{CompiledExpr, EvalError, Mono, Step, Value, ValueBytes, hash_values};
+pub use program::{CompiledExpr, EvalError, Mono, RecCache, Step, Value, ValueBytes, REC_MAX_STEPS, hash_values};
 pub use reference::{ReferenceEvaluator, eval_reference};
 
 /// 表达式 payload 的 schema 版本。
@@ -81,4 +81,7 @@ pub use reference::{ReferenceEvaluator, eval_reference};
 /// `1 → 2`（提案 #6 B 批）：通道从封闭枚举 `"channel": "time"` 改为**数据引用**
 /// `"channel": { "namespace": "", "name": "time" }` —— 组件字段通道与基础通道同形。
 /// 受影响的作品只有 `expr_demo`（唯一使用表达式层的作品）。
+///
+/// 阶段 1 / 3 的新增（`i64` 字面量、`bytes` 值、`nat_rec` / `rec_prev` / `rec_index`
+/// 节点）都是**追加**：老 payload 不含这些标签，解码路径一个字节不动 ⇒ 不递增。
 pub const SCHEMA_VERSION: u32 = 2;

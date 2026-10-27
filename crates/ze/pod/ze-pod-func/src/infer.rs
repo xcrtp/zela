@@ -101,6 +101,7 @@ pub fn infer_full(expr: &Expr) -> Result<Inference, TypeError> {
         defs: definitions(expr),
         memo: HashMap::new(),
         visiting: HashSet::new(),
+        rec: None,
     };
     context.type_of(expr)
 }
@@ -408,6 +409,8 @@ struct Infer<'a> {
     defs: BTreeMap<&'a str, &'a Expr>,
     memo: HashMap<&'a str, Inference>,
     visiting: HashSet<&'a str>,
+    /// `NatRec.step` 的**状态类型**（`RecPrev` 的类型）；嵌套时按词法作用域恢复。
+    rec: Option<ChannelType>,
 }
 
 impl<'a> Infer<'a> {
@@ -488,6 +491,45 @@ impl<'a> Infer<'a> {
                     pointwise,
                 })
             }
+            Node::NatRec { count, init, step } => {
+                let count_info = self.type_of(count)?;
+                if count_info.ty != ChannelType::I64 {
+                    return Err(TypeError::new(format!(
+                        "`NatRec.count` 必须是 I64（非整数请显式 Floor），实际 {}",
+                        count_info.ty.name()
+                    )));
+                }
+                let init_info = self.type_of(init)?;
+                let previous = self.rec.replace(init_info.ty);
+                let step_info = self.type_of(step);
+                self.rec = previous;
+                let step_info = step_info?;
+                if step_info.ty != init_info.ty {
+                    return Err(TypeError::new(format!(
+                        "`NatRec` 的 init / step 类型不同：{} / {}",
+                        init_info.ty.name(),
+                        step_info.ty.name()
+                    )));
+                }
+                // 离散层：NatRec 本身**不是** pointwise（需要 O(n) 重放）。
+                Ok(Inference {
+                    ty: init_info.ty,
+                    pointwise: PointwiseReport::blocked("nat_rec（离散层）"),
+                })
+            }
+            Node::RecPrev => match self.rec {
+                Some(ty) => Ok(Inference {
+                    ty,
+                    pointwise: PointwiseReport::blocked("rec_prev"),
+                }),
+                None => Err(TypeError::new(
+                    "`RecPrev` 只能出现在 `NatRec.step` 内",
+                )),
+            },
+            Node::RecIndex => Ok(Inference {
+                ty: ChannelType::I64,
+                pointwise: PointwiseReport::blocked("rec_index"),
+            }),
         }
     }
 
@@ -644,6 +686,52 @@ mod tests {
             "必须点名污染源，实际 {:?}",
             report.blocker
         );
+    }
+
+    /// **阶段 3**：`NatRec` 可推导；`count` 必须是 `I64`；init/step 类型必须一致；
+    /// 离散层 ⇒ 非 pointwise。
+    #[test]
+    fn nat_rec_is_a_discrete_non_pointwise_node() {
+        let expr = Expr::nat_rec(
+            Expr::pure(4_i64),
+            Expr::pure(1.0),
+            call("add", vec![Expr::rec_prev(), Expr::pure(2.0)]),
+        );
+        let info = infer_full(&expr).expect("NatRec 可推导");
+        assert_eq!(info.ty, ChannelType::Number);
+        assert!(!info.pointwise.pointwise, "NatRec 是离散层");
+        assert!(info
+            .pointwise
+            .blocker
+            .as_deref()
+            .is_some_and(|text| text.contains("nat_rec")));
+
+        // count 用 f64 ⇒ 显式拒绝（不取整）。
+        let bad_count = Expr::nat_rec(
+            Expr::pure(4.0),
+            Expr::pure(1.0),
+            Expr::rec_prev(),
+        );
+        assert!(infer(&bad_count).is_err());
+
+        // init / step 类型不同 ⇒ 显式拒绝。
+        let mismatch = Expr::nat_rec(
+            Expr::pure(1_i64),
+            Expr::pure(1.0),
+            Expr::rec_index(),
+        );
+        assert!(infer(&mismatch).is_err());
+    }
+
+    /// `RecIndex` 的类型是 `I64`（不经过 f64）。
+    #[test]
+    fn rec_index_infers_as_i64() {
+        let expr = Expr::nat_rec(
+            Expr::pure(1_i64),
+            Expr::pure(0_i64),
+            Expr::rec_index(),
+        );
+        assert_eq!(infer(&expr).expect("可推导"), ChannelType::I64);
     }
 
     /// `Select` 的分支也参与污染：任一分支非 pointwise ⇒ 整棵非 pointwise。
