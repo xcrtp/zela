@@ -91,6 +91,30 @@ impl Node {
             | Node::RecIndex => Vec::new(),
         }
     }
+
+    /// `Channel` 叶子（宿主注入的连续量）。
+    pub fn channel(&self) -> Option<&ChannelRef> {
+        match self {
+            Node::Channel { channel } => Some(channel),
+            _ => None,
+        }
+    }
+
+    /// `Read` 叶子：`(通道, 对象句柄下标)`。
+    pub fn read(&self) -> Option<(&ChannelRef, u64)> {
+        match self {
+            Node::Read { channel, object } => Some((channel, *object)),
+            _ => None,
+        }
+    }
+
+    /// `Pure` 字面量叶子。
+    pub fn literal(&self) -> Option<&Literal> {
+        match self {
+            Node::Pure { value } => Some(value),
+            _ => None,
+        }
+    }
 }
 
 /// 字面量（跨边界前的最后一层：过了 Pod 边界就只剩这些值）。
@@ -159,6 +183,24 @@ impl From<[f32; 2]> for Literal {
 impl From<[f32; 3]> for Literal {
     fn from(value: [f32; 3]) -> Self {
         Literal::Vec3(value)
+    }
+}
+
+impl Literal {
+    /// 实数标量视图（`F32` / `F64` / `I32`）。
+    ///
+    /// `I64` 是**离散层索引**，不隐式转 `f64`（避免刀刃取整）⇒ 这里返回 `None`。
+    pub fn as_real(&self) -> Option<f64> {
+        match self {
+            Literal::F32(value) => Some(f64::from(*value)),
+            Literal::F64(value) => Some(*value),
+            Literal::I32(value) => Some(f64::from(*value)),
+            Literal::I64(_)
+            | Literal::Bool(_)
+            | Literal::Text(_)
+            | Literal::Vec2(_)
+            | Literal::Vec3(_) => None,
+        }
     }
 }
 

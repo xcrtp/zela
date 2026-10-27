@@ -42,7 +42,7 @@
 
 use std::sync::Arc;
 
-use ze_comb::{ChannelRef, CompiledExpr, Expr, Node, OpRef};
+use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
 use ze_scene_contract::{
     Components, ObjectId, Parent, Scene as SceneContract, Visibility, VisibilityTag,
 };
@@ -110,20 +110,32 @@ fn is_injected(channel: &ChannelRef) -> bool {
 
 fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
     CompiledExpr::compile(expr).map_err(|error| ExprBindError::BadExpression(error.to_string()))?;
-    fn first_unsupported(expr: &Expr) -> Option<ChannelRef> {
-        match &expr.node {
+
+    /// 未注通道检查：命中即用 `ChannelRef` 提前结束遍历（`walk` 的错误通道）。
+    struct Unsupported;
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Unsupported {
+        type Error = ChannelRef;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, ChannelRef> {
             // `Read` 是叶子（children() 为空）：它的 channel 也要过注入检查，
             // 否则未注册地址会在运行期才炸 —— 装配期就该显式拒绝。
-            Node::Channel { channel } | Node::Read { channel, .. } => {
-                if !is_injected(channel) {
-                    return Some(channel.clone());
-                }
+            let channel = expr
+                .node
+                .channel()
+                .or_else(|| expr.node.read().map(|(channel, _)| channel));
+            match channel {
+                Some(channel) if !is_injected(channel) => Err(channel.clone()),
+                _ => Ok(true),
             }
-            _ => {}
         }
-        expr.node.children().into_iter().find_map(first_unsupported)
     }
-    match first_unsupported(expr) {
+
+    match expr.walk(&mut Unsupported).err() {
         Some(channel) => Err(ExprBindError::UnsupportedChannel(channel)),
         None => Ok(()),
     }
@@ -134,18 +146,26 @@ fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
 /// 越界说明脚本引用了不存在的句柄 —— 与绑定目标的 [`ExprBindError::UnknownObject`]
 /// 同一口径，装配期显式报错。
 fn check_read_objects(expr: &Expr, object_count: usize) -> Result<(), ExprBindError> {
-    fn first_bad(expr: &Expr, object_count: usize) -> Option<usize> {
-        if let Node::Read { object, .. } = &expr.node {
-            if *object >= object_count as u64 {
-                return Some(*object as usize);
+    struct Bad {
+        object_count: usize,
+    }
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Bad {
+        type Error = usize;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, usize> {
+            match expr.node.read() {
+                Some((_, object)) if object >= self.object_count as u64 => Err(object as usize),
+                _ => Ok(true),
             }
         }
-        expr.node
-            .children()
-            .into_iter()
-            .find_map(|child| first_bad(child, object_count))
     }
-    match first_bad(expr, object_count) {
+
+    match expr.walk(&mut Bad { object_count }).err() {
         Some(index) => Err(ExprBindError::UnknownObject(index)),
         None => Ok(()),
     }

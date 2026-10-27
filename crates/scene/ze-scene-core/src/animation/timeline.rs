@@ -696,36 +696,19 @@ fn clock_affine(clock: &ClockProgram) -> Option<(f64, f64)> {
 ///
 /// `resolve` 把**脚本局部句柄下标**映射成 `ObjectId` 打包值；非 `Read` 节点原样
 /// 复制（`Ref` 复用不展开，改写仍逐节点进行，`Ref` 指向的子树是另一份 Expr）。
+///
+/// 子节点重建统一走 [`Expr::map_children`]（不再自己展开 `Call` / `Select` / `NatRec`）。
 fn rewrite_reads(expr: &Expr, resolve: &impl Fn(u64) -> u64) -> Expr {
-    let node = match &expr.node {
-        Node::Read { channel, object } => Node::Read {
-            channel: channel.clone(),
-            object: resolve(*object),
-        },
-        Node::Pure { value } => Node::Pure { value: value.clone() },
-        Node::Channel { channel } => Node::Channel { channel: channel.clone() },
-        Node::Ref { to } => Node::Ref { to: to.clone() },
-        Node::Call { op, args } => Node::Call {
-            op: op.clone(),
-            args: args.iter().map(|arg| rewrite_reads(arg, resolve)).collect(),
-        },
-        Node::Select { cond, then, r#else } => Node::Select {
-            cond: Box::new(rewrite_reads(cond, resolve)),
-            then: Box::new(rewrite_reads(then, resolve)),
-            r#else: Box::new(rewrite_reads(r#else, resolve)),
-        },
-        Node::NatRec { count, init, step } => Node::NatRec {
-            count: Box::new(rewrite_reads(count, resolve)),
-            init: Box::new(rewrite_reads(init, resolve)),
-            step: Box::new(rewrite_reads(step, resolve)),
-        },
-        Node::RecPrev => Node::RecPrev,
-        Node::RecIndex => Node::RecIndex,
-    };
-    Expr {
-        id: expr.id.clone(),
-        node,
+    if let Some((channel, object)) = expr.node.read() {
+        return Expr {
+            id: expr.id.clone(),
+            node: Node::Read {
+                channel: channel.clone(),
+                object: resolve(object),
+            },
+        };
     }
+    expr.map_children(|child| rewrite_reads(child, resolve))
 }
 
 #[cfg(test)]

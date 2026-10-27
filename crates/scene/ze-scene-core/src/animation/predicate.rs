@@ -519,27 +519,17 @@ pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
 
 /// 连续变量的身份：`Channel` / `Read` 都是"随帧采样的连续量"。
 fn continuous_variable(expr: &Expr) -> Option<String> {
-    match &expr.node {
-        Node::Channel { channel } => Some(channel.qualified()),
-        Node::Read { channel, object } => Some(format!("{}#{object}", channel.qualified())),
-        _ => None,
+    if let Some(channel) = expr.node.channel() {
+        return Some(channel.qualified());
     }
+    expr.node
+        .read()
+        .map(|(channel, object)| format!("{}#{object}", channel.qualified()))
 }
 
 
 fn number(expr: &Expr) -> Option<f64> {
-    match &expr.node {
-        Node::Pure {
-            value: Literal::F64(value),
-        } => Some(*value),
-        Node::Pure {
-            value: Literal::F32(value),
-        } => Some(f64::from(*value)),
-        Node::Pure {
-            value: Literal::I32(value),
-        } => Some(f64::from(*value)),
-        _ => None,
-    }
+    expr.node.literal().and_then(Literal::as_real)
 }
 
 #[cfg(test)]
