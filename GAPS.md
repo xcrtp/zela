@@ -1152,8 +1152,72 @@
 | AQ-06 | **阶段 4：双比对器与分档告警** | xtask | **已关闭（0）** | 等式：`compare_structures`（缺基线 / 跨后端不一致 / 与基线不符都 fail）。不等式：`compare_bench` + `BENCH_WARN_RATIO = 1.20` / `BENCH_FAIL_RATIO = 1.50`；新 step `cargo verify --step bench`（已进 full 列表）。**CI 只拦 >50%**；`>20%` 打印 `[bench][warn]` 不阻断。没跑过 `cargo bench` ⇒ 打印「**未测**，跳过（不是通过）」；产物存在但基线未登记 ⇒ 同样只打印不阻断（换机 / 新 bench 不该红）。基线 `bench_baselines.txt` 已按本机录制 **88 条**（单位 = 纳秒，criterion `estimates.json` 的 `median.point_estimate` 原生单位；`ZELA_RECORD_DEVICE` 记设备），不承诺跨设备。**结构指纹的 CI 边界与像素一致**：`--skip-baseline` 时只断言跨 pass / 跨后端一致（`script == bundle`、`wgpu == vector`），不比对 `structures.txt` —— 跨 OS libm 的 1 ulp 分歧尚未排除（与 AP-11 同类），不拿未经验证的判据去红 CI。 |
 | AQ-07 | **阶段 5：覆盖率补洞** —— 改坏了不会红且没人知道 | scripts / xtask | **部分关闭（1）** | `scripts/dispositions.txt` + `check_dispositions`：30 个脚本 **23 有像素基线 + 7 显式豁免（理由必填）**，未登记 / 假声明 `baseline` / 空理由都 fail（`--step hashes` 恒开）。**残余**：cap_channels2d / cap_channels3d / expr_demo / expr_read / sine_trace 5 件 demo 只有 manifest payload 断言，补 `[vector]` 基线需一次录制设备运行（与 AQ-04 同一批）。 |
 | AQ-08 | **阶段 0 记账**：9 个 bench 与 248 处 `println!`/`eprintln!` 登记 | 记账 | **已关闭（0）** | bench（9 个 / 7 crate）：`ze-comb` eval_bench + expr_bench、`ze-func` lookup_bench、`ze-graph-core` graph_bench、`ze-reflect` reflect_bench、`zela-schedule` scheduler_bench、`ze-pod-core` assembly_bench + function_lookup、`ze-pod-tests` pod_bench（criterion，已接 AQ-06）。`println!`/`eprintln!` 实测 **248** 处（计划写 221，按代码重算）；其中 `xtask` + `zela-app` 是 CLI 输出，本来就该给人读 ⇒ **不全改**，只治理「想被机器消费的那部分」（B12 起已有 `[decision]` / `[verify]` / `[timing]` / `[structure]` / `[observe]` 五种机器行）。`tracing::` 13 处 / 7 个文件，kernel 仍**零 tracing**（no_std 门禁守着，硬约束 3）。 |
+| AQ-09 | **verify 默认必须覆盖 Python（pyo3）** —— 门禁固定 `--features typst`，`ze-pod-py` 的 `python` feature 长期没被编译 | xtask / ze-pod-py | **已关闭（0）** | 反例：AP-13 的 Python 方法绑定里 `PyCFunction::new_closure` 的 `&'static CStr` 签名与闭包生命周期错误，在 `--step test` 全绿的情况下存在了整整一批；只有手动打开默认 features 才暴露。修复：`check` / `test` 在无解释器时**默认失败**（`--allow-no-python` 才降级，且降级必须显式），`FeaturePlan` 的能力检测保留；同时修掉那两处绑定错误。`hashes` 仍固定 typst-only（CI 的 hashes job 不装 `python3-dev`，且像素基线就是该组合下录的）。本机解释器改用 uv 托管 CPython 3.13.11 + 用户级 `PYO3_PYTHON`。 |
 
-**AQ 段小计**：已关闭 6（AQ-01、AQ-02、AQ-03、AQ-05、AQ-06、AQ-08）· 部分关闭 1（AQ-07）· 记账 0 · 未执行 1（AQ-04）· 落档 0。
+**AQ 段小计**：已关闭 7（AQ-01、AQ-02、AQ-03、AQ-05、AQ-06、AQ-08、AQ-09）· 部分关闭 1（AQ-07）· 记账 0 · 未执行 1（AQ-04）· 落档 0。
+
+---
+
+## AR. 场景侧组件与 API 专项治理 · 摸底记账（2026-10-28）
+
+> 计划《场景侧组件与API专项治理_摸底计划》。本段只记**摸底结论与实验结局**，不记落地；
+> 报告正文见仓库根 `场景侧组件与API专项治理_摸底报告.md`。
+> 每条实验按计划 §0.3 标注结局：A 转正 / B 删除（负面结论）/ C 挂账。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AR-01 | **P0-1 更正：`Reads`/`Writes` 只是 Resource 元组，组件级访问既未声明也不可声明** | zela-schedule / 全部 System | **记账（1）** | `zela-schedule/src/system.rs` 的 `System::Reads: ResourceTuple` / `Writes: ResourceTuple` 只展开成 `TypeId` 列表做 Resource 冲突检测；`ExecutorContext::borrow_world` / `borrow_world_mut`（`context.rs`）**不经过 `BorrowTracker`**。⇒ `MorphApplySystem` 的 `type Writes = ()` 与它写 `Path` 并不矛盾（组件写根本不进任何声明），`BindingApplySystem` 同理。「把声明改对」无法执行，真正动作是**新增组件级访问声明机制**——超出摸底批量级，转下一批（触发条件：需要静态判定"哪些组件被谁写"时，例如并行调度或结构指纹的写集推导）。 |
+| AR-02 | **P0-2：上一轮"通道常量 / 方法作者侧命名"主题的 20 文件补记** | 记账 | **已关闭（0）** | 实测该主题落在两个提交：`4c364e0`（12 文件，通道常量挂到脚本组件）+ `0cf5b2c`（18 文件，`Pod::methods` + 三语言绑定），并集 **27 文件**（含 `GAPS.md` / `xtask`）。两者已分别由 **AP-12 / AP-13** 记账并给出等价性证据（payload 逐字节不变），无需在 AR 段重复；本行只补交叉引用。 |
+| AR-03 | **P0-3：摸底参照基线（`*.explore-baseline`）** | scripts | **已关闭（0）** | 已复制 `crates/app/zela-app/scripts/structures.txt.explore-baseline` 与 `baselines.txt.explore-baseline`（SHA-256 与源文件一致：`EF8C6452…` / `D159E205…`）。实验前 `cargo verify --step coverage` = **55/55 使用、0 豁免**；实验后逐文件 `git checkout` 回滚，再跑 coverage（55/55）与 structure（双比对器 + 渲染指纹 + 能力指纹全绿）**逐位回到原状态**。 |
+| AR-04 | **端点普查：动画不是四份实现，是"每帧变量归谁"的两族 + 四条专用通路** | scene-core / ecs / render | **记账（2）** | 六处实测：① `channel`（值在 `Curve`，写字段，30 条 `TARGETS`）；② `MorphShape{t}` + `MorphApplySystem`（CPU，Headless 用）；③ `MorphShape{t}` + `MorphRecordSystem`（GPU：双 vertex buffer + `t` uniform，App 用，`shape_2d_morph.wgsl` 的 `mix(from,to,t)`）；④ `Reveal{start,end}` + `RevealRecordSystem`（沿弧长的区间，专属队列）；⑤ `PhaseAnim.phase` + `FunctionGraphRefreshSystem`（`zela-scene-ecs/src/geometry.rs`，每帧重采样并**覆盖写 `Path`**）；⑥ `Curve::PathMorph`（值域已实现、单测覆盖、**零接线**）。另有两处**非声明式**控制流常被误计入动画：`CameraDriveSystem`（绑定在位/让位）与 `CameraInputSystem`+`FpsView`（跨帧累积）。**修正计划口径**：`record_group::<S,A,B>` 实测 **18 处**（9 Viewport + 9 Content），计划写 20。 |
+| AR-05 | **「配置 / 游标」混装：3 个组件确认 + 另 3 类混装被计划漏掉** | scene-core | **记账（2）** | 确认 3 个：`PhaseAnim{omega=配置, phase=游标}`、`MorphShape{from/to/samples=配置, t=游标}`、`Reveal{path=配置, start/end=游标}`。计划的两分法漏掉三类：① **状态+配置**（`Camera3D{eye/target=状态, up/projection=配置}`）；② **累积状态**（`FpsView{yaw,pitch}`，不是 f(t)，见 AR-11）；③ **运行时字段**（`MeshGeometry.id` 是 GPU 缓存键，显式不进产物 W1-01）。⇒ 类型级标记若只做"配置/游标"两分，仍需第三、四类；**不建议**用命名约定，建议用「可写通道 = 只有游标与数据」这一条判据（与 `TARGETS` 现状一致：`from`/`to`/`path`/`func` 都不在表里）。 |
+| AR-06 | **值系统三套：`TypeSpec` 7 变体 / `Value` 7 变体 / `AnimValue` 5 变体，且 `zela.Path` 在投影层缺口** | ze-type / ze-comb / ze-time | **记账（2）** | `ze-type/src/ty.rs` 的 `TypeSpec` = Scalar/Struct/Enum/Array/Opaque/**Var**/**App**（7）；`ze-comb/src/program.rs` 的 `Value` = F64/I64/Bool/Text/Vec2/Vec3/Bytes（7）；`ze-time/src/curve.rs` 的 `AnimValue` = Scalar/Vec2/Vec3/Color/Path（5）。缺口逐项：`AnimValue::Color` 在 `Value` 无对应（`anim_to_value` 显式报 `UnsupportedValue{kind:"color"}`）；`Value::I64` 在 `AnimValue` 无对应（`anim_value` 返回 `None`，即"不可动画"）；`Path` 已双向迁移（`Value::Bytes{ty:"zela.Path"}` ↔ `AnimValue::Path`）。**关键缺口**：`ChannelType::from_type_spec`（`ze-comb/src/expr.rs`）只认 `zela.Vec2`/`zela.Vec3`，`zela.Path` 落到 `_ => None` ⇒ 即使给 `Path` 加了通道，脚本侧类型投影与声明文件仍会拒绝它（`ChannelType::Bytes` 已存在，缺的是一条映射臂）。 |
+| AR-07 | **E1 · `Path` 通道化：机制成立，但 `#[derive(Channels)]` 不可用，且单独转正会更糟** | ze-scene-macros / ze-scene-core | **记账（C 挂账）** | 实测两步：① 给 `Path` 加 `#[channel(path: Path2D)]` ⇒ **编译期 E0609**（`no field 'path' on type &mut Path`）——宏的写体是 `c.#field = v`，只能寻址**可命名字段**（`Circle.radius` 靠 `DerefMut` 进内层），元组组件没有可命名字段。② 改手写 `FieldSpec`（`try_path()` → `c.0 = path.clone()`，`TypeSpec::Struct{name:"zela.Path", layout:None}`）⇒ 编译通过，单测 `path_channel_writes_the_whole_geometry` **通过**（写回整条几何 + 读回 + 类型不符显式报错）。改动量：宏 `MappedKind` 加一臂 ≈28 行、手写规格 + 表项 ≈30 行。**但**：新 Target 立刻撞 `cargo verify --step coverage`（`Target:Path.path 没有被任何 manifest 作品使用`），且引入结构指纹盲区（AR-08）⇒ 回滚代码，结论挂账。触发条件：AR-06 的投影臂 + AR-08 的判据改造同批完成。 |
+| AR-08 | **E1/E4 · 结构指纹按 `AnimValue::Path` 排除 ⇒ 一旦 `Path` 可动画，摘要对几何失明** | zela-scene-ecs | **记账（C 挂账）** | 实测单测：同一世界两条半宽 1.0 / 3.0 的闭合路径，`derived_excluded == 1` 且 **`digest` 完全相同**（`path_read_endpoint_makes_geometry_invisible_to_the_digest`）。根因在 `fingerprint.rs::hash_anim_value` 的 `AnimValue::Path(_) => { byte(b'p'); 1 }`：它排除的是**变体**，不是"来源"。⇒ 判据必须改成「按来源排除派生几何」（作者给的静态 `Path` 进摘要、由 `flatten`/字形产出的不进）或给读端加"来源"标记；否则 Path 通道化会让回归网在几何层面留洞，只剩像素基线兜底。这条与 AQ-03 的跨设备承诺直接冲突，**必须与 E1 同批**。改名/加标记/加来源字段三条路线的成本本批未实测（未执行部分）。 |
+| AR-09 | **E2 · `PathMorph` 替代 `MorphShape`：值层逐位等价，像素层不成立** | ze-time / zela-scene-ecs / render-backends | **已关闭（B 负面结论）** | 值层实测（单测 `path_morph_curve_equals_the_cpu_fallback_bit_for_bit`）：`Curve::PathMorph` 与 `MorphShape + MorphApplySystem` 在 t ∈ {0, .25, .37, .5, .93, 1} 上产出**逐位相同**的 `Path2D`（同源于 `Path2D::morph_points` + `from_polyline(.., true)`）。像素层**必然不同**：App 走 GPU 形变（`MorphRecordSystem` → 双 buffer + `mix(from,to,t)`，几何帧间不变、零上传），CPU 路径是「每帧形变 → 重新三角化 → 重新上传」；`MorphApplySystem` 之所以在 App 里不注册（`morph.rs` 头注释）正是为此。⇒ 「用 `PathMorph` 消灭一份实现且像素逐位一致」**不成立**；等价替换会用**最热路径的性能**换机制统一。结论：端点可以进值域，但**必须保留一条"端点静态 ⇒ 渲染层降级为 GPU 形变"的路径**，否则是负优化。 |
+| AR-10 | **E3 · "morph = A、B 都不显示、显示差值" 命题前提与现状不符** | scene-core / zela-render | **未执行（C 挂账）** | 实测三条：① 现状 morph 的 A/B **不是显示对象**——`from`/`to` 是 `MorphShape` 的**字段**，作者写 `Morph{from,to}` 内联两条几何，场上只有一个对象 ⇒ "disable A + disable B + 第三条绑定"这条组合没有可作用的 A/B。② `Visibility{tags: Vec<VisibilityTag>}` 是**并集语义**且 `Global` tag 恒命中，无法承载"布尔开关"（`Vec` 也不在 `#[channel]` 类型白名单里）。③ `Reveal` 是**沿弧长**的参数区间（`start/end ∈ [0,1]`），不是布尔可见性；一条 bool 通道表达不了 `0..0.37`。⇒ 用户命题作为"morph 的实现机制"不成立；但 `Visible(bool)` 作为**独立的作者能力**（时间轴显隐）仍值得做：新组件 + `bool` 通道（宏已支持 bool）+ `visible_for` 单一闸口 4 行；注意 `Light` / `Arc<MeshGeometry>` 两条录制通路不经过 `visible_for`。本批未写代码（渲染层改动 + 像素影响需另批验证）。 |
+| AR-11 | **E5 · 累积动画：边界由现成反例证明，作者面接入未执行** | zela-scene-ecs / ze-comb | **未执行（C 挂账）** | 反例在仓内已存在：`CameraInputSystem` 用 `FpsView{yaw,pitch}` **跨帧累加**（`crates/scene/zela-scene-ecs/src/camera_input.rs` 的 `apply_fps` + 回写组件），它既不是 `f(t)` 也进不了 `BindingTable`；`CameraDriveSystem` 只能靠"把绑定移出表"来让位。表达式层 `NatRec`/`rec_prev` 三语言入口已就位（AP-10），但 **30 个脚本零使用**（实测 grep 0 命中），且 `seek_kind` 推导会把含 `NatRec` 的绑定记为 `Replay`。⇒ 「绑定表表达一切」的边界就是**有记忆的演化**：它需要"状态 + 步进"两个原语，绑定表只有"值 + 时间"。把 `nat_rec` 接到作者面（做一个"拖拽后继续漫游"）本批未做——它同时要回答与 `CameraDriveSystem` 让位机制的冲突，属独立批次。 |
+| AR-12 | **E6 · `{STRUCT}_CHANNELS` 消费：假设"拼接会打断门禁"不成立，真正的债换成了手工文件清单** | xtask / ze-scene-macros | **已关闭（B 负面结论）** | 实测：① 16 条 `#[channel]` **全部**已在 `TARGETS`（30 项里 16 项派生 + 14 项手写，其中 2 项复合），拼接今天**语义等价**、零行为变化。② 门禁**不会**因拼接失效：能力抽取有两条独立路径——`collect_targets`（解析 `target.rs` 源码的 `scalar_spec!` / `FieldSpec` 字面量）与 `collect_channel_capabilities`（解析各组件文件里的 `#[channel(...)]`），后者不依赖 `target.rs`。③ 真正的债：`xtask/src/main.rs::step_coverage` 里 `channel_files` 是**手工 4 文件**清单（`object/primitives.rs`、`object/camera.rs`、`components.rs`、`components/3d.rs`）⇒ 新组件把 `#[channel]` 写在别的文件里，覆盖门禁**静默漏检**（"漏了不红"）。修法：改成扫描 `crates/**/*.rs`（与 `collect_rs_files` 同源），成本小、收益是消掉这条静默失败。 |
+| AR-13 | **E7 / F-2 · 加组件 9 处：实测分类** | 全仓 | **未执行（3）** | 未走完"加一个完整组件"（建议的 `Disable` 与 E3 复用，本批未落地）。已用 E1 实测**加 Target** 这条路径：定义 1 处 + `TARGETS` 1 处即可，**只撞 coverage 1 处门禁**（报错点名 `target.rs:613`），脚本侧常量与地址由 `TARGETS` 自动派生（`channels()`）⇒ 计划里"第 3/4 处（Pod 包装 / register_component）"只对**组件**成立，对**通道**不成立。按性质分类见报告 §F-2 表（可自动化 3/手工 4/可门禁化 2）。 |
+| AR-14 | **组件分类表（41 × 有无通道 × 该不该动画）** | scene-core / ze-scene-api | **已关闭（0）** | 按 `known_component_table!` 实测 **41** 个已登记类型；**16 条通道 / 9 个组件**（Circle 2、Arrow 4、Camera3D 1、Framing2D 2、Light 1、Material3D 2、MorphShape 1、PhaseAnim 1、Reveal 2）。无通道的 32 个按"该不该能动画"分四堆（类型白名单挡 / 值系统挡 / 本来不该 / 已在别处动画），逐项清单见报告 §C-2。**修正计划口径**：计划写"9 个有通道 / 16 条"正确，但把 `Camera2D` 当组件计数——它是**派生视图**（`Framing2D::to_camera_2d` 现算），登记表里有名字、世界里没有存储实例。 |
+| AR-15 | **结构性债务四项（与动画专题同因）** | xtask / macros / schedule | **记账（2）** | ① `{STRUCT}_CHANNELS`：宏生成 9 个数组、**零消费**（全仓仅宏文档与 `target.rs` 注释提到）。② 跨 crate 重名白名单实测 **35 条**（计划写 36），其中 **27 条是"同一概念两处定义"**（18 条 Pod 包装 vs 组件/契约、9 条绘制参数 vs 组件视图）。③ `CHANNEL_HOMES` 2 条（`Framing2D→Camera2D`、`MorphShape→Morph`）——存储组件 ≠ 脚本组件。④ 组件级借用检查缺失（见 AR-01）。这四条都指向同一件事：**"组件"与"脚本可见的名字"没有单一真源**。 |
+
+**AR 段小计**：已关闭 5（AR-02、AR-03、AR-09、AR-12、AR-14）· 部分关闭 0 · 记账 7（AR-01、AR-04、AR-05、AR-06、AR-07、AR-08、AR-15）· 未执行 3（AR-10、AR-11、AR-13）· 落档 0。
+
+---
+
+## AS. 文档工程升级批次（docs/ 目录与模块索引，2026-10-28）
+
+> 计划《文档工程升级执行计划_docs目录与模块索引》。本批是**文档 + 门禁**，不改生产行为。
+> 核心判据：会腐烂的（文件清单 / 依赖 / 行数 / API）自动生成 + 漂移 fail；不会腐烂的（职责 /
+> 边界 / 决策理由）才手写。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AS-01 | `architecture.json` **零消费者**且内容已漂移（仍登记不存在的 `ze-object` / `zela-scene`，缺 8 个真实 crate） | xtask / 文档 | **已关闭（0）** | 新增 `check_architecture`：`cargo metadata --no-deps` 与 `architecture.json` **双向**比对（登记了不存在的 / 漏登记 / 层路径不符 / 重复登记），并入 `cargo verify --step structure`。同批修正声明：补 `ze-comb` / `ze-func` / `ze-pod-func` / `zela-render-vector` / app 层四件 / 新增 web 层，删除已并入的 object 层，scene 层改为 6 个真实 crate。 |
+| AS-02 | `docs/` 不在文档检查范围：`root_markdown_docs()` 只扫仓库根 ⇒ 新文档反而零校验 | xtask | **已关闭（0）** | 改为 `repository_markdown_docs`（根 + `docs/**` 递归），锚点（`crate::Item` 存在性）与路径（`crates/...` 链接存在性）两条检查同时覆盖 `docs/`（主计划 6.4 / 6.5）。 |
+| AS-03 | 50 个 crate 零模块索引；46 个同名文件名 / 159 个文件无「crate 内怎么分工」文档 | 文档 / xtask | **已关闭（0）** | 新增 `xtask docs-gen`（零第三方依赖，自带极简 JSON 解析器）：生成 50 篇 `docs/modules/<crate>.md` 自动区（层 / 路径 / 生产依赖双向 / 文件清单 + 行数 + `//!` 首行 / 文件级 `use` 图 / 模块级 `pub` 项）。11 个重点 crate 手写四段；文件数 ≥ 15 的 4 个（`zela-scene-ecs` 24 / `zela-render-backends` 21 / `zela-render` 17 / `ze-pod-core` 16）与 `ze-scene-core`（41）在「运行机制」里回答了内部文件分工。 |
+| AS-04 | README 与 `docs/modules/` 双真源（33 个 crate 有 README，深度内容仍在 README） | 文档 | **记账（2）** | **5.3 已做**：32 个 crate README 的 H1 下各加一行 `docs/modules/<crate>.md` 指针（按目录层级算相对路径，逐条校验可解析；`crates/ze/graph/README.md` 是分组目录、无 Cargo.toml，跳过）。**5.1 未做**：深度内容仍在 README，同一事实可能两处各有一份；搬迁需逐篇核对归属，属独立一批。 |
+| AS-05 | 手写区必填段无门禁（模板占位也能"绿"） | xtask | **已关闭（0）** | `check_handwritten_sections`：`## 职责` 与 `## 边界与不做什么` 必须存在且非空；源文件数 ≥ 15 的 crate 另需 `## 运行机制`；占位文案 `（待补` 视为未填。并入 `--step structure`。 |
+| AS-06 | 上一批「通道常量 / 方法作者侧命名」主题是否未记账存疑（主计划 0.2） | 记账 | **已关闭（0）** | 核实 `GAPS AP-12`（通道常量挂错存储组件 ⇒ 三语言绑定静默丢弃）与 `AP-13`（方法没有作者面调用形态 ⇒ 只能手写 `expr.method{}`）均已收口并各带等价性证据（payload 逐字节相同），本批无需重复记账。 |
+
+**AS 段小计**：已关闭 5（AS-01、AS-02、AS-03、AS-05、AS-06）· 记账 1（AS-04）。
+
+---
+
+## AT. 文档工程升级补充批次（glossary 与 decisions，2026-10-28）
+
+> 补充计划《补充计划_docs术语表与决策记录》。判据：散文不可校验，**挂载点可以**。
+> 备忘录中的「未落地清单 / 下一阶段起点 / 关键原话」一律不搬，只留指向 `GAPS.md` 的指针。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AT-01 | 全仓零术语表 / 零决策记录；专有名词密度高但无 hub | 文档 | **已关闭（0）** | `docs/glossary.md` 87 条（每条必带 `- **代码锚点**：` 或 `- **锚点**：`）；`docs/decisions/` 8 篇（确定性谱系 / 计算内核双层 / 图灵完备边界 / Pass 架构 / 类型与反射 / 图基础设施 / 作者面 / 定位）+ README 索引。搬运时逐条按 `GAPS.md` 校验时效性（备忘录 §五「可观测性计划未执行」已过时，AQ 段已执行）。 |
+| AT-02 | 术语 / 决策无门禁 ⇒ 写了也守不住 | xtask | **已关闭（0）** | 7.1 复用 docs 锚点扫描；7.2 `check_glossary`；7.3–7.5 `check_decision`（状态 / 锚点 / 被谁取代 / 决策·理由·反例三段）；7.6 复用 `linked_crate_paths`；7.7 孤儿术语只告警且**恒打印计数**（0 条也打印）。全部并入 `--step structure`。 |
+| AT-03 | 补充计划写「备忘录 §七 共 7 条」，实际只有 5 条 | 文档 | **已关闭（0）** | 按实际搬运 5 条进 `CONTRIBUTING.md`「协作注意事项」；数字差 2 在此记账，**不猜补**（补两条编造纪律比少两条更糟）。 |
+| AT-04 | 备忘录 §四 / §五 未落地清单与下一阶段起点 | 文档 | **已关闭（0）** | `docs/README.md` 的「未落地项 / 下一阶段去哪看」只放指针（`GAPS.md` / `ARCHITECTURE.md` / `architecture.json`），无复制内容；决策记录里剩余缺口只写「见 GAPS 对应段」。 |
+
+**AT 段小计**：已关闭 4（AT-01、AT-02、AT-03、AT-04）。
 
 ---
 
@@ -1202,7 +1266,7 @@
 | zela-schedule | ECS 调度框架 | `Scheduler` / `Resource` / telemetry |
 | zela-render | 渲染抽象 | 绘制队列 / 三角化 / 视口 |
 | zela-render-backends | wgpu 后端 | 2D / 3D / 合成器 |
-| zela-render-vector | 矢量后端 | 移植自 manimgx（native-only） |
+| zela-render-vector | 矢量后端 | 移植自 manimgx；native 同步读回，wasm32 只开 `*_async`（B15） |
 | zela-egui | egui 前端 | 画面宿主 / 健康检查 |
 | zela-node-editor | 节点编辑器状态机 | 命中测试 / 布局 / undo |
 | zela-node-egui | 节点编辑器 egui 视图 | canvas / painter |
@@ -1220,8 +1284,8 @@
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AQ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AQ 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
+> （**D–AT**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AT 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
 
 | 类别 | 数量 |
 |---|---|

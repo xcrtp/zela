@@ -1,5 +1,7 @@
 # zela-scene-ecs
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-scene-ecs.md`](../../../docs/modules/zela-scene-ecs.md)。
+
 > **场景层的 ECS 实现**（B3-1d 起；原 `zela-scene`）。只装"实现"：
 > ① `Scene`（hecs 适配）/ 资源 / 延迟命令 / 生命周期；
 > ② 全部 System（`BindingApply` / `MorphApply` / `CameraDrive` / `DirectorAdvance` / …）；

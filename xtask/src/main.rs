@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use xtask::{
-    Baselines, Options, Step, apply_record, assert_attributed, load_baselines, rebind_dirty,
+    ArchLayer, Baselines, ModuleDocFacts, Options, Step, apply_record, architecture_layers,
+    assert_attributed, check_handwritten_sections, compare_architecture, load_baselines,
+    merge_module_doc, parse_json, rebind_dirty,
 };
 
 /// wasm gate 的 kernel 组（与 CI 名单逐字一致）。
@@ -58,9 +60,8 @@ const FACADE_CRATES: &[&str] = &["ze-pod", "ze-node", "zela"];
 /// 而 `ze-pod-js` 的存在理由正是"native 与 wasm 跑同一个 JS 引擎"（B3-P §一）——
 /// 不给它门禁，那条理由就没有回归保护（A1）。
 ///
-/// ⚠️ **native-only（不进任何 wasm 名单）**：`zela-render-vector` 依赖 `pollster` + wgpu
-/// 的同步构造，编不到 wasm32；把它加进上面的 kernel / facade 名单会得到一条难懂的
-/// 编译错误。它的正确性由 native 侧的 `zela-render-backends` 对拍覆盖（B4）。
+/// ⚠️ **不在下面的 wasm 名单里**：`zela-render-vector` 走 wgpu 同步构造（native），
+/// wasm32 侧只开异步回读（B15），由 `zela-web` 的构建覆盖；本名单只覆盖 kernel / facade 组。
 const OPTIONAL_WASM_CRATES: &[&str] = &["ze-pod-js"];
 
 /// 结构性判据 1：`crates/ze/pod/` 的生产依赖边不得出现任何 `zela-*`。
@@ -186,7 +187,7 @@ impl FeaturePlan {
                     "[xtask] 注意：zela-gui 的依赖边强制 zela-app 默认 features（含 pyo3），本机将跳过该 crate"
                 );
                 println!(
-                    "[xtask] 如需与 CI 完全一致（覆盖 zela-gui）：设置 PYO3_PYTHON（必要时连同 PYTHONHOME）指向 Python 3 解释器"
+                    "[xtask] 如需与 CI 完全一致（覆盖 zela-gui）：设置 PYO3_PYTHON 指向 Python 3（uv 托管：`uv python find 3.13`）"
                 );
             }
         }
@@ -213,6 +214,16 @@ fn probe_python(program: &str, prefix: &[&str]) -> bool {
 
 fn main() {
     let raw: Vec<String> = env::args().skip(1).collect();
+    // 文档工程升级（阶段 1）：`cargo run -p xtask -- docs-gen` 刷新 docs/modules/ 的自动区。
+    // 单列一个子命令（不走 `--step`），因为它**写盘**，而 `cargo verify` 只读 + 判定。
+    if raw.first().map(String::as_str) == Some("docs-gen") {
+        let result = repo_root().and_then(|root| run_docs_gen(&root));
+        if let Err(message) = result {
+            eprintln!("[xtask] 失败：{message}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let options = match Options::parse(&raw) {
         Ok(options) => options,
         Err(message) => {
@@ -236,6 +247,24 @@ fn run(options: &Options) -> Result<(), String> {
         return run_record(&root, options);
     }
     let plan = FeaturePlan::detect();
+    let steps = options.steps();
+
+    // **Python 门禁**（执行计划 AQ 之后）：check / test 必须覆盖 pyo3 绑定。
+    //
+    // 历史教训：`ze-pod-py` 的 `python` feature 默认关闭，门禁长期固定
+    // `--features typst` ⇒ `PyCFunction::new_closure` 的签名错误在本机一直没被编译过。
+    // 降级因此改为**显式**开关（`--allow-no-python`），默认直接失败。
+    let needs_python = steps
+        .iter()
+        .any(|step| matches!(step, Step::Check | Step::Test));
+    if needs_python && !plan.pyo3_available() && !options.allow_no_python {
+        return Err(
+            "未找到可用的 Python 3 解释器：cargo verify 默认必须覆盖 Python 绑定（pyo3）。\n  \
+             设置 PYO3_PYTHON 指向 Python 3（本机 uv 托管：`uv python find 3.13`）后重试；\n  \
+             确实要跳过（不推荐）：cargo verify --allow-no-python"
+                .to_string(),
+        );
+    }
 
     println!("[xtask] 仓库根：{}", root.display());
     plan.announce();
@@ -245,7 +274,6 @@ fn run(options: &Options) -> Result<(), String> {
         );
     }
 
-    let steps = options.steps();
     println!(
         "[xtask] 步骤：{}",
         steps
@@ -568,6 +596,65 @@ fn step_docs(root: &Path) -> Result<(), String> {
         "[xtask] 声明文件：{} 个文件，两次生成逐字节一致（生成物，未入库）",
         expected.len()
     );
+
+    // 文档工程升级（阶段 1 / 门禁 6.2 + 6.3）：模块文档自动区。
+    // 生成两次 → 逐字节比对（确定性）→ 与已提交 docs/modules 比对（漂移即 fail）。
+    let docs_base = root.join("target").join("docs-gen");
+    if docs_base.exists() {
+        remove_dir_all_robust(&docs_base)
+            .map_err(|error| format!("清理 {} 失败：{error}", docs_base.display()))?;
+    }
+    let docs_first = docs_base.join("a");
+    let docs_second = docs_base.join("b");
+    for dir in [&docs_first, &docs_second] {
+        fs::create_dir_all(dir)
+            .map_err(|error| format!("创建 {} 失败：{error}", dir.display()))?;
+        generate_module_docs(root, dir)?;
+    }
+    let first_docs = collect_files(&docs_first)?;
+    let second_docs = collect_files(&docs_second)?;
+    let mut doc_problems = Vec::new();
+    for (path, bytes) in &first_docs {
+        match second_docs.get(path) {
+            None => doc_problems.push(format!("第二次生成缺少：{path}")),
+            Some(other) if other != bytes => doc_problems.push(format!("两次生成不一致：{path}")),
+            Some(_) => {}
+        }
+    }
+    for path in second_docs.keys() {
+        if !first_docs.contains_key(path) {
+            doc_problems.push(format!("第二次生成多出：{path}"));
+        }
+    }
+    if !doc_problems.is_empty() {
+        return Err(format!(
+            "模块文档生成不确定（{} 项）：\n  {}",
+            doc_problems.len(),
+            doc_problems.join("\n  ")
+        ));
+    }
+
+    let mut drifted = Vec::new();
+    for (path, bytes) in &first_docs {
+        let committed = root.join("docs").join("modules").join(path);
+        match fs::read(&committed) {
+            Ok(existing) if &existing == bytes => {}
+            Ok(_) => drifted.push(path.clone()),
+            Err(_) => drifted.push(format!("{path}（未提交）")),
+        }
+    }
+    if !drifted.is_empty() {
+        return Err(format!(
+            "docs/modules 的自动区与生成结果不一致（{} 项）：\n  {}\n  \
+             修法：`cargo run -p xtask -- docs-gen` 后提交（手写区不会被覆盖）",
+            drifted.len(),
+            drifted.join("\n  ")
+        ));
+    }
+    println!(
+        "[xtask] 模块文档：{} 个文件，生成两次逐字节一致，且与已提交内容一致",
+        first_docs.len()
+    );
     Ok(())
 }
 
@@ -620,6 +707,522 @@ fn collect_files(dir: &Path) -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut out = BTreeMap::new();
     walk(dir, dir, &mut out)?;
     Ok(out)
+}
+
+// ─── 文档工程升级：workspace 索引 / 模块文档生成 / 门禁 ──────────────────────
+
+/// workspace 的 crate 索引：`name → 仓库相对路径` + 生产依赖边（dev-deps 不计）。
+struct WorkspaceIndex {
+    members: BTreeMap<String, String>,
+    production_deps: BTreeMap<String, Vec<String>>,
+}
+
+impl WorkspaceIndex {
+    fn downstream(&self, name: &str) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .production_deps
+            .iter()
+            .filter(|(_, deps)| deps.iter().any(|dep| dep == name))
+            .map(|(crate_name, _)| crate_name.clone())
+            .collect();
+        out.sort();
+        out
+    }
+}
+
+/// 读 `cargo metadata --no-deps`（不含外部依赖，只服务本仓 crate 的索引）。
+fn workspace_index(root: &Path) -> Result<WorkspaceIndex, String> {
+    let output = cargo_capture(
+        root,
+        &strings(&["metadata", "--format-version", "1", "--no-deps"]),
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo metadata 失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let json = parse_json(&text)?;
+    let packages = json
+        .get("packages")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "cargo metadata 缺少 `packages`".to_string())?;
+
+    let mut members = BTreeMap::new();
+    for package in packages {
+        let name = package
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| "cargo metadata 的 package 缺少 `name`".to_string())?;
+        let manifest = package
+            .get("manifest_path")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("cargo metadata 的 `{name}` 缺少 `manifest_path`"))?;
+        let dir = Path::new(manifest)
+            .parent()
+            .ok_or_else(|| format!("`{manifest}` 没有父目录"))?;
+        members.insert(name.to_string(), relative_path(root, dir)?);
+    }
+
+    let mut production_deps = BTreeMap::new();
+    for package in packages {
+        let name = package
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let mut deps = Vec::new();
+        if let Some(list) = package.get("dependencies").and_then(|value| value.as_array()) {
+            for dep in list {
+                // `kind` 缺省 / null = 生产依赖；"dev" / "build" 不计。
+                let kind = dep.get("kind");
+                if !matches!(kind, None | Some(xtask::Json::Null)) {
+                    continue;
+                }
+                if let Some(dep_name) = dep.get("name").and_then(|value| value.as_str()) {
+                    if members.contains_key(dep_name) {
+                        deps.push(dep_name.to_string());
+                    }
+                }
+            }
+        }
+        deps.sort();
+        deps.dedup();
+        production_deps.insert(name, deps);
+    }
+
+    Ok(WorkspaceIndex {
+        members,
+        production_deps,
+    })
+}
+
+/// 仓库相对路径（`/` 分隔，跨机一致）。
+fn relative_path(root: &Path, path: &Path) -> Result<String, String> {
+    let stripped = path
+        .strip_prefix(root)
+        .map_err(|error| format!("{} 不在仓库根下：{error}", path.display()))?;
+    Ok(stripped.to_string_lossy().replace('\\', "/"))
+}
+
+/// 读 `architecture.json` 的层声明。
+fn load_arch_layers(root: &Path) -> Result<Vec<ArchLayer>, String> {
+    let path = root.join("architecture.json");
+    let text =
+        fs::read_to_string(&path).map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+    let json = parse_json(&text).map_err(|error| format!("解析 architecture.json 失败：{error}"))?;
+    architecture_layers(&json)
+}
+
+/// `cargo run -p xtask -- docs-gen`：就地刷新 `docs/modules/<crate>.md` 的自动区。
+fn run_docs_gen(root: &Path) -> Result<(), String> {
+    let out = root.join("docs").join("modules");
+    let count = generate_module_docs(root, &out)?;
+    println!(
+        "[xtask] docs-gen：已刷新 {count} 个模块文档的自动区（{}）",
+        out.display()
+    );
+    println!(
+        "[xtask] 手写区（`## 职责` / `## 运行机制` / `## 边界与不做什么`）不会被改动；\
+         缺段由 `cargo verify --step structure` 判定"
+    );
+    Ok(())
+}
+
+/// 生成全部模块文档到 `out`（已提交的同名文件只替换自动区）。
+fn generate_module_docs(root: &Path, out: &Path) -> Result<usize, String> {
+    let index = workspace_index(root)?;
+    let layers = load_arch_layers(root)?;
+    fs::create_dir_all(out).map_err(|error| format!("创建 {} 失败：{error}", out.display()))?;
+    for crate_name in index.members.keys() {
+        let facts = collect_module_facts(root, &index, &layers, crate_name)?;
+        let committed = root
+            .join("docs")
+            .join("modules")
+            .join(format!("{crate_name}.md"));
+        let existing = fs::read_to_string(&committed).ok();
+        let text = merge_module_doc(existing.as_deref(), &facts)?;
+        let target = out.join(format!("{crate_name}.md"));
+        fs::write(&target, text).map_err(|error| format!("写入 {} 失败：{error}", target.display()))?;
+    }
+    Ok(index.members.len())
+}
+
+/// 收集单个 crate 的自动区事实。
+fn collect_module_facts(
+    root: &Path,
+    index: &WorkspaceIndex,
+    layers: &[ArchLayer],
+    crate_name: &str,
+) -> Result<ModuleDocFacts, String> {
+    let crate_path = index
+        .members
+        .get(crate_name)
+        .ok_or_else(|| format!("workspace 里没有 crate `{crate_name}`"))?
+        .clone();
+    let (layer, layer_path) = match layers
+        .iter()
+        .find(|layer| layer.crates.iter().any(|name| name == crate_name))
+    {
+        Some(layer) => (layer.name.clone(), layer.path.clone()),
+        None => ("（未登记）".to_string(), "（未登记）".to_string()),
+    };
+
+    let mut files = Vec::new();
+    let mut sources = Vec::new();
+    let src = root.join(&crate_path).join("src");
+    let mut paths = Vec::new();
+    collect_rs_files(&src, &mut paths)?;
+    paths.sort();
+    for path in paths {
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let relative = relative_path(&root.join(&crate_path), &path)?;
+        files.push((relative.clone(), text.lines().count(), first_module_doc_line(&text)));
+        sources.push((relative, text));
+    }
+
+    let module_map: BTreeMap<String, String> = sources
+        .iter()
+        .map(|(relative, _)| (module_path_of(relative), relative.clone()))
+        .collect();
+
+    let mut upstream = index
+        .production_deps
+        .get(crate_name)
+        .cloned()
+        .unwrap_or_default();
+    upstream.sort();
+
+    Ok(ModuleDocFacts {
+        crate_name: crate_name.to_string(),
+        layer,
+        layer_path,
+        crate_path,
+        upstream,
+        downstream: index.downstream(crate_name),
+        edges: module_edges(&sources, &module_map),
+        api: api_items(&sources),
+        files,
+    })
+}
+
+/// 文件开头的 `//!` 首行（没有 ⇒ `None`，**不编造**）。
+///
+/// 只看文件头连续的注释 / 属性区：一旦遇到第一行真实代码就停止。
+fn first_module_doc_line(text: &str) -> Option<String> {
+    for line in text.lines().take(40) {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("//!") {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                return Some(rest.to_string());
+            }
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
+            continue;
+        }
+        break;
+    }
+    None
+}
+
+/// `src/foo/bar.rs` → `foo::bar`；`src/foo/mod.rs` → `foo`；`src/lib.rs` → ``（根）。
+fn module_path_of(relative: &str) -> String {
+    let stem = relative
+        .strip_prefix("src/")
+        .unwrap_or(relative)
+        .trim_end_matches(".rs");
+    if stem == "lib" || stem == "main" {
+        return String::new();
+    }
+    let stem = stem.strip_suffix("/mod").unwrap_or(stem);
+    stem.replace('/', "::")
+}
+
+/// 在模块表里按**最长前缀**解析 `a::b::Item` 形态的路径。
+fn resolve_module_file(map: &BTreeMap<String, String>, segments: &[&str]) -> Option<String> {
+    for take in (1..=segments.len()).rev() {
+        let candidate = segments[..take].join("::");
+        if let Some(file) = map.get(&candidate) {
+            return Some(file.clone());
+        }
+    }
+    None
+}
+
+/// 文件级 `use` 边（`use crate::…` / `use super::…` / `use self::…`）。
+///
+/// 只认**单行** `use`（`use a::{b, c};` 这类分组形式跳过：按构造无法可靠拆解，
+/// 宁可少画一条边，也不编造）。
+fn module_edges(sources: &[(String, String)], map: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    let mut edges = std::collections::BTreeSet::new();
+    for (relative, text) in sources {
+        let owner = module_path_of(relative);
+        let owner_segments: Vec<&str> = owner.split("::").filter(|part| !part.is_empty()).collect();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix("use ") else {
+                continue;
+            };
+            if !rest.ends_with(';') || rest.contains('{') || rest.contains(" as ") {
+                continue;
+            }
+            let path = rest.trim_end_matches(';').trim();
+            let target = if let Some(tail) = path.strip_prefix("crate::") {
+                let segments: Vec<&str> = tail
+                    .split("::")
+                    .filter(|part| !part.is_empty() && *part != "self")
+                    .collect();
+                resolve_module_file(map, &segments)
+            } else if path.starts_with("super::") || path.starts_with("self::") {
+                let mut base: Vec<&str> = owner_segments.clone();
+                let mut rest = path;
+                while let Some(tail) = rest.strip_prefix("super::") {
+                    base.pop();
+                    rest = tail;
+                }
+                let rest = rest.strip_prefix("self::").unwrap_or(rest);
+                let mut segments = base;
+                segments.extend(
+                    rest.split("::")
+                        .filter(|part| !part.is_empty() && *part != "self"),
+                );
+                resolve_module_file(map, &segments)
+            } else {
+                None
+            };
+            if let Some(file) = target {
+                if &file != relative {
+                    edges.insert((relative.clone(), file));
+                }
+            }
+        }
+    }
+    edges.into_iter().collect()
+}
+
+/// 模块级 `pub` 项（只看**零缩进**行：impl 方法见源码，不把几百条方法塞进索引）。
+fn api_items(sources: &[(String, String)]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (relative, text) in sources {
+        for line in text.lines() {
+            if line.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let is_item = ["pub struct ", "pub enum ", "pub trait ", "pub fn "]
+                .iter()
+                .any(|prefix| line.starts_with(prefix));
+            if !is_item {
+                continue;
+            }
+            let summary = line
+                .split('{')
+                .next()
+                .unwrap_or(line)
+                .trim_end()
+                .trim_end_matches(';')
+                .trim_end();
+            out.push((relative.clone(), summary.to_string()));
+        }
+    }
+    out
+}
+
+/// **门禁 0.1**：`architecture.json` 与 `cargo metadata` 双向比对。
+fn check_architecture(root: &Path, index: &WorkspaceIndex) -> Result<(), String> {
+    let layers = load_arch_layers(root)?;
+    let problems = compare_architecture(&layers, &index.members);
+    if !problems.is_empty() {
+        return Err(format!(
+            "architecture.json 与 workspace 不一致（{} 项）：\n  {}",
+            problems.len(),
+            problems.join("\n  ")
+        ));
+    }
+    println!(
+        "[xtask] OK: architecture.json 与 {} 个 crate 双向一致",
+        index.members.len()
+    );
+    Ok(())
+}
+
+/// **门禁 6.1**：每个 crate 必须有 `docs/modules/<crate>.md`；多余文件同样失败。
+fn check_module_doc_coverage(root: &Path, index: &WorkspaceIndex) -> Result<(), String> {
+    let dir = root.join("docs").join("modules");
+    let mut missing = Vec::new();
+    for name in index.members.keys() {
+        if !dir.join(format!("{name}.md")).is_file() {
+            missing.push(name.clone());
+        }
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "以下 crate 缺少模块文档（新增 crate 必须建 `docs/modules/<crate>.md`）：{}",
+            missing.join(", ")
+        ));
+    }
+    let mut orphans = Vec::new();
+    let entries =
+        fs::read_dir(&dir).map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("遍历 {} 失败：{error}", dir.display()))?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default();
+        if !index.members.contains_key(stem) {
+            orphans.push(format!("{stem}.md"));
+        }
+    }
+    if !orphans.is_empty() {
+        orphans.sort();
+        return Err(format!(
+            "docs/modules/ 里有不对应任何 crate 的文档（改名或删除后没清理）：{}",
+            orphans.join(", ")
+        ));
+    }
+    println!(
+        "[xtask] OK: docs/modules 覆盖 {} 个 crate",
+        index.members.len()
+    );
+    Ok(())
+}
+
+/// **门禁 6.6**：手写区必填段（`## 职责` / `## 边界与不做什么`；文件数 ≥ 15 的 crate
+/// 还必须有 `## 运行机制`）。
+fn check_module_doc_sections(root: &Path, index: &WorkspaceIndex) -> Result<(), String> {
+    let mut problems = Vec::new();
+    for (name, crate_path) in &index.members {
+        let path = root.join("docs").join("modules").join(format!("{name}.md"));
+        let text =
+            fs::read_to_string(&path).map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+        let mut files = Vec::new();
+        collect_rs_files(&root.join(crate_path).join("src"), &mut files)?;
+        problems.extend(check_handwritten_sections(&text, name, files.len() >= 15));
+    }
+    if !problems.is_empty() {
+        return Err(format!(
+            "模块文档手写区不合格（{} 项）：\n  {}",
+            problems.len(),
+            problems.join("\n  ")
+        ));
+    }
+    println!(
+        "[xtask] OK: {} 个模块文档的手写区齐备（大 crate 含「运行机制」）",
+        index.members.len()
+    );
+    Ok(())
+}
+
+// ─── 补充计划：docs/glossary.md 与 docs/decisions/ 的门禁（7.2–7.7） ─────────
+
+/// **门禁 7.2 / 7.7**：术语条目必须带锚点；孤儿术语（代码 + GAPS + 其他 docs 里
+/// 零出现）**打印警告但不阻断**（术语可以先于实现登记，但必须可见）。
+fn check_docs_glossary(root: &Path) -> Result<(), String> {
+    let path = root.join("docs").join("glossary.md");
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+    let problems = xtask::check_glossary(&text);
+    if !problems.is_empty() {
+        return Err(format!(
+            "docs/glossary.md 不合格（{} 项）：\n  {}",
+            problems.len(),
+            problems.join("\n  ")
+        ));
+    }
+    let entries = xtask::glossary_entries(&text);
+
+    // 孤儿检测的语料：本仓 `.rs` + `GAPS.md` + 其他 `docs/**`（不含术语表自身）。
+    let mut corpus = String::new();
+    let mut files = Vec::new();
+    collect_rs_files(&root.join("crates"), &mut files)?;
+    for file in files {
+        if let Ok(body) = fs::read_to_string(&file) {
+            corpus.push_str(&body);
+        }
+    }
+    if let Ok(body) = fs::read_to_string(root.join("GAPS.md")) {
+        corpus.push_str(&body);
+    }
+    for document in repository_markdown_docs(root)? {
+        if document == path {
+            continue;
+        }
+        if let Ok(body) = fs::read_to_string(&document) {
+            corpus.push_str(&body);
+        }
+    }
+
+    let mut orphans = Vec::new();
+    for entry in &entries {
+        // 只按术语名做子串计数：这是**提示性**判据，不做词边界（宁可多报，不漏报）。
+        if !corpus.contains(&entry.term) {
+            orphans.push(entry.term.clone());
+        }
+    }
+    println!(
+        "[xtask] OK: docs/glossary.md {} 条术语，全部带锚点",
+        entries.len()
+    );
+    println!(
+        "[xtask] 孤儿术语告警（代码 + GAPS + 其他 docs 零出现）：{} 条",
+        orphans.len()
+    );
+    for term in &orphans {
+        println!("  [glossary][warn] `{term}`");
+    }
+    Ok(())
+}
+
+/// **门禁 7.3 / 7.4 / 7.5**：每篇决策记录都必须有状态 / 锚点 / 取代者字段与三段正文。
+fn check_decisions(root: &Path) -> Result<(), String> {
+    let dir = root.join("docs").join("decisions");
+    let entries =
+        fs::read_dir(&dir).map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?;
+    let mut problems = Vec::new();
+    let mut count = 0usize;
+    for entry in entries {
+        let path = entry
+            .map_err(|error| format!("遍历 {} 失败：{error}", dir.display()))?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if name == "README.md" {
+            continue;
+        }
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+        let scope = format!("docs/decisions/{name}");
+        problems.extend(xtask::check_decision(&text, &scope));
+        count += 1;
+    }
+    if count == 0 {
+        return Err("docs/decisions/ 里没有任何决策记录（README.md 不算）".to_string());
+    }
+    if !problems.is_empty() {
+        return Err(format!(
+            "决策记录不合格（{} 项）：\n  {}",
+            problems.len(),
+            problems.join("\n  ")
+        ));
+    }
+    println!("[xtask] OK: {count} 篇决策记录的状态 / 锚点 / 三段正文齐备");
+    Ok(())
 }
 
 // ─── step: check ────────────────────────────────────────────────────────────
@@ -1097,7 +1700,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
-        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.",
+        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.", "## AR.",
+        "## AS.", "## AT.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1140,7 +1744,10 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("AN-")
                     || id.starts_with("AO-")
                     || id.starts_with("AP-")
-                    || id.starts_with("AQ-"));
+                    || id.starts_with("AQ-")
+                    || id.starts_with("AR-")
+                    || id.starts_with("AS-")
+                    || id.starts_with("AT-"));
             if !is_item {
                 continue;
             }
@@ -1211,8 +1818,9 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// **文档锚点**校验（B12 Step 0.3 起）：`crate::mod::Item` 形式的引用必须有定义，
-/// markdown 链接里的 `crates/...` 路径必须存在（B19 Step 2 加路径，PA Step 4 扩域）。
+/// **锚点校验判据**（B12 Step 0.3 起，`check_anchor_token` / `check_gaps_anchors` 共用）：
+/// `crate::mod::Item` 形式的引用必须有定义，markdown 链接里的 `crates/...` 路径必须存在
+/// （B19 Step 2 加路径，PA Step 4 扩域，文档工程升级扩到 `docs/`）。
 ///
 /// - 只查**存在性**，不查语义（"常量还在但缺口已关闭"是 `verified` 字段的事，不归这里）；
 /// - 只校验首段是**本仓 crate**（`crates/**/Cargo.toml` 的 name，`-`/`_` 等价）的锚点；
@@ -1231,6 +1839,40 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
 /// `WASM_PORT_SURVEY.md` **显式排除**（历史探测快照，路径漂移是它本来就该保留的信息；
 /// 文件头有可见声明 ⇒ 排除是响亮的，不是静默的）。含 `...` 的路径按构造不可解析，
 /// 不参与定位，但会**打印出来**让人决定是改成真实路径还是改写表述。
+/// 单个 crate 限定锚点：首段必须对应本仓 crate、末段必须在其 `src/**` 里有定义。
+///
+/// 返回 `Ok(false)` 表示"不是 crate 限定引用"（不参与定位，也不算通过）。
+fn check_anchor_token(
+    token: &str,
+    crates: &[(String, PathBuf)],
+    scope: &str,
+) -> Result<bool, String> {
+    let head = token.split("::").next().unwrap_or_default();
+    let normalized = head.replace('_', "-");
+    let Some((_, dir)) = crates.iter().find(|(name, _)| *name == normalized) else {
+        if head.starts_with("ze_") || head.starts_with("zela_") {
+            return Err(format!(
+                "{scope} 锚点 `{token}`：crate `{head}` 不在本仓（改名或已删除？）"
+            ));
+        }
+        return Ok(false);
+    };
+    let last = token
+        .rsplit("::")
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches("()");
+    if !ident_exists_in(&dir.join("src"), last)? {
+        return Err(format!(
+            "{scope} 锚点 `{token}`：在 {} 的 src/ 里找不到符号 `{last}`（改名或已删除？）",
+            dir.display()
+        ));
+    }
+    Ok(true)
+}
+
+/// **文档锚点**校验（B12 Step 0.3 起）：crate 限定符号 + `crates/...` 路径存在性。
+/// 判据说明见上方 `check_anchor_token` 的文档注释与函数体内的注释。
 fn check_gaps_anchors(root: &Path) -> Result<(), String> {
     let mut crates: Vec<(String, PathBuf)> = Vec::new();
     collect_crates(&root.join("crates"), &mut crates)?;
@@ -1239,36 +1881,39 @@ fn check_gaps_anchors(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("读取 GAPS.md 失败：{error}"))?;
     let mut checked = 0usize;
     for token in backticked_anchor_tokens(&text) {
-        let mut segments = token.split("::");
-        let head = segments.next().unwrap_or_default();
-        let normalized = head.replace('_', "-");
-        let Some((_, dir)) = crates.iter().find(|(name, _)| *name == normalized) else {
-            if head.starts_with("ze_") || head.starts_with("zela_") {
-                return Err(format!(
-                    "GAPS 锚点 `{token}`：crate `{head}` 不在本仓（改名或已删除？）"
-                ));
-            }
-            continue;
-        };
-        let last = token
-            .rsplit("::")
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches("()");
-        if !ident_exists_in(&dir.join("src"), last)? {
-            return Err(format!(
-                "GAPS 锚点 `{token}`：在 {} 的 src/ 里找不到符号 `{last}`（改名或已删除？）",
-                dir.display()
-            ));
+        if check_anchor_token(&token, &crates, "GAPS")? {
+            checked += 1;
         }
-        checked += 1;
     }
     println!("[xtask] GAPS 锚点：{checked} 条 crate 限定引用全部有定义");
+
+    // 门禁 6.5（文档工程升级）：`docs/**` 里的 crate 限定语义锚点同样必须能找到定义。
+    // 生成的自动区只有 `pub struct Foo` 这种**不带 `::`** 的形态，不会误触；
+    // 手写区若写 `crate::mod::Item`，就必须是真符号（与 GAPS 同一判据）。
+    let mut docs_checked = 0usize;
+    let docs_root = root.join("docs");
+    for document in repository_markdown_docs(root)? {
+        // 符号锚点只查 GAPS（记账约定）与 `docs/**`（入门文档）。仓库根的工作文档
+        // （`spec.md` / `tasks.md` / 摸底报告）是过程记录，允许保留历史 crate 名；
+        // 它们的**路径**仍由下面的链接检查覆盖。
+        if !document.starts_with(&docs_root) {
+            continue;
+        }
+        let scope = relative_path(root, &document)?;
+        let body = fs::read_to_string(&document)
+            .map_err(|error| format!("读取 {} 失败：{error}", document.display()))?;
+        for token in backticked_anchor_tokens(&body) {
+            if check_anchor_token(&token, &crates, &scope)? {
+                docs_checked += 1;
+            }
+        }
+    }
+    println!("[xtask] docs 锚点：{docs_checked} 条 crate 限定引用全部有定义");
 
     let mut linked = 0usize;
     let mut missing: Vec<String> = Vec::new();
     let mut abbreviated: Vec<String> = Vec::new();
-    for document in root_markdown_docs(root)? {
+    for document in repository_markdown_docs(root)? {
         let name = document
             .file_name()
             .and_then(|name| name.to_str())
@@ -1345,12 +1990,12 @@ fn abbreviated_crate_paths(text: &str) -> Vec<String> {
     out
 }
 
-/// 仓库根目录的 `.md` 文档（按文件名排序）。
+/// 仓库内参与文档检查的 `.md`：根目录 + `docs/**`（文档工程升级后，`docs/` 才是主入口）。
 ///
 /// `WASM_PORT_SURVEY.md` **显式排除**：它是历史探测快照，路径漂移是它本来就该保留的信息。
 /// 该文件头部有一行可见声明（"本报告为历史快照，文中路径可能已漂移…"），所以这个排除
 /// 是**响亮**的；静默排除等于又造一个"看起来全绿"的门禁（PA-02）。
-fn root_markdown_docs(root: &Path) -> Result<Vec<PathBuf>, String> {
+fn repository_markdown_docs(root: &Path) -> Result<Vec<PathBuf>, String> {
     const EXCLUDED: &[&str] = &["WASM_PORT_SURVEY.md"];
     let mut out = Vec::new();
     let entries =
@@ -1370,8 +2015,30 @@ fn root_markdown_docs(root: &Path) -> Result<Vec<PathBuf>, String> {
         }
         out.push(path);
     }
+    let docs = root.join("docs");
+    if docs.is_dir() {
+        collect_markdown_files(&docs, &mut out)?;
+    }
     out.sort();
     Ok(out)
+}
+
+/// 递归收集目录下的 `.md`。
+fn collect_markdown_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries =
+        fs::read_dir(dir).map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("遍历 {} 失败：{error}", dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_markdown_files(&path, out)?;
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// 递归收集 `crates/**/Cargo.toml` 的 `name` → crate 目录。
@@ -1634,6 +2301,15 @@ fn step_structure(root: &Path) -> Result<(), String> {
     check_gaps_subtotals(root)?;
     // B12 Step 0.3：GAPS 里的 crate 限定语义锚点必须能在源码里找到定义。
     check_gaps_anchors(root)?;
+    // 文档工程升级（2026-10-28）：architecture.json 有消费者 + 模块文档覆盖 / 手写区。
+    // 这三条不依赖 jq，先跑。
+    let index = workspace_index(root)?;
+    check_architecture(root, &index)?;
+    check_module_doc_coverage(root, &index)?;
+    check_module_doc_sections(root, &index)?;
+    // 补充计划：术语表 / 决策记录（7.2–7.5；7.7 只告警）。
+    check_docs_glossary(root)?;
+    check_decisions(root)?;
     let jq_available = Command::new("jq")
         .arg("--version")
         .stdout(Stdio::null())

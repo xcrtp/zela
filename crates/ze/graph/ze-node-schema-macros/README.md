@@ -1,5 +1,7 @@
 # ze-node-schema-macros
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-node-schema-macros.md`](../../../../docs/modules/ze-node-schema-macros.md)。
+
 > **`ze-node-schema` 的过程宏支撑**。
 > 提供 `#[derive(NodeSpec)]`（配合 `#[node(...)]` 与 `#[property(...)]`
 > 属性），零样板地生成 `Node + NodeSpec + Default` 三个 impl 以及

@@ -7,14 +7,14 @@
       "path": "crates/kernel",
       "prefix": "ze-",
       "description": "纯计算/数据，无 egui/渲染/领域依赖；ze-prerender 属例外——kernel 层唯一的重 crate，重型引擎依赖必须 feature-gated",
-      "crates": ["ze-type", "ze-reflect", "ze-graph-core", "ze-notion", "ze-render-ir", "ze-scene-contract", "ze-time", "ze-content", "ze-prerender", "ze-vertex", "ze-resource", "ze-macro"]
+      "crates": ["ze-type", "ze-reflect", "ze-graph-core", "ze-notion", "ze-render-ir", "ze-scene-contract", "ze-time", "ze-content", "ze-prerender", "ze-comb", "ze-func", "ze-vertex", "ze-resource", "ze-macro"]
     },
     {
       "name": "pod",
       "path": "crates/ze/pod",
       "prefix": "ze-",
-      "description": "领域无关的 Pod 层。核心组（ze-pod-core / ze-pod-binding / ze-pod-macro）平台无关、必须过 wasm gate；语言适配器组（ze-pod-lua / ze-pod-py）依赖 mlua / pyo3，不得进 wasm gate。ze-pod-tests 是测试专用 crate（publish = false，不进 wasm gate、不被生产依赖）。全部生产依赖均不含任何 zela-*",
-      "crates": ["ze-pod-core", "ze-pod-binding", "ze-pod-macro", "ze-pod-lua", "ze-pod-py", "ze-pod-tests", "ze-pod"],
+      "description": "领域无关的 Pod 层。核心组（ze-pod-core / ze-pod-binding / ze-pod-macro）平台无关、必须过 wasm gate；函子库组（ze-pod-func，只依赖 ze-func）；语言适配器组（ze-pod-lua / ze-pod-py / ze-pod-js）中的 lua / py 依赖 mlua / pyo3，不进 wasm gate（ze-pod-js 例外，单独进 wasm gate）。ze-pod-tests 是测试专用 crate（publish = false，不进 wasm gate、不被生产依赖）。全部生产依赖均不含任何 zela-*",
+      "crates": ["ze-pod-core", "ze-pod-binding", "ze-pod-macro", "ze-pod-func", "ze-pod-lua", "ze-pod-py", "ze-pod-js", "ze-pod-tests", "ze-pod"],
       "subgroups": [
         {
           "name": "core",
@@ -28,10 +28,16 @@
           "reason": "只聚合 core + binding + macro；不含 lua / py，保持 wasm32"
         },
         {
+          "name": "function-library",
+          "crates": ["ze-pod-func"],
+          "wasm_gate": true,
+          "reason": "zela.math 函子库：只依赖 ze-func 组合子内核（S3）"
+        },
+        {
           "name": "language-adapters",
-          "crates": ["ze-pod-lua", "ze-pod-py"],
+          "crates": ["ze-pod-lua", "ze-pod-py", "ze-pod-js"],
           "wasm_gate": false,
-          "reason": "mlua 需要 C 工具链；pyo3 需要系统 Python"
+          "reason": "mlua 需要 C 工具链；pyo3 需要系统 Python；ze-pod-js 单独进 wasm gate（见 OPTIONAL_WASM_CRATES）"
         },
         {
           "name": "tests",
@@ -40,13 +46,6 @@
           "reason": "测试 / 基准专用（publish = false）；被它依赖不等于生产边"
         }
       ]
-    },
-    {
-      "name": "object",
-      "path": "crates/object",
-      "prefix": "ze-",
-      "description": "场景对象层（M3）：用户可见的场景对象（图元 newtype / 相机 / 变换）；只依赖 kernel，禁止依赖任何 zela-*",
-      "crates": ["ze-object"]
     },
     {
       "name": "graph",
@@ -72,9 +71,9 @@
     {
       "name": "scene",
       "path": "crates/scene",
-      "prefix": "zela-",
-      "description": "场景层：ECS 场景数据（Scene / 组件）+ 场景 System + UI↔场景 domain 契约 + Pod domain（SceneApi / ContentApi）；不依赖任何渲染后端",
-      "crates": ["zela-scene"]
+      "prefix": "ze-/zela-",
+      "description": "场景层：场景核心（组件 / 动画 target 表 / 对象几何）+ 场景 Pod 能力层 + 场景派生宏 + ECS 契约 / 实现 + 产物与输入流；不依赖任何渲染后端",
+      "crates": ["ze-scene-core", "ze-scene-macros", "ze-scene-api", "ze-scene-hecs", "zela-scene-ecs", "zela-scene-bundle"]
     },
     {
       "name": "render",
@@ -83,7 +82,8 @@
       "description": "渲染抽象（trait / 队列 / 三角化）+ 具体后端实现（场景层已归位到 crates/scene/）",
       "crates": [
         "zela-render",
-        "zela-render-backends"
+        "zela-render-backends",
+        "zela-render-vector"
       ]
     },
     {
@@ -102,8 +102,15 @@
       "name": "app",
       "path": "crates/app",
       "prefix": "zela-",
-      "description": "应用组装层（唯一可执行入口）",
-      "crates": ["zela-app"]
+      "description": "应用组装层（唯一可执行入口）+ 内置作品 / 回放 / GUI 宿主 / 编译入口",
+      "crates": ["zela-app", "zela-authored", "zela-playback", "zela-gui", "zela-compile"]
+    },
+    {
+      "name": "web",
+      "path": "crates/web",
+      "prefix": "zela-",
+      "description": "浏览器（wasm）门面：只做装配与入口导出，不含业务",
+      "crates": ["zela-web"]
     },
     {
       "name": "zela",

@@ -1,5 +1,7 @@
 # ze-node-core
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-node-core.md`](../../../../docs/modules/ze-node-core.md)。
+
 > **节点编辑器核心 trait 层（纯接口）**。
 > 定义"世界长什么样"——值类型、Socket、Edge、Node、Graph、执行上下文——
 > **不绑定任何具体算法、存储策略或 UI 后端**。

@@ -1,5 +1,7 @@
 # ze-vertex
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-vertex.md`](../../../docs/modules/ze-vertex.md)。
+
 > **顶点格式契约** — 只声明「顶点长什么样」，不生产数据。
 > 零 wgpu 依赖，可编译到 `wasm32`。
 

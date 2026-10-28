@@ -1,5 +1,7 @@
 # ze-graph-eval
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-graph-eval.md`](../../../../docs/modules/ze-graph-eval.md)。
+
 > 为 `ze-node-core` 提供的**求值策略**。默认实现 `LazyPullEval`
 > （反向依赖惰性求值 + 脏传播 + 错误恢复），以及 `DefaultExecContext` 作为
 > `ExecContext` trait 的具体承载。

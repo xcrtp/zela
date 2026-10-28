@@ -1,5 +1,7 @@
 # ze-pod-py
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-py.md`](../../../../docs/modules/ze-pod-py.md)。
+
 > **纯 Python 适配器**（pyo3，`python` feature 门控）。
 >
 > 生产依赖只有 `ze-pod-core` / `ze-pod-binding` / `ze-pod-macro`（+ 可选 `pyo3`）：

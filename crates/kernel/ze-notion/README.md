@@ -1,5 +1,7 @@
 # ze-notion
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-notion.md`](../../../docs/modules/ze-notion.md)。
+
 > **理念层（数学元语）** — zela 渲染框架的地基。零 trait object、零后端依赖，
 > 仅依赖 [`glam`](https://docs.rs/glam/0.33) 提供高性能 SIMD 友好的线性代数原语。
 >

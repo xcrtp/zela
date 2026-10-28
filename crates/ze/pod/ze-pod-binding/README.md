@@ -1,5 +1,7 @@
 # ze-pod-binding
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-binding.md`](../../../../docs/modules/ze-pod-binding.md)。
+
 > **语言无关的绑定驱动**。
 >
 > 把 capability 的 `calls()` 摊平成「函数 + 可达类型」，交给各语言适配器

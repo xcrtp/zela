@@ -1,5 +1,7 @@
 # ze-macro
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-macro.md`](../../../docs/modules/ze-macro.md)。
+
 > **zela 的过程宏支撑库**。当前提供 `#[derive(Transform2DInto)]`，
 > 为 `zela-scene::transform` 模块提供零样板的 2D 屏幕↔逻辑坐标转换派生。
 

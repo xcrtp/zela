@@ -1,5 +1,7 @@
 # ze-node-schema
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-node-schema.md`](../../../../docs/modules/ze-node-schema.md)。
+
 > **属性模型层**。位于 `ze-node-core`（纯节点内核）与 UI 层之间，提供：
 >
 > - `Property` / `PropertyValue` — UI 中立的参数字典（12 种常用变体）；

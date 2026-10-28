@@ -1,5 +1,7 @@
 # zela-render-backends
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-render-backends.md`](../../../docs/modules/zela-render-backends.md)。
+
 > **具体渲染后端实现**：wgpu 3D、wgpu 2D（S3-1，**唯一 2D 路径**）、eframe 集成、顶点契约翻译层。
 > **所有模块按 feature-gate 提供**，最终用户按需组合。
 >

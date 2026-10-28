@@ -1,5 +1,7 @@
 # zela-render
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-render.md`](../../../docs/modules/zela-render.md)。
+
 > **渲染 trait + 调度 + 资源管理层**。位于三层架构的中间层：
 >
 > ```text

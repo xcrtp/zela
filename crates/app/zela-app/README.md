@@ -1,5 +1,7 @@
 # zela-app
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-app.md`](../../../docs/modules/zela-app.md)。
+
 > **组装层**（无 UI）。把 `zela-scene / zela-render / zela-render-backends`
 > 提供的 System、Resource、Backend 按阶段装配成 GUI / headless 共用的 `Runtime`。
 > GUI 可执行壳在 `zela-gui`（依赖本 crate + `zela-egui`）；headless 入口是本 crate 的

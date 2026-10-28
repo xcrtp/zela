@@ -1,5 +1,7 @@
 # ze-pod-js
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-js.md`](../../../../docs/modules/ze-pod-js.md)。
+
 > **纯 JS 适配器**（boa 0.22，纯 Rust 引擎，无 C/C++ 依赖）。
 >
 > 生产依赖只有 `ze-pod-core` / `ze-pod-binding` / `boa_engine`：

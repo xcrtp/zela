@@ -1,5 +1,7 @@
 # ze-scene-contract
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-scene-contract.md`](../../../docs/modules/ze-scene-contract.md)。
+
 > **契约层** — 场景抽象：**身份 / 关系 / 样式描述符 / 场景读写契约**。
 > 上层（渲染管线、宿主 UI、场景对象层）只依赖本层；**具体 ECS（hecs）只出现在实现方 `zela-scene`**。
 

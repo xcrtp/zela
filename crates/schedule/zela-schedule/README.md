@@ -1,5 +1,7 @@
 # zela-schedule
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-schedule.md`](../../../docs/modules/zela-schedule.md)。
+
 > **通用的 ECS 调度框架 + Telemetry**（可观测性基础设施）。
 > 从场景层抽离出来的「与业务无关」的那一半：**只做「谁、按什么顺序、访问了什么」**，
 > 不知道任何场景 / 渲染 / UI 概念。

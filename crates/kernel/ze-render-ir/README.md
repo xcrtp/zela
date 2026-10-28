@@ -1,5 +1,7 @@
 # ze-render-ir
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-render-ir.md`](../../../docs/modules/ze-render-ir.md)。
+
 > **渲染 IR 层** — 2D 图元的**中间表示**：`Shape2D`（逻辑图元）+ `Style2D`（绘制样式）
 > + 样式组件 + 「对象 → IR」的降级 trait（`ToShape2D` / `ResolveStyle`）。
 > 只依赖理念层，可编译到 `wasm32`。

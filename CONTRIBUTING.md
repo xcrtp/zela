@@ -15,7 +15,9 @@
 3. 根 `Cargo.toml` 的 `[workspace].members` 追加路径
 4. 所有 `[dependencies]` 的 `path` 按跨层修正（同层 `../`，跨层 `../../layer/name`）
 5. `architecture.json` 对应层的 `crates` 数组追加 crate 名
-6. 跑完整校验（见下）
+6. 建 `docs/modules/<crate>.md`：写 `## 职责` 与 `## 边界与不做什么`（源文件数 ≥ 15 时还要写
+   `## 运行机制`），自动区由 `cargo run -p xtask -- docs-gen` 生成
+7. 跑完整校验（见下）
 
 ## 校验命令
 
@@ -40,9 +42,20 @@ cargo clippy --workspace --all-targets
 
 ## 文档引用
 
+- 入门文档入口（模块索引 / 术语表 / 决策记录 / 指南）→ `docs/README.md`
 - 架构总览 + 依赖图 + 合规校验 → `ARCHITECTURE.md`（自动生成区 + 手写设计说明）
-- 分层声明 → `architecture.json`（workspace 根）
+- 分层声明 → `architecture.json`（workspace 根；`cargo verify --step structure` 做双向比对）
 - 强制 CI → `.github/workflows/architecture.yml`
+
+## 协作注意事项
+
+> 以下 5 条来自本轮对话的教训（补充计划原写 7 条，实际只有 5 条；差额已在 GAPS `AT-03` 记账）。
+
+1. **计划文档必须实际写入文件**，不能只写回复。
+2. **数字要精确核实**（出现过「37 条数成 34」的学费；引用数字前重算）。
+3. **每阶段要可测试**：不依赖渲染、不依赖场景、不重录基线。
+4. **记账要诚实**：写理由而不是含糊带过；「部分关闭」不写成「已关闭」。
+5. **不确定就说不确定**；采信实跑记录时标明「无法复现」的部分。
 
 ## 批次收尾检查表（人工纪律）
 

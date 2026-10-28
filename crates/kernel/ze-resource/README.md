@@ -1,5 +1,7 @@
 # ze-resource
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-resource.md`](../../../docs/modules/ze-resource.md)。
+
 > **GPU 资源契约与缓存** — 只声明「资源怎么被标识、怎么被缓存、怎么被回收」，
 > **零依赖**（仅 `std`），不依赖任何后端。
 

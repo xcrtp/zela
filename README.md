@@ -9,6 +9,9 @@ Painter 抽象、egui UI overlay、3D 渲染层，以及语言无关的 Pod 边�
 > 前缀为 `xc-` / `xcal-`；2026-10 重命名为 `zela`，前缀改为 `ze-` /
 > `zela-`。代码、字符串、脚本与配置中不再出现旧前缀。
 
+> **入门文档**：模块索引（每个 crate 的职责 / 运行机制 / 边界）、术语表、决策记录与
+> 交叉主题指南见 [`docs/README.md`](docs/README.md)。缺口与未接线项看 [`GAPS.md`](GAPS.md)。
+
 ## Quick Start
 
 > 目标：**5 分钟内看到第一个 mp4**。命令都在仓库根目录执行。

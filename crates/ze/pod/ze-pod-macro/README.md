@@ -1,5 +1,7 @@
 # ze-pod-macro
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-macro.md`](../../../../docs/modules/ze-pod-macro.md)。
+
 > **`ze-pod-core` 的过程宏支撑**。
 > 提供 `#[capability]`（把「函数集合」struct 变成运行时协商出的 typed 句柄）
 > 与 `#[derive(PodType)]`（类型定义 → `TypeSpec` + 双向转换）。

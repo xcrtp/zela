@@ -1,5 +1,7 @@
 # zela-egui
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-egui.md`](../../../docs/modules/zela-egui.md)。
+
 > **UI 适配层**：`EguiSceneHost` 是 egui 与场景之间的**唯一**适配层——把每帧 egui
 > 输入翻译为 `SceneEvent`、绘制面板 chrome、写 `ViewRect`、提交 2D/3D 内容。
 > 本 crate **不再注册任何场景 System**（坐标轴 / 函数图刷新、时间与参数面板事件消费

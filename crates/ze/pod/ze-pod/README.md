@@ -1,5 +1,7 @@
 # ze-pod
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod.md`](../../../../docs/modules/ze-pod.md)。
+
 zela 的 Pod 层统一入口。
 
 聚合三个平台无关的 crate：

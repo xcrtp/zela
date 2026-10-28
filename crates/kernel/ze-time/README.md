@@ -1,5 +1,7 @@
 # ze-time
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-time.md`](../../../docs/modules/ze-time.md)。
+
 > **纯逻辑时间内核** — 时钟树 + 动画曲线 + Director（导演）。
 > 零渲染 / 零 ECS / 零 UI 依赖；全部求值为**纯函数**，全部状态可序列化。
 

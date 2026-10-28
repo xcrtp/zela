@@ -24,10 +24,19 @@ pub const USAGE: &str = "\
                              # 上一槽 commit、轮换 slotA/slotB、写 device 行
   cargo verify --rebind      # 把 `@ <sha>+dirty` 归因到当前 HEAD（提交后立刻跑）
 
+文档（写盘，不走 --step）：
+  docs-gen                   # 刷新 docs/modules/<crate>.md 的自动区（手写区不动）；
+
 对拍选项：
   --skip-baseline            # 只断言 --script == --bundle，不比对基线
                              # （用于无匹配 GPU 的 CI；会显式打印，不静默）
   --independent              # 走**独立进程**对拍（B9 批量模式的对照组，诊断用）
+
+Python 门禁（执行计划 AQ 之后）：
+  --allow-no-python          # 允许在无 Python 解释器时降级为
+                             # --no-default-features --features typst。
+                             # **默认不允许**：check / test 必须覆盖 pyo3 绑定，
+                             # 否则 Python 那条路径会长期「没编译过」（AQ-09 的教训）。
 
 录制选项（仅录制设备可执行）：
   --record                   # 重录 baselines.txt（需设 ZELA_RECORD_DEVICE，见报错提示）
@@ -102,6 +111,13 @@ pub struct Options {
     pub rebind: bool,
     /// B9 Step 3：对拍走**独立进程**路径（批量模式的对照组，长期保留用于诊断）。
     pub independent: bool,
+    /// 无 Python 解释器时是否允许降级。
+    ///
+    /// 默认 `false`：`check` / `test` **必须**覆盖 pyo3 绑定。历史教训：
+    /// `ze-pod-py` 的 `python` feature 默认关闭，门禁固定 `--features typst`
+    /// ⇒ 那段代码长期没被编译过（`PyCFunction::new_closure` 签名错误直到手动
+    /// 打开默认 features 才暴露）。要降级必须显式说。
+    pub allow_no_python: bool,
     pub reason: Option<String>,
 }
 
@@ -113,6 +129,7 @@ impl Options {
         let mut record = false;
         let mut rebind = false;
         let mut independent = false;
+        let mut allow_no_python = false;
         let mut reason = None;
         let mut index = 0;
         while index < raw.len() {
@@ -123,6 +140,7 @@ impl Options {
                 "--record" => record = true,
                 "--rebind" => rebind = true,
                 "--independent" => independent = true,
+                "--allow-no-python" => allow_no_python = true,
                 "--reason" => {
                     index += 1;
                     let value = raw
@@ -184,6 +202,7 @@ impl Options {
             record,
             rebind,
             independent,
+            allow_no_python,
             reason,
         })
     }
@@ -1794,5 +1813,651 @@ pub fn check_dispositions(
         }
     }
     Ok((covered, exempted))
+}
+
+// ─── 文档工程升级（2026-10-28）：architecture.json 消费方 + 模块文档自动区 ────
+//
+// 设计约束与 xtask 其余部分一致：**零第三方依赖** ⇒ 自带一个只够用的 JSON 解析器。
+// 这一组函数只做纯字符串 / 数据变换；读盘与起 `cargo metadata` 留在 `main.rs`。
+
+/// 极简 JSON 值。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Json {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<Json>),
+    Object(Vec<(String, Json)>),
+}
+
+impl Json {
+    pub fn get(&self, key: &str) -> Option<&Json> {
+        match self {
+            Json::Object(entries) => entries.iter().find(|(name, _)| name == key).map(|(_, value)| value),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Json::String(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&[Json]> {
+        match self {
+            Json::Array(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub fn is_null(&self) -> bool {
+        matches!(self, Json::Null)
+    }
+}
+
+/// 解析 JSON（只支持 RFC 8259 的常规子集：`architecture.json` 与 `cargo metadata` 够用）。
+pub fn parse_json(text: &str) -> Result<Json, String> {
+    let mut parser = JsonParser {
+        bytes: text.as_bytes(),
+        index: 0,
+    };
+    let value = parser.value()?;
+    parser.skip_whitespace();
+    if parser.index != parser.bytes.len() {
+        return Err(format!("JSON 尾部有多余内容（偏移 {}）", parser.index));
+    }
+    Ok(value)
+}
+
+struct JsonParser<'a> {
+    bytes: &'a [u8],
+    index: usize,
+}
+
+impl JsonParser<'_> {
+    fn skip_whitespace(&mut self) {
+        while matches!(
+            self.bytes.get(self.index),
+            Some(b' ') | Some(b'\n') | Some(b'\r') | Some(b'\t')
+        ) {
+            self.index += 1;
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.index).copied()
+    }
+
+    fn value(&mut self) -> Result<Json, String> {
+        self.skip_whitespace();
+        match self.peek() {
+            None => Err("JSON 意外结束".to_string()),
+            Some(b'{') => self.object(),
+            Some(b'[') => self.array(),
+            Some(b'"') => self.string().map(Json::String),
+            Some(b't') => self.literal("true", Json::Bool(true)),
+            Some(b'f') => self.literal("false", Json::Bool(false)),
+            Some(b'n') => self.literal("null", Json::Null),
+            Some(_) => self.number(),
+        }
+    }
+
+    fn literal(&mut self, word: &str, value: Json) -> Result<Json, String> {
+        if self.bytes[self.index..].starts_with(word.as_bytes()) {
+            self.index += word.len();
+            Ok(value)
+        } else {
+            Err(format!("JSON 无法识别的字面量（偏移 {}）", self.index))
+        }
+    }
+
+    fn object(&mut self) -> Result<Json, String> {
+        self.index += 1; // '{'
+        let mut entries = Vec::new();
+        self.skip_whitespace();
+        if self.peek() == Some(b'}') {
+            self.index += 1;
+            return Ok(Json::Object(entries));
+        }
+        loop {
+            self.skip_whitespace();
+            let key = self.string()?;
+            self.skip_whitespace();
+            if self.peek() != Some(b':') {
+                return Err(format!("JSON 对象缺少 `:`（偏移 {}）", self.index));
+            }
+            self.index += 1;
+            let value = self.value()?;
+            entries.push((key, value));
+            self.skip_whitespace();
+            match self.peek() {
+                Some(b',') => self.index += 1,
+                Some(b'}') => {
+                    self.index += 1;
+                    return Ok(Json::Object(entries));
+                }
+                _ => return Err(format!("JSON 对象未闭合（偏移 {}）", self.index)),
+            }
+        }
+    }
+
+    fn array(&mut self) -> Result<Json, String> {
+        self.index += 1; // '['
+        let mut items = Vec::new();
+        self.skip_whitespace();
+        if self.peek() == Some(b']') {
+            self.index += 1;
+            return Ok(Json::Array(items));
+        }
+        loop {
+            items.push(self.value()?);
+            self.skip_whitespace();
+            match self.peek() {
+                Some(b',') => self.index += 1,
+                Some(b']') => {
+                    self.index += 1;
+                    return Ok(Json::Array(items));
+                }
+                _ => return Err(format!("JSON 数组未闭合（偏移 {}）", self.index)),
+            }
+        }
+    }
+
+    fn string(&mut self) -> Result<String, String> {
+        if self.peek() != Some(b'"') {
+            return Err(format!("JSON 期望字符串（偏移 {}）", self.index));
+        }
+        self.index += 1;
+        let mut out = String::new();
+        loop {
+            let byte = self
+                .peek()
+                .ok_or_else(|| "JSON 字符串意外结束".to_string())?;
+            self.index += 1;
+            match byte {
+                b'"' => return Ok(out),
+                b'\\' => {
+                    let escape = self
+                        .peek()
+                        .ok_or_else(|| "JSON 转义意外结束".to_string())?;
+                    self.index += 1;
+                    match escape {
+                        b'"' => out.push('"'),
+                        b'\\' => out.push('\\'),
+                        b'/' => out.push('/'),
+                        b'b' => out.push('\u{8}'),
+                        b'f' => out.push('\u{c}'),
+                        b'n' => out.push('\n'),
+                        b'r' => out.push('\r'),
+                        b't' => out.push('\t'),
+                        b'u' => {
+                            let code = self.hex4()?;
+                            out.push(char::from_u32(code).unwrap_or('\u{fffd}'));
+                        }
+                        other => return Err(format!("JSON 未知转义 `\\{}`", other as char)),
+                    }
+                }
+                _ => out.push(byte as char),
+            }
+        }
+    }
+
+    fn hex4(&mut self) -> Result<u32, String> {
+        let mut value = 0u32;
+        for _ in 0..4 {
+            let byte = self
+                .peek()
+                .ok_or_else(|| "JSON `\\u` 转义意外结束".to_string())?;
+            self.index += 1;
+            let digit = (byte as char)
+                .to_digit(16)
+                .ok_or_else(|| "JSON `\\u` 转义不是十六进制".to_string())?;
+            value = value * 16 + digit;
+        }
+        Ok(value)
+    }
+
+    fn number(&mut self) -> Result<Json, String> {
+        let start = self.index;
+        while matches!(
+            self.peek(),
+            Some(b'-') | Some(b'+') | Some(b'.') | Some(b'e') | Some(b'E') | Some(b'0'..=b'9')
+        ) {
+            self.index += 1;
+        }
+        if start == self.index {
+            return Err(format!("JSON 无法识别的值（偏移 {}）", self.index));
+        }
+        let text = std::str::from_utf8(&self.bytes[start..self.index])
+            .map_err(|error| format!("JSON 数字不是 UTF-8：{error}"))?;
+        text.parse::<f64>()
+            .map(Json::Number)
+            .map_err(|error| format!("JSON 数字解析失败：{error}"))
+    }
+}
+
+/// `architecture.json` 的一层。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchLayer {
+    pub name: String,
+    pub path: String,
+    pub crates: Vec<String>,
+}
+
+/// 读 `architecture.json` 的 `layers`（只取 `name` / `path` / `crates`）。
+pub fn architecture_layers(json: &Json) -> Result<Vec<ArchLayer>, String> {
+    let layers = json
+        .get("layers")
+        .and_then(Json::as_array)
+        .ok_or_else(|| "architecture.json 缺少 `layers` 数组".to_string())?;
+    let mut out = Vec::new();
+    for entry in layers {
+        let name = entry
+            .get("name")
+            .and_then(Json::as_str)
+            .ok_or_else(|| "architecture.json 的层缺少 `name`".to_string())?;
+        let path = entry
+            .get("path")
+            .and_then(Json::as_str)
+            .ok_or_else(|| format!("architecture.json 层 `{name}` 缺少 `path`"))?;
+        let crates = entry
+            .get("crates")
+            .and_then(Json::as_array)
+            .ok_or_else(|| format!("architecture.json 层 `{name}` 缺少 `crates` 数组"))?
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| format!("architecture.json 层 `{name}` 的 `crates` 里有非字符串项"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        out.push(ArchLayer {
+            name: name.to_string(),
+            path: path.to_string(),
+            crates,
+        });
+    }
+    Ok(out)
+}
+
+/// **门禁 0.1**：`architecture.json` 与 `cargo metadata` 的**双向**比对。
+///
+/// `members` 是 `crate 名 → 仓库相对路径`（用 `/` 分隔）。返回全部问题（空 = 通过）：
+/// - 登记了仓库里不存在的 crate（改名 / 删除后没同步）；
+/// - crate 实际目录不在它登记的层路径下（层放错了）；
+/// - workspace 里有 crate 没登记（新增时漏登记）；
+/// - 同一 crate 登记在两层。
+pub fn compare_architecture(
+    layers: &[ArchLayer],
+    members: &BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut registered: BTreeMap<&str, &str> = BTreeMap::new();
+    for layer in layers {
+        let prefix = format!("{}/", layer.path.trim_end_matches('/'));
+        for name in &layer.crates {
+            if let Some(previous) = registered.insert(name, &layer.name) {
+                problems.push(format!(
+                    "crate `{name}` 同时登记在层 `{previous}` 与 `{}`（一个 crate 只能在一层）",
+                    layer.name
+                ));
+            }
+            match members.get(name) {
+                None => problems.push(format!(
+                    "architecture.json 层 `{}` 登记了仓库里不存在的 crate `{name}`",
+                    layer.name
+                )),
+                Some(path) => {
+                    if !path.starts_with(&prefix) {
+                        problems.push(format!(
+                            "crate `{name}` 实际位于 `{path}`，但登记在层 `{}`（`{}`）",
+                            layer.name, layer.path
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    for (name, path) in members {
+        if !registered.contains_key(name.as_str()) {
+            problems.push(format!(
+                "workspace crate `{name}`（`{path}`）未在 architecture.json 任何层登记"
+            ));
+        }
+    }
+    problems.sort();
+    problems
+}
+
+/// 一个 crate 的模块文档事实（自动区的全部输入）。
+#[derive(Debug, Clone)]
+pub struct ModuleDocFacts {
+    pub crate_name: String,
+    pub layer: String,
+    pub layer_path: String,
+    pub crate_path: String,
+    pub upstream: Vec<String>,
+    pub downstream: Vec<String>,
+    /// `(相对路径, 行数, `//!` 首行)`
+    pub files: Vec<(String, usize, Option<String>)>,
+    /// 文件级 `use` 边 `(from, to)`
+    pub edges: Vec<(String, String)>,
+    /// 模块级 `pub` 项 `(相对路径, 签名摘要)`
+    pub api: Vec<(String, String)>,
+}
+
+pub const AUTO_BEGIN: &str = "<!-- AUTO:BEGIN -->";
+pub const AUTO_END: &str = "<!-- AUTO:END -->";
+
+fn escape_cell(text: &str) -> String {
+    text.replace('|', "\\|").trim().to_string()
+}
+
+/// 渲染自动区（`<!-- AUTO:BEGIN -->` … `<!-- AUTO:END -->`，含两端的标记）。
+///
+/// **确定性**：所有内容按固定顺序输出（文件 / 边 / API 都由调用方排序），
+/// 不含时间戳、绝对路径、机器名 —— 跨机生成必须逐字节一致。
+pub fn render_auto_region(facts: &ModuleDocFacts) -> String {
+    let mut out = String::new();
+    out.push_str(AUTO_BEGIN);
+    out.push_str("\n## 事实（自动生成）\n\n");
+    out.push_str(&format!(
+        "- 层：`{}`（`{}`）\n",
+        facts.layer, facts.layer_path
+    ));
+    out.push_str(&format!("- 路径：`{}`\n", facts.crate_path));
+    let upstream = if facts.upstream.is_empty() {
+        "（无）".to_string()
+    } else {
+        facts
+            .upstream
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join("、")
+    };
+    let downstream = if facts.downstream.is_empty() {
+        "（无）".to_string()
+    } else {
+        facts
+            .downstream
+            .iter()
+            .map(|name| format!("`{name}`"))
+            .collect::<Vec<_>>()
+            .join("、")
+    };
+    out.push_str(&format!("- 生产依赖（上游，dev-deps 不计）：{upstream}\n"));
+    out.push_str(&format!("- 被依赖（下游）：{downstream}\n"));
+    let total_lines: usize = facts.files.iter().map(|(_, lines, _)| lines).sum();
+    out.push_str(&format!(
+        "- 源文件：{} 个 · {total_lines} 行\n\n",
+        facts.files.len()
+    ));
+
+    out.push_str("### 文件清单\n\n");
+    out.push_str("| 文件 | 行数 | `//!` 首行 |\n|---|---|---|\n");
+    for (path, lines, doc) in &facts.files {
+        let doc = doc
+            .as_deref()
+            .map(escape_cell)
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| "—".to_string());
+        out.push_str(&format!("| `{path}` | {lines} | {doc} |\n"));
+    }
+    out.push('\n');
+
+    out.push_str("### 模块内关系（`use crate::…` / `use super::…`）\n\n");
+    if facts.edges.is_empty() {
+        out.push_str("（未解析到文件级 `use` 边）\n\n");
+    } else {
+        out.push_str("```mermaid\ngraph LR\n");
+        let mut index = BTreeMap::new();
+        for (from, to) in &facts.edges {
+            for path in [from, to] {
+                if !index.contains_key(path) {
+                    let id = format!("f{}", index.len());
+                    index.insert(path.clone(), id);
+                }
+            }
+        }
+        for (path, id) in &index {
+            out.push_str(&format!("    {id}[\"{path}\"]\n"));
+        }
+        for (from, to) in &facts.edges {
+            out.push_str(&format!(
+                "    {} --> {}\n",
+                index[from], index[to]
+            ));
+        }
+        out.push_str("```\n\n");
+    }
+
+    out.push_str("### 对外 API（模块级 `pub` 项；impl 方法见源码）\n\n");
+    if facts.api.is_empty() {
+        out.push_str("（未解析到模块级 `pub` 项）\n");
+    } else {
+        out.push_str("| 文件 | 项 |\n|---|---|\n");
+        for (path, item) in &facts.api {
+            out.push_str(&format!("| `{path}` | `{}` |\n", escape_cell(item)));
+        }
+    }
+    out.push_str(AUTO_END);
+    out
+}
+
+/// 新建模块文档的完整内容（自动区 + 手写区模板）。
+fn module_doc_shell(facts: &ModuleDocFacts, auto: &str) -> String {
+    format!(
+        "# {name}\n\n\
+         > **本文件的「事实（自动生成）」一节由 `cargo verify --step docs` 生成，勿手动编辑。**\n\
+         > 手写内容放在 `## 职责` 及之后的章节：生成器只替换自动区，手写区逐字节保留。\n\
+         > 导航与阅读顺序见 [`docs/README.md`](../README.md)。\n\n\
+         {auto}\n\n\
+         ## 职责\n\n（待补：一句话定位 + 它持有什么）\n\n\
+         ## 运行机制\n\n（待补：数据 / 控制怎么流过时；文件数 ≥ 15 的 crate 必须回答「内部文件怎么分工」）\n\n\
+         ## 边界与不做什么\n\n（待补：不得依赖什么 / 不得包含什么 / 看起来该它做但它不做的事及理由）\n",
+        name = facts.crate_name
+    )
+}
+
+/// 生成单个模块文档：已有文件**只替换自动区**，手写区逐字节保留。
+pub fn merge_module_doc(
+    existing: Option<&str>,
+    facts: &ModuleDocFacts,
+) -> Result<String, String> {
+    let auto = render_auto_region(facts);
+    let Some(text) = existing else {
+        return Ok(module_doc_shell(facts, &auto));
+    };
+    // 用 `rfind`：正文里可能引用标记文字（示例 / 说明），真正的自动区在文件后半段。
+    let begin = text.rfind(AUTO_BEGIN).ok_or_else(|| {
+        format!(
+            "docs/modules/{}.md 缺少 `{AUTO_BEGIN}` 标记（不许手工拼接自动区）",
+            facts.crate_name
+        )
+    })?;
+    let end = text
+        .find(AUTO_END)
+        .ok_or_else(|| {
+            format!(
+                "docs/modules/{}.md 缺少 `{AUTO_END}` 标记",
+                facts.crate_name
+            )
+        })?
+        .checked_add(AUTO_END.len())
+        .ok_or_else(|| "自动区标记偏移溢出".to_string())?;
+    if end < begin {
+        return Err(format!(
+            "docs/modules/{}.md 的自动区标记顺序颠倒",
+            facts.crate_name
+        ));
+    }
+    Ok(format!("{}{}{}", &text[..begin], auto, &text[end..]))
+}
+
+/// 手写区必填段检查（门禁 6.6）：`## 职责` 与 `## 边界与不做什么` 必须存在且非空；
+/// 源文件数 ≥ 15 的 crate 还必须有 `## 运行机制`。
+///
+/// 返回问题（空 = 通过）。占位文案 `（待补` 视为**未填**（模板不是内容）。
+pub fn check_handwritten_sections(text: &str, crate_name: &str, require_mechanism: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (heading, required) in [
+        ("## 职责", true),
+        ("## 运行机制", require_mechanism),
+        ("## 边界与不做什么", true),
+    ] {
+        if !required {
+            continue;
+        }
+        match section_body(text, heading) {
+            None => problems.push(format!(
+                "docs/modules/{crate_name}.md 缺少手写段 `{heading}`"
+            )),
+            Some(body) => {
+                let filled = body
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .any(|line| !line.starts_with("（待补"));
+                if !filled {
+                    problems.push(format!(
+                        "docs/modules/{crate_name}.md 的手写段 `{heading}` 还没填（不许留 `（待补` 占位）"
+                    ));
+                }
+            }
+        }
+    }
+    problems
+}
+
+/// markdown 二级标题下的正文（到下一个 `## ` 为止）。
+fn section_body<'a>(text: &'a str, heading: &str) -> Option<&'a str> {
+    let start = text.find(heading)?;
+    let after = &text[start + heading.len()..];
+    let end = after.find("\n## ").unwrap_or(after.len());
+    Some(&after[..end])
+}
+
+// ─── 补充计划：docs/glossary.md 与 docs/decisions/ 的门禁（7.2–7.5） ─────────
+
+/// 术语表的一条（`## 术语` + 正文）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlossaryEntry {
+    pub term: String,
+    pub body: String,
+}
+
+/// 解析术语表：二级标题即一条术语。
+pub fn glossary_entries(text: &str) -> Vec<GlossaryEntry> {
+    let mut out = Vec::new();
+    let mut current: Option<(String, String)> = None;
+    for line in text.lines() {
+        if let Some(term) = line.strip_prefix("## ") {
+            if let Some((term, body)) = current.take() {
+                out.push(GlossaryEntry { term, body });
+            }
+            current = Some((term.trim().to_string(), String::new()));
+            continue;
+        }
+        if let Some((_, body)) = current.as_mut() {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if let Some((term, body)) = current {
+        out.push(GlossaryEntry { term, body });
+    }
+    out
+}
+
+/// **门禁 7.2**：每条术语必须有 `- **代码锚点**：…` 或 `- **锚点**：…`，且内容非空。
+///
+/// 锚点本身的**存在性**由 `check_gaps_anchors` 的 docs 扫描负责（7.1），这里只管
+/// "有没有写锚点"这一层 —— 两件事分开，报错才指得准。
+pub fn check_glossary(text: &str) -> Vec<String> {
+    let entries = glossary_entries(text);
+    if entries.is_empty() {
+        return vec!["docs/glossary.md 没有任何 `## 术语` 条目".to_string()];
+    }
+    let mut problems = Vec::new();
+    for entry in entries {
+        let anchor = entry.body.lines().find_map(|line| {
+            let line = line.trim_start();
+            line.strip_prefix("- **代码锚点**：")
+                .or_else(|| line.strip_prefix("- **锚点**："))
+        });
+        match anchor {
+            None => problems.push(format!(
+                "术语 `{}` 没有锚点行（必须有 `- **代码锚点**：` 或 `- **锚点**：`）",
+                entry.term
+            )),
+            Some(value) if value.trim().is_empty() => problems.push(format!(
+                "术语 `{}` 的锚点行为空（裸术语不许进术语表）",
+                entry.term
+            )),
+            Some(_) => {}
+        }
+    }
+    problems
+}
+
+/// **门禁 7.3 / 7.4 / 7.5**：决策记录必须有状态 / 锚点 / 被谁取代三个字段，
+/// 且 `决策` / `理由` / `反例` 三段齐全；废弃类状态必须写明取代者。
+pub fn check_decision(text: &str, file: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let field = |prefix: &str| {
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix(prefix).map(str::trim))
+    };
+
+    let status = field("> **状态**：");
+    match status {
+        None => problems.push(format!("{file} 缺少 `> **状态**：` 行")),
+        Some(value) if value.is_empty() => {
+            problems.push(format!("{file} 的 `状态` 为空"));
+        }
+        Some(value) => {
+            if value.contains("已废弃") || value.contains("已被取代") {
+                match field("> **被谁取代**：") {
+                    None => problems.push(format!(
+                        "{file} 的状态是「{value}」，但缺少 `> **被谁取代**：` 行"
+                    )),
+                    Some(replacement) => {
+                        let replacement = replacement.trim_matches(|c: char| {
+                            c.is_whitespace() || c == '—' || c == '-' || c == '（' || c == '）'
+                        });
+                        if replacement.is_empty() || replacement.starts_with('若') {
+                            problems.push(format!(
+                                "{file} 的状态是「{value}」，但「被谁取代」为空（不许留空）"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    match field("> **锚点**：") {
+        None => problems.push(format!("{file} 缺少 `> **锚点**：` 行")),
+        Some(value) if value.is_empty() => problems.push(format!("{file} 的 `锚点` 为空")),
+        Some(_) => {}
+    }
+    for heading in ["## 决策", "## 理由", "## 反例"] {
+        match section_body(text, heading) {
+            None => problems.push(format!("{file} 缺少 `{heading}` 段")),
+            Some(body) => {
+                let filled = body
+                    .lines()
+                    .map(str::trim)
+                    .any(|line| !line.is_empty() && !line.starts_with("（待补"));
+                if !filled {
+                    problems.push(format!("{file} 的 `{heading}` 段为空"));
+                }
+            }
+        }
+    }
+    problems
 }
 
