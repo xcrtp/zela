@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`ze-pod-func`、`zela-scene-ecs`
-- 源文件：5 个 · 1579 行
+- 源文件：5 个 · 1708 行
 
 ### 文件清单
 
@@ -19,8 +19,8 @@
 |---|---|---|
 | `src/layout.rs` | 102 | **Layout / Codec 的门面**：实现已迁至 `ze-type`（纯代数）与 `ze-reflect`（运行时注册表）。 |
 | `src/lib.rs` | 37 | ze-func：**基础函子库**（namespace `zela.math`）。 |
-| `src/op.rs` | 468 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
-| `src/ops.rs` | 644 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
+| `src/op.rs` | 479 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
+| `src/ops.rs` | 762 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
 | `src/simplify.rs` | 328 | **符号化简**（阶段 4）：常量折叠 + **层间迁移**（离散层 → 连续层）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

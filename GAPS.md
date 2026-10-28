@@ -1241,9 +1241,9 @@
 
 | AU-10 | **W-A（值系统三套收敛）显式关闭** | ze-comb / ze-time | **记账（2）** | 计划 §3 判据 6 要求"W-A 显式关闭或显式说明理由"。本批的阶段 1/2 就是它的答案：`Value` 与 `TypeSpec` 已同构（`Scalar{ty,dim}` ↔ `Scalar` / `App`，文本与路径统一为 `Bytes + 命名类型`），`ChannelType` 是 `TypeSpec` 的降级视图（唯一投影点）。`AnimValue`（ze-time 的动画侧值）按计划 §5 明确**不在本批**，留待阶段 1/2 之后的独立评估。 |
 
-| AU-11 | **签名声明了向量重载，求值只吃标量**（`add` / `mul` / `scale` / `sum`） | ze-func | **记账（3）** | 实测：`add` / `mul` / `scale` / `sum` 的签名表里有 `Vector` 重载（`SAME_VEC` / `SCALE_VEC_*` / `SUM_VEC`），但 `eval` 一律走 `as_f64` ⇒ 装配期能通过类型推导、运行期报"第 N 个实参不是数值"。本批**不修**：补实现等于改语义（`changed` 必须 bump ⇒ 用到这些算子的 payload 会被点名拒绝），与本批"不重录基线"冲突；归入"值系统收敛之后的算子语义补齐"独立批次。 |
+| AU-11 | **签名声明了向量重载，求值只吃标量**（`add` / `mul` / `scale` / `sum`） | ze-func / app / scripts | **已关闭（收尾）** | 实现：`add` 同型逐分量；`scale` / `mul` 支持「向量 × 数」与「数 × 向量」两侧（**f32 域**，与向量分量同宽）；`sum` 同型累加（空序列仍是标量零元）；混型一律**显式失败**（不隐式提升、也不静默跳过）。这是**语义变更**（此前这些输入 100% 报错）⇒ 按纪律 bump `changed` 1 → 18（`since` 与签名不变），旧产物在加载时被点名拒绝。代价与证据：17 件作品的 ZSB payload 因 revision 记录变化而更新 `demo/manifest.txt` 哈希（`demo` 27 条断言重绿）；**像素 36/36 与结构指纹逐位不变**（渲染结果与 revision 无关）。用例：`vector_overloads_are_implemented`、`vector_overloads_landed_at_revision_18`。 |
 
-**AU 段小计**：已关闭 7（AU-01、AU-02、AU-03、AU-05、AU-06、AU-07、AU-08）· 部分关闭 1（AU-09）· 记账 3（AU-04、AU-10、AU-11）· 未执行 0 · 落档 0。
+**AU 段小计**：已关闭 8（AU-01、AU-02、AU-03、AU-05、AU-06、AU-07、AU-08、AU-11）· 部分关闭 1（AU-09）· 记账 2（AU-04、AU-10）· 未执行 0 · 落档 0。
 
 ---
 

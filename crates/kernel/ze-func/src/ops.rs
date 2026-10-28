@@ -94,23 +94,90 @@ pub fn cos(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     Ok(Value::f64(number(op, args, 0)?.cos()))
 }
 
-/// `add(a, b)`：数值加法（向量重载在签名表里，但求值仍是标量 —— 既有口径不变）。
+/// `add(a, b)`：同型加法（数值 / `Vec2` / `Vec3`）。
+///
+/// AU-11：签名表早就声明了 `SAME_VEC` 重载，但求值只吃标量 ⇒ 装配期能过、
+/// 运行期报错。现在两侧对齐：**同型才算**，混型是显式错误（不做隐式提升）。
 pub fn add(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::f64(number(op, args, 0)? + number(op, args, 1)?))
+    let a = args.first().ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    let b = args.get(1).ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    if let (Some(a), Some(b)) = (a.as_vec2(), b.as_vec2()) {
+        return Ok(Value::vec2([a[0] + b[0], a[1] + b[1]]));
+    }
+    if let (Some(a), Some(b)) = (a.as_vec3(), b.as_vec3()) {
+        return Ok(Value::vec3([a[0] + b[0], a[1] + b[1], a[2] + b[2]]));
+    }
+    if let (Some(a), Some(b)) = (a.as_f64(), b.as_f64()) {
+        return Ok(Value::f64(a + b));
+    }
+    Err(EvalError::op(
+        op,
+        "两个实参必须同型（数值 / Vec2 / Vec3；不做隐式提升）",
+    ))
 }
 
-/// `mul(a, b)`：数值 × 数值（既有口径：与 `scale` 同为标量乘法）。
+/// `mul(a, b)`：数值 × 数值 / 向量 × 数值 / 数值 × 向量。
 pub fn mul(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     scale(op, args)
 }
 
 /// `scale(k, of)`：`k` 在产物里是字面量叶子，这里只是普通乘法。
+///
+/// 向量侧按 **f32** 逐分量相乘（向量分量本来就是 f32，`AU-04` 的口径）。
 pub fn scale(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::f64(number(op, args, 0)? * number(op, args, 1)?))
+    let a = args.first().ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    let b = args.get(1).ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    if let (Some(vector), Some(k)) = (a.as_vec2(), b.as_f64()) {
+        let k = k as f32;
+        return Ok(Value::vec2([vector[0] * k, vector[1] * k]));
+    }
+    if let (Some(k), Some(vector)) = (a.as_f64(), b.as_vec2()) {
+        let k = k as f32;
+        return Ok(Value::vec2([vector[0] * k, vector[1] * k]));
+    }
+    if let (Some(vector), Some(k)) = (a.as_vec3(), b.as_f64()) {
+        let k = k as f32;
+        return Ok(Value::vec3([vector[0] * k, vector[1] * k, vector[2] * k]));
+    }
+    if let (Some(k), Some(vector)) = (a.as_f64(), b.as_vec3()) {
+        let k = k as f32;
+        return Ok(Value::vec3([vector[0] * k, vector[1] * k, vector[2] * k]));
+    }
+    if let (Some(a), Some(b)) = (a.as_f64(), b.as_f64()) {
+        return Ok(Value::f64(a * b));
+    }
+    Err(EvalError::op(
+        op,
+        "需要「数值 × 数值」或「向量 × 数值」（同型；不做隐式提升）",
+    ))
 }
 
-/// `sum(terms…)`：任意多项数值求和（空 ⇒ `0.0`）。
+/// `sum(terms…)`：任意多项**同型**求和（空 ⇒ `0.0`）。
+///
+/// `Vec2` / `Vec3` 按 f32 逐分量累加；混型是显式错误（不静默跳过）。
 pub fn sum(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    if args.is_empty() {
+        return Ok(Value::f64(0.0));
+    }
+    if args[0].as_vec2().is_some() {
+        let mut total = [0.0_f32; 2];
+        for index in 0..args.len() {
+            let v = vec2_arg(op, args, index)?;
+            total[0] += v[0];
+            total[1] += v[1];
+        }
+        return Ok(Value::vec2(total));
+    }
+    if args[0].as_vec3().is_some() {
+        let mut total = [0.0_f32; 3];
+        for index in 0..args.len() {
+            let v = vec3_arg(op, args, index)?;
+            total[0] += v[0];
+            total[1] += v[1];
+            total[2] += v[2];
+        }
+        return Ok(Value::vec3(total));
+    }
     let mut total = 0.0;
     for index in 0..args.len() {
         total += number(op, args, index)?;
@@ -482,6 +549,57 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::mix"));
+    }
+
+    /// **AU-11**：签名里声明的向量重载必须真有实现（同型才算，混型显式失败）。
+    #[test]
+    fn vector_overloads_are_implemented() {
+        let v2 = Value::vec2([1.0, 2.0]);
+        let w2 = Value::vec2([3.0, 4.0]);
+        assert_eq!(
+            eval(&math("add"), &[v2.clone(), w2]).unwrap(),
+            Value::vec2([4.0, 6.0])
+        );
+
+        let v3 = Value::vec3([1.0, 2.0, 3.0]);
+        assert_eq!(
+            eval(&math("add"), &[v3.clone(), Value::vec3([4.0, 5.0, 6.0])]).unwrap(),
+            Value::vec3([5.0, 7.0, 9.0])
+        );
+
+        // `mul` / `scale`：向量 × 数值 与 数值 × 向量 两侧都成立（f32 域）。
+        assert_eq!(
+            eval(&math("scale"), &[v2.clone(), Value::f64(2.0)]).unwrap(),
+            Value::vec2([2.0, 4.0])
+        );
+        assert_eq!(
+            eval(&math("mul"), &[Value::f64(0.5), v2.clone()]).unwrap(),
+            Value::vec2([0.5, 1.0])
+        );
+        assert_eq!(
+            eval(&math("scale"), &[Value::f64(2.0), v3.clone()]).unwrap(),
+            Value::vec3([2.0, 4.0, 6.0])
+        );
+        assert_eq!(
+            eval(&math("mul"), &[v3.clone(), Value::f64(0.5)]).unwrap(),
+            Value::vec3([0.5, 1.0, 1.5])
+        );
+
+        // `sum`：同型逐分量累加；空序列仍是标量零元（与 AU-11 之前的唯一形态一致）。
+        assert_eq!(
+            eval(&math("sum"), &[v2.clone(), v2.clone()]).unwrap(),
+            Value::vec2([2.0, 4.0])
+        );
+        assert_eq!(
+            eval(&math("sum"), &[v3.clone(), v3]).unwrap(),
+            Value::vec3([2.0, 4.0, 6.0])
+        );
+        assert_eq!(eval(&math("sum"), &[]).unwrap(), Value::f64(0.0));
+
+        // 混型 ⇒ 显式错误（不做隐式提升，也不静默跳过）。
+        assert!(eval(&math("add"), &[v2.clone(), Value::f64(1.0)]).is_err());
+        assert!(eval(&math("scale"), &[v2.clone(), v2]).is_err());
+        assert!(eval(&math("sum"), &[Value::vec2([1.0, 2.0]), Value::f64(1.0)]).is_err());
     }
 
     #[test]

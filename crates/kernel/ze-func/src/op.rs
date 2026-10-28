@@ -303,10 +303,10 @@ macro_rules! math_ops {
 math_ops! {
     sin: "zela.math.Sin", [UNARY_NUM], 1, 1;
     cos: "zela.math.Cos", [UNARY_NUM], 1, 1;
-    add: "zela.math.Add", [SAME_NUM, SAME_VEC], 1, 1;
-    mul: "zela.math.Mul", [SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT], 1, 1;
-    scale: "zela.math.Scale", [SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT], 1, 1;
-    sum: "zela.math.Sum", [SUM_NUM, SUM_VEC], 1, 1;
+    add: "zela.math.Add", [SAME_NUM, SAME_VEC], 1, 18;
+    mul: "zela.math.Mul", [SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT], 1, 18;
+    scale: "zela.math.Scale", [SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT], 1, 18;
+    sum: "zela.math.Sum", [SUM_NUM, SUM_VEC], 1, 18;
     mix: "zela.math.Mix", [MIX_NUM, MIX_VEC], 9, 9;
     clamp: "zela.math.Clamp", [CLAMP], 9, 9;
     vec2: "zela.math.Vec2Of", [TO_VEC2], 9, 9;
@@ -437,6 +437,17 @@ mod tests {
                 def.spec
             );
         }
+    }
+
+    /// `changed` 记录的是**语义最后一次变更**：`add` / `mul` / `scale` / `sum` 在
+    /// AU-11 补齐了签名早就声明的向量重载 ⇒ `changed = 18`（`since` 不变）。
+    #[test]
+    fn vector_overloads_landed_at_revision_18() {
+        assert_eq!(super::op_revision("add"), Some((1, 18)));
+        assert_eq!(super::op_revision("mul"), Some((1, 18)));
+        assert_eq!(super::op_revision("scale"), Some((1, 18)));
+        assert_eq!(super::op_revision("sum"), Some((1, 18)));
+        assert_eq!(super::op_revision("sin"), Some((1, 1)), "未改语义的算子不 bump");
     }
 
     /// 既有算子的 revision 与批次对应（1 = 追踪开始前、9 = 第 1 批、11 = 第 3 批、12 = 第 5a 批）。
