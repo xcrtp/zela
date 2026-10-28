@@ -71,8 +71,8 @@ pub mod walk;
 pub use analysis::{affected_consumers, reference_groups, shared_definitions, unreachable};
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use expr::{
-    ChannelRef, ChannelType, ClockLinkShape, ClockShape, Expr, ExprError, Id, Literal, MethodRef,
-    Node, OpRef,
+    ChannelClass, ChannelRef, ChannelType, ClockLinkShape, ClockShape, Expr, ExprError, Id,
+    Literal, MethodRef, Node, OpRef,
 };
 pub use graph_view::ExprGraphView;
 pub use iter::{ValueIter, ValueStream};
@@ -84,7 +84,7 @@ pub use program::{
     CompiledExpr, EvalError, Mono, RecCache, SCALAR_MAX_DIM, Scalar, Step, TEXT_TYPE, Value,
     ValueBytes, REC_MAX_STEPS, hash_values,
 };
-pub use reference::{ReferenceEvaluator, eval_reference};
+pub use reference::{ReferenceEvaluator, eval_reference, eval_reference_elements};
 pub use walk::ExprVisitor;
 
 /// 表达式 payload 的 schema 版本。

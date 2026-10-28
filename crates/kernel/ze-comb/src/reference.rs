@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::expr::{definitions, Expr, Node};
+use crate::expr::{definitions, ChannelClass, Expr, Node};
 use crate::program::{
     literal_value, value_kind, EvalError, Mono, Value, REC_MAX_STEPS,
 };
@@ -31,8 +31,28 @@ pub fn eval_reference(expr: &Expr, mono: &dyn Mono) -> Result<Value, EvalError> 
     let mut context = RefContext {
         memo: BTreeMap::new(),
         rec: None,
+        element: None,
     };
     eval_node(expr, &defs, &mut context, mono)
+}
+
+/// **阶段 5**：逐元素参考求值（与 `CompiledExpr::eval_elements` 对拍用）。
+pub fn eval_reference_elements(
+    expr: &Expr,
+    mono: &dyn Mono,
+    len: u32,
+) -> Result<crate::iter::ValueIter, EvalError> {
+    let defs = definitions(expr);
+    let mut items = Vec::with_capacity(len as usize);
+    for element in 0..len {
+        let mut context = RefContext {
+            memo: BTreeMap::new(),
+            rec: None,
+            element: Some(element),
+        };
+        items.push(eval_node(expr, &defs, &mut context, mono)?);
+    }
+    crate::iter::ValueIter::new(items)
 }
 
 /// 参考求值器的递归上下文（与 lowered 的 `EvalContext` 同构）。
@@ -40,6 +60,8 @@ struct RefContext {
     memo: BTreeMap<String, Value>,
     /// 当前 `NatRec.step` 的 `(上一步状态, 索引)`。
     rec: Option<(Value, i64)>,
+    /// **阶段 5**：当前元素下标（顶点 / 实例）。
+    element: Option<u32>,
 }
 
 fn eval_node<'a>(
@@ -56,7 +78,17 @@ fn eval_node<'a>(
 
     let value = match &expr.node {
         Node::Pure { value } => literal_value(value),
-        Node::Channel { channel } => mono.read(channel)?,
+        Node::Channel { channel } => match channel.class() {
+            ChannelClass::Element => {
+                let element = context
+                    .element
+                    .ok_or_else(|| EvalError::ElementContext {
+                        channel: channel.clone(),
+                    })?;
+                mono.read_element(channel, element)?
+            }
+            ChannelClass::Frame | ChannelClass::HostState => mono.read(channel)?,
+        },
         Node::Read { channel, object } => mono.read_object(channel, *object)?,
         Node::Method {
             method,
@@ -119,6 +151,8 @@ fn eval_node<'a>(
                 let mut step_context = RefContext {
                     memo: BTreeMap::new(),
                     rec: Some((state.clone(), index)),
+                    // 元素身份跨 fold 保持（与 lowered 同口径）。
+                    element: context.element,
                 };
                 let next = eval_node(step, defs, &mut step_context, mono)?;
                 if value_kind(&next) != state_kind {

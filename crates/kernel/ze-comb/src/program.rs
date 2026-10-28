@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 
 use ze_type::ScalarKind;
 
-use crate::expr::{ChannelRef, Expr, ExprError, Literal, MethodRef, Node, OpRef};
+use crate::expr::{ChannelClass, ChannelRef, Expr, ExprError, Literal, MethodRef, Node, OpRef};
 
 /// 标量 / 向量的**最多分量数**（`Vec4` 是当前上限）。
 pub const SCALAR_MAX_DIM: u8 = 4;
@@ -615,6 +615,17 @@ pub trait Mono {
             method: method.qualified(),
         })
     }
+
+    /// 读**某个元素**（顶点 / 实例）上的通道（阶段 5：元素身份）。
+    ///
+    /// 只有 [`ChannelClass::Element`] 的通道会走到这里（`uv` / `zela.vertex`）；
+    /// 默认实现**显式失败**（`MissingElementChannel`）—— 宿主没有逐元素数据源时
+    /// 不该静默返回 0。
+    fn read_element(&self, channel: &ChannelRef, _element: u32) -> Result<Value, EvalError> {
+        Err(EvalError::MissingElementChannel {
+            channel: channel.clone(),
+        })
+    }
 }
 
 /// 求值错误：显式、带算子来源（§7.6 的运行时对应物）。
@@ -689,6 +700,12 @@ pub enum EvalError {
     /// `Stream` 的层数与 `depth` 不一致（构造期就拒绝，不留"看起来对"的产物）。
     #[error("Stream 的层数 {levels} 与 depth {depth} 不一致")]
     StreamShape { depth: u32, levels: usize },
+    /// 逐元素通道出现在**没有元素上下文**的地方（只能经 `eval_elements` 求值）。
+    #[error("通道 `{channel}` 是逐元素通道，但当前没有元素上下文")]
+    ElementContext { channel: ChannelRef },
+    /// 宿主没有提供逐元素数据源（不静默返回 0）。
+    #[error("通道 `{channel}` 的逐元素值未由宿主注入")]
+    MissingElementChannel { channel: ChannelRef },
 }
 
 impl EvalError {
@@ -725,6 +742,8 @@ struct EvalContext {
     cache: Option<RecCache>,
     /// 是否允许读写缓存（子程序内关闭，避免污染）。
     cache_enabled: bool,
+    /// **阶段 5**：当前元素下标（顶点 / 实例）。只有 `eval_elements` 会设置它。
+    element: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -840,10 +859,32 @@ impl CompiledExpr {
             rec: None,
             cache: cache.take(),
             cache_enabled: true,
+            element: None,
         };
         let value = self.eval_with(mono, &mut context);
         *cache = context.cache;
         value
+    }
+
+    /// **阶段 5**：逐元素求值（每顶点 / 每实例）—— 结果是一个 [`ValueIter`]。
+    ///
+    /// 这是"per-vertex 变成对迭代器 map"的落地：元素身份由 `element` 下标给出，
+    /// [`ChannelClass::Element`] 的通道经 [`Mono::read_element`] 读取。
+    /// 没有逐元素通道的表达式同样可以逐元素求值（等价于广播）。
+    pub fn eval_elements(
+        &self,
+        mono: &dyn Mono,
+        len: u32,
+    ) -> Result<crate::iter::ValueIter, EvalError> {
+        let mut items = Vec::with_capacity(len as usize);
+        for element in 0..len {
+            let mut context = EvalContext {
+                element: Some(element),
+                ..EvalContext::default()
+            };
+            items.push(self.eval_with(mono, &mut context)?);
+        }
+        crate::iter::ValueIter::new(items)
     }
 
     fn eval_with(&self, mono: &dyn Mono, context: &mut EvalContext) -> Result<Value, EvalError> {
@@ -851,7 +892,16 @@ impl CompiledExpr {
         for step in &self.steps {
             let value = match step {
                 Step::Pure(literal) => literal_value(literal),
-                Step::Channel(channel) => mono.read(channel)?,
+                // 阶段 5：逐元素通道必须带着身份读；其余类别走 `read`（与阶段 5 之前一致）。
+                Step::Channel(channel) => match channel.class() {
+                    ChannelClass::Element => {
+                        let element = context.element.ok_or_else(|| EvalError::ElementContext {
+                            channel: channel.clone(),
+                        })?;
+                        mono.read_element(channel, element)?
+                    }
+                    ChannelClass::Frame | ChannelClass::HostState => mono.read(channel)?,
+                },
                 Step::Read { channel, object } => mono.read_object(channel, *object)?,
                 Step::Select { cond, then, r#else } => match values[*cond].as_bool() {
                     Some(true) => then.eval_with(mono, context)?,
@@ -889,7 +939,16 @@ impl CompiledExpr {
                     };
                     let (mut state, mut index) = match cached {
                         Some(cache) if cache.count <= count => (cache.value, cache.count),
-                        _ => (init.eval_with(mono, &mut EvalContext::default())?, 0),
+                        _ => (
+                            init.eval_with(
+                                mono,
+                                &mut EvalContext {
+                                    element: context.element,
+                                    ..EvalContext::default()
+                                },
+                            )?,
+                            0,
+                        ),
                     };
                     let state_kind = value_kind(&state);
                     while index < count {
@@ -901,6 +960,8 @@ impl CompiledExpr {
                             }),
                             cache: None,
                             cache_enabled: false,
+                            // 元素身份跨 fold 保持：逐顶点的递归仍然知道自己是第几个顶点。
+                            element: context.element,
                         };
                         let next = step.eval_with(mono, &mut step_context)?;
                         if value_kind(&next) != state_kind {
@@ -1719,5 +1780,122 @@ mod tests {
             err,
             EvalError::MissingComponent { object, .. } if object == 7
         ));
+    }
+
+    // ─── 阶段 5：元素身份（每顶点 / 每实例）─────────────────────────────
+
+    /// 逐元素宿主：`uv.position` 给出第 i 个顶点的 UV。
+    struct UvHost;
+
+    impl Mono for UvHost {
+        fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
+            Err(EvalError::MissingChannel {
+                channel: channel.clone(),
+            })
+        }
+        fn call(&self, op: &OpRef, _args: &[Value]) -> Result<Value, EvalError> {
+            Err(EvalError::op(op, "测试单子只提供逐元素通道".to_string()))
+        }
+        fn read_element(&self, channel: &ChannelRef, element: u32) -> Result<Value, EvalError> {
+            if channel.namespace == "uv" && channel.name == "position" {
+                Ok(Value::vec2([element as f32 / 10.0, 0.5]))
+            } else {
+                Err(EvalError::MissingElementChannel {
+                    channel: channel.clone(),
+                })
+            }
+        }
+    }
+
+    /// 分类判据是**地址的函数**（机器可检查）：三类的例子各钉一条。
+    #[test]
+    fn channels_are_classified_into_three_buckets() {
+        use crate::expr::ChannelClass;
+        assert_eq!(ChannelRef::builtin("time").class(), ChannelClass::Frame);
+        assert_eq!(ChannelRef::builtin("frame").class(), ChannelClass::Frame);
+        assert_eq!(
+            ChannelRef::new("uv", "position").class(),
+            ChannelClass::Element
+        );
+        assert_eq!(
+            ChannelRef::new("zela.vertex", "world").class(),
+            ChannelClass::Element
+        );
+        assert_eq!(
+            ChannelRef::new("zela.scene", "Circle.radius").class(),
+            ChannelClass::HostState
+        );
+        assert_eq!(
+            ChannelRef::builtin("event").class(),
+            ChannelClass::HostState,
+            "控制事件依赖宿主状态（进不了 shader）"
+        );
+    }
+
+    /// UV 通道按**元素下标**读出值；lowered 与参考求值器逐位一致。
+    #[test]
+    fn element_channels_read_with_identity() {
+        let expr = Expr::channel(ChannelRef::new("uv", "position"));
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let iter = program.eval_elements(&UvHost, 3).expect("逐元素可读");
+        assert_eq!(
+            iter.items(),
+            &[
+                Value::vec2([0.0, 0.5]),
+                Value::vec2([0.1, 0.5]),
+                Value::vec2([0.2, 0.5]),
+            ],
+            "元素身份存在：每顶点拿到自己的值"
+        );
+        assert_eq!(
+            crate::reference::eval_reference_elements(&expr, &UvHost, 3).unwrap(),
+            iter,
+            "参考求值器与 lowered 逐位一致"
+        );
+
+        // 没有元素上下文 ⇒ 显式失败（不是静默返回 0 / 第一个元素）。
+        assert_eq!(
+            program.eval(&UvHost).unwrap_err(),
+            EvalError::ElementContext {
+                channel: ChannelRef::new("uv", "position")
+            }
+        );
+    }
+
+    /// 宿主没有逐元素数据源 ⇒ `MissingElementChannel`（默认实现显式失败）。
+    #[test]
+    fn missing_element_source_is_explicit() {
+        struct NoElements;
+        impl Mono for NoElements {
+            fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
+                Err(EvalError::MissingChannel {
+                    channel: channel.clone(),
+                })
+            }
+            fn call(&self, op: &OpRef, _args: &[Value]) -> Result<Value, EvalError> {
+                Err(EvalError::op(op, "测试单子不实现 call".to_string()))
+            }
+        }
+
+        let expr = Expr::channel(ChannelRef::new("uv", "position"));
+        let program = CompiledExpr::compile(&expr).unwrap();
+        assert_eq!(
+            program.eval_elements(&NoElements, 1).unwrap_err(),
+            EvalError::MissingElementChannel {
+                channel: ChannelRef::new("uv", "position")
+            }
+        );
+    }
+
+    /// 不含逐元素通道的表达式逐元素求值 = **广播**（每帧通道对每个元素同值）。
+    #[test]
+    fn elementwise_evaluation_broadcasts_frame_channels() {
+        let expr = Expr::call(math("sin"), [Expr::channel(ChannelRef::builtin("time"))]);
+        let program = CompiledExpr::compile(&expr).unwrap();
+        let mono = ScalarMono::new(0.5, 0);
+        let iter = program.eval_elements(&mono, 3).unwrap();
+        assert_eq!(iter.len(), 3);
+        let expected = Value::f64(0.5_f64.sin());
+        assert!(iter.items().iter().all(|value| value == &expected));
     }
 }

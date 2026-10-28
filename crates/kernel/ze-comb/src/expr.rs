@@ -295,6 +295,27 @@ pub enum ChannelType {
     Bytes,
 }
 
+/// 通道的**求值类别**（阶段 5：为下游 codegen 铺路的三分法）。
+///
+/// 分类判据是**地址**（机器可检查，见 [`ChannelRef::class`]）：
+///
+/// | 类别 | 例子 | GPU 侧形态 |
+/// |---|---|---|
+/// | [`Frame`](Self::Frame) | `time` / `frame` | uniform（每帧一次） |
+/// | [`Element`](Self::Element) | `uv` / 世界坐标 | attribute（**需要元素身份**） |
+/// | [`HostState`](Self::HostState) | 组件字段 / 控制事件 | ❌ 进不了 shader |
+///
+/// 第三类是 codegen 的**真边界**：依赖宿主状态的表达式不能编译进 shader。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ChannelClass {
+    /// 每帧一次。
+    Frame,
+    /// 每顶点 / 每实例（求值需要元素身份，见 `CompiledExpr::eval_elements`）。
+    Element,
+    /// 需要宿主状态。
+    HostState,
+}
+
 impl ChannelType {
     /// 文档 / 诊断里的短名（`F64` / `I64` / `Bool` / `Vec2` / `Vec3` / `Bytes`）。
     pub const fn name(self) -> &'static str {
@@ -488,6 +509,22 @@ impl ChannelRef {
     /// 是否宿主基础通道（由 `Mono::read` 直接提供）。
     pub fn is_builtin(&self) -> bool {
         self.namespace.is_empty()
+    }
+
+    /// **求值类别**（阶段 5 的分类判据，机器可检查）。
+    ///
+    /// 判据只看**地址**（不看 `ty` 元数据，因为 `ty` 不进 payload）：
+    ///
+    /// - 空 namespace + `time` / `frame` ⇒ [`ChannelClass::Frame`]；
+    /// - `uv` / `zela.vertex` namespace ⇒ [`ChannelClass::Element`]（每顶点 / 每实例）；
+    /// - 其余（组件字段 `zela.scene::*`、控制事件 `event`、第三方 namespace）
+    ///   ⇒ [`ChannelClass::HostState`]。
+    pub fn class(&self) -> ChannelClass {
+        match self.namespace.as_str() {
+            "" if matches!(self.name.as_str(), "time" | "frame") => ChannelClass::Frame,
+            "uv" | "zela.vertex" => ChannelClass::Element,
+            _ => ChannelClass::HostState,
+        }
     }
 
     /// `namespace::name`（基础通道只写 name；带时钟身份时附 `@clock`）。
