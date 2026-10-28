@@ -1110,7 +1110,9 @@
 
 | AP-02 | **子阶段 A1：删脚本侧旧动画 API** | scene-api / app / xtask | **已关闭（A1）** | `SceneApi` 删除 `clip` / `clip_transform` / `animate` / `parallel` / `wait` 五个字段（`zela.scene` 11 → **12**，指纹重钉 `133_947_965_974_789_799`）；`scene_service` 删除 `Clip` / `ClipTarget` / `clips` 句柄表与五个注册/实现；`capability_exemptions.txt` 的 5 条 `scene:*` 一并清空（coverage 56/68 + 豁免 12）；仅存的两条使用方测试（`python_keyframes_curve_matches_lua` / `js_and_lua_produce_the_same_scene_script`）随 API 删除。Rust 侧 `SceneEncoder` / `Timeline` 旧接口与 `Name` 组件保留到 A3（脚本已不调用）。 |
 
-**AP 段小计**：已关闭 2（AP-01、AP-02）· 部分关闭 0 · 记账 0 · 未执行 0。
+| AP-03 | **子阶段 A2：删双 `Curve`** | scene-api / xtask | **已关闭（A2）** | 删除 `ze-scene-api::Curve`（脚本侧曲线枚举）及其 `to_native`、两条映射测试；`xtask` 能力抽取去掉 `Curve` 类别（`collect_capabilities` 不再要求该种类非空）；豁免再清 7 条 `Curve:*`（现 5 条：`TransformChannel` ×3 + `Target` ×2）。**全仓 `pub enum Curve` 只剩 `ze-time/src/curve.rs` 一处**（`Timeline`/`SceneEncoder` 一直用的是它，不受影响）。 |
+
+**AP 段小计**：已关闭 3（AP-01、AP-02、AP-03）· 部分关闭 0 · 记账 0 · 未执行 0。
 
 ---
 

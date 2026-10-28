@@ -13,15 +13,7 @@
 # · 该能力一旦被作品覆盖，这一行就会变成"豁免过期"⇒ 检查失败，必须删掉
 #
 # 当前清单：第 5a 批（AK-05）把 manifest 作品全部迁到 `expr.bind` 后，旧动画 API
-# 已在 5b 删除（scene:clip / clip_transform / animate / parallel / wait 不再存在）；
-# `Curve` 变体仍由 `zela.Curve` 暴露，等待 A2 一并删除。
-Curve:Const -> AK-05
-Curve:Sin -> AK-05
-Curve:Phase -> AK-05
-Curve:Ramp -> AK-05
-Curve:Ramp2 -> AK-05
-Curve:Orbit -> AK-05
-Curve:Keyframes -> AK-05
+# 与 `zela.Curve` 已在 5b 删除（A1 / A2）；下面只剩仍未进作品的 Target / 通道。
 TransformChannel:Position -> AK-05
 TransformChannel:Rotation -> AK-05
 TransformChannel:Scale -> AK-05

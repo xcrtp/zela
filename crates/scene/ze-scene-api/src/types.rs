@@ -6,7 +6,7 @@
 // - 宿主侧 Service 把它们的值转成场景原语（`ze_object` / `ze_time` …）。
 
 use ze_scene_core::animation::target::TransformChannel as NativeTransformChannel;
-use ze_time::{AnimValue, Curve as NativeCurve, Interp as NativeInterp};
+use ze_time::Interp as NativeInterp;
 use ze_pod_core::Handle;
 use ze_pod_macro::PodType;
 use ze_scene_macros::SceneComponent;
@@ -504,69 +504,6 @@ impl KeyframeInterp {
     }
 }
 
-/// 曲线：脚本侧的统一枚举（取代 sin / phase / constant / ramp / ramp2 五个函数）。
-///
-/// `dur` 用 `f64`：段内关键帧时间与 `Timeline` 的 `duration` 同精度，
-/// 否则 `1/N` 这类时长在 f32 上会与手写分镜差一个 ulp。
-#[derive(Clone, Debug, PartialEq, PodType)]
-#[pod_type(name = "zela.Curve")]
-pub enum Curve {
-    Const { value: f32 },
-    Sin { base: f32, amp: f32, omega: f32 },
-    Phase { omega: f32 },
-    Ramp { from: f32, to: f32, dur: f64 },
-    Ramp2 { from: Vec2, to: Vec2, dur: f64 },
-    /// **2D 公转**（S4）：`r * (cos θ, sin θ)`，`θ = speed * t + initial_angle`。
-    Orbit { radius: f32, speed: f32, initial_angle: f32 },
-    /// **标量关键帧**（S4）：段内 `t` → 值，按 `interpolation` 插值。
-    Keyframes { keys: Vec<ScalarKey>, interpolation: KeyframeInterp },
-}
-
-impl Curve {
-    /// 绑定层的曲线 → 场景层的曲线（装配期一次）。
-    pub fn to_native(&self) -> NativeCurve {
-        match self {
-            Curve::Const { value } => NativeCurve::Const(AnimValue::Scalar(*value)),
-            Curve::Sin { base, amp, omega } => NativeCurve::Sin {
-                base: *base,
-                amp: *amp,
-                omega: *omega,
-            },
-            Curve::Phase { omega } => NativeCurve::Phase { omega: *omega },
-            Curve::Ramp { from, to, dur } => NativeCurve::Keyframes {
-                keys: vec![
-                    (0.0, AnimValue::Scalar(*from)),
-                    (*dur, AnimValue::Scalar(*to)),
-                ],
-                interpolation: NativeInterp::Linear,
-            },
-            Curve::Ramp2 { from, to, dur } => NativeCurve::Keyframes {
-                keys: vec![
-                    (0.0, AnimValue::Vec2(ze_notion::Vec2::new(from.x, from.y))),
-                    (*dur, AnimValue::Vec2(ze_notion::Vec2::new(to.x, to.y))),
-                ],
-                interpolation: NativeInterp::Linear,
-            },
-            Curve::Orbit {
-                radius,
-                speed,
-                initial_angle,
-            } => NativeCurve::Orbit2D {
-                radius: *radius,
-                speed: *speed,
-                initial_angle: *initial_angle,
-            },
-            Curve::Keyframes { keys, interpolation } => NativeCurve::Keyframes {
-                keys: keys
-                    .iter()
-                    .map(|key| (key.t, AnimValue::Scalar(key.value)))
-                    .collect(),
-                interpolation: interpolation.to_native(),
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,37 +543,4 @@ mod tests {
         check::<PathShape>("path_shape", "zela.PathShape");
     }
 
-    #[test]
-    fn script_orbit_maps_to_2d_orbit() {
-        let native = Curve::Orbit {
-            radius: 2.0,
-            speed: 1.0,
-            initial_angle: 0.0,
-        }
-        .to_native();
-        assert!(matches!(native, NativeCurve::Orbit2D { radius, .. } if radius == 2.0));
-    }
-
-    #[test]
-    fn script_keyframes_map_to_scalar_keyframes() {
-        let native = Curve::Keyframes {
-            keys: vec![
-                ScalarKey { t: 0.0, value: 0.0 },
-                ScalarKey { t: 1.0, value: 2.0 },
-            ],
-            interpolation: KeyframeInterp::Step,
-        }
-        .to_native();
-        match native {
-            NativeCurve::Keyframes {
-                keys,
-                interpolation,
-            } => {
-                assert_eq!(keys.len(), 2);
-                assert_eq!(keys[1].1.scalar(), 2.0);
-                assert!(matches!(interpolation, NativeInterp::Step));
-            }
-            other => panic!("期望 Keyframes，实际 {other:?}"),
-        }
-    }
 }

@@ -24,13 +24,8 @@ pub struct ContentApi<'a> {
 "#;
 
 const TYPES: &str = r#"
-pub enum Curve {
-    // 注释要跳过
-    Const { value: f32 },
-    Phase { omega: f32 },
-}
-
 pub enum TransformChannel {
+    // 注释要跳过
     Position,
     Rotation,
 }
@@ -67,8 +62,6 @@ fn capabilities_come_from_source() {
             "scene:spawn",
             "scene:animate",
             "content:text",
-            "Curve:Const",
-            "Curve:Phase",
             "TransformChannel:Position",
             "TransformChannel:Rotation",
             "Target:CircleRadius",

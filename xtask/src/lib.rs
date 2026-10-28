@@ -865,7 +865,6 @@ pub fn collect_capabilities(
     for (struct_name, kind) in [("SceneApi", "scene"), ("ContentApi", "content")] {
         out.extend(collect_methods(api_rs, "api.rs", struct_name, kind));
     }
-    out.extend(collect_variants(types_rs, "types.rs", "Curve", "Curve"));
     out.extend(collect_variants(
         types_rs,
         "types.rs",
@@ -874,7 +873,7 @@ pub fn collect_capabilities(
     ));
     out.extend(collect_targets(target_rs));
     out.extend(collect_channel_capabilities(channel_sources));
-    for kind in ["scene", "content", "Target", "Curve", "TransformChannel"] {
+    for kind in ["scene", "content", "Target", "TransformChannel"] {
         if !out.iter().any(|capability| capability.kind == kind) {
             return Err(format!(
                 "从源码抽不到任何 `{kind}` 能力 —— 能力清单的解析规则可能已与源码结构脱节\
