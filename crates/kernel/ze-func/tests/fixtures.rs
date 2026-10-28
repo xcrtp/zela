@@ -48,7 +48,7 @@ impl Expected {
             Expected::Bool(value) => Value::Bool(*value),
             Expected::Vec2(value) => Value::vec2(*value),
             Expected::Vec3(value) => Value::vec3(*value),
-            Expected::Text(value) => Value::Text(value.clone()),
+            Expected::Text(value) => Value::text(value.clone()),
         }
     }
 }

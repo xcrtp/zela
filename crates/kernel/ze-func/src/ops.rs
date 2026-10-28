@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn type_errors_name_the_operator() {
-        let err = eval(&math("sin"), &[Value::Text("x".to_string())]).unwrap_err();
+        let err = eval(&math("sin"), &[Value::text("x")]).unwrap_err();
         assert_eq!(
             err,
             EvalError::Op {
@@ -542,8 +542,7 @@ mod tests {
             eval(&math("eq"), &[Value::Bool(true), Value::Bool(true)]).unwrap(),
             Value::Bool(true)
         );
-        let err = eval(&math("eq"), &[Value::Text("a".into()), Value::Text("a".into())])
-            .unwrap_err();
+        let err = eval(&math("eq"), &[Value::text("a"), Value::text("a")]).unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::eq"));
     }
 }

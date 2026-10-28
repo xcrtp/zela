@@ -151,7 +151,7 @@ fn literal_to_value(literal: &Literal) -> Option<Value> {
         Literal::I32(value) => Value::f64(f64::from(*value)),
         Literal::I64(value) => Value::i64(*value),
         Literal::Bool(value) => Value::Bool(*value),
-        Literal::Text(value) => Value::Text(value.clone()),
+        Literal::Text(value) => Value::text(value.clone()),
         Literal::Vec2(value) => Value::vec2(*value),
         Literal::Vec3(value) => Value::vec3(*value),
     })
@@ -174,7 +174,11 @@ fn value_to_literal(value: &Value) -> Option<Literal> {
             }
         }
         Value::Bool(value) => Literal::Bool(*value),
-        Value::Text(value) => Literal::Text(value.clone()),
+        // 文本已下沉到 `Bytes + zela.Text`（阶段 2）：可逆地还原成文本字面量。
+        Value::Bytes(bytes) if bytes.ty == ze_comb::TEXT_TYPE => match value.as_text() {
+            Some(text) => Literal::Text(text.to_string()),
+            None => return None,
+        },
         Value::Bytes(_) => return None,
     })
 }

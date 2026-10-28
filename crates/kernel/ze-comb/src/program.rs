@@ -59,12 +59,18 @@ pub enum Value {
     /// `F32×2/3/4` = 向量）。
     Scalar(Scalar),
     Bool(bool),
-    Text(String),
-    /// **字节块 + 命名类型**（`zela.Path` / 第三方私有类型）。
+    /// **字节块 + 命名类型**（`zela.Path` / `zela.Text` / 第三方私有类型）。
     ///
     /// 命名类型与布局描述在 `ze-func::layout` 的注册表里；本 crate 只搬运字节。
+    ///
+    /// **阶段 2**：文本不再是独立变体 —— 它是 `Bytes + zela.Text`（变长 ⇒ 没有
+    /// `Layout` ⇒ 永远慢路径）。下沉的意义是让文本与 `zela.Path` / `acme.Tensor`
+    /// 走**同一套**协商机制，而不是"看起来快"。
     Bytes(ValueBytes),
 }
+
+/// 文本的命名类型（阶段 2：`Text` 下沉为 `Bytes + zela.Text`）。
+pub const TEXT_TYPE: &str = "zela.Text";
 
 /// 标量 / 向量：`ty`（分量类型）× `dim`（分量数）的定长值。
 ///
@@ -201,7 +207,7 @@ impl Scalar {
             ScalarKind::U8 => "u8",
             // 构造函数已拒绝这两个：`Bool` 有独立变体，`String` 是变长（阶段 2 下沉 Bytes）。
             ScalarKind::Bool | ScalarKind::String => {
-                panic!("Scalar 不承载 {ty:?}（Bool 走 Value::Bool，String 走 Value::Text）", ty = self.ty)
+                panic!("Scalar 不承载 {ty:?}（Bool 走 Value::Bool，String 走 Value::Bytes + zela.Text）", ty = self.ty)
             }
         }
     }
@@ -443,12 +449,20 @@ impl Value {
         }
     }
 
-    /// 取文本（阶段 2 前仍独立承载）。
+    /// 文本值（`Bytes + zela.Text`，UTF-8）。
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Bytes(ValueBytes::new(TEXT_TYPE, text.into().into_bytes()))
+    }
+
+    /// 取文本：只有命名类型是 `zela.Text` **且**字节是合法 UTF-8 时成立。
+    ///
+    /// 第三方若用 `zela.Text` 塞了非 UTF-8 字节，这里返回 `None`（不静默替换）。
     pub fn as_text(&self) -> Option<&str> {
-        match self {
-            Value::Text(text) => Some(text.as_str()),
-            _ => None,
+        let bytes = self.as_bytes()?;
+        if bytes.ty != TEXT_TYPE {
+            return None;
         }
+        std::str::from_utf8(&bytes.bytes).ok()
     }
 
     /// 取字节块。
@@ -490,17 +504,20 @@ impl Value {
                 out.push(1);
                 out.push(u8::from(*value));
             }
-            Value::Text(text) => {
-                out.push(2);
-                out.extend_from_slice(&(text.len() as u32).to_le_bytes());
-                out.extend_from_slice(text.as_bytes());
-            }
             Value::Bytes(bytes) => {
-                out.push(5);
-                out.extend_from_slice(&(bytes.ty.len() as u32).to_le_bytes());
-                out.extend_from_slice(bytes.ty.as_bytes());
-                out.extend_from_slice(&(bytes.bytes.len() as u32).to_le_bytes());
-                out.extend_from_slice(&bytes.bytes);
+                // **文本保留既有标签 2**：`zela.Text` 的规范编码与阶段 1 之前的
+                // `Value::Text` 逐位相同 ⇒ 值序列哈希不动（其余命名类型走标签 5）。
+                if bytes.ty == TEXT_TYPE {
+                    out.push(2);
+                    out.extend_from_slice(&(bytes.bytes.len() as u32).to_le_bytes());
+                    out.extend_from_slice(&bytes.bytes);
+                } else {
+                    out.push(5);
+                    out.extend_from_slice(&(bytes.ty.len() as u32).to_le_bytes());
+                    out.extend_from_slice(bytes.ty.as_bytes());
+                    out.extend_from_slice(&(bytes.bytes.len() as u32).to_le_bytes());
+                    out.extend_from_slice(&bytes.bytes);
+                }
             }
         }
         out
@@ -879,7 +896,8 @@ pub(crate) fn value_kind(value: &Value) -> &'static str {
     match value {
         Value::Scalar(scalar) => scalar.kind_name(),
         Value::Bool(_) => "bool",
-        Value::Text(_) => "text",
+        // 文本是 `Bytes + zela.Text`：诊断词汇仍叫 `text`（与通道 / 错误消息一致）。
+        Value::Bytes(bytes) if bytes.ty == TEXT_TYPE => "text",
         Value::Bytes(_) => "bytes",
     }
 }
@@ -891,7 +909,7 @@ pub(crate) fn literal_value(literal: &Literal) -> Value {
         Literal::I32(value) => Value::f64(f64::from(*value)),
         Literal::I64(value) => Value::i64(*value),
         Literal::Bool(value) => Value::Bool(*value),
-        Literal::Text(value) => Value::Text(value.clone()),
+        Literal::Text(value) => Value::text(value.clone()),
         Literal::Vec2(value) => Value::vec2(*value),
         Literal::Vec3(value) => Value::vec3(*value),
     }
@@ -1374,6 +1392,30 @@ mod tests {
         }
     }
 
+
+    /// **阶段 2**：`Text` 下沉为 `Bytes + zela.Text`，往返逐位不变。
+    #[test]
+    fn text_sinks_into_named_bytes_without_changing_the_canonical_bytes() {
+        let text = "时间 t: π";
+        let value = Value::text(text);
+        assert_eq!(value.kind(), "text", "诊断词汇仍是 text");
+        assert_eq!(value.as_text(), Some(text), "往返逐位不变");
+        assert_eq!(
+            value.as_bytes().map(|bytes| bytes.ty.as_str()),
+            Some(TEXT_TYPE)
+        );
+
+        // 规范编码与阶段 1 之前的 `Value::Text` 逐位相同（标签 2 + len + utf8）。
+        let mut legacy = vec![2u8];
+        legacy.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        legacy.extend_from_slice(text.as_bytes());
+        assert_eq!(value.canonical_bytes(), legacy);
+
+        // 其它命名类型的字节块仍是 bytes（不静默当文本）。
+        let foreign = Value::Bytes(ValueBytes::new("acme.Tensor", vec![0xff]));
+        assert_eq!(foreign.kind(), "bytes");
+        assert_eq!(foreign.as_text(), None);
+    }
 
     // ─── 阶段 3：NatRec 离散层 ─────────────────────────────────────────
 

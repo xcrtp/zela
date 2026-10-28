@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：9 个 · 4243 行
+- 源文件：9 个 · 4285 行
 
 ### 文件清单
 
@@ -23,7 +23,7 @@
 | `src/graph_view.rs` | 221 | **Expr DAG 图视图**：把表达式树投影成 [`ze_graph_core::Topology`]。 |
 | `src/lib.rs` | 99 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
 | `src/pass.rs` | 293 | **Pass 抽象**：把已有的能力收进一个约定（不是为假想需求预付）。 |
-| `src/program.rs` | 1622 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
+| `src/program.rs` | 1664 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
 | `src/reference.rs` | 253 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
 | `src/walk.rs` | 165 | — |
 
