@@ -21,6 +21,7 @@
 //! - 全部现有算子声明为 `pointwise`（连续层）；离散层（`NatRec`）在阶段 3 引入。
 
 pub mod layout;
+pub mod mono;
 pub mod op;
 pub mod ops;
 pub mod simplify;
@@ -29,6 +30,7 @@ pub use layout::{
     ENDIAN, Endian, FieldLayout, Layout, LayoutError, PATH_TYPE, Record, Scalar, Transcode,
     TypeRegistry, decode_path, decode_record, encode_path, encode_record, negotiate_bytes,
 };
+pub use mono::{MathMonomorphizer, monomorphizer};
 pub use op::{
     DEFS as OP_DEFS, EvalFn, LIBRARY_NAMESPACE, OPS, OpDef, Target, is_pointwise, op_def,
     op_revision, qualified, signature_of, targets,

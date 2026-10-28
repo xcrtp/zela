@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：10 个 · 4881 行
+- 源文件：12 个 · 5616 行
 
 ### 文件清单
 
@@ -19,13 +19,15 @@
 |---|---|---|
 | `src/analysis.rs` | 169 | **表达式图分析**：`ze-graph-core` 的 SCC / reachable / dirty 在表达式 DAG 上的落点。 |
 | `src/codata.rs` | 215 | codata：**生产性展开**（不是图灵完备）。 |
+| `src/compiled.rs` | 164 | **装配期程序的两种形态**：`lowered`（语义基准）+ 可选 `typed`（单态化快路径）。 |
 | `src/expr.rs` | 1243 | 表达式树：节点、字面量、通道、算子引用，以及装配期校验。 |
 | `src/graph_view.rs` | 221 | **Expr DAG 图视图**：把表达式树投影成 [`ze_graph_core::Topology`]。 |
 | `src/iter.rs` | 286 | 可迭代类型：**`Iter`（有穷）与 `Stream`（余归纳）是两个类型**。 |
-| `src/lib.rs` | 101 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
+| `src/lib.rs` | 105 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
 | `src/pass.rs` | 293 | **Pass 抽象**：把已有的能力收进一个约定（不是为假想需求预付）。 |
 | `src/program.rs` | 1901 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
 | `src/reference.rs` | 287 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
+| `src/typed.rs` | 567 | **单态化求值**（typed fast path）：编译期定类型、按类型分槽、直接调函数指针。 |
 | `src/walk.rs` | 165 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -63,6 +65,8 @@ graph LR
 | `src/codata.rs` | `pub struct Expanded<S>` |
 | `src/codata.rs` | `pub fn expand<U: Unfold>(` |
 | `src/codata.rs` | `pub fn observe<U: Unfold>(` |
+| `src/compiled.rs` | `pub struct ExprProgram` |
+| `src/compiled.rs` | `pub struct NoMonomorphizer` |
 | `src/expr.rs` | `pub enum Node` |
 | `src/expr.rs` | `pub enum Literal` |
 | `src/expr.rs` | `pub enum ChannelType` |
@@ -101,6 +105,15 @@ graph LR
 | `src/reference.rs` | `pub fn eval_reference(expr: &Expr, mono: &dyn Mono) -> Result<Value, EvalError>` |
 | `src/reference.rs` | `pub fn eval_reference_elements(` |
 | `src/reference.rs` | `pub struct ReferenceEvaluator<'a>` |
+| `src/typed.rs` | `pub enum SlotType` |
+| `src/typed.rs` | `pub struct SlotRef` |
+| `src/typed.rs` | `pub struct SlotLayout` |
+| `src/typed.rs` | `pub struct Slots` |
+| `src/typed.rs` | `pub enum TypedOp` |
+| `src/typed.rs` | `pub struct TypedCall` |
+| `src/typed.rs` | `pub trait OpResolver` |
+| `src/typed.rs` | `pub enum TypedStep` |
+| `src/typed.rs` | `pub struct TypedProgram` |
 | `src/walk.rs` | `pub trait ExprVisitor<'a>` |
 <!-- AUTO:END -->
 

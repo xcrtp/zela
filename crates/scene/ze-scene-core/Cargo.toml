@@ -26,6 +26,9 @@ ze-scene-macros = { path = "../ze-scene-macros" }
 ze-time = { path = "../../kernel/ze-time" }
 # S3：表达式绑定（只做结构 + 求值程序；效果值经宿主 M 注入）。
 ze-comb = { path = "../../kernel/ze-comb" }
+# 表达式绑定的**单态化解析器**（`ze_func::monomorphizer`）：编译期把算子解析成
+# 具体类型的函数指针 ⇒ 求值走 typed 快路径（解析失败自动回落 `CompiledExpr`）。
+ze-func = { path = "../../kernel/ze-func" }
 # 地址表（TARGETS）的符号索引：装配期解析一次，之后 O(1)。
 ze-reflect = { path = "../../kernel/ze-reflect" }
 # 内置数学函数由 Pod 提供（math_pod）；核心层不依赖任何 zela-*。

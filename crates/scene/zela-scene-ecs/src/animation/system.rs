@@ -713,7 +713,7 @@ mod tests {
         .expect("Read 是叶子，必然可编译");
         table.add(Binding {
             clock: reader,
-            driver: BindingDriver::Expr(program),
+            driver: BindingDriver::Expr(program.into()),
             target: Arc::new(FieldTarget {
                 id: phase_id,
                 spec: target_entry("PhaseAnim.phase").unwrap().spec,

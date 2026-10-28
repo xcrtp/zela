@@ -43,13 +43,19 @@ pub enum SeekKind {
     Replay,
 }
 
+/// 表达式驱动：**lowered 恒有、typed 可选**（定义在 `ze-comb`，**领域无关**）。
+///
+/// 场景层不自己实现"要不要单态化、失败怎么回落"—— 那是内核的编译策略
+/// （[`ze_comb::ExprProgram`]）；这里只把它接到绑定表上。
+pub use ze_comb::ExprProgram;
+
 /// 绑定的驱动源。
 #[derive(Debug, Clone)]
 pub enum BindingDriver {
     /// 手写 / 脚本曲线（既有全部绑定）。
     Curve(Curve),
     /// 组合子表达式（S3）：装配期编译，运行期只做线性扫描。
-    Expr(CompiledExpr),
+    Expr(ExprProgram),
 }
 
 impl BindingDriver {
@@ -70,7 +76,7 @@ impl BindingDriver {
 
     pub fn as_expr(&self) -> Option<&CompiledExpr> {
         match self {
-            BindingDriver::Expr(program) => Some(program),
+            BindingDriver::Expr(program) => Some(program.lowered()),
             BindingDriver::Curve(_) => None,
         }
     }
@@ -151,7 +157,15 @@ impl BindingTable {
     }
 
     /// 添加一条**表达式绑定**（S3）：程序已在装配期编译。
-    pub fn bind_expr(&mut self, clock: ClockId, program: CompiledExpr, target: Arc<dyn Target>) {
+    ///
+    /// 传 [`CompiledExpr`] 会自动包成"仅 lowered"的 [`ExprProgram`]（测试 / 手写装配）；
+    /// 走脚本装配时由 [`ExprProgram::compile`] 顺带做单态化。
+    pub fn bind_expr(
+        &mut self,
+        clock: ClockId,
+        program: impl Into<ExprProgram>,
+        target: Arc<dyn Target>,
+    ) {
         self.bind_expr_gated(clock, program, target, None, None, ResetBehavior::Hold);
     }
 
@@ -168,12 +182,13 @@ impl BindingTable {
     pub fn bind_expr_gated(
         &mut self,
         clock: ClockId,
-        program: CompiledExpr,
+        program: impl Into<ExprProgram>,
         target: Arc<dyn Target>,
         predicate: Option<CompiledExpr>,
         active: Option<MultiIntervalSet>,
         reset: ResetBehavior,
     ) {
+        let program = program.into();
         let seek_kind =
             seek_kind_for(program.requires_replay(), predicate.is_some(), reset, active.is_some());
         self.add(Binding {

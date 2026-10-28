@@ -60,16 +60,19 @@
 
 pub mod analysis;
 pub mod codata;
+pub mod compiled;
 pub mod expr;
 pub mod graph_view;
 pub mod iter;
 pub mod pass;
 pub mod program;
 pub mod reference;
+pub mod typed;
 pub mod walk;
 
 pub use analysis::{affected_consumers, reference_groups, shared_definitions, unreachable};
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
+pub use compiled::{ExprProgram, NoMonomorphizer};
 pub use expr::{
     ChannelClass, ChannelRef, ChannelType, ClockLinkShape, ClockShape, Expr, ExprError, Id,
     Literal, MethodRef, Node, OpRef,
@@ -85,6 +88,7 @@ pub use program::{
     ValueBytes, REC_MAX_STEPS, hash_values,
 };
 pub use reference::{ReferenceEvaluator, eval_reference, eval_reference_elements};
+pub use typed::{OpResolver, SlotLayout, SlotRef, SlotType, Slots, TypedCall, TypedOp, TypedProgram, TypedStep};
 pub use walk::ExprVisitor;
 
 /// 表达式 payload 的 schema 版本。

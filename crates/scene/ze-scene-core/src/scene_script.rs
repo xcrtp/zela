@@ -826,7 +826,7 @@ fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(),
         };
         let reader_start = forest.start_offset(binding.clock);
         let mut reads = Vec::new();
-        collect_reads(program, &mut reads);
+        collect_reads(program.lowered(), &mut reads);
         for (channel, object) in reads {
             for writer in &bindings.bindings {
                 if writer.target.address() == channel.name.as_str()

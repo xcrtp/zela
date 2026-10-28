@@ -22,7 +22,7 @@ use ze_comb::{CompiledExpr, Expr, Node};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, ClockProgram, PlayMode};
 
-use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
+use crate::animation::binding::{BindingTable, ExprProgram, LibraryRef, ResetBehavior};
 use crate::animation::target::Target;
 
 /// **静止时刻报告**（阶段 2）：把"推导不出来"的**原因**显式分开。
@@ -251,7 +251,8 @@ impl Timeline {
                     let Some(id) = clock_id else { continue };
                     let target: Arc<dyn Target> = (target.make)(resolve(target.handle));
                     // `bind` 时已用同一个 `Expr` 校验/编译过一次；此处失败说明内部不变量被破坏。
-                    let program = match CompiledExpr::compile(expr) {
+                    // 走 `ExprProgram::compile`：装配期顺带单态化（不可单态化则回落 lowered）。
+                    let program = match ExprProgram::compile(expr, ze_func::monomorphizer()) {
                         Ok(program) => program,
                         Err(error) => {
                             debug_assert!(false, "表达式绑定在 commit 时编译失败：{error}");

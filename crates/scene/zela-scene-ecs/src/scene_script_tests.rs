@@ -435,10 +435,11 @@ mod tests {
             );
             assert_eq!(e_node.span, h_node.span, "区间语义必须一致");
             assert_eq!(e_node.mode, h_node.mode);
+            // 比较**语义基准**（lowered）：typed 快路径是否启用不影响绑定语义。
             assert_eq!(
-                format!("{:?}", enc_b.driver),
-                format!("{:?}", h_b.driver),
-                "表达式程序必须一致"
+                format!("{:?}", enc_b.driver.as_expr()),
+                format!("{:?}", h_b.driver.as_expr()),
+                "表达式程序必须一致（比较 lowered 语义基准）"
             );
             assert_eq!(enc_b.target.name(), h_b.target.name(), "目标语义名必须一致");
         }

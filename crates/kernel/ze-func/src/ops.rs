@@ -427,12 +427,12 @@ pub fn not(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 /// 线性插值（**f32 域**）。
 ///
 /// `α` 先落 f32 再参与运算，与 `ze-time` 的 `Curve::Keyframes` 同一精度口径。
-fn lerp_f32(a: f32, b: f32, t: f64) -> f32 {
+pub(crate) fn lerp_f32(a: f32, b: f32, t: f64) -> f32 {
     a + (b - a) * (t as f32)
 }
 
 /// `Vec2` 单位化：零长度保持零（与 `glam::normalize_or_zero` 同一约定，不产出 NaN）。
-fn unit2(v: [f32; 2], length: f32) -> [f32; 2] {
+pub(crate) fn unit2(v: [f32; 2], length: f32) -> [f32; 2] {
     if length > 1e-12 {
         [v[0] / length, v[1] / length]
     } else {
@@ -441,7 +441,7 @@ fn unit2(v: [f32; 2], length: f32) -> [f32; 2] {
 }
 
 /// `Vec3` 单位化：零长度保持零。
-fn unit3(v: [f32; 3], length: f32) -> [f32; 3] {
+pub(crate) fn unit3(v: [f32; 3], length: f32) -> [f32; 3] {
     if length > 1e-12 {
         [v[0] / length, v[1] / length, v[2] / length]
     } else {
@@ -452,7 +452,7 @@ fn unit3(v: [f32; 3], length: f32) -> [f32; 3] {
 /// 罗德里格斯旋转：`v cosθ + (axis × v) sinθ + axis (axis·v)(1 − cosθ)`。
 ///
 /// `axis` 先归一化；零向量轴退回 `Y`（与旧 `Curve::Orbit` 的退化处理一致）。
-fn rotate_rodrigues(v: [f64; 3], axis: [f64; 3], angle: f64) -> [f32; 3] {
+pub(crate) fn rotate_rodrigues(v: [f64; 3], axis: [f64; 3], angle: f64) -> [f32; 3] {
     let length = (axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]).sqrt();
     let axis = if length > 1e-12 {
         [axis[0] / length, axis[1] / length, axis[2] / length]

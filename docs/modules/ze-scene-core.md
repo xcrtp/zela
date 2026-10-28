@@ -9,19 +9,19 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/ze-scene-core`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
+- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：41 个 · 9493 行
+- 源文件：41 个 · 9509 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/binding.rs` | 278 | — |
+| `src/animation/binding.rs` | 293 | — |
 | `src/animation/mod.rs` | 27 | — |
 | `src/animation/predicate.rs` | 729 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
 | `src/animation/target.rs` | 1135 | — |
-| `src/animation/timeline.rs` | 600 | — |
+| `src/animation/timeline.rs` | 601 | — |
 | `src/bounds.rs` | 197 | — |
 | `src/camera_input.rs` | 160 | — |
 | `src/components/3d.rs` | 402 | — |

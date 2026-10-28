@@ -1247,6 +1247,29 @@
 
 ---
 
+## AV. 表达式求值单态化批次（typed fast path，2026-10-28）
+
+> 用户立约：**编译器做单态化，按类型分槽，直接解析指针**；且**类型转换不该由算子库
+> 做**，应由底层按注册的类型自动完成。
+>
+> 现状病根：`CompiledExpr` 的值表是 `Vec<Value>` —— 每步一次装箱值、每个算子一次
+> `Vec<Value>` 实参（clone）、一次符号表查找，算子里还要 `as_f64` / `as_vec2` 做**运行期**
+> 类型判断。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AV-01 | **编译期单态化 + 按类型分槽 + 函数指针直呼** | ze-comb | **已关闭（1）** | 新增 [`ze_comb::typed`](crates/kernel/ze-comb/src/typed.rs)：`SlotType`（F64 / I64 / Bool / Vec2 / Vec3）、`SlotRef`（编译期分配）、`Slots`（SoA 值池：`Vec<f64>` / `Vec<[f32;2]>` / …）、`TypedOp`（**精确类型签名**的函数指针枚举）、`TypedStep`（常量 / 通道 / 调用）、`TypedProgram::compile/eval`。求值期：无符号表查找、无 `Value` 装箱、无实参 `Vec`；每步一次枚举分派 + 裸指针调用。槽池按 `SlotLayout` **一次性预分配**。**回落策略也在内核**：[`ze_comb::compiled`](crates/kernel/ze-comb/src/compiled.rs) 的 `ExprProgram { lowered, typed: Option<_> }`（`compile(expr, resolver)` / `lowered_only` / `eval`）+ `NoMonomorphizer` —— 这两者只认识 `OpResolver`，不认识任何算子词汇。 |
+| AV-02 | **类型转换下沉到调度层**（算子不再做 `as_*`） | ze-func | **已关闭（2）** | [`ze_func::mono`](crates/kernel/ze-func/src/mono.rs)：`MathMonomorphizer` 实现 `ze_comb::OpResolver` —— 输入 `(算子, 实参槽类型)`，按**注册的签名**选出唯一实例（`F64xF64ToF64` / `Vec2xF64ToVec2` / `MixVec3` / …）；`instances` 模块只写**精确类型**的公式，没有 `as_f64`。签名声明了但没登记的类型组合 ⇒ `None`（整棵回落），不静默挑近似实例。29 个算子全部覆盖（含向量重载与 Bool 比较）。 |
+| AV-03 | **三路逐位对拍** | ze-func | **已关闭（3）** | `ze-func/tests/typed_equivalence.rs`：42 条算子用例 + 整树（通道 / 共享节点）+ 4 条回落用例，断言 `typed == lowered == reference` **逐位相同**；`sum` 的累加顺序与动态路径同为 `0.0` 起左折（`Vec2` / `Vec3` 变体亦然）。 |
+| AV-04 | **性能实测**（同一条 `Σ sin(t)` 深链） | ze-func bench | **已关闭（4）** | `ze-func/benches/typed_bench.rs`（criterion，warm-up 0.5s / measure 2s，本机 median）：16 项 **2.23 µs → 0.415 µs（5.4×）**；64 项 **9.26 µs → 1.60 µs（5.8×）**；256 项 **37.8 µs → 6.23 µs（6.1×）**。项数越多差距越大 ⇒ 砍掉的是**每步固定开销**（装箱 / 参数 Vec / 符号表 / 动态类型判断）。 |
+| AV-05 | **宿主接入（装配期单态化，运行期快路径）** | ze-comb / ze-scene-core / ecs | **已关闭（5）** | `BindingDriver::Expr(CompiledExpr)` → `Expr(ze_comb::ExprProgram)`（场景层只 `pub use`，**不自己实现回落策略**）；`Timeline::commit` 用 `ExprProgram::compile(expr, ze_func::monomorphizer())` —— 内核只依赖 `OpResolver` 接口，解析器实例由场景层装配时注入。求值点 `BindingApplySystem` 无需改动（`ExprProgram::eval` 与旧签名同形）。`predicate` / 读集分析仍用 lowered 语义基准。**端到端证据**：像素 **36/36** 与结构指纹**逐位不变**，`demo` 27 条 payload 断言不变。 |
+| AV-06 | **未覆盖的节点与值类型** | ze-comb / ze-func | **记账（1）** | 本批 typed 只做**逐点数值 / 向量 / Bool**：`Select`（惰性分支）/ `Read`（对象）/ `Method` / `NatRec`（递归）/ `Exists` / `Bytes` / `Text` / `Iter` / `Stream` / `Vec4` / 类型未知的通道一律**回落** `CompiledExpr`（`TypedProgram::compile` 返回 `None`）。回落是整棵而非混跑 —— 部分 typed 会让"同一条表达式两种语义"变得不可对拍。 |
+| AV-07 | **残余开销** | ze-comb | **记账（2）** | ① 变参 `sum` 在 typed 里仍收集一次 `Vec<f64>`（每帧一次小分配）；② 通道读仍经 `Mono::read` 返回 `Value` 再解包（`time` / `frame` 每帧 1–2 次，占比小；后续可加 `Mono::read_f64` 默认方法让宿主覆写）；③ 槽池每帧 `Slots::new` 分配 5 个 Vec（可按帧复用，需 `&mut` 求值入口）。三者都**不影响正确性**，属下一轮微优化。 |
+
+**AV 段小计**：已关闭 5（AV-01…AV-05）· 部分关闭 0 · 记账 2（AV-06、AV-07）· 未执行 0 · 落档 0。
+
+---
+
 ## 附录. crate 能力表（阶段 0.5 门禁）
 
 > **门禁 1**：`crates/**/Cargo.toml` 的每个 crate 必须在本表登记（新增 crate 未登记 ⇒ `cargo verify --step structure` 失败）。

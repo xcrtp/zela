@@ -10,15 +10,16 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-reflect`、`ze-type`
-- 被依赖（下游）：`ze-pod-func`、`zela-scene-ecs`
-- 源文件：5 个 · 1708 行
+- 被依赖（下游）：`ze-pod-func`、`ze-scene-core`、`zela-scene-ecs`
+- 源文件：6 个 · 2057 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/layout.rs` | 102 | **Layout / Codec 的门面**：实现已迁至 `ze-type`（纯代数）与 `ze-reflect`（运行时注册表）。 |
-| `src/lib.rs` | 37 | ze-func：**基础函子库**（namespace `zela.math`）。 |
+| `src/lib.rs` | 39 | ze-func：**基础函子库**（namespace `zela.math`）。 |
+| `src/mono.rs` | 347 | **单态解析器**：把 `(算子, 实参槽类型)` 解析成具体类型的函数指针。 |
 | `src/op.rs` | 479 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
 | `src/ops.rs` | 762 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
 | `src/simplify.rs` | 328 | **符号化简**（阶段 4）：常量折叠 + **层间迁移**（离散层 → 连续层）。 |
@@ -38,6 +39,8 @@ graph LR
 |---|---|
 | `src/layout.rs` | `pub fn encode_path(points: &[[f32; 2]], closed: bool) -> ValueBytes` |
 | `src/layout.rs` | `pub fn negotiate_bytes(` |
+| `src/mono.rs` | `pub struct MathMonomorphizer` |
+| `src/mono.rs` | `pub fn monomorphizer() -> &'static MathMonomorphizer` |
 | `src/op.rs` | `pub fn op_def(name: &str) -> Option<&'static OpDef>` |
 | `src/op.rs` | `pub fn signature_of(name: &str) -> Option<&'static OpDef>` |
 | `src/op.rs` | `pub fn op_revision(name: &str) -> Option<(u32, u32)>` |
