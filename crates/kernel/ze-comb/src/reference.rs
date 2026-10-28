@@ -83,21 +83,25 @@ fn eval_node<'a>(
                 .expect("参考求值前必须通过 Expr::validate");
             eval_node(target, defs, context, mono)?
         }
-        Node::Select { cond, then, r#else } => match eval_node(cond, defs, context, mono)? {
-            Value::Bool(true) => eval_node(then, defs, context, mono)?,
-            Value::Bool(false) => eval_node(r#else, defs, context, mono)?,
-            other => {
-                return Err(EvalError::SelectCondition {
-                    actual: value_kind(&other),
-                })
+        Node::Select { cond, then, r#else } => {
+            let condition = eval_node(cond, defs, context, mono)?;
+            match condition.as_bool() {
+                Some(true) => eval_node(then, defs, context, mono)?,
+                Some(false) => eval_node(r#else, defs, context, mono)?,
+                None => {
+                    return Err(EvalError::SelectCondition {
+                        actual: value_kind(&condition),
+                    })
+                }
             }
-        },
+        }
         Node::NatRec { count, init, step } => {
-            let count = match eval_node(count, defs, context, mono)? {
-                Value::I64(value) if value >= 0 => value,
-                other => {
+            let raw = eval_node(count, defs, context, mono)?;
+            let count = match raw.as_i64() {
+                Some(value) if value >= 0 => value,
+                _ => {
                     return Err(EvalError::RecCount {
-                        actual: value_kind(&other),
+                        actual: value_kind(&raw),
                     })
                 }
             };
@@ -133,7 +137,7 @@ fn eval_node<'a>(
             None => return Err(EvalError::RecContext { leaf: "rec_prev" }),
         },
         Node::RecIndex => match &context.rec {
-            Some((_, index)) => Value::I64(*index),
+            Some((_, index)) => Value::i64(*index),
             None => return Err(EvalError::RecContext { leaf: "rec_index" }),
         },
         // `exists` 只有装配期才有对象集；参考求值器与产物求值器同一口径。
@@ -176,7 +180,7 @@ mod tests {
     impl Mono for ScalarMono {
         fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
             match channel.name.as_str() {
-                "time" => Ok(Value::F64(self.time)),
+                "time" => Ok(Value::f64(self.time)),
                 _ => Err(EvalError::MissingChannel {
                     channel: channel.clone(),
                 }),
@@ -191,9 +195,9 @@ mod tests {
                     .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是数值")))
             };
             match op.name.as_str() {
-                "sin" => Ok(Value::F64(number(0)?.sin())),
-                "mul" => Ok(Value::F64(number(0)? * number(1)?)),
-                "add" => Ok(Value::F64(number(0)? + number(1)?)),
+                "sin" => Ok(Value::f64(number(0)?.sin())),
+                "mul" => Ok(Value::f64(number(0)? * number(1)?)),
+                "add" => Ok(Value::f64(number(0)? + number(1)?)),
                 other => Err(EvalError::op(op, format!("未知算子 `{other}`"))),
             }
         }
@@ -222,7 +226,7 @@ mod tests {
             calls: Cell::new(0),
         };
         let value = eval_reference(&root, &mono).unwrap();
-        assert_eq!(value, Value::F64(2.0 * 1.0_f64.sin()));
+        assert_eq!(value, Value::f64(2.0 * 1.0_f64.sin()));
         // sin 只调一次（共享节点），add 一次。
         assert_eq!(mono.calls.get(), 2);
     }
@@ -238,7 +242,7 @@ mod tests {
             time: 0.0,
             calls: Cell::new(0),
         };
-        assert_eq!(eval_reference(&expr, &mono).unwrap(), Value::F64(2.0));
+        assert_eq!(eval_reference(&expr, &mono).unwrap(), Value::f64(2.0));
 
         let bad = Expr::select(Expr::pure(1.0), Expr::pure(1.0), Expr::pure(0.0));
         assert_eq!(

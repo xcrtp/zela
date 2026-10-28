@@ -1221,6 +1221,25 @@
 
 ---
 
+## AU. 类型与算子地基批次 · 阶段 1（值类型参数化，2026-10-28）
+
+> 计划《组合子库算子库类型改造与优化_执行计划》，代号**类型与算子地基批次**。
+> 硬纪律：① 参数化不得削弱穷尽匹配门禁（新增标量类型未处理 ⇒ 编译失败或测试失败）；
+> ② 每阶段挂在可验证产出上。本段只记**阶段 1**（全批阻塞项），阶段 2–5 未执行。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AU-01 | **阶段 1：值类型参数化**（`Value` 六变体 → 四变体） | ze-comb / ze-func / scene | **已关闭（1）** | `Value` 由 `F64 / I64 / Vec2 / Vec3` 四个变体收敛为 `Scalar(Scalar)`：`Scalar { ty: ScalarKind, dim: u8, data: [u8; 32] }`（`ty × 1..=4`，零堆分配，字段私有 ⇒ 只能经构造函数产生）。同时补上 `Vec4` 与 `F32` 标量的表达能力（旧枚举无法表达）。调用点全部迁移：`ze-func::ops`（含 `mix` / `x|y|z` / `length` / `normalize` / 转换族）、`simplify`、`reference`、`pass`、`zela-scene-ecs::expr_mono`、`ze-scene-core::target`。**规范字节（`canonical_bytes`）对既有四种组合逐位不变**（标签 `0 / 6 / 3 / 4` 保留），新组合走通用标签 `7`——值序列哈希因此不动，fixture 与像素 / 结构基线无需重录。 |
+| AU-02 | **值侧 `I64` 在类型侧没有对应种类**（`ScalarKind` 缺 `I64`） | ze-type / ze-pod-* | **已关闭（1）** | 反例：`Value::I64` 是离散层索引，而 `ScalarKind` 只有 `F32/F64/I32/U32/U64/U8/Bool/String` ⇒ 参数化后该值没有类型可填。补 `ScalarKind::I64` 并让**穷尽匹配把它逼出来**：`ze-type::unify`（布局 8/8）、`gen::static_of`、`ze-pod-core::ScalarValue::I64` + `impl_pod_type_scalar!(i64)`、三语言绑定（Lua `integer` / Python `int` / JS 精确整数 `MAX_EXACT_INTEGER` 内）与声明文件类型名。这类"新增种类 ⇒ 4 个 crate 编译失败"正是 §0.1 要的门禁。 |
+| AU-03 | **`ChannelType::Bytes` 是死臂**：`zela.Path` 的 schema 投影不到 `Bytes` | ze-comb / ze-pod-func | **已关闭（1）** | 旧 `from_type_spec` 只认 `zela.Vec2` / `zela.Vec3`，`zela.Path`（`Struct { layout: None }`）落到 `None` ⇒ 通道化会在类型投影处被拒。按**定长 / 变长第一判据**接上：`Struct` 有 `Layout` ⇒ 具体数值类型（`Vec2/Vec3/Vec4`），无 `Layout` ⇒ `ChannelType::Bytes`（走 `negotiate_bytes` 同一协商入口）。另补 `ChannelType::Vec4`（`kind_of` → `Kind::Vector`），与值侧 `Vec4` 对齐。 |
+| AU-04 | **精度口径：标量 `f64`、向量 `f32` 不统一成单一宽度** | ze-comb | **记账（1）** | 风险表第 4 条要求"明确选哪个"。裁决：**保持两种显式类型**——`F64 × 1` 是表达式层的数（与 `sin` / `mul` 等 f64 算术逐位一致），`F32 × 2/3/4` 是向量（与 `ze-type::layout` 的 `zela.Vec2/Vec3` 的 f32 字段逐位一致）。统一成 f32 会改全部标量语义、统一成 f64 会改 `mix` / `normalize` / `length` 的 f32 取整 ⇒ 两者都会改像素基线（本批硬门禁禁止）。参数化的意义是把这层差异**写在类型里**（`ty` 显式），而不是藏在一个无类型标签的枚举里。 |
+| AU-05 | **跨 crate 重名白名单**：`Scalar`（ze-comb vs ze-type） | xtask | **已关闭（1）** | `ze-type::layout::Scalar` 是布局标量 trait，`ze_comb::Scalar` 是运行时值（`ty × dim`）——角色不同，按既有机制登记真实理由（白名单 37 → 38 条），`--step structure` 全绿。 |
+| AU-06 | 阶段 2–5（`Text` 下沉 `Bytes` / `Iter`+`Stream` / 算子注册表化 / Mono 元素身份） | ze-comb / ze-func / ze-pod-func / scene | **未执行（2–5）** | 本批只完成阶段 1（全批阻塞项）；后续阶段依赖它刚建立的值侧参数化，按计划 `1 → (2 ∥ 3) → 5`、`4` 独立推进。 |
+
+**AU 段小计**：已关闭 4（AU-01、AU-02、AU-03、AU-05）· 部分关闭 0 · 记账 1（AU-04）· 未执行 1（AU-06）· 落档 0。
+
+---
+
 ## 附录. crate 能力表（阶段 0.5 门禁）
 
 > **门禁 1**：`crates/**/Cargo.toml` 的每个 crate 必须在本表登记（新增 crate 未登记 ⇒ `cargo verify --step structure` 失败）。

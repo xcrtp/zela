@@ -17,7 +17,7 @@ pub fn lua_type_name(spec: &'static TypeSpec) -> &'static str {
     match spec {
         TypeSpec::Scalar(kind) => match kind {
             ScalarKind::F32 | ScalarKind::F64 => "number",
-            ScalarKind::I32 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => "integer",
+            ScalarKind::I32 | ScalarKind::I64 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => "integer",
             ScalarKind::Bool => "boolean",
             ScalarKind::String => "string",
         },

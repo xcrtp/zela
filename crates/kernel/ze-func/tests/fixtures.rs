@@ -44,10 +44,10 @@ enum Expected {
 impl Expected {
     fn to_value(&self) -> Value {
         match self {
-            Expected::Number(value) => Value::F64(*value),
+            Expected::Number(value) => Value::f64(*value),
             Expected::Bool(value) => Value::Bool(*value),
-            Expected::Vec2(value) => Value::Vec2(*value),
-            Expected::Vec3(value) => Value::Vec3(*value),
+            Expected::Vec2(value) => Value::vec2(*value),
+            Expected::Vec3(value) => Value::vec3(*value),
             Expected::Text(value) => Value::Text(value.clone()),
         }
     }
@@ -65,7 +65,7 @@ impl Mono for FixtureMono<'_> {
         self.channels
             .get(&channel.name)
             .and_then(|series| series.get(self.sample))
-            .map(|value| Value::F64(*value))
+            .map(|value| Value::f64(*value))
             .ok_or_else(|| EvalError::MissingChannel {
                 channel: channel.clone(),
             })
@@ -75,7 +75,7 @@ impl Mono for FixtureMono<'_> {
         self.objects
             .get(&object.to_string())
             .and_then(|fields| fields.get(&channel.name))
-            .map(|value| Value::F64(*value))
+            .map(|value| Value::f64(*value))
             .ok_or_else(|| EvalError::MissingComponent {
                 object,
                 channel: channel.clone(),

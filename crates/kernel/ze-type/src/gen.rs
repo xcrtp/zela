@@ -150,7 +150,7 @@ fn substitute(
 /// 复用已有静态描述，避免为标量实例分配。
 fn static_of(spec: TypeSpec) -> &'static TypeSpec {
     use crate::ty::ScalarKind;
-    static SCALARS: [TypeSpec; 8] = [
+    static SCALARS: [TypeSpec; 9] = [
         TypeSpec::Scalar(ScalarKind::F32),
         TypeSpec::Scalar(ScalarKind::F64),
         TypeSpec::Scalar(ScalarKind::I32),
@@ -159,6 +159,7 @@ fn static_of(spec: TypeSpec) -> &'static TypeSpec {
         TypeSpec::Scalar(ScalarKind::U8),
         TypeSpec::Scalar(ScalarKind::Bool),
         TypeSpec::Scalar(ScalarKind::String),
+        TypeSpec::Scalar(ScalarKind::I64),
     ];
     match spec {
         TypeSpec::Scalar(kind) => {
@@ -171,6 +172,7 @@ fn static_of(spec: TypeSpec) -> &'static TypeSpec {
                 ScalarKind::U8 => 5,
                 ScalarKind::Bool => 6,
                 ScalarKind::String => 7,
+                ScalarKind::I64 => 8,
             };
             &SCALARS[index]
         }

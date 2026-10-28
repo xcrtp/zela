@@ -286,6 +286,8 @@ pub enum ChannelType {
     Vec2,
     /// 三维向量。
     Vec3,
+    /// 四维向量。
+    Vec4,
     /// **字节块 + 命名类型**（`Value::Bytes`）。
     ///
     /// 内核不知道"路径"是什么：`zela.Path` 只是宿主注册表里的一个名字
@@ -303,6 +305,7 @@ impl ChannelType {
             Self::Bool => "Bool",
             Self::Vec2 => "Vec2",
             Self::Vec3 => "Vec3",
+            Self::Vec4 => "Vec4",
             Self::Bytes => "Bytes",
         }
     }
@@ -314,20 +317,35 @@ impl ChannelType {
     ///
     /// 不支持的 schema（变长数组 / 类型构造应用 / 类型变量 / `String`）返回 `None`，
     /// 由调用方给出带上下文的显式错误。
+    ///
+    /// **定长 / 变长是第一判据**（与 `Value` 侧一致）：
+    ///
+    /// - 有 `Layout`（定长）⇒ 具体数值类型（`Vec2` / `Vec3` / `Vec4`）；
+    /// - 无 `Layout`（变长 / 私有类型，如 `zela.Path`）⇒ [`Self::Bytes`]，
+    ///   走 `negotiate_bytes` 的同一套协商机制。
     pub fn from_type_spec(spec: &TypeSpec) -> Option<Self> {
         match spec {
             TypeSpec::Scalar(kind) => match kind {
                 ScalarKind::Bool => Some(Self::Bool),
+                ScalarKind::I64 => Some(Self::I64),
                 ScalarKind::String => None,
                 _ => Some(Self::Number),
             },
-            TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } | TypeSpec::Opaque(name) => {
-                match name.strip_prefix("zela.").unwrap_or(name) {
-                    "Vec2" => Some(Self::Vec2),
-                    "Vec3" => Some(Self::Vec3),
-                    _ => None,
-                }
-            }
+            TypeSpec::Struct { name, layout, .. } => match name.strip_prefix("zela.").unwrap_or(name)
+            {
+                "Vec2" => Some(Self::Vec2),
+                "Vec3" => Some(Self::Vec3),
+                "Vec4" => Some(Self::Vec4),
+                // 没有布局 ⇒ 变长 / 不透明 ⇒ 字节块协商（`zela.Path` 就在这里）。
+                _ => layout.is_none().then_some(Self::Bytes),
+            },
+            TypeSpec::Opaque(name) => match name.strip_prefix("zela.").unwrap_or(name) {
+                "Vec2" => Some(Self::Vec2),
+                "Vec3" => Some(Self::Vec3),
+                "Vec4" => Some(Self::Vec4),
+                _ => None,
+            },
+            TypeSpec::Enum { .. } => None,
             TypeSpec::Var(_) | TypeSpec::Array { .. } | TypeSpec::App { .. } => None,
         }
     }

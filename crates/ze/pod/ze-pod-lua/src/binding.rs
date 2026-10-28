@@ -434,6 +434,7 @@ fn scalar_from_lua(value: &Value, kind: ScalarKind) -> mlua::Result<PodValue> {
         ScalarKind::F32 => ScalarValue::F32(number(value)? as f32),
         ScalarKind::F64 => ScalarValue::F64(number(value)?),
         ScalarKind::I32 => ScalarValue::I32(integer(value)? as i32),
+        ScalarKind::I64 => ScalarValue::I64(integer(value)?),
         ScalarKind::U32 => ScalarValue::U32(integer(value)? as u32),
         ScalarKind::U64 => {
             let n = integer(value)?;
@@ -487,6 +488,7 @@ fn pod_to_lua(lua: &Lua, value: &PodValue) -> mlua::Result<Value> {
             ScalarValue::F32(v) => Value::Number(*v as f64),
             ScalarValue::F64(v) => Value::Number(*v),
             ScalarValue::I32(v) => Value::Integer(*v as i64),
+            ScalarValue::I64(v) => Value::Integer(*v),
             ScalarValue::U32(v) => Value::Integer(*v as i64),
             ScalarValue::U64(v) => Value::Integer(i64::try_from(*v).map_err(|_| {
                 mlua::Error::RuntimeError(format!("u64 超出 Lua 整数范围：{v}"))

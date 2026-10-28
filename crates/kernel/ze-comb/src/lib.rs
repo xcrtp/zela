@@ -78,7 +78,10 @@ pub use pass::{
     AnalysisPass, Lower, LoweredEval, PassInfo, PassKind, PassRegistry, PassRegistryError,
     ReferenceEval, Semantics, TransformPass, Validate, kernel_registry,
 };
-pub use program::{CompiledExpr, EvalError, Mono, RecCache, Step, Value, ValueBytes, REC_MAX_STEPS, hash_values};
+pub use program::{
+    CompiledExpr, EvalError, Mono, RecCache, SCALAR_MAX_DIM, Scalar, Step, Value, ValueBytes,
+    REC_MAX_STEPS, hash_values,
+};
 pub use reference::{ReferenceEvaluator, eval_reference};
 pub use walk::ExprVisitor;
 

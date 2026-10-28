@@ -7,7 +7,6 @@
 // P0：目标由 `BindingTarget` 枚举改为 `Arc<dyn Target>` —— 本 System 只做
 // "遍历 + 求值 + 派发"，**不认识任何具体目标**（新增目标零 System 改动）。
 
-use ze_comb::Value;
 use ze_time::{AnimValue, ClockForest};
 use zela_scene_ecs::TimeState;
 use zela_schedule::context::ExecutorContext;
@@ -72,14 +71,16 @@ impl System for BindingApplySystem {
                 (None, Some(predicate)) => {
                     let mono = SceneMono::with_global(lt, t_global, frame, &scene);
                     match predicate.eval(&mono) {
-                        Ok(Value::Bool(value)) => value,
-                        Ok(other) => {
-                            eprintln!(
-                                "[expr] 绑定目标 {} 的 predicate 必须返回 Bool，实际 {other:?}（本帧按不生效处理）",
-                                b.target.name()
-                            );
-                            false
-                        }
+                        Ok(value) => match value.as_bool() {
+                            Some(value) => value,
+                            None => {
+                                eprintln!(
+                                    "[expr] 绑定目标 {} 的 predicate 必须返回 Bool，实际 {value:?}（本帧按不生效处理）",
+                                    b.target.name()
+                                );
+                                false
+                            }
+                        },
                         Err(error) => {
                             eprintln!(
                                 "[expr] 绑定目标 {} 的 predicate 求值失败：{error}",

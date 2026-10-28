@@ -60,28 +60,38 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
             .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是数值")))
     };
     let boolean = |index: usize| -> Result<bool, EvalError> {
-        match args.get(index) {
-            Some(Value::Bool(value)) => Ok(*value),
-            _ => Err(EvalError::op(
+        match args.get(index).and_then(Value::as_bool) {
+            Some(value) => Ok(value),
+            None => Err(EvalError::op(
                 op,
                 format!("第 {index} 个实参不是布尔（Bool 由比较算子产出）"),
             )),
         }
     };
+    let vec2 = |index: usize| -> Result<[f32; 2], EvalError> {
+        args.get(index)
+            .and_then(Value::as_vec2)
+            .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是 Vec2")))
+    };
+    let vec3 = |index: usize| -> Result<[f32; 3], EvalError> {
+        args.get(index)
+            .and_then(Value::as_vec3)
+            .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是 Vec3")))
+    };
 
     match op.name.as_str() {
-        "sin" => Ok(Value::F64(number(0)?.sin())),
-        "cos" => Ok(Value::F64(number(0)?.cos())),
-        "add" => Ok(Value::F64(number(0)? + number(1)?)),
-        "mul" => Ok(Value::F64(number(0)? * number(1)?)),
+        "sin" => Ok(Value::f64(number(0)?.sin())),
+        "cos" => Ok(Value::f64(number(0)?.cos())),
+        "add" => Ok(Value::f64(number(0)? + number(1)?)),
+        "mul" => Ok(Value::f64(number(0)? * number(1)?)),
         // `scale(k, of)`：k 在产物里是字面量叶子，这里只是普通乘法。
-        "scale" => Ok(Value::F64(number(0)? * number(1)?)),
+        "scale" => Ok(Value::f64(number(0)? * number(1)?)),
         "sum" => {
             let mut total = 0.0;
             for index in 0..args.len() {
                 total += number(index)?;
             }
-            Ok(Value::F64(total))
+            Ok(Value::f64(total))
         }
         // ─── 第 1 批（算子补齐）────────────────────────────────────────
         // `mix(a, b, t)`：线性插值（数值 / Vec2 / Vec3 同型）。
@@ -98,28 +108,28 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
             if t == 1.0 {
                 return Ok(b.clone());
             }
-            match (a, b) {
-                // 标量走 **f32 插值**：与旧 `Curve::Keyframes`（`AnimValue::Scalar`）的
-                // `a + (b - a) * α` 逐位一致（第 5a 批「先证明等价」的硬要求）。
-                (Value::F64(a), Value::F64(b)) => Ok(Value::F64(f64::from(lerp_f32(
-                    *a as f32,
-                    *b as f32,
-                    t,
-                )))),
-                (Value::Vec2(a), Value::Vec2(b)) => Ok(Value::Vec2([
+            // 标量走 **f32 插值**：与旧 `Curve::Keyframes`（`AnimValue::Scalar`）的
+            // `a + (b - a) * α` 逐位一致（第 5a 批「先证明等价」的硬要求）。
+            if let (Some(a), Some(b)) = (a.as_f64(), b.as_f64()) {
+                return Ok(Value::f64(f64::from(lerp_f32(a as f32, b as f32, t))));
+            }
+            if let (Some(a), Some(b)) = (a.as_vec2(), b.as_vec2()) {
+                return Ok(Value::vec2([
                     lerp_f32(a[0], b[0], t),
                     lerp_f32(a[1], b[1], t),
-                ])),
-                (Value::Vec3(a), Value::Vec3(b)) => Ok(Value::Vec3([
+                ]));
+            }
+            if let (Some(a), Some(b)) = (a.as_vec3(), b.as_vec3()) {
+                return Ok(Value::vec3([
                     lerp_f32(a[0], b[0], t),
                     lerp_f32(a[1], b[1], t),
                     lerp_f32(a[2], b[2], t),
-                ])),
-                _ => Err(EvalError::op(
-                    op,
-                    "两个端点必须是同型数值 / 向量（不做隐式提升）",
-                )),
+                ]));
             }
+            Err(EvalError::op(
+                op,
+                "两个端点必须是同型数值 / 向量（不做隐式提升）",
+            ))
         }
         // `clamp(x, lo, hi)`：`lo > hi` 时按 `lo` 优先（与 `f32::clamp` 的 panic 口径不同 ——
         // 表达式层不 panic，取"先夹下界"的确定行为）。
@@ -127,7 +137,7 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
             let x = number(0)?;
             let lo = number(1)?;
             let hi = number(2)?;
-            Ok(Value::F64(if x < lo {
+            Ok(Value::f64(if x < lo {
                 lo
             } else if x > hi {
                 hi
@@ -135,11 +145,8 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
                 x
             }))
         }
-        "vec2" => Ok(Value::Vec2([
-            number(0)? as f32,
-            number(1)? as f32,
-        ])),
-        "vec3" => Ok(Value::Vec3([
+        "vec2" => Ok(Value::vec2([number(0)? as f32, number(1)? as f32])),
+        "vec3" => Ok(Value::vec3([
             number(0)? as f32,
             number(1)? as f32,
             number(2)? as f32,
@@ -151,84 +158,96 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
                 "y" => 1,
                 _ => 2,
             };
-            match args.first() {
-                Some(Value::Vec2(v)) => {
-                    if index == 2 {
-                        return Err(EvalError::op(op, "Vec2 没有 z 分量（请先 vec3 升维）"));
-                    }
-                    Ok(Value::F64(f64::from(v[index])))
+            if let Some(v) = args.first().and_then(Value::as_vec2) {
+                if index == 2 {
+                    return Err(EvalError::op(op, "Vec2 没有 z 分量（请先 vec3 升维）"));
                 }
-                Some(Value::Vec3(v)) => Ok(Value::F64(f64::from(v[index]))),
-                _ => Err(EvalError::op(op, "第 0 个实参不是向量")),
+                return Ok(Value::f64(f64::from(v[index])));
             }
+            if let Some(v) = args.first().and_then(Value::as_vec3) {
+                return Ok(Value::f64(f64::from(v[index])));
+            }
+            Err(EvalError::op(op, "第 0 个实参不是向量"))
         }
         // `rotate3(v, axis, angle)`：罗德里格斯（与旧 `Curve::Orbit` 同一公式）。
         "rotate3" => {
-            let v = vec3_arg(op, args, 0)?;
-            let axis = vec3_arg(op, args, 1)?;
+            let v = vec3(0)?;
+            let axis = vec3(1)?;
             let angle = number(2)?;
-            Ok(Value::Vec3(rotate_rodrigues(v, axis, angle)))
+            Ok(Value::vec3(rotate_rodrigues(
+                [
+                    f64::from(v[0]),
+                    f64::from(v[1]),
+                    f64::from(v[2]),
+                ],
+                [
+                    f64::from(axis[0]),
+                    f64::from(axis[1]),
+                    f64::from(axis[2]),
+                ],
+                angle,
+            )))
         }
         // ─── 第 3 批（类型系统扩展）：转换算子族 ───────────────────────
         // `splat(v)`：一个标量铺成三个分量（`F64 → Vec3`）。
         "splat" => {
             let v = number(0)? as f32;
-            Ok(Value::Vec3([v, v, v]))
+            Ok(Value::vec3([v, v, v]))
         }
         // `vec3_from_vec2(v, z)`：显式补 z（不猜 0）。
-        "vec3_from_vec2" => match args.first() {
-            Some(Value::Vec2(v)) => Ok(Value::Vec3([v[0], v[1], number(1)? as f32])),
-            _ => Err(EvalError::op(op, "第 0 个实参不是 Vec2")),
-        },
+        "vec3_from_vec2" => {
+            let v = vec2(0)?;
+            Ok(Value::vec3([v[0], v[1], number(1)? as f32]))
+        }
         // `vec2_from_vec3(v)`：**显式**丢弃 z（不是静默截断 —— 算子名写明了）。
-        "vec2_from_vec3" => match args.first() {
-            Some(Value::Vec3(v)) => Ok(Value::Vec2([v[0], v[1]])),
-            _ => Err(EvalError::op(op, "第 0 个实参不是 Vec3")),
-        },
+        "vec2_from_vec3" => {
+            let v = vec3(0)?;
+            Ok(Value::vec2([v[0], v[1]]))
+        }
         // `length(v)`：向量模长；`normalize(v)`：单位向量（零向量保持零，不产出 NaN）。
         "length" | "normalize" => {
             let normalized = op.name == "normalize";
-            match args.first() {
-                Some(Value::Vec2(v)) => {
-                    let length = (v[0] * v[0] + v[1] * v[1]).sqrt();
-                    if normalized {
-                        Ok(Value::Vec2(unit2(*v, length)))
-                    } else {
-                        Ok(Value::F64(f64::from(length)))
-                    }
-                }
-                Some(Value::Vec3(v)) => {
-                    let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-                    if normalized {
-                        Ok(Value::Vec3(unit3(*v, length)))
-                    } else {
-                        Ok(Value::F64(f64::from(length)))
-                    }
-                }
-                _ => Err(EvalError::op(op, "第 0 个实参不是向量")),
+            if let Some(v) = args.first().and_then(Value::as_vec2) {
+                let length = (v[0] * v[0] + v[1] * v[1]).sqrt();
+                return if normalized {
+                    Ok(Value::vec2(unit2(v, length)))
+                } else {
+                    Ok(Value::f64(f64::from(length)))
+                };
             }
+            if let Some(v) = args.first().and_then(Value::as_vec3) {
+                let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                return if normalized {
+                    Ok(Value::vec3(unit3(v, length)))
+                } else {
+                    Ok(Value::f64(f64::from(length)))
+                };
+            }
+            Err(EvalError::op(op, "第 0 个实参不是向量"))
         }
         // `round_f32(x)`：把数值落成 f32 再升回 f64。
         //
         // **为什么需要**：动画值域是 f32（`AnimValue::Scalar`），而表达式层是 f64。
         // 旧曲线（`Sin` / `Phase` / `Orbit2D`）每一步都在 f32 上取整；要把它们
         // **逐位**迁移过来，必须在同样的位置显式落位（第 5a 批的等价证明）。
-        "round_f32" => Ok(Value::F64(f64::from(number(0)? as f32))),
+        "round_f32" => Ok(Value::f64(f64::from(number(0)? as f32))),
         "lt" => Ok(Value::Bool(number(0)? < number(1)?)),
         "gt" => Ok(Value::Bool(number(0)? > number(1)?)),
         "le" => Ok(Value::Bool(number(0)? <= number(1)?)),
         "ge" => Ok(Value::Bool(number(0)? >= number(1)?)),
         "eq" | "ne" => {
             let equal = match (args.first(), args.get(1)) {
-                (Some(Value::Bool(a)), Some(Value::Bool(b))) => a == b,
-                (Some(a), Some(b)) => match (a.as_f64(), b.as_f64()) {
+                (Some(a), Some(b)) => match (a.as_bool(), b.as_bool()) {
                     (Some(a), Some(b)) => a == b,
-                    _ => {
-                        return Err(EvalError::op(
-                            op,
-                            "只支持数值或布尔比较（不做隐式真值转换）",
-                        ))
-                    }
+                    _ => match (a.as_f64(), b.as_f64()) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => {
+                            return Err(EvalError::op(
+                                op,
+                                "只支持数值或布尔比较（不做隐式真值转换）",
+                            ))
+                        }
+                    },
                 },
                 _ => return Err(EvalError::op(op, "需要两个实参")),
             };
@@ -247,14 +266,6 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 /// `a + (b - a) * α` 全部在 f32 上完成（第 5a 批的逐位等价要求）。
 fn lerp_f32(a: f32, b: f32, t: f64) -> f32 {
     a + (b - a) * (t as f32)
-}
-
-/// 取第 `index` 个 `Vec3` 实参（错误点名算子与位置）。
-fn vec3_arg(op: &OpRef, args: &[Value], index: usize) -> Result<[f64; 3], EvalError> {
-    match args.get(index) {
-        Some(Value::Vec3(v)) => Ok([f64::from(v[0]), f64::from(v[1]), f64::from(v[2])]),
-        _ => Err(EvalError::op(op, format!("第 {index} 个实参不是 Vec3"))),
-    }
 }
 
 /// `Vec2` 单位化：零长度保持零（与 `glam::normalize_or_zero` 同一约定，不产出 NaN）。
@@ -309,24 +320,24 @@ mod tests {
 
     #[test]
     fn scalar_operators_match_std_math() {
-        let x = Value::F64(0.5);
+        let x = Value::f64(0.5);
         assert_eq!(
             eval(&math("sin"), std::slice::from_ref(&x)).unwrap(),
-            Value::F64(0.5_f64.sin())
+            Value::f64(0.5_f64.sin())
         );
         assert_eq!(
-            eval(&math("mul"), &[x.clone(), Value::F64(3.0)]).unwrap(),
-            Value::F64(1.5)
+            eval(&math("mul"), &[x.clone(), Value::f64(3.0)]).unwrap(),
+            Value::f64(1.5)
         );
         assert_eq!(
-            eval(&math("scale"), &[Value::F64(4.0), x.clone()]).unwrap(),
-            Value::F64(2.0)
+            eval(&math("scale"), &[Value::f64(4.0), x.clone()]).unwrap(),
+            Value::f64(2.0)
         );
         assert_eq!(
-            eval(&math("sum"), &[Value::F64(1.0), x, Value::F64(2.0)]).unwrap(),
-            Value::F64(3.5)
+            eval(&math("sum"), &[Value::f64(1.0), x, Value::f64(2.0)]).unwrap(),
+            Value::f64(3.5)
         );
-        assert_eq!(eval(&math("sum"), &[]).unwrap(), Value::F64(0.0));
+        assert_eq!(eval(&math("sum"), &[]).unwrap(), Value::f64(0.0));
     }
 
     /// 第 1 批（算子补齐）：`mix` 覆盖数值 / Vec2 / Vec3，且不做隐式提升。
@@ -335,42 +346,42 @@ mod tests {
         assert_eq!(
             eval(
                 &math("mix"),
-                &[Value::F64(0.0), Value::F64(10.0), Value::F64(0.25)]
+                &[Value::f64(0.0), Value::f64(10.0), Value::f64(0.25)]
             )
             .unwrap(),
-            Value::F64(2.5)
+            Value::f64(2.5)
         );
         assert_eq!(
             eval(
                 &math("mix"),
                 &[
-                    Value::Vec2([0.0, -2.0]),
-                    Value::Vec2([4.0, 2.0]),
-                    Value::F64(0.5),
+                    Value::vec2([0.0, -2.0]),
+                    Value::vec2([4.0, 2.0]),
+                    Value::f64(0.5),
                 ]
             )
             .unwrap(),
-            Value::Vec2([2.0, 0.0])
+            Value::vec2([2.0, 0.0])
         );
         assert_eq!(
             eval(
                 &math("mix"),
                 &[
-                    Value::Vec3([0.0, 0.0, 0.0]),
-                    Value::Vec3([2.0, 4.0, 6.0]),
-                    Value::F64(0.5),
+                    Value::vec3([0.0, 0.0, 0.0]),
+                    Value::vec3([2.0, 4.0, 6.0]),
+                    Value::f64(0.5),
                 ]
             )
             .unwrap(),
-            Value::Vec3([1.0, 2.0, 3.0])
+            Value::vec3([1.0, 2.0, 3.0])
         );
         // 端点混型 ⇒ 显式错误（不静默当真值提升）。
         let err = eval(
             &math("mix"),
             &[
-                Value::F64(0.0),
-                Value::Vec2([1.0, 1.0]),
-                Value::F64(0.5),
+                Value::f64(0.0),
+                Value::vec2([1.0, 1.0]),
+                Value::f64(0.5),
             ],
         )
         .unwrap_err();
@@ -382,31 +393,31 @@ mod tests {
         let clamp = |x: f64| {
             eval(
                 &math("clamp"),
-                &[Value::F64(x), Value::F64(0.0), Value::F64(1.0)],
+                &[Value::f64(x), Value::f64(0.0), Value::f64(1.0)],
             )
             .unwrap()
         };
-        assert_eq!(clamp(-0.5), Value::F64(0.0));
-        assert_eq!(clamp(0.25), Value::F64(0.25));
-        assert_eq!(clamp(2.0), Value::F64(1.0));
+        assert_eq!(clamp(-0.5), Value::f64(0.0));
+        assert_eq!(clamp(0.25), Value::f64(0.25));
+        assert_eq!(clamp(2.0), Value::f64(1.0));
     }
 
     /// 第 1 批：`vec2` / `vec3` 显式构造，`x|y|z` 取分量（`Vec2` 上取 z 是显式错误）。
     #[test]
     fn vector_constructors_and_components() {
-        let v2 = eval(&math("vec2"), &[Value::F64(1.0), Value::F64(2.0)]).unwrap();
-        assert_eq!(v2, Value::Vec2([1.0, 2.0]));
-        assert_eq!(eval(&math("x"), &[v2.clone()]).unwrap(), Value::F64(1.0));
-        assert_eq!(eval(&math("y"), &[v2.clone()]).unwrap(), Value::F64(2.0));
+        let v2 = eval(&math("vec2"), &[Value::f64(1.0), Value::f64(2.0)]).unwrap();
+        assert_eq!(v2, Value::vec2([1.0, 2.0]));
+        assert_eq!(eval(&math("x"), &[v2.clone()]).unwrap(), Value::f64(1.0));
+        assert_eq!(eval(&math("y"), &[v2.clone()]).unwrap(), Value::f64(2.0));
         assert!(eval(&math("z"), &[v2]).is_err(), "Vec2 没有 z 分量");
 
         let v3 = eval(
             &math("vec3"),
-            &[Value::F64(1.0), Value::F64(2.0), Value::F64(3.0)],
+            &[Value::f64(1.0), Value::f64(2.0), Value::f64(3.0)],
         )
         .unwrap();
-        assert_eq!(v3, Value::Vec3([1.0, 2.0, 3.0]));
-        assert_eq!(eval(&math("z"), &[v3]).unwrap(), Value::F64(3.0));
+        assert_eq!(v3, Value::vec3([1.0, 2.0, 3.0]));
+        assert_eq!(eval(&math("z"), &[v3]).unwrap(), Value::f64(3.0));
     }
 
     /// `rotate3` 与旧 `Curve::Orbit` 同一公式：绕 Y 转 90° ⇒ `(0,0,r) → (r,0,0)`。
@@ -415,13 +426,13 @@ mod tests {
         let rotated = eval(
             &math("rotate3"),
             &[
-                Value::Vec3([0.0, 0.0, 5.0]),
-                Value::Vec3([0.0, 1.0, 0.0]),
-                Value::F64(std::f64::consts::FRAC_PI_2),
+                Value::vec3([0.0, 0.0, 5.0]),
+                Value::vec3([0.0, 1.0, 0.0]),
+                Value::f64(std::f64::consts::FRAC_PI_2),
             ],
         )
         .unwrap();
-        let Value::Vec3(v) = rotated else {
+        let Some(v) = rotated.as_vec3() else {
             panic!("rotate3 必须返回 Vec3");
         };
         assert!((v[0] - 5.0).abs() < 1e-4 && v[1].abs() < 1e-4 && v[2].abs() < 1e-4, "{v:?}");
@@ -431,49 +442,49 @@ mod tests {
     #[test]
     fn conversion_operators_are_explicit() {
         assert_eq!(
-            eval(&math("splat"), &[Value::F64(2.0)]).unwrap(),
-            Value::Vec3([2.0, 2.0, 2.0])
+            eval(&math("splat"), &[Value::f64(2.0)]).unwrap(),
+            Value::vec3([2.0, 2.0, 2.0])
         );
         assert_eq!(
             eval(
                 &math("vec3_from_vec2"),
-                &[Value::Vec2([1.0, 2.0]), Value::F64(3.0)]
+                &[Value::vec2([1.0, 2.0]), Value::f64(3.0)]
             )
             .unwrap(),
-            Value::Vec3([1.0, 2.0, 3.0])
+            Value::vec3([1.0, 2.0, 3.0])
         );
         assert_eq!(
-            eval(&math("vec2_from_vec3"), &[Value::Vec3([4.0, 5.0, 6.0])]).unwrap(),
-            Value::Vec2([4.0, 5.0]),
+            eval(&math("vec2_from_vec3"), &[Value::vec3([4.0, 5.0, 6.0])]).unwrap(),
+            Value::vec2([4.0, 5.0]),
             "vec2_from_vec3 显式丢弃 z"
         );
 
-        let length = eval(&math("length"), &[Value::Vec3([3.0, 4.0, 0.0])]).unwrap();
-        assert_eq!(length, Value::F64(5.0));
-        let unit = eval(&math("normalize"), &[Value::Vec2([0.0, 3.0])]).unwrap();
-        assert_eq!(unit, Value::Vec2([0.0, 1.0]));
+        let length = eval(&math("length"), &[Value::vec3([3.0, 4.0, 0.0])]).unwrap();
+        assert_eq!(length, Value::f64(5.0));
+        let unit = eval(&math("normalize"), &[Value::vec2([0.0, 3.0])]).unwrap();
+        assert_eq!(unit, Value::vec2([0.0, 1.0]));
         // 零向量保持零（不产出 NaN）。
         assert_eq!(
-            eval(&math("normalize"), &[Value::Vec3([0.0, 0.0, 0.0])]).unwrap(),
-            Value::Vec3([0.0, 0.0, 0.0])
+            eval(&math("normalize"), &[Value::vec3([0.0, 0.0, 0.0])]).unwrap(),
+            Value::vec3([0.0, 0.0, 0.0])
         );
 
         // 类型不符是显式错误（不做隐式升降维）。
         assert!(
             eval(
                 &math("vec3_from_vec2"),
-                &[Value::Vec3([1.0, 2.0, 3.0]), Value::F64(0.0)]
+                &[Value::vec3([1.0, 2.0, 3.0]), Value::f64(0.0)]
             )
             .is_err()
         );
-        assert!(eval(&math("length"), &[Value::F64(1.0)]).is_err());
+        assert!(eval(&math("length"), &[Value::f64(1.0)]).is_err());
     }
 
     /// 第 5a 批：`round_f32` 把数值落成 f32 再升回（逐位复刻旧曲线的精度口径）。
     #[test]
     fn round_f32_lands_on_the_f32_grid() {
-        let value = eval(&math("round_f32"), &[Value::F64(0.1 + 0.2)]).unwrap();
-        assert_eq!(value, Value::F64(f64::from((0.1_f64 + 0.2_f64) as f32)));
+        let value = eval(&math("round_f32"), &[Value::f64(0.1 + 0.2)]).unwrap();
+        assert_eq!(value, Value::f64(f64::from((0.1_f64 + 0.2_f64) as f32)));
     }
 
     #[test]
@@ -490,15 +501,15 @@ mod tests {
 
     #[test]
     fn unknown_operator_is_explicit() {
-        let err = eval(&math("tan"), &[Value::F64(1.0)]).unwrap_err();
+        let err = eval(&math("tan"), &[Value::f64(1.0)]).unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::tan"));
     }
 
     /// 比较算子产出 `Bool`（predicate 的原料）；顺序与边界都按 IEEE 比较。
     #[test]
     fn comparisons_yield_bool() {
-        let one = Value::F64(1.0);
-        let two = Value::F64(2.0);
+        let one = Value::f64(1.0);
+        let two = Value::f64(2.0);
         assert_eq!(eval(&math("lt"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(true));
         assert_eq!(eval(&math("gt"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(false));
         assert_eq!(eval(&math("le"), &[two.clone(), two.clone()]).unwrap(), Value::Bool(true));
@@ -520,7 +531,7 @@ mod tests {
         );
         assert_eq!(eval(&math("not"), &[Value::Bool(true)]).unwrap(), Value::Bool(false));
 
-        let err = eval(&math("and"), &[Value::F64(1.0), Value::Bool(true)]).unwrap_err();
+        let err = eval(&math("and"), &[Value::f64(1.0), Value::Bool(true)]).unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::and"));
     }
 
@@ -536,3 +547,4 @@ mod tests {
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::eq"));
     }
 }
+

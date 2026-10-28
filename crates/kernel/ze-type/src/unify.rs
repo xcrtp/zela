@@ -243,6 +243,7 @@ fn scalar_layout(kind: ScalarKind) -> Option<Layout> {
         ScalarKind::F32 => Layout::new(4, 4, &[]),
         ScalarKind::F64 => Layout::new(8, 8, &[]),
         ScalarKind::I32 | ScalarKind::U32 => Layout::new(4, 4, &[]),
+        ScalarKind::I64 => Layout::new(8, 8, &[]),
         ScalarKind::U64 => Layout::new(8, 8, &[]),
         ScalarKind::U8 | ScalarKind::Bool => Layout::new(1, 1, &[]),
         ScalarKind::String => return None,
@@ -264,6 +265,7 @@ impl BoxedSpec {
             TypeSpec::Scalar(ScalarKind::F32) => &SCALAR_F32,
             TypeSpec::Scalar(ScalarKind::F64) => &SCALAR_F64,
             TypeSpec::Scalar(ScalarKind::I32) => &SCALAR_I32,
+            TypeSpec::Scalar(ScalarKind::I64) => &SCALAR_I64,
             TypeSpec::Scalar(ScalarKind::U32) => &SCALAR_U32,
             TypeSpec::Scalar(ScalarKind::U64) => &SCALAR_U64,
             TypeSpec::Scalar(ScalarKind::U8) => &SCALAR_U8,
@@ -277,6 +279,7 @@ impl BoxedSpec {
 static SCALAR_F32: TypeSpec = TypeSpec::Scalar(ScalarKind::F32);
 static SCALAR_F64: TypeSpec = TypeSpec::Scalar(ScalarKind::F64);
 static SCALAR_I32: TypeSpec = TypeSpec::Scalar(ScalarKind::I32);
+static SCALAR_I64: TypeSpec = TypeSpec::Scalar(ScalarKind::I64);
 static SCALAR_U32: TypeSpec = TypeSpec::Scalar(ScalarKind::U32);
 static SCALAR_U64: TypeSpec = TypeSpec::Scalar(ScalarKind::U64);
 static SCALAR_U8: TypeSpec = TypeSpec::Scalar(ScalarKind::U8);

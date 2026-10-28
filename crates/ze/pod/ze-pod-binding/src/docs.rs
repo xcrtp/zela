@@ -85,6 +85,7 @@ fn scalar_name(kind: ScalarKind) -> &'static str {
         ScalarKind::F32 => "f32",
         ScalarKind::F64 => "f64",
         ScalarKind::I32 => "i32",
+        ScalarKind::I64 => "i64",
         ScalarKind::U32 => "u32",
         ScalarKind::U64 => "u64",
         ScalarKind::U8 => "u8",

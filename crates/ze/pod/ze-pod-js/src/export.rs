@@ -24,7 +24,7 @@ pub fn ts_type_name(spec: &'static TypeSpec) -> String {
     match spec {
         TypeSpec::Scalar(kind) => match kind {
             ScalarKind::F32 | ScalarKind::F64 => "number".to_string(),
-            ScalarKind::I32 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => {
+            ScalarKind::I32 | ScalarKind::I64 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => {
                 "number".to_string()
             }
             ScalarKind::Bool => "boolean".to_string(),

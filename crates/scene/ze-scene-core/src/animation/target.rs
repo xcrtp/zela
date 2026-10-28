@@ -382,7 +382,7 @@ pub static REVEAL_CURRENT_POS_METHOD: MethodSpec = MethodSpec {
                 channel: ChannelRef::new("zela.scene", "Reveal.current_pos"),
             }
         })?;
-        Ok(Value::Vec2([tip.x, tip.y]))
+        Ok(Value::vec2([tip.x, tip.y]))
     },
 };
 

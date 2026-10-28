@@ -11,7 +11,7 @@
 - 路径：`crates/ze/pod/ze-pod-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`ze-pod`、`ze-pod-binding`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-pod-tests`、`ze-render-ir`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-ecs`
-- 源文件：16 个 · 4281 行
+- 源文件：16 个 · 4284 行
 
 ### 文件清单
 
@@ -32,7 +32,7 @@
 | `src/topic.rs` | 60 | topic 机制：**广播降级为「查询 + 迭代单播」**。 |
 | `src/type_name.rs` | 85 | 稳定类型名（与 `ze-node-core::TypeTag::type_name()` 形态同构）。 |
 | `src/typespec.rs` | 49 | 类型描述（IDL schema）：**实现已迁至 `ze-type`**，本模块只做 re-export + |
-| `src/value.rs` | 329 | 跨语言值（`PodValue`）与类型转换（`PodType`）。 |
+| `src/value.rs` | 332 | 跨语言值（`PodValue`）与类型转换（`PodType`）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

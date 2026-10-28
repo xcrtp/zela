@@ -113,14 +113,14 @@ fn eval_closed(expr: &Expr, rec: Option<(&Value, i64)>) -> Option<Value> {
             }
             ops::eval(op, &values).ok()?
         }
-        Node::Select { cond, then, r#else } => match eval_closed(cond, rec)? {
-            Value::Bool(true) => eval_closed(then, rec)?,
-            Value::Bool(false) => eval_closed(r#else, rec)?,
-            _ => return None,
+        Node::Select { cond, then, r#else } => match eval_closed(cond, rec)?.as_bool() {
+            Some(true) => eval_closed(then, rec)?,
+            Some(false) => eval_closed(r#else, rec)?,
+            None => return None,
         },
         Node::NatRec { count, init, step } => {
-            let count = match eval_closed(count, rec)? {
-                Value::I64(value) if (0..=SIMPLIFY_REC_LIMIT).contains(&value) => value,
+            let count = match eval_closed(count, rec)?.as_i64() {
+                Some(value) if (0..=SIMPLIFY_REC_LIMIT).contains(&value) => value,
                 _ => return None,
             };
             let mut state = eval_closed(init, rec)?;
@@ -135,7 +135,7 @@ fn eval_closed(expr: &Expr, rec: Option<(&Value, i64)>) -> Option<Value> {
             state
         }
         Node::RecPrev => rec.map(|(prev, _)| prev.clone())?,
-        Node::RecIndex => Value::I64(rec?.1),
+        Node::RecIndex => Value::i64(rec?.1),
         // `Ref` 需要整棵表达式的定义表；化简阶段保守地视为非闭合。
         Node::Ref { .. } => return None,
         // `exists` 依赖装配期的对象集 ⇒ 不是闭合表达式（装配期已折叠成常量）。
@@ -146,25 +146,35 @@ fn eval_closed(expr: &Expr, rec: Option<(&Value, i64)>) -> Option<Value> {
 
 fn literal_to_value(literal: &Literal) -> Option<Value> {
     Some(match literal {
-        Literal::F32(value) => Value::F64(f64::from(*value)),
-        Literal::F64(value) => Value::F64(*value),
-        Literal::I32(value) => Value::F64(f64::from(*value)),
-        Literal::I64(value) => Value::I64(*value),
+        Literal::F32(value) => Value::f64(f64::from(*value)),
+        Literal::F64(value) => Value::f64(*value),
+        Literal::I32(value) => Value::f64(f64::from(*value)),
+        Literal::I64(value) => Value::i64(*value),
         Literal::Bool(value) => Value::Bool(*value),
         Literal::Text(value) => Value::Text(value.clone()),
-        Literal::Vec2(value) => Value::Vec2(*value),
-        Literal::Vec3(value) => Value::Vec3(*value),
+        Literal::Vec2(value) => Value::vec2(*value),
+        Literal::Vec3(value) => Value::vec3(*value),
     })
 }
 
 fn value_to_literal(value: &Value) -> Option<Literal> {
     Some(match value {
-        Value::F64(value) => Literal::F64(*value),
-        Value::I64(value) => Literal::I64(*value),
+        Value::Scalar(scalar) => {
+            if let Some(value) = scalar.as_f64() {
+                Literal::F64(value)
+            } else if let Some(value) = scalar.as_i64() {
+                Literal::I64(value)
+            } else if let Some(value) = scalar.as_vec2() {
+                Literal::Vec2(value)
+            } else if let Some(value) = scalar.as_vec3() {
+                Literal::Vec3(value)
+            } else {
+                // `Vec4` / `F32` 标量等尚无字面量形态 ⇒ 显式拒绝（不静默改类型）。
+                return None;
+            }
+        }
         Value::Bool(value) => Literal::Bool(*value),
         Value::Text(value) => Literal::Text(value.clone()),
-        Value::Vec2(value) => Literal::Vec2(*value),
-        Value::Vec3(value) => Literal::Vec3(*value),
         Value::Bytes(_) => return None,
     })
 }
@@ -293,7 +303,7 @@ mod tests {
         let simplified = simplify(&expr);
         let after = ze_comb::eval_reference(&simplified, &Mono).unwrap();
         assert_eq!(reference, after);
-        assert_eq!(reference, Value::F64(13.0));
+        assert_eq!(reference, Value::f64(13.0));
     }
 
     #[test]

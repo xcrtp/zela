@@ -308,7 +308,7 @@ fn spec_concrete(spec: &TypeSpec) -> Result<ChannelType, String> {
 fn kind_of(ty: ChannelType) -> Kind {
     match ty {
         ChannelType::Number | ChannelType::I64 | ChannelType::Unknown => Kind::Num,
-        ChannelType::Vec2 | ChannelType::Vec3 => Kind::Vector,
+        ChannelType::Vec2 | ChannelType::Vec3 | ChannelType::Vec4 => Kind::Vector,
         ChannelType::Bool => Kind::Bool,
         ChannelType::Bytes => Kind::Bytes,
     }

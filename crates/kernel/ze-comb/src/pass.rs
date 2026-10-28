@@ -253,7 +253,7 @@ mod tests {
         impl Mono for Mono0 {
             fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
                 if channel.name == "time" {
-                    Ok(Value::F64(self.time))
+                    Ok(Value::f64(self.time))
                 } else {
                     Err(EvalError::MissingChannel {
                         channel: channel.clone(),
@@ -264,8 +264,8 @@ mod tests {
                 self.calls.set(self.calls.get() + 1);
                 let x = args[0].as_f64().unwrap();
                 match op.name.as_str() {
-                    "sin" => Ok(Value::F64(x.sin())),
-                    "mul" => Ok(Value::F64(x * args[1].as_f64().unwrap())),
+                    "sin" => Ok(Value::f64(x.sin())),
+                    "mul" => Ok(Value::f64(x * args[1].as_f64().unwrap())),
                     other => Err(EvalError::op(op, format!("未知算子 `{other}`"))),
                 }
             }

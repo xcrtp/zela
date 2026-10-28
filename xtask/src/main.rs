@@ -1504,6 +1504,10 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("OpDef", "已收敛到 ze-type；保留条目让『再次出现第二份』立刻失败"),
     ("ChannelSpec", "Pod 声明是 ChannelDecl，脚本值类型是 ChannelSpec —— 角色不同"),
     ("NodeSpec", "装配计划（ze-pod-core）与节点 schema 各自的领域类型"),
+    (
+        "Scalar",
+        "ze-type 的 layout::Scalar 是布局标量 trait；ze-comb 的 Scalar 是运行时值（ty × dim）",
+    ),
     // ── 历史领域重复（本批只登记，收敛属后续领域去重批次）────────────────
     ("Arrow", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("Axes2D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),

@@ -120,7 +120,7 @@ fn py_type(spec: &'static TypeSpec, components: &BTreeSet<&'static str>) -> Stri
     match spec {
         TypeSpec::Scalar(kind) => match kind {
             ScalarKind::F32 | ScalarKind::F64 => "float".to_string(),
-            ScalarKind::I32 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => "int".to_string(),
+            ScalarKind::I32 | ScalarKind::I64 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => "int".to_string(),
             ScalarKind::Bool => "bool".to_string(),
             ScalarKind::String => "str".to_string(),
         },

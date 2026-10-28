@@ -632,6 +632,13 @@ fn scalar_from_js(value: &JsValue, kind: ScalarKind) -> Result<PodValue, PodErro
         ScalarKind::I32 => {
             ScalarValue::I32(exact_integer(value, "i32", i32::MIN as f64, i32::MAX as f64)? as i32)
         }
+        // JS 只有 f64：i64 与 u64 同口径 —— 只接受**可精确表示**的整数。
+        ScalarKind::I64 => ScalarValue::I64(exact_integer(
+            value,
+            "i64",
+            -MAX_EXACT_INTEGER,
+            MAX_EXACT_INTEGER,
+        )? as i64),
         ScalarKind::U32 => {
             ScalarValue::U32(exact_integer(value, "u32", 0.0, u32::MAX as f64)? as u32)
         }
@@ -688,6 +695,7 @@ fn pod_to_js(ctx: &mut Context, value: &PodValue) -> Result<JsValue, PodError> {
             ScalarValue::F32(v) => JsValue::from(*v as f64),
             ScalarValue::F64(v) => JsValue::from(*v),
             ScalarValue::I32(v) => JsValue::from(*v as f64),
+            ScalarValue::I64(v) => JsValue::from(*v as f64),
             ScalarValue::U32(v) => JsValue::from(*v as f64),
             ScalarValue::U64(v) => {
                 if *v as f64 > MAX_EXACT_INTEGER {

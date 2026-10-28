@@ -27,6 +27,11 @@ pub enum ScalarKind {
     F32,
     F64,
     I32,
+    /// 64 位有符号整数（离散层索引 / 帧号；**不经过 f64**）。
+    ///
+    /// 值侧 `Value::Scalar` 的 I64 必须能投影成类型侧的一种标量，
+    /// 否则「值侧对齐类型侧」会留下一个没有类型的值种类。
+    I64,
     U32,
     /// 64 位无符号整数（`u64` / `PodHandle` 的寻址号）。
     U64,
@@ -295,6 +300,7 @@ pub fn render_type(spec: &TypeSpec, vars: &[(&'static str, Kind)]) -> String {
         TypeSpec::Scalar(kind) => match kind {
             ScalarKind::F32 => "F32".to_string(),
             ScalarKind::F64 => "F64".to_string(),
+            ScalarKind::I64 => "I64".to_string(),
             ScalarKind::Bool => "Bool".to_string(),
             ScalarKind::String => "String".to_string(),
             other => format!("{other:?}"),

@@ -26,7 +26,7 @@ struct Host {
 impl Mono for Host {
     fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
         if channel.name == "time" {
-            Ok(Value::F64(self.time))
+            Ok(Value::f64(self.time))
         } else {
             Err(EvalError::MissingChannel {
                 channel: channel.clone(),
@@ -37,8 +37,8 @@ impl Mono for Host {
     fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
         let number = |index: usize| args[index].as_f64().expect("实参必须是标量");
         match op.name.as_str() {
-            "sin" => Ok(Value::F64(number(0).sin())),
-            "add" => Ok(Value::F64(number(0) + number(1))),
+            "sin" => Ok(Value::f64(number(0).sin())),
+            "add" => Ok(Value::f64(number(0) + number(1))),
             other => Err(EvalError::op(op, format!("未知算子 `{other}`"))),
         }
     }
@@ -144,7 +144,7 @@ fn benchmarks(c: &mut Criterion) {
         b.iter(|| {
             let mut cache = Some(RecCache {
                 count: RESUME_AT,
-                value: Value::F64((RESUME_AT + 1) as f64),
+                value: Value::f64((RESUME_AT + 1) as f64),
             });
             black_box(compiled.eval_cached(&host, &mut cache).expect("可求值"))
         })

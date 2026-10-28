@@ -22,26 +22,342 @@
 
 use std::collections::BTreeMap;
 
+use ze_type::ScalarKind;
+
 use crate::expr::{ChannelRef, Expr, ExprError, Literal, MethodRef, Node, OpRef};
 
+/// 标量 / 向量的**最多分量数**（`Vec4` 是当前上限）。
+pub const SCALAR_MAX_DIM: u8 = 4;
+
+/// 单个分量的最大字节宽度（`f64` / `i64` / `u64`）。
+const MAX_LANE_BYTES: usize = 8;
+
+/// 定长数据区（`dim × lane`，**零堆分配**）。
+const SCALAR_DATA_BYTES: usize = SCALAR_MAX_DIM as usize * MAX_LANE_BYTES;
+
 /// 运行时值（跨通道 / 算子的最小集）。
+///
+/// # 为什么标量与向量是**一个**变体
+///
+/// 旧形态 `F64 | I64 | Vec2 | Vec3` 是同一件事的四种组合（`ty × dim`）各占一格：
+/// 加一个 `F32` 标量或 `Vec4` 就得多一个变体，而每个 `match` 都要跟着改。
+/// 现在 `Scalar { ty, dim }` 与类型侧的 [`ze_type::TypeSpec`]（`Scalar` / `App`）同构，
+/// **值侧对齐类型侧**。
+///
+/// # 精度口径（风险表第 4 条的显式裁决）
+///
+/// 标量取 `F64`、向量取 `F32` —— 这不是"不一致被藏起来"，而是**显式的两种类型**：
+/// 向量与 `ze-type::layout` 的 `zela.Vec2/Vec3`（`f32` 字段）逐位一致，标量与
+/// 表达式层的 `f64` 算术逐位一致。统一成单一宽度会改变像素基线（禁止）。
 ///
 /// `Path` 已**迁移出核心**（阶段 1）：路径是 `Bytes` + 命名类型 `zela.Path`，
 /// 内核只认识"带类型名的字节块"，不认识"路径"这个领域概念。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum Value {
-    F64(f64),
-    /// 64 位整数（递归索引 / 帧号；**不经过 f64**）。
-    I64(i64),
+    /// 标量 / 向量：**`ty × dim` 参数化**（`F64×1` = 数、`I64×1` = 离散索引、
+    /// `F32×2/3/4` = 向量）。
+    Scalar(Scalar),
     Bool(bool),
     Text(String),
-    Vec2([f32; 2]),
-    Vec3([f32; 3]),
     /// **字节块 + 命名类型**（`zela.Path` / 第三方私有类型）。
     ///
     /// 命名类型与布局描述在 `ze-func::layout` 的注册表里；本 crate 只搬运字节。
     Bytes(ValueBytes),
+}
+
+/// 标量 / 向量：`ty`（分量类型）× `dim`（分量数）的定长值。
+///
+/// 字段私有 ⇒ **只能**经构造函数产生（分量宽度与 `dim` 的一致性由入口保证，
+/// 见 [`Scalar::f32_vec`]）：这让 `match (ty, dim)` 的分支可以被信任。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Scalar {
+    ty: ScalarKind,
+    dim: u8,
+    /// 分量按 `ty` 的宽度小端连续存放；未用字节恒为 0（`PartialEq` 依赖这一点）。
+    data: [u8; SCALAR_DATA_BYTES],
+}
+
+impl Scalar {
+    /// `f64` 标量（表达式层的通用数值）。
+    pub fn f64(value: f64) -> Self {
+        Self::single(ScalarKind::F64, value.to_le_bytes())
+    }
+
+    /// `i64` 离散值（递归索引 / 帧号；**不经过 f64**）。
+    pub fn i64(value: i64) -> Self {
+        Self::single(ScalarKind::I64, value.to_le_bytes())
+    }
+
+    /// `f32` 向量（`dim ∈ 1..=4`，即 `F32` 标量 / `Vec2` / `Vec3` / `Vec4`）。
+    pub fn f32_vec(components: &[f32]) -> Self {
+        let dim = components.len();
+        assert!(
+            (1..=SCALAR_MAX_DIM as usize).contains(&dim),
+            "向量分量数必须在 1..=4，实际 {dim}"
+        );
+        let mut data = [0u8; SCALAR_DATA_BYTES];
+        for (index, component) in components.iter().enumerate() {
+            let offset = index * 4;
+            data[offset..offset + 4].copy_from_slice(&component.to_le_bytes());
+        }
+        Self {
+            ty: ScalarKind::F32,
+            dim: dim as u8,
+            data,
+        }
+    }
+
+    fn single(ty: ScalarKind, lane: [u8; MAX_LANE_BYTES]) -> Self {
+        let mut data = [0u8; SCALAR_DATA_BYTES];
+        data[..MAX_LANE_BYTES].copy_from_slice(&lane);
+        Self { ty, dim: 1, data }
+    }
+
+    /// 分量类型。
+    pub fn ty(&self) -> ScalarKind {
+        self.ty
+    }
+
+    /// 分量数（`1` = 标量）。
+    pub fn dim(&self) -> u8 {
+        self.dim
+    }
+
+    /// 数值视图：**只有** `F64 × 1` 是"表达式层的数"（不做隐式提升）。
+    pub fn as_f64(&self) -> Option<f64> {
+        match (self.ty, self.dim) {
+            (ScalarKind::F64, 1) => Some(f64::from_le_bytes(self.lane(0))),
+            _ => None,
+        }
+    }
+
+    /// 整数视图：**只有** `I64 × 1`（不把浮点静默取整）。
+    pub fn as_i64(&self) -> Option<i64> {
+        match (self.ty, self.dim) {
+            (ScalarKind::I64, 1) => Some(i64::from_le_bytes(self.lane(0))),
+            _ => None,
+        }
+    }
+
+    /// `F32` 向量的第 `index` 个分量（`index < dim` 且 `ty == F32`）。
+    pub fn lane_f32(&self, index: usize) -> Option<f32> {
+        if self.ty != ScalarKind::F32 || index >= usize::from(self.dim) {
+            return None;
+        }
+        let offset = index * 4;
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&self.data[offset..offset + 4]);
+        Some(f32::from_le_bytes(bytes))
+    }
+
+    /// `F32 × 2` 视图（`Vec2`）。
+    pub fn as_vec2(&self) -> Option<[f32; 2]> {
+        if (self.ty, self.dim) != (ScalarKind::F32, 2) {
+            return None;
+        }
+        Some([self.lane_f32(0)?, self.lane_f32(1)?])
+    }
+
+    /// `F32 × 3` 视图（`Vec3`）。
+    pub fn as_vec3(&self) -> Option<[f32; 3]> {
+        if (self.ty, self.dim) != (ScalarKind::F32, 3) {
+            return None;
+        }
+        Some([
+            self.lane_f32(0)?,
+            self.lane_f32(1)?,
+            self.lane_f32(2)?,
+        ])
+    }
+
+    /// `F32 × 4` 视图（`Vec4`）。
+    pub fn as_vec4(&self) -> Option<[f32; 4]> {
+        if (self.ty, self.dim) != (ScalarKind::F32, 4) {
+            return None;
+        }
+        Some([
+            self.lane_f32(0)?,
+            self.lane_f32(1)?,
+            self.lane_f32(2)?,
+            self.lane_f32(3)?,
+        ])
+    }
+
+    /// 值种类名（错误消息 / 诊断用）。
+    fn kind_name(&self) -> &'static str {
+        match self.ty {
+            ScalarKind::F64 => "scalar",
+            ScalarKind::I64 => "i64",
+            ScalarKind::F32 => match self.dim {
+                1 => "f32",
+                2 => "vec2",
+                3 => "vec3",
+                _ => "vec4",
+            },
+            ScalarKind::I32 => "i32",
+            ScalarKind::U32 => "u32",
+            ScalarKind::U64 => "u64",
+            ScalarKind::U8 => "u8",
+            // 构造函数已拒绝这两个：`Bool` 有独立变体，`String` 是变长（阶段 2 下沉 Bytes）。
+            ScalarKind::Bool | ScalarKind::String => {
+                panic!("Scalar 不承载 {ty:?}（Bool 走 Value::Bool，String 走 Value::Text）", ty = self.ty)
+            }
+        }
+    }
+
+    /// 分量宽度（**编译期穷尽**：新增 `ScalarKind` 必须在这里决定能否做标量载荷）。
+    const fn lane_width(ty: ScalarKind) -> Option<usize> {
+        match ty {
+            ScalarKind::F32 | ScalarKind::I32 | ScalarKind::U32 => Some(4),
+            ScalarKind::F64 | ScalarKind::I64 | ScalarKind::U64 => Some(8),
+            ScalarKind::U8 => Some(1),
+            ScalarKind::Bool | ScalarKind::String => None,
+        }
+    }
+
+    /// 分量种类在**规范字节**里的编码（新增种类必须给码，否则编译失败）。
+    const fn ty_code(ty: ScalarKind) -> u8 {
+        match ty {
+            ScalarKind::F32 => 0,
+            ScalarKind::F64 => 1,
+            ScalarKind::I32 => 2,
+            ScalarKind::I64 => 3,
+            ScalarKind::U32 => 4,
+            ScalarKind::U64 => 5,
+            ScalarKind::U8 => 6,
+            ScalarKind::Bool => 7,
+            ScalarKind::String => 8,
+        }
+    }
+
+    fn lane(&self, index: usize) -> [u8; MAX_LANE_BYTES] {
+        let width = Self::lane_width(self.ty).expect("Scalar 的 ty 必须是标量载荷");
+        let offset = index * width;
+        let mut lane = [0u8; MAX_LANE_BYTES];
+        lane[..width].copy_from_slice(&self.data[offset..offset + width]);
+        lane
+    }
+
+    /// 实际使用的字节（错误信息 / 序列化用；不暴露填充）。
+    fn used_bytes(&self) -> &[u8] {
+        let width = Self::lane_width(self.ty).expect("Scalar 的 ty 必须是标量载荷");
+        &self.data[..usize::from(self.dim) * width]
+    }
+
+    /// **规范字节编码**（与既有标签**逐位**一致）。
+    ///
+    /// 旧形态的标签必须保留：值序列哈希（`hash_values`）是基线的一部分，
+    /// 改编码就是改基线。新组合（`Vec4` / `F32` 标量 / 其它 `ScalarKind`）走
+    /// 通用标签 `7`：`ty_code + dim + 分量字节`。
+    fn canonical_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        match (self.ty, self.dim) {
+            (ScalarKind::F64, 1) => {
+                out.push(0);
+                out.extend_from_slice(self.used_bytes());
+            }
+            (ScalarKind::I64, 1) => {
+                out.push(6);
+                out.extend_from_slice(self.used_bytes());
+            }
+            (ScalarKind::F32, 2) => {
+                out.push(3);
+                out.extend_from_slice(self.used_bytes());
+            }
+            (ScalarKind::F32, 3) => {
+                out.push(4);
+                out.extend_from_slice(self.used_bytes());
+            }
+            _ => {
+                out.push(7);
+                out.push(Self::ty_code(self.ty));
+                out.push(self.dim);
+                out.extend_from_slice(self.used_bytes());
+            }
+        }
+        out
+    }
+}
+
+impl serde::Serialize for Scalar {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Scalar", 3)?;
+        state.serialize_field("ty", kind_code(self.ty))?;
+        state.serialize_field("dim", &self.dim)?;
+        state.serialize_field("data", self.used_bytes())?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Scalar {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            ty: String,
+            dim: u8,
+            data: Vec<u8>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let ty = kind_from_code(&wire.ty).ok_or_else(|| {
+            serde::de::Error::custom(format!("未知标量种类 `{}`", wire.ty))
+        })?;
+        let width = Scalar::lane_width(ty)
+            .ok_or_else(|| serde::de::Error::custom(format!("标量种类 `{}` 不能承载值", wire.ty)))?;
+        if wire.dim == 0 || wire.dim > SCALAR_MAX_DIM {
+            return Err(serde::de::Error::custom(format!(
+                "标量维度必须在 1..=4，实际 {}",
+                wire.dim
+            )));
+        }
+        let expected = usize::from(wire.dim) * width;
+        if wire.data.len() != expected {
+            return Err(serde::de::Error::custom(format!(
+                "标量数据长度 {} 与 {width} 字节 × {} 个分量不符",
+                wire.data.len(),
+                wire.dim
+            )));
+        }
+        let mut data = [0u8; SCALAR_DATA_BYTES];
+        data[..expected].copy_from_slice(&wire.data);
+        Ok(Scalar {
+            ty,
+            dim: wire.dim,
+            data,
+        })
+    }
+}
+
+/// 种类在序列化里的短名（小写，与 `kind_name` 的前缀一致）。
+fn kind_code(ty: ScalarKind) -> &'static str {
+    match ty {
+        ScalarKind::F32 => "f32",
+        ScalarKind::F64 => "f64",
+        ScalarKind::I32 => "i32",
+        ScalarKind::I64 => "i64",
+        ScalarKind::U32 => "u32",
+        ScalarKind::U64 => "u64",
+        ScalarKind::U8 => "u8",
+        ScalarKind::Bool => "bool",
+        ScalarKind::String => "string",
+    }
+}
+
+fn kind_from_code(code: &str) -> Option<ScalarKind> {
+    Some(match code {
+        "f32" => ScalarKind::F32,
+        "f64" => ScalarKind::F64,
+        "i32" => ScalarKind::I32,
+        "i64" => ScalarKind::I64,
+        "u32" => ScalarKind::U32,
+        "u64" => ScalarKind::U64,
+        "u8" => ScalarKind::U8,
+        "bool" => ScalarKind::Bool,
+        "string" => ScalarKind::String,
+        _ => return None,
+    })
 }
 
 /// 带类型名的字节块。
@@ -76,20 +392,86 @@ impl ValueBytes {
 }
 
 impl Value {
-    /// 取数值（`F32` / `F64` / `I32` 字面量都归一到这里）。
-    pub fn as_f64(&self) -> Option<f64> {
+    /// `f64` 标量（表达式层的通用数值）。
+    pub fn f64(value: f64) -> Self {
+        Self::Scalar(Scalar::f64(value))
+    }
+
+    /// `i64` 离散值（递归索引 / 帧号）。
+    pub fn i64(value: i64) -> Self {
+        Self::Scalar(Scalar::i64(value))
+    }
+
+    /// `Vec2`（`F32 × 2`）。
+    pub fn vec2(value: [f32; 2]) -> Self {
+        Self::Scalar(Scalar::f32_vec(&value))
+    }
+
+    /// `Vec3`（`F32 × 3`）。
+    pub fn vec3(value: [f32; 3]) -> Self {
+        Self::Scalar(Scalar::f32_vec(&value))
+    }
+
+    /// `Vec4`（`F32 × 4`）。
+    pub fn vec4(value: [f32; 4]) -> Self {
+        Self::Scalar(Scalar::f32_vec(&value))
+    }
+
+    /// 标量 / 向量视图（`Bool` / `Text` / `Bytes` 返回 `None`）。
+    pub fn scalar(&self) -> Option<&Scalar> {
         match self {
-            Value::F64(value) => Some(*value),
+            Value::Scalar(scalar) => Some(scalar),
             _ => None,
         }
     }
 
-    /// 取整数（**只有** `I64`；不把 f64 静默取整）。
+    /// 取数值（**只有** `F64 × 1`；`F32` / `I64` 不做隐式提升）。
+    pub fn as_f64(&self) -> Option<f64> {
+        self.scalar().and_then(Scalar::as_f64)
+    }
+
+    /// 取整数（**只有** `I64 × 1`；不把 f64 静默取整）。
     pub fn as_i64(&self) -> Option<i64> {
+        self.scalar().and_then(Scalar::as_i64)
+    }
+
+    /// 取布尔。
+    pub fn as_bool(&self) -> Option<bool> {
         match self {
-            Value::I64(value) => Some(*value),
+            Value::Bool(value) => Some(*value),
             _ => None,
         }
+    }
+
+    /// 取文本（阶段 2 前仍独立承载）。
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            Value::Text(text) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+
+    /// 取字节块。
+    pub fn as_bytes(&self) -> Option<&ValueBytes> {
+        match self {
+            Value::Bytes(bytes) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    /// `Vec2` 视图。
+    pub fn as_vec2(&self) -> Option<[f32; 2]> {
+        self.scalar().and_then(Scalar::as_vec2)
+    }
+
+    /// `Vec3` 视图。
+    pub fn as_vec3(&self) -> Option<[f32; 3]> {
+        self.scalar().and_then(Scalar::as_vec3)
+    }
+
+    /// `Vec4` 视图。
+    pub fn as_vec4(&self) -> Option<[f32; 4]> {
+        self.scalar().and_then(Scalar::as_vec4)
     }
 
     /// 值种类名（错误消息 / 诊断用）。
@@ -103,14 +485,7 @@ impl Value {
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
-            Value::F64(value) => {
-                out.push(0);
-                out.extend_from_slice(&value.to_bits().to_le_bytes());
-            }
-            Value::I64(value) => {
-                out.push(6);
-                out.extend_from_slice(&value.to_le_bytes());
-            }
+            Value::Scalar(scalar) => out.extend(scalar.canonical_bytes()),
             Value::Bool(value) => {
                 out.push(1);
                 out.push(u8::from(*value));
@@ -119,17 +494,6 @@ impl Value {
                 out.push(2);
                 out.extend_from_slice(&(text.len() as u32).to_le_bytes());
                 out.extend_from_slice(text.as_bytes());
-            }
-            Value::Vec2(value) => {
-                out.push(3);
-                out.extend_from_slice(&value[0].to_bits().to_le_bytes());
-                out.extend_from_slice(&value[1].to_bits().to_le_bytes());
-            }
-            Value::Vec3(value) => {
-                out.push(4);
-                for component in value {
-                    out.extend_from_slice(&component.to_bits().to_le_bytes());
-                }
             }
             Value::Bytes(bytes) => {
                 out.push(5);
@@ -415,21 +779,21 @@ impl CompiledExpr {
                 Step::Pure(literal) => literal_value(literal),
                 Step::Channel(channel) => mono.read(channel)?,
                 Step::Read { channel, object } => mono.read_object(channel, *object)?,
-                Step::Select { cond, then, r#else } => match &values[*cond] {
-                    Value::Bool(true) => then.eval_with(mono, context)?,
-                    Value::Bool(false) => r#else.eval_with(mono, context)?,
-                    other => {
+                Step::Select { cond, then, r#else } => match values[*cond].as_bool() {
+                    Some(true) => then.eval_with(mono, context)?,
+                    Some(false) => r#else.eval_with(mono, context)?,
+                    None => {
                         return Err(EvalError::SelectCondition {
-                            actual: value_kind(other),
+                            actual: value_kind(&values[*cond]),
                         })
                     }
                 },
                 Step::NatRec { count, init, step } => {
-                    let count = match &values[*count] {
-                        Value::I64(value) if *value >= 0 => *value,
-                        other => {
+                    let count = match values[*count].as_i64() {
+                        Some(value) if value >= 0 => value,
+                        _ => {
                             return Err(EvalError::RecCount {
-                                actual: value_kind(other),
+                                actual: value_kind(&values[*count]),
                             })
                         }
                     };
@@ -487,7 +851,7 @@ impl CompiledExpr {
                     None => return Err(EvalError::RecContext { leaf: "rec_prev" }),
                 },
                 Step::RecIndex => match &context.rec {
-                    Some(frame) => Value::I64(frame.index),
+                    Some(frame) => Value::i64(frame.index),
                     None => return Err(EvalError::RecContext { leaf: "rec_index" }),
                 },
                 Step::UnfoldedExists => return Err(EvalError::UnfoldedExists),
@@ -513,26 +877,23 @@ impl CompiledExpr {
 /// 值种类名（错误消息用；与 Pod 层词汇一致）。
 pub(crate) fn value_kind(value: &Value) -> &'static str {
     match value {
-        Value::F64(_) => "scalar",
-        Value::I64(_) => "i64",
+        Value::Scalar(scalar) => scalar.kind_name(),
         Value::Bool(_) => "bool",
         Value::Text(_) => "text",
-        Value::Vec2(_) => "vec2",
-        Value::Vec3(_) => "vec3",
         Value::Bytes(_) => "bytes",
     }
 }
 
 pub(crate) fn literal_value(literal: &Literal) -> Value {
     match literal {
-        Literal::F32(value) => Value::F64(f64::from(*value)),
-        Literal::F64(value) => Value::F64(*value),
-        Literal::I32(value) => Value::F64(f64::from(*value)),
-        Literal::I64(value) => Value::I64(*value),
+        Literal::F32(value) => Value::f64(f64::from(*value)),
+        Literal::F64(value) => Value::f64(*value),
+        Literal::I32(value) => Value::f64(f64::from(*value)),
+        Literal::I64(value) => Value::i64(*value),
         Literal::Bool(value) => Value::Bool(*value),
         Literal::Text(value) => Value::Text(value.clone()),
-        Literal::Vec2(value) => Value::Vec2(*value),
-        Literal::Vec3(value) => Value::Vec3(*value),
+        Literal::Vec2(value) => Value::vec2(*value),
+        Literal::Vec3(value) => Value::vec3(*value),
     }
 }
 
@@ -693,8 +1054,8 @@ mod tests {
     impl Mono for ScalarMono {
         fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
             match (channel.namespace.as_str(), channel.name.as_str()) {
-                ("", "time") => Ok(Value::F64(self.time)),
-                ("", "frame") => Ok(Value::F64(self.frame as f64)),
+                ("", "time") => Ok(Value::f64(self.time)),
+                ("", "frame") => Ok(Value::f64(self.frame as f64)),
                 _ => Err(EvalError::MissingChannel {
                     channel: channel.clone(),
                 }),
@@ -709,17 +1070,17 @@ mod tests {
                     .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是数值")))
             };
             match op.name.as_str() {
-                "sin" => Ok(Value::F64(num(0)?.sin())),
-                "cos" => Ok(Value::F64(num(0)?.cos())),
-                "mul" => Ok(Value::F64(num(0)? * num(1)?)),
-                "add" => Ok(Value::F64(num(0)? + num(1)?)),
-                "scale" => Ok(Value::F64(num(0)? * num(1)?)),
+                "sin" => Ok(Value::f64(num(0)?.sin())),
+                "cos" => Ok(Value::f64(num(0)?.cos())),
+                "mul" => Ok(Value::f64(num(0)? * num(1)?)),
+                "add" => Ok(Value::f64(num(0)? + num(1)?)),
+                "scale" => Ok(Value::f64(num(0)? * num(1)?)),
                 "sum" => {
                     let mut total = 0.0;
                     for index in 0..args.len() {
                         total += num(index)?;
                     }
-                    Ok(Value::F64(total))
+                    Ok(Value::f64(total))
                 }
                 other => Err(EvalError::op(op, format!("未知算子 `{other}`"))),
             }
@@ -819,14 +1180,14 @@ mod tests {
         let program = CompiledExpr::compile(&expr).expect("Select 已实现");
         assert_eq!(
             program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
-            Value::F64(1.0)
+            Value::f64(1.0)
         );
 
         let expr = Expr::select(Expr::pure(false), Expr::pure(1.0), Expr::pure(0.0));
         let program = CompiledExpr::compile(&expr).unwrap();
         assert_eq!(
             program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
-            Value::F64(0.0)
+            Value::f64(0.0)
         );
     }
 
@@ -839,7 +1200,7 @@ mod tests {
         let program = CompiledExpr::compile(&expr).unwrap();
         assert_eq!(
             program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
-            Value::F64(0.0),
+            Value::f64(0.0),
             "else 分支生效 ⇒ then 里的缺失通道不会被读到"
         );
 
@@ -852,7 +1213,7 @@ mod tests {
         let program = CompiledExpr::compile(&expr).unwrap();
         assert_eq!(
             program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
-            Value::F64(1.0)
+            Value::f64(1.0)
         );
     }
 
@@ -897,13 +1258,13 @@ mod tests {
     /// **阶段 1**：`I64` 不经过 f64（递归索引不能撞刀刃取整）。
     #[test]
     fn i64_stays_integer_and_is_not_silently_cast() {
-        let value = Value::I64(7);
+        let value = Value::i64(7);
         assert_eq!(value.as_i64(), Some(7));
         assert_eq!(value.as_f64(), None, "I64 不得静默转 f64");
         assert_eq!(value.kind(), "i64");
         assert_ne!(
-            hash_values(&[Value::I64(7)]),
-            hash_values(&[Value::F64(7.0)]),
+            hash_values(&[Value::i64(7)]),
+            hash_values(&[Value::f64(7.0)]),
             "整数与浮点必须是不同的值序列"
         );
     }
@@ -917,6 +1278,102 @@ mod tests {
         assert_eq!(canonical[0], 5, "Bytes 的规范标签");
         assert!(canonical.windows("zela.Path".len()).any(|w| w == b"zela.Path"));
     }
+
+    /// **阶段 1 门禁（§0.1）**：`Scalar` 能承载哪些 `ScalarKind` 必须**逐条登记**。
+    ///
+    /// 三层强制：`lane_width` / `ty_code` 是穷尽 `match`（新增种类不处理 ⇒ **编译失败**）；
+    /// 本用例钉住"哪些能作载荷"，改动分类必须同时改这里（**测试失败**）。
+    #[test]
+    fn scalar_payload_kinds_are_explicitly_classified() {
+        use ze_type::ScalarKind::*;
+        const ALL: &[ScalarKind] = &[F32, F64, I32, I64, U32, U64, U8, Bool, String];
+
+        let payload: Vec<&str> = ALL
+            .iter()
+            .filter(|kind| Scalar::lane_width(**kind).is_some())
+            .map(|kind| kind_code(*kind))
+            .collect();
+        let rejected: Vec<&str> = ALL
+            .iter()
+            .filter(|kind| Scalar::lane_width(**kind).is_none())
+            .map(|kind| kind_code(*kind))
+            .collect();
+
+        assert_eq!(payload, vec!["f32", "f64", "i32", "i64", "u32", "u64", "u8"]);
+        assert_eq!(
+            rejected,
+            vec!["bool", "string"],
+            "Bool 有独立变体，String 是变长（阶段 2 下沉 Bytes）"
+        );
+    }
+
+    /// **阶段 1**：标量与向量是同一个变体（`ty × dim`），`dim` 上限 4。
+    #[test]
+    fn scalar_and_vectors_share_one_representation() {
+        assert_eq!(Value::f64(1.5).kind(), "scalar");
+        assert_eq!(Value::i64(3).kind(), "i64");
+        assert_eq!(Value::vec2([1.0, 2.0]).kind(), "vec2");
+        assert_eq!(Value::vec3([1.0, 2.0, 3.0]).kind(), "vec3");
+        assert_eq!(Value::vec4([1.0, 2.0, 3.0, 4.0]).kind(), "vec4");
+
+        assert_eq!(Value::vec3([1.0, 2.0, 3.0]).as_vec3(), Some([1.0, 2.0, 3.0]));
+        assert_eq!(Value::vec2([1.0, 2.0]).as_vec3(), None, "不做隐式升维");
+        assert_eq!(Value::f64(1.0).as_vec2(), None, "标量不是向量");
+        assert_eq!(Value::vec4([1.0, 2.0, 3.0, 4.0]).as_vec4(), Some([1.0, 2.0, 3.0, 4.0]));
+    }
+
+    /// 既有四种组合的规范字节**逐位不变**（值序列哈希是基线的一部分）。
+    #[test]
+    fn canonical_bytes_keep_the_legacy_tags() {
+        assert_eq!(
+            Value::f64(1.5).canonical_bytes(),
+            [vec![0], 1.5_f64.to_bits().to_le_bytes().to_vec()].concat()
+        );
+        assert_eq!(
+            Value::i64(7).canonical_bytes(),
+            [vec![6], 7_i64.to_le_bytes().to_vec()].concat()
+        );
+        assert_eq!(
+            Value::vec2([1.0, 2.0]).canonical_bytes(),
+            [
+                vec![3],
+                1.0_f32.to_le_bytes().to_vec(),
+                2.0_f32.to_le_bytes().to_vec()
+            ]
+            .concat()
+        );
+        assert_eq!(
+            Value::vec3([1.0, 2.0, 3.0]).canonical_bytes(),
+            [
+                vec![4],
+                1.0_f32.to_le_bytes().to_vec(),
+                2.0_f32.to_le_bytes().to_vec(),
+                3.0_f32.to_le_bytes().to_vec()
+            ]
+            .concat()
+        );
+        // 新组合（`Vec4`）走通用标签 7：`ty_code + dim + 分量`。
+        let vec4 = Value::vec4([1.0, 2.0, 3.0, 4.0]).canonical_bytes();
+        assert_eq!(vec4[0], 7);
+        assert_eq!(vec4[1], 0, "F32 的 ty_code");
+        assert_eq!(vec4[2], 4, "dim");
+    }
+
+    /// `Scalar` 的 serde 往返（缓存可序列化 ⇒ 值必须能过 JSON）。
+    #[test]
+    fn scalar_round_trips_through_json() {
+        for value in [
+            Value::f64(-0.0),
+            Value::i64(i64::MIN),
+            Value::vec2([0.1, -0.2]),
+            Value::vec4([f32::MIN, 1.0, 2.0, f32::MAX]),
+        ] {
+            let json = serde_json::to_string(&value).expect("可序列化");
+            let back: Value = serde_json::from_str(&json).expect("可反序列化");
+            assert_eq!(back, value, "JSON 往返必须逐位不变：{json}");
+        }
+    }
+
 
     // ─── 阶段 3：NatRec 离散层 ─────────────────────────────────────────
 
@@ -936,7 +1393,7 @@ mod tests {
         let program = CompiledExpr::compile(&expr).unwrap();
         let mono = ScalarMono::new(0.0, 0);
         let lowered = program.eval(&mono).unwrap();
-        assert_eq!(lowered, Value::F64(9.0));
+        assert_eq!(lowered, Value::f64(9.0));
         assert_eq!(
             crate::reference::eval_reference(&expr, &mono).unwrap(),
             lowered,
@@ -965,7 +1422,7 @@ mod tests {
         let program = CompiledExpr::compile(&expr).unwrap();
         assert_eq!(
             program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
-            Value::I64(3)
+            Value::i64(3)
         );
     }
 
@@ -1074,7 +1531,7 @@ mod tests {
 
         let mut cache = None;
         let first = program.eval_cached(&mono, &mut cache).unwrap();
-        assert_eq!(first, Value::F64(11.0));
+        assert_eq!(first, Value::f64(11.0));
         let cache = cache.expect("根级 NatRec 必须产出缓存");
         assert_eq!(cache.count, 5);
 
@@ -1111,7 +1568,7 @@ mod tests {
         let mono = ScalarMono::new(0.0, 0);
         let mut cache = None;
         let value = program.eval_cached(&mono, &mut cache).unwrap();
-        assert_eq!(value, Value::F64(12.0), "5 + 7");
+        assert_eq!(value, Value::f64(12.0), "5 + 7");
         let cache = cache.expect("第一个 NatRec 产出缓存");
         assert_eq!(cache.count, 2, "缓存属于第一个 fold");
         assert_eq!(
@@ -1138,7 +1595,7 @@ mod tests {
             }
             fn read_object(&self, channel: &ChannelRef, object: u64) -> Result<Value, EvalError> {
                 if channel.name == "Circle.radius" {
-                    Ok(Value::F64(self.radius))
+                    Ok(Value::f64(self.radius))
                 } else {
                     Err(EvalError::MissingComponent {
                         object,

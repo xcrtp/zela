@@ -23,6 +23,8 @@ pub enum ScalarValue {
     F32(f32),
     F64(f64),
     I32(i32),
+    /// 64 位有符号整数（离散层索引 / 帧号；**不经 f64**）。
+    I64(i64),
     U32(u32),
     U64(u64),
     U8(u8),
@@ -213,6 +215,7 @@ impl_pod_type_scalar!(f32, F32, F32, "f32");
 impl_pod_type_scalar!(f64, F64, F64, "f64");
 impl_pod_type_scalar!(i32, I32, I32, "i32");
 impl_pod_type_scalar!(u32, U32, U32, "u32");
+impl_pod_type_scalar!(i64, I64, I64, "i64");
 impl_pod_type_scalar!(u64, U64, U64, "u64");
 impl_pod_type_scalar!(u8, U8, U8, "u8");
 impl_pod_type_scalar!(bool, Bool, Bool, "bool");

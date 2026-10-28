@@ -84,13 +84,13 @@ impl<'a> SceneMono<'a> {
 impl Mono for SceneMono<'_> {
     fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
         match (channel.namespace.as_str(), channel.name.as_str()) {
-            ("", TIME_CHANNEL) => Ok(Value::F64(match &channel.clock {
+            ("", TIME_CHANNEL) => Ok(Value::f64(match &channel.clock {
                 // `c.time()`：按叶子携带的时钟链在**同一个全局时间**上反算。
                 Some(shape) => shape.eval(self.global),
                 // `clock.time()`：绑定时钟的局部时间（`None` = 现状）。
                 None => self.time,
             })),
-            ("", FRAME_CHANNEL) => Ok(Value::F64(self.frame as f64)),
+            ("", FRAME_CHANNEL) => Ok(Value::f64(self.frame as f64)),
             _ => Err(EvalError::MissingChannel {
                 channel: channel.clone(),
             }),
@@ -164,16 +164,14 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
         ChannelType::Bool => "bool",
         ChannelType::Vec2 => "vec2",
         ChannelType::Vec3 => "vec3",
+        ChannelType::Vec4 => "vec4",
         ChannelType::Bytes => "bytes",
     };
-    let actual = match value {
-        Value::F64(_) => "number",
-        Value::I64(_) => "i64",
-        Value::Bool(_) => "bool",
-        Value::Vec2(_) => "vec2",
-        Value::Vec3(_) => "vec3",
-        Value::Text(_) => "text",
-        Value::Bytes(_) => "bytes",
+    let actual = match value.kind() {
+        // 标量 / 向量共用 `Value::Scalar`：`kind()` 已给出 `vec2` / `vec3` / `vec4` / `i64` …
+        // 只有表达式层的 "数" 在通道词汇里叫 `number`。
+        "scalar" => "number",
+        other => other,
     };
     if expected == actual {
         Ok(())
@@ -193,9 +191,9 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
 /// 路径是变长结构、没有 Layout ⇒ 零拷贝不适用（硬约束 4 的安全缺省）。
 fn anim_to_value(channel: &ChannelRef, value: &AnimValue) -> Result<Value, EvalError> {
     match value {
-        AnimValue::Scalar(value) => Ok(Value::F64(*value as f64)),
-        AnimValue::Vec2(value) => Ok(Value::Vec2([value.x, value.y])),
-        AnimValue::Vec3(value) => Ok(Value::Vec3([value.x, value.y, value.z])),
+        AnimValue::Scalar(value) => Ok(Value::f64(*value as f64)),
+        AnimValue::Vec2(value) => Ok(Value::vec2([value.x, value.y])),
+        AnimValue::Vec3(value) => Ok(Value::vec3([value.x, value.y, value.z])),
         AnimValue::Color(_) => Err(EvalError::UnsupportedValue {
             channel: channel.clone(),
             kind: "color",
@@ -237,13 +235,21 @@ fn decode_path_value(bytes: &ze_comb::ValueBytes) -> Option<ze_notion::Path2D> {
 /// （调用方显式记录，不静默写 0）。`Value::Bytes` 只在命名类型是
 /// `zela.Path` 时解码回路径；其它命名类型同样显式跳过。
 pub fn anim_value(value: &Value) -> Option<AnimValue> {
-    match value {
-        Value::F64(value) => Some(AnimValue::Scalar(*value as f32)),
-        Value::Vec2(value) => Some(AnimValue::Vec2((*value).into())),
-        Value::Vec3(value) => Some(AnimValue::Vec3((*value).into())),
-        Value::Bytes(bytes) => decode_path_value(bytes).map(AnimValue::Path),
-        Value::I64(_) | Value::Bool(_) | Value::Text(_) => None,
+    if let Some(bytes) = value.as_bytes() {
+        return decode_path_value(bytes).map(AnimValue::Path);
     }
+    let scalar = value.scalar()?;
+    if let Some(value) = scalar.as_f64() {
+        return Some(AnimValue::Scalar(value as f32));
+    }
+    if let Some(value) = scalar.as_vec2() {
+        return Some(AnimValue::Vec2(value.into()));
+    }
+    if let Some(value) = scalar.as_vec3() {
+        return Some(AnimValue::Vec3(value.into()));
+    }
+    // `I64` / `F32` 标量 / `Vec4` 没有对应的组件字段通道 ⇒ `None`（调用方显式记录）。
+    None
 }
 
 #[cfg(test)]
@@ -274,11 +280,11 @@ mod tests {
         let mono = SceneMono::from_time_state(&state, &NoScene);
         assert_eq!(
             mono.read(&ChannelRef::builtin(TIME_CHANNEL)).unwrap(),
-            Value::F64(1.5)
+            Value::f64(1.5)
         );
         assert_eq!(
             mono.read(&ChannelRef::builtin(FRAME_CHANNEL)).unwrap(),
-            Value::F64(45.0)
+            Value::f64(45.0)
         );
         assert_eq!(
             mono.read(&ChannelRef::builtin("event")).unwrap_err(),
@@ -361,10 +367,10 @@ mod tests {
         let scoped = ChannelRef::builtin(TIME_CHANNEL).with_clock(shape);
         // 绑定局部 = 0.5，全局 = 5.0 ⇒ `c.time()` = (5 − 2) × 0.5 = 1.5。
         let mono = SceneMono::with_global(0.5, 5.0, 0, &NoScene);
-        assert_eq!(mono.read(&scoped).unwrap(), Value::F64(1.5));
+        assert_eq!(mono.read(&scoped).unwrap(), Value::f64(1.5));
         assert_eq!(
             mono.read(&ChannelRef::builtin(TIME_CHANNEL)).unwrap(),
-            Value::F64(0.5),
+            Value::f64(0.5),
             "无身份的 `clock.time()` 读绑定局部时间"
         );
     }
@@ -378,7 +384,7 @@ mod tests {
         );
         let program = CompiledExpr::compile(&expr).unwrap();
         let mono = SceneMono::new(std::f64::consts::FRAC_PI_2, 0, &NoScene);
-        assert_eq!(program.eval(&mono).unwrap(), Value::F64(1.0));
+        assert_eq!(program.eval(&mono).unwrap(), Value::f64(1.0));
     }
 
     /// 帧号通道与时间通道互相独立：`sin(frame)` 用的是帧号。
@@ -390,7 +396,7 @@ mod tests {
         );
         let program = CompiledExpr::compile(&expr).unwrap();
         let mono = SceneMono::new(0.0, 30, &NoScene);
-        assert_eq!(program.eval(&mono).unwrap(), Value::F64(30.0_f64.sin()));
+        assert_eq!(program.eval(&mono).unwrap(), Value::f64(30.0_f64.sin()));
     }
 
     /// **本批 A**：比较算子经同一个宿主 M 求值得到 `Bool`；
@@ -430,7 +436,7 @@ mod tests {
         let mono = SceneMono::new(0.0, 0, &ws);
         let channel = ChannelRef::new("zela.scene", "Circle.radius");
         let value = mono.read_object(&channel, id.to_packed()).unwrap();
-        assert_eq!(value, Value::F64(2.5));
+        assert_eq!(value, Value::f64(2.5));
     }
 
     /// **第 2 批对账**：通道声明类型与运行期值的标签不符 ⇒ 显式错误。
@@ -529,7 +535,7 @@ mod tests {
         let value = mono
             .call_method(&method, id.to_packed(), &[])
             .expect("方法可调用");
-        let Value::Vec2([x, y]) = value else {
+        let Some([x, y]) = value.as_vec2() else {
             panic!("Reveal.current_pos 必须是 Vec2，实际 {value:?}");
         };
         assert!(x.abs() < 1e-4 && y.abs() < 1e-4, "end = 0.5 ⇒ 线段中点");
@@ -541,7 +547,7 @@ mod tests {
             Err(EvalError::MissingMethod { .. })
         ));
         assert!(matches!(
-            mono.call_method(&method, id.to_packed(), &[Value::F64(1.0)]),
+            mono.call_method(&method, id.to_packed(), &[Value::f64(1.0)]),
             Err(EvalError::MissingMethod { .. })
         ));
     }
