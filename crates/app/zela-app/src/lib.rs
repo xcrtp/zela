@@ -1550,6 +1550,71 @@ mod tests {
         );
     }
 
+    /// **B4 验收**：`bind_each` 在装配期展开为 N 条具体绑定；结果按 ObjectId 升序、
+    /// 两次装配逐位一致；`N = 0` 可见但不报错。
+    #[test]
+    fn bind_each_expands_at_assembly_and_reports_n() {
+        use ze_prerender::placeholder_engine;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功");
+        let run = || {
+            let script = assembly
+                .run_script(
+                    r#"
+                    local a = scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
+                    local b = scene.spawn({ Circle { x = 2.0, y = 0.0, r = 1.0 } })
+                    local c = scene.spawn({
+                        Circle { x = 4.0, y = 0.0, r = 1.0 },
+                        Reveal { points = { Vec2 { x = 0.0, y = 0.0 }, Vec2 { x = 1.0, y = 1.0 } }, closed = false },
+                    })
+                    -- AOP：所有**没有 Reveal** 的圆，半径统一放大 2 倍
+                    expr.bind_each {
+                        requires = { "Circle" },
+                        excludes = { "Reveal" },
+                        target = Circle.channel.radius,
+                        root = Mul { a = expr.query_self(Circle.channel.radius), b = expr.pure(2.0) },
+                    }
+                    -- N = 0 的查询：显式可见，不报错
+                    expr.bind_each {
+                        requires = { "Parent" },
+                        excludes = {},
+                        target = Circle.channel.radius,
+                        root = expr.pure(1.0),
+                    }
+                    -- `exists`：装配期常量折叠（这条 predicate 折成 `true`）
+                    expr.bind {
+                        object = a,
+                        target = Circle.channel.radius,
+                        root = expr.pure(3.0),
+                        predicate = Predicate.Of {
+                            expr = expr.exists { requires = { "Circle" }, excludes = { "Reveal" } },
+                        },
+                    }
+                    "#,
+                )
+                .expect("批量绑定脚本执行成功");
+            let mut scene = Scene::new();
+            let recipe = script.commit(&mut scene).expect("commit 成功");
+            recipe
+                .bindings
+                .bindings
+                .iter()
+                .map(|binding| binding.target.target_id())
+                .collect::<Vec<_>>()
+        };
+
+        let first = run();
+        let second = run();
+        assert_eq!(
+            first.len(),
+            3,
+            "a / b 命中（c 带 Reveal 被排除）+ 1 条带 `exists` predicate 的绑定"
+        );
+        assert_eq!(first, second, "两次装配的展开顺序必须逐位一致");
+        assert_ne!(first[1], first[2], "展开到两个不同对象");
+    }
+
     /// **D 线验收**：Python 版分镜与硬编码版逐对象、逐绑定相等。
     #[cfg(feature = "python")]
     #[test]

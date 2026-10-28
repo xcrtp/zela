@@ -510,7 +510,7 @@ mod tests {
             root,
             zela_scene_ecs::animation::LibraryRef {
                 namespace: "zela.math".to_string(),
-                version: "15".to_string(),
+                version: "17".to_string(),
                 op_revisions: Default::default(),
             },
             zela_scene_ecs::ClockProgram::new(),

@@ -391,6 +391,43 @@ pub struct NotSpec {
     pub of: Handle,
 }
 
+/// `BindEach { … }`：**装配期展开**的批量绑定（B4 Query）。
+///
+/// 过滤条件只能是"组件类型组合"（装配期可判定）；结果按 `ObjectId` 升序冻结成
+/// N 份具体绑定 —— 产物里既没有 `it` 也没有 query。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.BindEach")]
+pub struct BindEachSpec {
+    /// 目标通道（`Circle.channel.radius`）。
+    pub target: ChannelSpec,
+    /// 根表达式（可用 `expr.query_self(channel)` 引用"当前对象"）。
+    pub root: Handle,
+    /// 绑定时钟。
+    pub clock: ClockSpec,
+    pub predicate: PredicateSpec,
+    pub reset: ResetSpec,
+    /// 必须**同时**具备的组件名（稳定 Rust 类型名）。
+    ///
+    /// 字段名是 `requires` / `excludes` 而不是 `with` / `without`：
+    /// `with` 是 Python 关键字（同 `Select` 的 `otherwise` 之于 `else`）。
+    pub requires: Vec<String>,
+    /// 必须**不**具备的组件名。
+    pub excludes: Vec<String>,
+}
+
+/// `exists { requires, excludes }`：集合**判空**（B4 Query）。
+///
+/// 过滤条件只有组件类型组合 ⇒ 装配期即可判定 ⇒ **装配期常量折叠**成 `Bool`
+/// 字面量（折叠优先于区间代数：常量不依赖连续变量）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Exists")]
+pub struct ExistsSpec {
+    /// 必须**同时**具备的组件名（稳定 Rust 类型名）。
+    pub requires: Vec<String>,
+    /// 必须**不**具备的组件名。
+    pub excludes: Vec<String>,
+}
+
 /// `Method { name, object, args }`：调用**对象方法**（B2）。
 ///
 /// 方法与字段的区别是类型级的：方法不在写表里，永远选不中作 target。
@@ -430,7 +467,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "15",
+    version = "17",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -552,6 +589,15 @@ pub struct MathApi<'a> {
     /// `Method { name, object, args }`：调用对象方法（`Reveal.current_pos`）。
     pub method: fn(&'a dyn Pod, spec: MethodCallSpec) -> Handle,
 
+    /// `query_self(channel)`：批量绑定里的"当前对象"字段读（装配期替换为具体句柄）。
+    pub query_self: fn(&'a dyn Pod, channel: ChannelSpec) -> Handle,
+
+    /// `BindEach { … }`：装配期展开的批量绑定（按组件类型组合过滤）。
+    pub bind_each: fn(&'a dyn Pod, spec: BindEachSpec) -> (),
+
+    /// `exists { requires, excludes }`：集合判空（装配期常量折叠成 `Bool`）。
+    pub exists: fn(&'a dyn Pod, spec: ExistsSpec) -> Handle,
+
     /// `NatRec { count, init, step }`：离散折（合法递归；`count` 必须是非负整数）。
     pub nat_rec: fn(&'a dyn Pod, spec: NatRecSpec) -> Handle,
 
@@ -618,9 +664,11 @@ pub struct MathApi<'a> {
 /// `clock_time_of` / `clock_range` / `clock_range_of`（时钟身份 + 窗口函子）。
 /// `@14`（5b B5）：新增 `nat_rec` / `rec_prev` / `rec_index`（离散层脚本入口）。
 /// `@15`（5b B2）：新增 `method`（对象方法调用；`Reveal.current_pos` 从字段改为方法）。
-pub const MATH_API_VERSION: &str = "15";
+/// `@16`（5b B4）：新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
+/// `@17`（5b B4）：新增 `exists`（集合判空；装配期常量折叠）。
+pub const MATH_API_VERSION: &str = "17";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 16_372_683_120_857_373_424;
+pub const MATH_API_FINGERPRINT: u64 = 4_840_136_137_552_424_654;
 
 /// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
 ///

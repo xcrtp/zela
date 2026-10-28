@@ -78,6 +78,17 @@ pub enum Node {
         init: Box<Expr>,
         step: Box<Expr>,
     },
+    /// **集合判空**（B4 Query）：`exists(requires = [...], excludes = [...])`。
+    ///
+    /// 过滤条件只有**组件类型组合**，装配期即可判定 ⇒ 装配期**常量折叠**成
+    /// `Bool` 字面量（折叠优先于区间代数：常量不依赖连续变量）。
+    /// 漏折到求值期是显式错误（[`crate::EvalError::UnfoldedExists`]），不静默算错。
+    Exists {
+        /// 必须**同时**具备的组件名（稳定 Rust 类型名）。
+        requires: Vec<String>,
+        /// 必须**不**具备的组件名。
+        excludes: Vec<String>,
+    },
     /// `NatRec.step` 内：上一步的状态（`value(k−1)`）。在 step 之外出现是**显式错误**。
     RecPrev,
     /// `NatRec.step` 内：当前索引 `k`（`I64`，不经过 f64）。
@@ -98,8 +109,17 @@ impl Node {
             | Node::Channel { .. }
             | Node::Ref { .. }
             | Node::Read { .. }
+            | Node::Exists { .. }
             | Node::RecPrev
             | Node::RecIndex => Vec::new(),
+        }
+    }
+
+    /// `Exists` 叶子：`(requires, excludes)`。
+    pub fn exists(&self) -> Option<(&[String], &[String])> {
+        match self {
+            Node::Exists { requires, excludes } => Some((requires, excludes)),
+            _ => None,
         }
     }
 
@@ -645,6 +665,16 @@ impl Expr {
     /// `NatRec.step` 内的当前索引（`I64`）。
     pub fn rec_index() -> Self {
         Self::new(Node::RecIndex)
+    }
+
+    /// **集合判空**（B4 Query）：`exists(requires, excludes)` ⇒ `Bool`。
+    ///
+    /// 只在装配期有意义：场景层把对象集冻结后，它会折叠成 `Bool` 字面量。
+    pub fn exists(requires: Vec<String>, excludes: Vec<String>) -> Self {
+        Self::new(Node::Exists {
+            requires,
+            excludes,
+        })
     }
 
     /// 装配期校验：重名 id / 悬空 `Ref` / 环 / 递归叶子越界。

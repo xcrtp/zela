@@ -28,13 +28,14 @@ pub mod ops;
 pub mod signature;
 
 pub use api::{
-    AddSpec, AndSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec, EqSpec, GeSpec,
-    GtSpec, LeSpec, LtSpec, MathApi, MethodCallSpec, METHOD_SIGNATURES, MulSpec, NatRecSpec,
-    NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec, SinSpec, SumSpec,
-    method_signature,
+    AddSpec, AndSpec, BindEachSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec,
+    EqSpec, ExistsSpec, GeSpec, GtSpec, LeSpec, LtSpec, MathApi, MethodCallSpec, METHOD_SIGNATURES,
+    MulSpec, NatRecSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec, SinSpec,
+    SumSpec, method_signature,
 };
 pub use expr_pod::{
-    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding, SCENE_NAMESPACE,
+    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBindEach, PendingBinding,
+    QUERY_SELF_OBJECT, SCENE_NAMESPACE,
 };
 pub use infer::{
     Inference, PointwiseReport, TypeError, infer, infer_full, infer_pointwise, infer_predicate,

@@ -37,6 +37,20 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
             Some(PodValue::Enum("zela.math.Reset", "Hold", Vec::new()))
         }
         ("zela.math.Bind", "duration") => Some(PodValue::Scalar(ScalarValue::F64(0.0))),
+        // B4：批量绑定与单条绑定共用同一组默认（时钟 / predicate / reset）。
+        // `with` / `without` **没有默认**：过滤条件必须显式写（否则等于全选）。
+        ("zela.math.BindEach", "clock") => Some(PodValue::Struct(
+            "zela.math.Clock",
+            vec![("links", PodValue::Array(Vec::new()))],
+        )),
+        ("zela.math.BindEach", "predicate") => Some(PodValue::Enum(
+            "zela.math.Predicate",
+            "Always",
+            Vec::new(),
+        )),
+        ("zela.math.BindEach", "reset") => {
+            Some(PodValue::Enum("zela.math.Reset", "Hold", Vec::new()))
+        }
         _ => None,
     }
 }
@@ -51,6 +65,9 @@ pub fn field_default_literal(type_name: &str, field_name: &str) -> Option<&'stat
         ("zela.math.Bind", "predicate") => Some("Predicate.Always"),
         ("zela.math.Bind", "reset") => Some("Reset.Hold"),
         ("zela.math.Bind", "duration") => Some("0"),
+        ("zela.math.BindEach", "clock") => Some("Clock()"),
+        ("zela.math.BindEach", "predicate") => Some("Predicate.Always"),
+        ("zela.math.BindEach", "reset") => Some("Reset.Hold"),
         _ => None,
     }
 }

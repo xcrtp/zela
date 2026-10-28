@@ -20,6 +20,8 @@ ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 ze-pod-binding = { path = "../../ze/pod/ze-pod-binding" }
 # 函子库 Pod（namespace `zela.math`）：表达式层叶子算子（S2）。
 ze-pod-func = { path = "../../ze/pod/ze-pod-func" }
+# B4：批量绑定的装配期展开要重写表达式树（`Node::Read` 的 `it` 占位）。
+ze-comb = { path = "../../kernel/ze-comb" }
 # Lua 适配器（纯语言层）：`--script` 用 Lua 编排最小分镜。
 ze-pod-lua = { path = "../../ze/pod/ze-pod-lua" }
 # Python 适配器：只在 feature = "python" 时引入，默认构建不受 pyo3 影响。

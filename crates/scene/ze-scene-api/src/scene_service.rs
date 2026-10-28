@@ -65,6 +65,9 @@ struct Recording {
     /// 与 `objects` 同步的记录（`HandleTable` 不提供遍历）：`finish` 时快照，
     /// 供表达式绑定把 pod 句柄转成脚本句柄（提案 #6 B）。
     object_log: Vec<(Handle, ScriptHandle)>,
+    /// 每个对象（按 create 顺序）的组件**稳定名字** —— `Query` 的过滤依据
+    /// （装配期展开，产物里不存）。
+    component_names: Vec<Vec<&'static str>>,
     encoder: SceneEncoder,
     /// 装配期错误（非法句柄等）：在 `finish` 时作为 `run` 的明确失败返回。
     error: Option<String>,
@@ -76,6 +79,7 @@ impl Recording {
             components: HandleTable::new(PodId::next()),
             objects: HandleTable::new(PodId::next()),
             object_log: Vec::new(),
+            component_names: Vec::new(),
             encoder: SceneEncoder::new(),
             error: None,
         }
@@ -115,6 +119,8 @@ pub struct SceneServicePod {
     /// 表达式绑定在 `run` 之后合并，那时录制状态已清空 ⇒ 快照必须活过 `finish`。
     /// 只含**装配期**数据，不进产物。
     last_objects: Mutex<Vec<(Handle, ScriptHandle)>>,
+    /// 与 `last_objects` 同寿命的组件名快照（按脚本句柄下标索引）。
+    last_component_names: Mutex<Vec<Vec<&'static str>>>,
 }
 
 impl Default for SceneServicePod {
@@ -197,6 +203,7 @@ impl SceneServicePod {
             rec: RecordingCell::new(Recording::new()),
             paths,
             last_objects: Mutex::new(Vec::new()),
+            last_component_names: Mutex::new(Vec::new()),
         }
     }
 
@@ -213,6 +220,14 @@ impl SceneServicePod {
             .map(|(_, script)| *script)
     }
 
+    /// 最近一次 `finish` 的**组件名快照**（按脚本句柄下标）。
+    pub fn component_names(&self) -> Vec<Vec<&'static str>> {
+        self.last_component_names
+            .lock()
+            .expect("组件名快照锁中毒")
+            .clone()
+    }
+
     /// 取走本轮的 `SceneScript`，并重置状态。
     ///
     /// 装配期错误（非法句柄等）在此变成 `run` 的**明确失败**，
@@ -225,6 +240,10 @@ impl SceneServicePod {
         // 表达式绑定在 `run` 之后才合并 ⇒ 句柄映射要先快照再清空录制状态。
         *self.last_objects.lock().expect("对象句柄快照锁中毒") =
             std::mem::take(&mut rec.object_log);
+        *self
+            .last_component_names
+            .lock()
+            .expect("组件名快照锁中毒") = std::mem::take(&mut rec.component_names);
         self.paths.reset();
         *rec = Recording::new();
         match error {
@@ -786,6 +805,14 @@ fn scene_spawn(pod: &dyn Pod, handles: Vec<Handle>) -> Handle {
             Err(_) => rec.fail(format!("组件句柄无效：{handle}")),
         }
     }
+    // `Query` 的过滤依据：在**装配期**就记下每个对象挂了哪些组件（稳定名字）。
+    // 未登记组件（函数类等）没有稳定名字 ⇒ 不参与过滤（显式跳过，不猜名字）。
+    let names: Vec<&'static str> = components
+        .iter()
+        .filter_map(|component| ze_scene_core::registry::known_type_name_of((**component).as_any()))
+        .collect();
+    rec.component_names.push(names);
+
     let object = rec.encoder.spawn(components);
     let handle = rec.objects.insert(object);
     rec.object_log.push((handle, object));

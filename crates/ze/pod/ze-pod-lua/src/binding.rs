@@ -298,7 +298,10 @@ fn table_to_pod(
             values.push((field.name, default));
             continue;
         }
-        values.push((field.name, lua_to_pod(&value, field.ty)?));
+        values.push((field.name, lua_to_pod(&value, field.ty).map_err(|error| {
+            // 带上字段名：错在哪个字段必须一眼可见（表可以很深）。
+            mlua::Error::RuntimeError(format!("`{type_name}.{}`：{error}", field.name))
+        })?));
     }
     Ok(match variant {
         Some(variant) => PodValue::Enum(type_name, variant, values),

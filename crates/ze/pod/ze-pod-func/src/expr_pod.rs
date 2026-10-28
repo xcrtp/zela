@@ -30,9 +30,9 @@ use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, Qualifi
 use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
     ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LengthSpec, LtSpec, MixSpec, MulSpec,
-    MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec,
-    ResetSpec, Rotate3Spec,
-    RoundF32Spec, ScaleSpec, SelectSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
+    BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
+    PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec, SinSpec,
+    SplatSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
@@ -52,12 +52,31 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// （`clock_time_of`）与窗口函子（`clock_range` / `clock_range_of`）。
 /// `14`：**5b B5** 新增离散层入口 `nat_rec` / `rec_prev` / `rec_index`。
 /// `15`：**5b B2** 新增 `method`（对象方法；`Reveal.current_pos` 改走方法）。
-pub const LIBRARY_VERSION: &str = "15";
+/// `16`：**5b B4** 新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
+/// `17`：**5b B4** 新增 `exists`（集合判空；装配期常量折叠）。
+pub const LIBRARY_VERSION: &str = "17";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
 
 const HANDLE: &str = "ze_pod_core.Handle";
+
+/// **`it` 的占位对象**：批量绑定里的"当前对象"，由宿主在装配期替换成具体句柄。
+pub const QUERY_SELF_OBJECT: u64 = u64::MAX;
+
+/// 一条待**装配期展开**的批量绑定（B4 Query）。
+#[derive(Clone, Debug)]
+pub struct PendingBindEach {
+    pub target: ChannelSpec,
+    pub expr: Expr,
+    pub clock: ClockSpec,
+    pub predicate: Option<Expr>,
+    pub reset: ResetSpec,
+    pub requires: Vec<String>,
+    pub excludes: Vec<String>,
+    /// 装配期推导出的根类型（宿主核对目标通道用；不进 payload）。
+    pub root_type: ChannelType,
+}
 
 /// 一条待并入 `SceneScript` 的表达式动画（S3）。
 #[derive(Clone, Debug)]
@@ -86,6 +105,8 @@ pub struct ExprPod {
     store: Mutex<HandleTable<Expr>>,
     /// 脚本登记的表达式动画（宿主在脚本结束后取走）。
     bindings: Mutex<Vec<PendingBinding>>,
+    /// 脚本登记的**批量绑定**（宿主在装配期展开成 N 条具体绑定）。
+    bind_each: Mutex<Vec<PendingBindEach>>,
     /// 装配期错误（未知通道 / 未知算子 / 非法句柄）—— 宿主取走时显式失败。
     errors: Mutex<Vec<String>>,
 }
@@ -291,12 +312,32 @@ impl ExprPod {
             "()",
             bind,
         );
+        // B4 Query：装配期展开的批量绑定 + `it` 占位读。
+        registry.register_fn1_named::<ChannelSpec, Handle>(
+            "zela.math::query_self",
+            "zela.math.Channel",
+            HANDLE,
+            query_self_ctor,
+        );
+        registry.register_fn1_named::<BindEachSpec, ()>(
+            "zela.math::bind_each",
+            "zela.math.BindEach",
+            "()",
+            bind_each,
+        );
+        registry.register_fn1_named::<ExistsSpec, Handle>(
+            "zela.math::exists",
+            "zela.math.Exists",
+            HANDLE,
+            exists_ctor,
+        );
 
         Self {
             id,
             registry,
             store: Mutex::new(HandleTable::new(id)),
             bindings: Mutex::new(Vec::new()),
+            bind_each: Mutex::new(Vec::new()),
             errors: Mutex::new(Vec::new()),
         }
     }
@@ -316,6 +357,16 @@ impl ExprPod {
                 .expect("表达式错误表只在持有期间被 panic 毒化"),
         );
         (bindings, errors)
+    }
+
+    /// 取走本轮登记的**批量绑定**（装配期展开用）。
+    pub fn take_bind_each(&self) -> Vec<PendingBindEach> {
+        std::mem::take(
+            &mut *self
+                .bind_each
+                .lock()
+                .expect("批量绑定表只在持有期间被 panic 毒化"),
+        )
     }
 
     /// 取回句柄对应的表达式（宿主侧 / 测试用）。
@@ -450,6 +501,12 @@ impl Pod for ExprPod {
             "select" => Box::new(select_ctor(self, arg::<SelectSpec>(args, 0)?.clone())),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
+            "query_self" => Box::new(query_self_ctor(
+                self,
+                arg::<ChannelSpec>(args, 0)?.clone(),
+            )),
+            "bind_each" => Box::new(bind_each(self, arg::<BindEachSpec>(args, 0)?.clone())),
+            "exists" => Box::new(exists_ctor(self, arg::<ExistsSpec>(args, 0)?.clone())),
             other => {
                 return Err(PodError::UnknownFunction(format!(
                     "{}::{other}",
@@ -995,6 +1052,94 @@ fn reject_clock_scoped_time(expr: &Expr) -> Result<(), String> {
     }
 
     expr.walk(&mut Check)
+}
+
+/// `exists { requires, excludes }`：集合判空（装配期常量折叠成 `Bool`）。
+///
+/// 这里只造**标记节点**：对象集只有装配期（脚本执行完）才知道，宿主在
+/// `merge_expr_bindings` 里把它折成 `Expr::pure(Bool)`。
+fn exists_ctor(pod: &dyn Pod, spec: ExistsSpec) -> Handle {
+    expr_pod(pod).intern(Expr::exists(spec.requires, spec.excludes))
+}
+
+/// `query_self(channel)`：批量绑定里的"当前对象"字段读（`object = QUERY_SELF_OBJECT`）。
+fn query_self_ctor(pod: &dyn Pod, channel: ChannelSpec) -> Handle {
+    let this = expr_pod(pod);
+    let channel =
+        ChannelRef::new(channel.namespace, channel.name).with_type(channel_type_of(channel.ty));
+    this.intern(Expr::read(channel, QUERY_SELF_OBJECT))
+}
+
+/// `bind_each { … }`：登记一条**装配期展开**的批量绑定。
+///
+/// 这里只做与 `bind` 同口径的装配期校验（结构 / 通道 / 类型 / predicate 单时钟）；
+/// 过滤条件的组件名由宿主在展开时解析（未知名字 ⇒ 显式失败）。
+fn bind_each(pod: &dyn Pod, spec: BindEachSpec) {
+    let this = expr_pod(pod);
+    let expr = match this.tree(spec.root) {
+        Ok(expr) => expr,
+        Err(error) => {
+            push_binding_error(this, format!("批量绑定根表达式句柄无效：{error}"));
+            return;
+        }
+    };
+    if let Err(message) = validate_binding(&expr) {
+        push_binding_error(this, format!("批量绑定非法：{message}"));
+        return;
+    }
+    let root_type = match infer_root(&expr) {
+        Ok(ty) => ty,
+        Err(error) => {
+            push_binding_error(this, format!("批量绑定类型检查失败：{error}"));
+            return;
+        }
+    };
+    let predicate = match spec.predicate {
+        PredicateSpec::Always => None,
+        PredicateSpec::Of { expr: root } => match this.tree(root) {
+            Ok(tree) => {
+                if let Err(message) = validate_binding(&tree) {
+                    push_binding_error(this, format!("批量绑定 predicate 非法：{message}"));
+                    return;
+                }
+                if let Err(error) = infer_predicate(&tree) {
+                    push_binding_error(this, format!("批量绑定 predicate 类型检查失败：{error}"));
+                    return;
+                }
+                if let Err(message) = reject_clock_scoped_time(&tree) {
+                    push_binding_error(this, format!("批量绑定 predicate 非法：{message}"));
+                    return;
+                }
+                Some(tree)
+            }
+            Err(error) => {
+                push_binding_error(this, format!("批量绑定 predicate 句柄无效：{error}"));
+                return;
+            }
+        },
+    };
+    if spec
+        .requires
+        .iter()
+        .chain(spec.excludes.iter())
+        .any(|name| name.trim().is_empty())
+    {
+        push_binding_error(this, "批量绑定的过滤组件名不能为空".to_string());
+        return;
+    }
+    this.bind_each
+        .lock()
+        .expect("批量绑定表未被毒化")
+        .push(PendingBindEach {
+            target: spec.target,
+            expr,
+            clock: spec.clock,
+            predicate,
+            reset: spec.reset,
+            requires: spec.requires,
+            excludes: spec.excludes,
+            root_type,
+        });
 }
 
 fn push_binding_error(this: &ExprPod, message: String) {

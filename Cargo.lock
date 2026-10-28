@@ -6859,6 +6859,7 @@ dependencies = [
  "png 0.17.16",
  "tracing",
  "wgpu",
+ "ze-comb",
  "ze-content",
  "ze-macro",
  "ze-notion",

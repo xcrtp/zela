@@ -552,6 +552,12 @@ impl<'a> Infer<'a> {
                 ty: ChannelType::I64,
                 pointwise: PointwiseReport::blocked("rec_index"),
             }),
+            // `exists` 只看组件类型组合 ⇒ Bool；装配期会折叠成常量，
+            // 但折叠前就必须能定型（predicate 里直接写 `exists{…}` 是常见写法）。
+            Node::Exists { .. } => Ok(Inference {
+                ty: ChannelType::Bool,
+                pointwise: PointwiseReport::blocked("exists（装配期常量）"),
+            }),
         }
     }
 

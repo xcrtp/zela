@@ -29,8 +29,15 @@ impl BindingPlan {
         Self { calls, types }
     }
 
-    /// 「单参数是该结构体 + 返回不透明句柄」的 capability 视为组件构造器。
+    /// 「单参数是该结构体 + 返回不透明句柄」的 capability 视为构造器
+    /// （组件 `Circle { … }` 与算子 `Sin { … }` 同一形状）。
     pub fn component_ctor(&self, type_name: &'static str) -> Option<ErasedFn> {
+        // 值形状不是组件：`query_self(channel) -> Handle` 与 `clock_time_of(clock) -> Handle`
+        // 的形状与构造器相同，但它们消费的是**数据**（通道 / 时钟），返回的是句柄；
+        // 认成构造器会让 `Channel { … }` 返回句柄而不是通道值。
+        if VALUE_SHAPES.contains(&type_name) {
+            return None;
+        }
         self.calls.iter().copied().find(|item| {
             item.io.params.len() == 1
                 && matches!(
@@ -41,6 +48,12 @@ impl BindingPlan {
         })
     }
 }
+
+/// 脚本侧**值形状**：只作为字段 / 参数在脚本里传递，没有构造器语义。
+///
+/// 不能靠"函数名 == 类型短名"来排除：算子构造器名是**脚本别名**
+/// （`Vec2Of` ↔ `vec2`、`Component` ↔ `x`/`y`/`z`），与类型名不同形。
+const VALUE_SHAPES: &[&str] = &["zela.math.Channel", "zela.math.Clock"];
 
 /// 递归收集命名类型（struct / enum）。
 pub fn collect_types(

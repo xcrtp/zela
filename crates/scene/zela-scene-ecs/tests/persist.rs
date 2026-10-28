@@ -320,7 +320,7 @@ fn bind_fade(enc: &mut SceneEncoder, object: zela_scene_ecs::Handle, dur: f64) {
         Expr::pure(1.0),
         LibraryRef {
             namespace: "zela.math".to_string(),
-            version: "15".to_string(),
+            version: "17".to_string(),
             op_revisions: Default::default(),
         },
         ClockProgram::new(),

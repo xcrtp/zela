@@ -138,6 +138,8 @@ fn eval_closed(expr: &Expr, rec: Option<(&Value, i64)>) -> Option<Value> {
         Node::RecIndex => Value::I64(rec?.1),
         // `Ref` 需要整棵表达式的定义表；化简阶段保守地视为非闭合。
         Node::Ref { .. } => return None,
+        // `exists` 依赖装配期的对象集 ⇒ 不是闭合表达式（装配期已折叠成常量）。
+        Node::Exists { .. } => return None,
     };
     Some(value)
 }

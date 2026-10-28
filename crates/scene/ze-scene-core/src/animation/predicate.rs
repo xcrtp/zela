@@ -446,6 +446,16 @@ impl MultiIntervalSet {
 /// **阶段 2**：`time` 不再是唯一变量 —— 任意 `Channel` / `Read` 都是连续变量，
 /// 键分别是 `channel.qualified()` / `channel.qualified()#object`。
 pub fn analyze(expr: &Expr) -> Option<MultiIntervalSet> {
+    // **常量折叠优先**（B4）：`true` / `false` 是"完全静态"的 predicate
+    // （`exists` 装配期折叠的产物）。它不约束任何连续变量 ⇒ 全集 / 空集，
+    // 与"依赖时间"的另一类静态（区间代数）并存。
+    if let Some(Literal::Bool(value)) = expr.node.literal() {
+        return Some(if *value {
+            MultiIntervalSet::all()
+        } else {
+            MultiIntervalSet::never()
+        });
+    }
     let Node::Call { op, args } = &expr.node else {
         return None;
     };
@@ -637,8 +647,19 @@ mod tests {
     fn unknown_shapes_are_not_guessed() {
         // 右侧不是字面量 ⇒ 不可分析。
         assert!(analyze(&call("lt", vec![time(), time()])).is_none());
-        // 含恒真（无 predicate）不是表达式，另行处理。
-        assert!(analyze(&Expr::pure(true)).is_none());
+    }
+
+    /// **B4 验收**：常量 predicate 是"完全静态"的另一类（折叠先于区间代数）。
+    #[test]
+    fn constants_are_completely_static() {
+        let always = analyze(&Expr::pure(true)).expect("`true` 可分析");
+        assert!(always.is_all());
+        assert_eq!(always.time_last_active(0.0), Some(0.0), "恒生效");
+        assert!(!always.has_non_time_variable(), "常量不引入变量");
+
+        let never = analyze(&Expr::pure(false)).expect("`false` 可分析");
+        assert!(never.is_empty());
+        assert_eq!(never.time_last_active(0.0), None, "从不生效");
     }
 
     fn variable(name: &str) -> Expr {

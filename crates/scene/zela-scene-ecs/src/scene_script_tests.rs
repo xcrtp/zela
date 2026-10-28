@@ -93,7 +93,7 @@ mod tests {
             Expr::pure(1.0),
             LibraryRef {
                 namespace: "zela.math".to_string(),
-                version: "15".to_string(),
+                version: "17".to_string(),
                 op_revisions: Default::default(),
             },
             clock,
@@ -507,7 +507,7 @@ mod tests {
 
         let lib = LibraryRef {
             namespace: "zela.math".to_string(),
-            version: "15".to_string(),
+            version: "17".to_string(),
             op_revisions: Default::default(),
         };
 
@@ -584,7 +584,7 @@ mod tests {
             root,
             LibraryRef {
                 namespace: "zela.math".to_string(),
-                version: "15".to_string(),
+                version: "17".to_string(),
                 op_revisions: Default::default(),
             },
             ClockProgram::new(),

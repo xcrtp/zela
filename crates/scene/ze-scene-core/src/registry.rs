@@ -74,6 +74,49 @@ pub fn known_type_name<T: 'static>() -> Option<&'static str> {
     None
 }
 
+/// 反向能力 ①b：**类型擦除**组件的稳定名字（`Query` 的组件过滤用）。
+///
+/// 与 [`known_type_name`] 同一张登记表；区别是入参是 `&dyn Any`（录制期拿到的
+/// 组件就是擦除形态）。
+pub fn known_type_name_of(c: &dyn std::any::Any) -> Option<&'static str> {
+    macro_rules! name_of_arms {
+        (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+            $(
+                if c.type_id() == std::any::TypeId::of::<$c>() {
+                    return Some(stringify!($c));
+                }
+            )+
+            $(
+                if c.type_id() == std::any::TypeId::of::<$m>() {
+                    return Some(stringify!($m));
+                }
+            )*
+        }};
+    }
+    known_component_table!(name_of_arms);
+    None
+}
+
+/// 反向能力 ①c：稳定名字 → `TypeId`（`Query.with("Circle")` 的解析用）。
+pub fn known_component_type_id(name: &str) -> Option<std::any::TypeId> {
+    macro_rules! id_arms {
+        (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+            $(
+                if name == stringify!($c) {
+                    return Some(std::any::TypeId::of::<$c>());
+                }
+            )+
+            $(
+                if name == stringify!($m) {
+                    return Some(std::any::TypeId::of::<$m>());
+                }
+            )*
+        }};
+    }
+    known_component_table!(id_arms);
+    None
+}
+
 /// 反向能力 ②：克隆一个**类型擦除**的已登记组件。
 pub fn clone_known(
     c: &(dyn std::any::Any + Send + Sync),

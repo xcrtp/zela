@@ -248,6 +248,9 @@ pub enum EvalError {
         actual: &'static str,
         index: i64,
     },
+    /// `exists` 没有在装配期折叠（对象集只有装配期才知道）⇒ 显式失败。
+    #[error("`exists` 必须在装配期折叠成常量（求值期没有对象集）")]
+    UnfoldedExists,
 }
 
 impl EvalError {
@@ -331,6 +334,8 @@ pub enum Step {
     RecPrev,
     /// `NatRec.step` 内：当前索引（`I64`）。
     RecIndex,
+    /// `exists` 漏折到运行期（装配期必须折叠成常量）⇒ 求值即失败。
+    UnfoldedExists,
 }
 
 /// 编译后的表达式（装配期一次，运行期线性扫描）。
@@ -485,6 +490,7 @@ impl CompiledExpr {
                     Some(frame) => Value::I64(frame.index),
                     None => return Err(EvalError::RecContext { leaf: "rec_index" }),
                 },
+                Step::UnfoldedExists => return Err(EvalError::UnfoldedExists),
                 Step::Method {
                     method,
                     object,
@@ -628,6 +634,11 @@ fn compile_node<'a>(
         }
         Node::RecIndex => {
             steps.push(Step::RecIndex);
+            steps.len() - 1
+        }
+        // `exists` 只可能在装配期折叠；漏下来就在求值期显式失败。
+        Node::Exists { .. } => {
+            steps.push(Step::UnfoldedExists);
             steps.len() - 1
         }
     };

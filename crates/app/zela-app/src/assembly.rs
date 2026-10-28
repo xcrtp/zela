@@ -178,6 +178,7 @@ impl PodAssembly {
     /// 清掉上一轮残留（脚本执行失败时也可能留下半成品）。
     fn clear_expr_bindings(&self) {
         let _ = self.expr.take_bindings();
+        let _ = self.expr.take_bind_each();
     }
 
     /// 把脚本登记的表达式动画并入成品脚本（S3 / 提案 #6 B）。
@@ -189,6 +190,7 @@ impl PodAssembly {
         mut script: SceneScript,
     ) -> Result<SceneScript, BrokerError> {
         let (bindings, errors) = self.expr.take_bindings();
+        let bind_each = self.expr.take_bind_each();
         if let Some(message) = errors.into_iter().next() {
             return Err(BrokerError::Injection {
                 node: EXPR_SERVICE.to_string(),
@@ -197,7 +199,15 @@ impl PodAssembly {
         }
         let library_namespace = LIBRARY_NAMESPACE.to_string();
         let library_version = LIBRARY_VERSION.to_string();
+        // 对象集在脚本结束后冻结 ⇒ `exists` 在这里就折成常量（B4 Query）。
+        let component_names = self.scene.component_names();
         for pending in bindings {
+            let expr = fold_exists(&pending.expr, &component_names)?;
+            let predicate = pending
+                .predicate
+                .as_ref()
+                .map(|predicate| fold_exists(predicate, &component_names))
+                .transpose()?;
             let namespace = pending.target.namespace.as_str();
             if !namespace.is_empty() && namespace != SCENE_NAMESPACE {
                 return Err(BrokerError::Injection {
@@ -259,8 +269,8 @@ impl PodAssembly {
             };
             // **第 4 批**：把这条绑定**实际用到的算子** revision 写进产物
             // （predicate 是独立表达式，同样记录；算子身份与 revision 同源于函子库）。
-            let mut op_revisions = ze_pod_func::collect_op_revisions(&pending.expr);
-            if let Some(predicate) = &pending.predicate {
+            let mut op_revisions = ze_pod_func::collect_op_revisions(&expr);
+            if let Some(predicate) = &predicate {
                 op_revisions.extend(ze_pod_func::collect_op_revisions(predicate));
             }
             let library = zela_scene_ecs::animation::LibraryRef {
@@ -272,10 +282,10 @@ impl PodAssembly {
                 .bind_expr_gated(
                     object,
                     &pending.target.name,
-                    pending.expr,
+                    expr,
                     library,
                     clock,
-                    pending.predicate,
+                    predicate,
                     reset,
                     pending.duration,
                 )
@@ -284,7 +294,218 @@ impl PodAssembly {
                     source: PodError::CallFailed(error.to_string()),
                 })?;
         }
+        self.expand_bind_each(&mut script, bind_each)?;
         Ok(script)
+    }
+
+    /// **B4 Query**：把批量绑定在**装配期**展开成 N 条具体绑定。
+    ///
+    /// 三条硬约束：
+    /// 1. 结果集按 `ObjectId` 升序（脚本句柄下标即 create 序）；不依赖任何容器迭代序；
+    /// 2. 过滤条件只能是组件类型组合（装配期可判定）；未知组件名 ⇒ 显式失败；
+    /// 3. 展开数 **N 必须可见**（`N = 0` 打印但不报错，与 `Sum{n=0}` 同类）。
+    fn expand_bind_each(
+        &self,
+        script: &mut SceneScript,
+        pendings: Vec<ze_pod_func::PendingBindEach>,
+    ) -> Result<(), BrokerError> {
+        if pendings.is_empty() {
+            return Ok(());
+        }
+        let component_names = self.scene.component_names();
+        for pending in pendings {
+            let namespace = pending.target.namespace.as_str();
+            if !namespace.is_empty() && namespace != SCENE_NAMESPACE {
+                return Err(BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "批量绑定目标的命名空间未知：`{namespace}`（只接受 `{SCENE_NAMESPACE}`）"
+                    )),
+                });
+            }
+            for name in pending.requires.iter().chain(pending.excludes.iter()) {
+                if ze_scene_core::registry::known_component_type_id(name).is_none() {
+                    return Err(BrokerError::Injection {
+                        node: EXPR_SERVICE.to_string(),
+                        source: PodError::CallFailed(format!(
+                            "批量绑定的过滤组件名未知：`{name}`（必须是已登记组件的稳定名）"
+                        )),
+                    });
+                }
+            }
+            if let Some(entry) = zela_scene_ecs::target_entry(&pending.target.name) {
+                if let Some(expected) = expected_value_type(entry.spec.ty) {
+                    if expected != pending.root_type {
+                        return Err(BrokerError::Injection {
+                            node: EXPR_SERVICE.to_string(),
+                            source: PodError::CallFailed(format!(
+                                "批量绑定目标 `{}` 期望 {}，根表达式是 {}",
+                                pending.target.name,
+                                expected.name(),
+                                pending.root_type.name()
+                            )),
+                        });
+                    }
+                }
+            }
+
+            let reset = reset_behavior(pending.reset);
+            let clock = clock_program(&pending.clock);
+            let expr = fold_exists(&pending.expr, &component_names)?;
+            let predicate = pending
+                .predicate
+                .as_ref()
+                .map(|predicate| fold_exists(predicate, &component_names))
+                .transpose()?;
+            let mut expanded = 0usize;
+            // 句柄下标 = create 顺序 = `ObjectId` 升序 ⇒ 这里**天然**是稳定排序。
+            for (index, components) in component_names.iter().enumerate() {
+                if index >= script.len() {
+                    break;
+                }
+                let matched = pending
+                    .requires
+                    .iter()
+                    .all(|name| components.contains(&name.as_str()))
+                    && pending
+                        .excludes
+                        .iter()
+                        .all(|name| !components.contains(&name.as_str()));
+                if !matched {
+                    continue;
+                }
+                let expr = substitute_query_self(&expr, index as u64);
+                let mut op_revisions = ze_pod_func::collect_op_revisions(&expr);
+                if let Some(predicate) = &predicate {
+                    op_revisions.extend(ze_pod_func::collect_op_revisions(predicate));
+                }
+                let library = zela_scene_ecs::animation::LibraryRef {
+                    namespace: LIBRARY_NAMESPACE.to_string(),
+                    version: LIBRARY_VERSION.to_string(),
+                    op_revisions,
+                };
+                script
+                    .bind_expr_gated(
+                        ze_scene_core::scene_script::Handle(index),
+                        &pending.target.name,
+                        expr,
+                        library,
+                        clock.clone(),
+                        predicate.clone(),
+                        reset,
+                        0.0,
+                    )
+                    .map_err(|error| BrokerError::Injection {
+                        node: EXPR_SERVICE.to_string(),
+                        source: PodError::CallFailed(error.to_string()),
+                    })?;
+                expanded += 1;
+            }
+            println!(
+                "[query] 批量绑定 `{}` 展开 {expanded} 条（requires=[{}] excludes=[{}]）",
+                pending.target.name,
+                pending.requires.join(","),
+                pending.excludes.join(",")
+            );
+        }
+        Ok(())
+    }
+}
+
+/// 装配期**常量折叠** `exists`（B4 Query）。
+///
+/// 对象集在脚本结束后已冻结 ⇒ `exists` 的值是常量（折叠**先于**区间代数：
+/// 区间代数只认依赖连续变量的表达式）。过滤组件名必须已登记，否则显式失败。
+fn fold_exists(
+    expr: &ze_comb::Expr,
+    component_names: &[Vec<&'static str>],
+) -> Result<ze_comb::Expr, BrokerError> {
+    if let Some((requires, excludes)) = expr.node.exists() {
+        for name in requires.iter().chain(excludes.iter()) {
+            if ze_scene_core::registry::known_component_type_id(name).is_none() {
+                return Err(BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "`exists` 的过滤组件名未知：`{name}`（必须是已登记组件的稳定名）"
+                    )),
+                });
+            }
+        }
+        let found = component_names.iter().any(|components| {
+            requires
+                .iter()
+                .all(|name| components.contains(&name.as_str()))
+                && excludes
+                    .iter()
+                    .all(|name| !components.contains(&name.as_str()))
+        });
+        return Ok(ze_comb::Expr::pure(ze_comb::Literal::Bool(found)));
+    }
+    let mut failure = None;
+    let folded = expr.map_children(|child| match fold_exists(child, component_names) {
+        Ok(child) => child,
+        Err(error) => {
+            failure.get_or_insert(error);
+            child.clone()
+        }
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(folded),
+    }
+}
+
+/// 把表达式树里的 `it` 占位对象替换成具体脚本句柄下标。
+fn substitute_query_self(expr: &ze_comb::Expr, object: u64) -> ze_comb::Expr {
+    if let Some((channel, current)) = expr.node.read() {
+        if current == ze_pod_func::QUERY_SELF_OBJECT {
+            return ze_comb::Expr {
+                id: expr.id.clone(),
+                node: ze_comb::Node::Read {
+                    channel: channel.clone(),
+                    object,
+                },
+            };
+        }
+    }
+    if let Some((method, current, args)) = expr.node.method() {
+        if current == ze_pod_func::QUERY_SELF_OBJECT {
+            return ze_comb::Expr {
+                id: expr.id.clone(),
+                node: ze_comb::Node::Method {
+                    method: method.clone(),
+                    object,
+                    args: args
+                        .iter()
+                        .map(|arg| substitute_query_self(arg, object))
+                        .collect(),
+                },
+            };
+        }
+    }
+    expr.map_children(|child| substitute_query_self(child, object))
+}
+
+/// Pod 侧时钟（扁平链）→ 产物侧 `ClockProgram`。
+fn clock_program(clock: &ze_pod_func::ClockSpec) -> zela_scene_ecs::ClockProgram {
+    zela_scene_ecs::ClockProgram {
+        links: clock
+            .links
+            .iter()
+            .map(|link| zela_scene_ecs::ClockLink {
+                shift: link.shift,
+                rate: link.rate,
+            })
+            .collect(),
+    }
+}
+
+/// Pod 侧 `ResetSpec` → 产物侧 `ResetBehavior`。
+fn reset_behavior(reset: ze_pod_func::ResetSpec) -> zela_scene_ecs::animation::ResetBehavior {
+    match reset {
+        ze_pod_func::ResetSpec::Hold => zela_scene_ecs::animation::ResetBehavior::Hold,
+        ze_pod_func::ResetSpec::Reset => zela_scene_ecs::animation::ResetBehavior::Reset,
+        ze_pod_func::ResetSpec::Skip => zela_scene_ecs::animation::ResetBehavior::Skip,
     }
 }
 
@@ -432,6 +653,30 @@ fn run_broker(nodes: &[PodNode]) -> Result<Broker, AssemblyError> {
 mod tests {
     use super::*;
     use ze_pod_core::BrokerError;
+
+    /// **B4 验收**：`exists` 在装配期折叠成常量（折叠先于区间代数）。
+    #[test]
+    fn exists_folds_to_a_constant_at_assembly() {
+        let names: Vec<Vec<&'static str>> = vec![vec!["Circle"], vec!["Circle", "Reveal"]];
+        let hit = ze_comb::Expr::call(
+            ze_comb::OpRef::new("zela.math", "mul"),
+            [ze_comb::Expr::exists(
+                vec!["Circle".to_string()],
+                vec!["Reveal".to_string()],
+            )],
+        );
+        let folded = fold_exists(&hit, &names).expect("折叠成功");
+        let (_, args) = folded.node.call().expect("外层仍是 Call");
+        assert_eq!(args[0].node.literal(), Some(&ze_comb::Literal::Bool(true)));
+
+        let miss = ze_comb::Expr::exists(vec!["Parent".to_string()], vec![]);
+        let folded = fold_exists(&miss, &names).expect("折叠成功");
+        assert_eq!(folded.node.literal(), Some(&ze_comb::Literal::Bool(false)));
+
+        // 组件名写错是装配期错误，不是"匹配空集"。
+        let bad = ze_comb::Expr::exists(vec!["NoSuchComponent".to_string()], vec![]);
+        assert!(fold_exists(&bad, &names).is_err());
+    }
 
     /// 描述层：拓扑 / 边 / optional 缺失全部可在**不建 Pod** 时断言。
     #[test]

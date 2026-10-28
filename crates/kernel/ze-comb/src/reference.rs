@@ -136,6 +136,8 @@ fn eval_node<'a>(
             Some((_, index)) => Value::I64(*index),
             None => return Err(EvalError::RecContext { leaf: "rec_index" }),
         },
+        // `exists` 只有装配期才有对象集；参考求值器与产物求值器同一口径。
+        Node::Exists { .. } => return Err(EvalError::UnfoldedExists),
     };
 
     if let Some(id) = expr.id.as_deref() {

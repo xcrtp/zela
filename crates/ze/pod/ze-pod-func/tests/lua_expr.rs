@@ -333,7 +333,7 @@ fn typed_stubs_carry_l2_signatures() {
     assert!(math.contains(
         "def Mul(a: Expr[Any], b: Expr[Any]) -> Expr[float] | Expr[Vec2] | Expr[Vec3]: ..."
     ));
-    assert!(math.contains("class Channel(Generic[T]):"));
+    assert!(math.contains("class Channel(Generic[T]):"), "pyi:\n{math}");
     assert!(math.contains("target: Channel[Any]") && math.contains("root: Expr[Any]"));
     assert!(math.contains("def Of(expr: Expr[bool]) -> Predicate: ..."));
     let math_mod = pyi.get("zela/math.pyi").expect("math 能力模块");
