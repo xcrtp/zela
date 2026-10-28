@@ -1239,7 +1239,9 @@
 | AU-08 | **阶段 5：Mono 元素身份 + 通道三分法** | ze-comb | **已关闭（5）** | `Mono::read_element(channel, element)`（默认 `MissingElementChannel` 显式失败）；`ChannelRef::class()` 是**地址的函数**（`Frame` / `Element` / `HostState`，机器可检查）；`Step::Channel` 按类别分派 —— 逐元素通道无上下文即 `ElementContext`；`CompiledExpr::eval_elements(mono, len)` 把"每顶点"变成对迭代器的 map（结果 `ValueIter`），参考求值器有同口径入口对拍。用例钉住：`uv.position` 按元素下标读出不同值、lowered == reference、无元素源/无上下文都显式失败、每帧通道在逐元素求值下**广播**。**偏差（诚实）**：场景侧真正的逐顶点数据源（顶点 attribute 注入）属下游批次，本批只交付机制。 |
 | AU-09 | **阶段 4：算子注册表化** | ze-func / ze-pod-func | **部分关闭（4）** | ① `ze-func`：`math_ops!` 一次展开同时产出 `DEFS`（元数据）/ `OPS`（名字）/ `EVALS`（名称→实现），`ops::eval` 改为**符号表查表**（`match op.name` 已删除）；少写实现 = 编译失败，漏登记 = 算子不存在。② 门禁：`every_def_has_an_eval_implementation`（目录 ↔ 注册表逐条）+ `every_operator_is_reachable_from_scripts`（目录 ↔ 作者面，缺字段/注册/`call` 分支即点名红）。③ **"加一个算子只改 1 处"未达成（诚实）**：作者面仍需 spec 结构 + `MathApi` 字段 + ctor + 注册 + `call` 分支（`#[capability]` 的字段无法由外部宏注入）。④ **实测发现的硬冲突**：新增算子必改 `signatures()` ⇒ 必须递增 version ⇒ `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**，与本批"不重录基线"互斥 —— 因此本批**不新增算子**（曾以 `floor` 全程实测并回滚，指纹/版本回到 17 / `4_840_…`）。彻底"1 处"需要算子 codegen（内核 + 作者面同一份源），属独立批次。 |
 
-**AU 段小计**：已关闭 7（AU-01、AU-02、AU-03、AU-05、AU-06、AU-07、AU-08）· 部分关闭 1（AU-09）· 记账 1（AU-04）· 未执行 0 · 落档 0。
+| AU-10 | **W-A（值系统三套收敛）显式关闭** | ze-comb / ze-time | **记账（2）** | 计划 §3 判据 6 要求"W-A 显式关闭或显式说明理由"。本批的阶段 1/2 就是它的答案：`Value` 与 `TypeSpec` 已同构（`Scalar{ty,dim}` ↔ `Scalar` / `App`，文本与路径统一为 `Bytes + 命名类型`），`ChannelType` 是 `TypeSpec` 的降级视图（唯一投影点）。`AnimValue`（ze-time 的动画侧值）按计划 §5 明确**不在本批**，留待阶段 1/2 之后的独立评估。 |
+
+**AU 段小计**：已关闭 7（AU-01、AU-02、AU-03、AU-05、AU-06、AU-07、AU-08）· 部分关闭 1（AU-09）· 记账 2（AU-04、AU-10）· 未执行 0 · 落档 0。
 
 ---
 
