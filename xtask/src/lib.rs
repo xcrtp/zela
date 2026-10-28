@@ -16,9 +16,9 @@ use std::path::Path;
 /// 用法文本。
 pub const USAGE: &str = "\
 用法：
-  cargo verify               # full：check + test + wasm + structure + docs + coverage + demo + smoke + hashes + fixtures
+  cargo verify               # full：check + test + wasm + structure + docs + coverage + demo + smoke + hashes + bench + fixtures
   cargo verify --fast        # 开发循环：check + test + fixtures + 短对拍（smoke）
-  cargo verify --step <name> # 单步：check | test | wasm | structure | docs | coverage | demo | smoke | hashes | fixtures
+  cargo verify --step <name> # 单步：check | test | wasm | structure | docs | coverage | demo | smoke | hashes | bench | fixtures
   cargo verify --record --reason <text>
                              # 录制设备重录基线（基线策略 §九）：强制 reason、自动回填
                              # 上一槽 commit、轮换 slotA/slotB、写 device 行
@@ -47,12 +47,17 @@ pub enum Step {
     Demo,
     Smoke,
     Hashes,
+    /// **执行计划阶段 4**：性能（不等式判据）—— 读 criterion 产物，按 20% / 50% 分档。
+    ///
+    /// 不自己跑 criterion：数据源就是 `target/criterion/**/new/estimates.json`。
+    /// 没跑过 bench ⇒ 显式跳过（不伪造通过）。
+    Bench,
     /// **阶段 4**：独立 fixture（表达式 + 输入序列 + 期望值哈希）；JS / Lua 跑同一套 JSON。
     Fixtures,
 }
 
 impl Step {
-    pub const ALL: [Step; 10] = [
+    pub const ALL: [Step; 11] = [
         Step::Check,
         Step::Test,
         Step::Wasm,
@@ -62,6 +67,7 @@ impl Step {
         Step::Demo,
         Step::Smoke,
         Step::Hashes,
+        Step::Bench,
         Step::Fixtures,
     ];
 
@@ -76,6 +82,7 @@ impl Step {
             Step::Demo => "demo",
             Step::Smoke => "smoke",
             Step::Hashes => "hashes",
+            Step::Bench => "bench",
             Step::Fixtures => "fixtures",
         }
     }
@@ -1473,3 +1480,319 @@ pub fn manifest_scripts(text: &str) -> Vec<String> {
     }
     out
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// 结构指纹基线（执行计划阶段 1/4：**等式**判据）
+// ══════════════════════════════════════════════════════════════════════════
+
+/// 一次结构指纹观测（`zela-verify` 的 `[structure]` 行）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructureObservation {
+    pub work: String,
+    /// `wgpu` / `vector`：状态**不应**随后端变化，这正是要断言的性质。
+    pub backend: String,
+    /// `script` / `bundle` / `png`。
+    pub pass: String,
+    /// 16 位十六进制（FNV-1a 64）。
+    pub digest: String,
+}
+
+/// 解析 `structures.txt`：`work = <16 hex> [@ <commit>]`。
+///
+/// 段头 `[...]` 与注释跳过（结构指纹**不分段**：状态与渲染后端无关，
+/// 一件作品只有一个值）。值里的 `@ <commit>` 只作追溯，不参与比较。
+pub fn parse_structures(text: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| format!("structures.txt 第 {} 行不是 `work = digest`：{line}", index + 1))?;
+        let key = key.trim();
+        let digest = value
+            .split('@')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if key.is_empty() {
+            return Err(format!("structures.txt 第 {} 行缺作品名：{line}", index + 1));
+        }
+        if digest.len() != 16 || !digest.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(format!(
+                "structures.txt 第 {} 行的摘要不是 16 位十六进制：{line}",
+                index + 1
+            ));
+        }
+        if out.insert(key.to_string(), digest).is_some() {
+            return Err(format!("structures.txt 重复登记 `{key}`"));
+        }
+    }
+    Ok(out)
+}
+
+/// 生成 `structures.txt` 的文本（键升序；只有生效值，没有双槽 —— 等式判据不轮换）。
+pub fn render_structures(entries: &BTreeMap<String, String>) -> String {
+    let mut out = String::from(
+        "# 结构指纹基线（等式判据：逐位相等）\n\
+         #\n\
+         # 口径 = `zela.observation/1` 的 structure 摘要：\n\
+         #   对象按 `ObjectId` 升序 × `TARGETS` 字段（精确 f32 位）× `WorldTransforms`（父子累乘后）。\n\
+         # **不含**像素 / 字体 / GPU / 编码器 ⇒ 这是本项目第一个目标跨设备的回归判据。\n\
+         # 派生几何（字形轮廓 / Path 展平）显式排除（基线文件头的 payload 口径）。\n\
+         #\n\
+         # 一件作品只有一个值：wgpu 与 vector、script 与 bundle **必须**相同；\n\
+         # 不同就是状态真的变了（或某条路径偷改了状态）。\n\
+         #\n\
+         # 重录：ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes（结构指纹与设备无关，无需 --record）。\n\
+         \n",
+    );
+    for (work, digest) in entries {
+        out.push_str(&format!("{work} = {digest}\n"));
+    }
+    out
+}
+
+/// **等式比对器**：同一作品在所有后端 / 两条路径上逐位相同，且等于基线。
+///
+/// 返回核对过的作品数。任何一条不满足 ⇒ 显式失败（点名作品与来源）。
+pub fn compare_structures(
+    baseline: &BTreeMap<String, String>,
+    current: &[StructureObservation],
+) -> Result<usize, String> {
+    if current.is_empty() {
+        return Err(
+            "结构指纹：本次运行没有产出任何观测（zela-verify 未打印 [structure]）".to_string(),
+        );
+    }
+    let mut by_work: BTreeMap<&str, &StructureObservation> = BTreeMap::new();
+    for observation in current {
+        match by_work.get(observation.work.as_str()) {
+            None => {
+                by_work.insert(&observation.work, observation);
+            }
+            Some(first) if first.digest != observation.digest => {
+                return Err(format!(
+                    "{}: 结构指纹在 pass / 后端之间不一致\n  {}/{} = {}\n  {}/{} = {}\n  \
+                     （状态必须与渲染后端、script vs bundle 无关；分歧点就是真问题）",
+                    observation.work,
+                    first.backend,
+                    first.pass,
+                    first.digest,
+                    observation.backend,
+                    observation.pass,
+                    observation.digest,
+                ));
+            }
+            _ => {}
+        }
+    }
+    for (work, observation) in &by_work {
+        let Some(expected) = baseline.get(*work) else {
+            return Err(format!(
+                "structures.txt 缺少 `{work}`：新作品必须显式登记（不能把「没有基线」当豁免）\n  \
+                 重录：ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes"
+            ));
+        };
+        if expected != &observation.digest {
+            return Err(format!(
+                "{work}: 结构指纹与基线不符（等式判据）\n  实测 = {}\n  基线 = {expected}\n  \
+                 与像素不同：结构指纹不含 GPU / 字体 / 编码器 ⇒ 失配就是状态真的变了。\n  \
+                 逐帧定位：ZELA_OBSERVE=<path> 再跑一次，把 data.frames 与上一次逐帧对齐。",
+                observation.digest
+            ));
+        }
+    }
+    Ok(by_work.len())
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 性能基线（执行计划阶段 4：**不等式**判据）
+// ══════════════════════════════════════════════════════════════════════════
+
+/// 警告阈值（上报告，不阻断）。
+pub const BENCH_WARN_RATIO: f64 = 1.20;
+/// 失败阈值（阻断）。CI 只拦这一档：微基准噪声大，太紧会毁掉门禁可信度。
+pub const BENCH_FAIL_RATIO: f64 = 1.50;
+
+/// 一条性能比较结果（时间单位 = **纳秒**，criterion `estimates.json` 的原生单位）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BenchDelta {
+    pub key: String,
+    pub baseline_nanos: f64,
+    pub current_nanos: f64,
+    /// `current / baseline`（> 1 = 变慢）。
+    pub ratio: f64,
+}
+
+impl BenchDelta {
+    pub fn percent(&self) -> f64 {
+        (self.ratio - 1.0) * 100.0
+    }
+}
+
+/// 解析 criterion 的 `estimates.json`，取 **median 的 point_estimate**（**纳秒**）。
+///
+/// criterion 的估计值单位是 ns（不是秒）：`assembly_cycle/128 ≈ 1.8e5 ns` 是 184 µs，
+/// 若按秒读会得到"184 秒/次"这种不可能的数。比较只用比值，但打印与基线文件必须标对单位。
+///
+/// 为什么不引 serde：xtask 是零依赖 crate；这里只需要一个数值字段，
+/// 用定位 + 解析即可（criterion 的 JSON 结构由它自己的版本钉住）。
+pub fn criterion_median_nanos(text: &str) -> Option<f64> {
+    let median_at = text.find("\"median\"")?;
+    let rest = &text[median_at..];
+    let estimate_at = rest.find("\"point_estimate\"")?;
+    let rest = &rest[estimate_at + "\"point_estimate\"".len()..];
+    let rest = rest.trim_start_matches([':', ' ', '\t', '\r', '\n']);
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | 'e' | 'E' | '+' | '-')))
+        .unwrap_or(rest.len());
+    rest[..end].parse::<f64>().ok()
+}
+
+/// 解析 `bench_baselines.txt`：`criterion-id = <纳秒>`。
+pub fn parse_bench_baselines(text: &str) -> Result<BTreeMap<String, f64>, String> {
+    let mut out = BTreeMap::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        let (key, value) = line
+            .split_once('=')
+            .ok_or_else(|| format!("bench_baselines.txt 第 {} 行不是 `id = 纳秒`：{line}", index + 1))?;
+        let key = key.trim();
+        let nanos: f64 = value
+            .trim()
+            .parse()
+            .map_err(|_| format!("bench_baselines.txt 第 {} 行的值不是数字：{line}", index + 1))?;
+        if key.is_empty() || !(nanos > 0.0) {
+            return Err(format!(
+                "bench_baselines.txt 第 {} 行非法（空 id 或非正数）：{line}",
+                index + 1
+            ));
+        }
+        out.insert(key.to_string(), nanos);
+    }
+    Ok(out)
+}
+
+/// 分档比较：`> 20%` 警告，`> 50%` 失败。返回 `(warnings, failures)`。
+///
+/// 缺少基线 / 缺少实测**不**在这里判：缺实测由调用方显式报"没跑 bench"；
+/// 缺基线意味着新 bench ⇒ 显式登记（调用方一并处理）。
+pub fn compare_bench(
+    baseline: &BTreeMap<String, f64>,
+    current: &BTreeMap<String, f64>,
+) -> (Vec<BenchDelta>, Vec<BenchDelta>) {
+    let mut warnings = Vec::new();
+    let mut failures = Vec::new();
+    for (key, nanos) in baseline {
+        let Some(&now) = current.get(key) else {
+            continue;
+        };
+        let ratio = now / *nanos;
+        let delta = BenchDelta {
+            key: key.clone(),
+            baseline_nanos: *nanos,
+            current_nanos: now,
+            ratio,
+        };
+        if ratio > BENCH_FAIL_RATIO {
+            failures.push(delta);
+        } else if ratio > BENCH_WARN_RATIO {
+            warnings.push(delta);
+        }
+    }
+    (warnings, failures)
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 脚本覆盖处置（执行计划阶段 5：不许「无保护且不声明」）
+// ══════════════════════════════════════════════════════════════════════════
+
+/// 一个脚本文件的处置。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Disposition {
+    /// 有像素基线（`baselines.txt` 的 `[native]` 或 `[vector]` 段）。
+    Baseline,
+    /// 显式豁免（理由必须非空）。
+    Exempt(String),
+}
+
+/// 解析 `scripts/dispositions.txt`：`file.lua = baseline` / `file.py = exempt: 理由`。
+pub fn parse_dispositions(text: &str) -> Result<BTreeMap<String, Disposition>, String> {
+    let mut out = BTreeMap::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (name, value) = line.split_once('=').ok_or_else(|| {
+            format!("dispositions.txt 第 {} 行不是 `file = baseline|exempt: …`：{line}", index + 1)
+        })?;
+        let name = name.trim().to_string();
+        let value = value.trim();
+        let disposition = if value == "baseline" {
+            Disposition::Baseline
+        } else if let Some(reason) = value.strip_prefix("exempt:") {
+            let reason = reason.trim();
+            if reason.is_empty() {
+                return Err(format!(
+                    "dispositions.txt 第 {} 行的豁免缺理由（不能静默豁免）：{line}",
+                    index + 1
+                ));
+            }
+            Disposition::Exempt(reason.to_string())
+        } else {
+            return Err(format!(
+                "dispositions.txt 第 {} 行的处置只接受 `baseline` / `exempt: <理由>`：{line}",
+                index + 1
+            ));
+        };
+        if out.insert(name.clone(), disposition).is_some() {
+            return Err(format!("dispositions.txt 重复登记 `{name}`"));
+        }
+    }
+    Ok(out)
+}
+
+/// 覆盖率补洞门禁：每个脚本必须有处置，且 `baseline` 必须真的在基线里。
+///
+/// 返回 `(有基线, 显式豁免)` 计数。**未登记** / 假 `baseline` ⇒ 失败。
+pub fn check_dispositions(
+    dispositions: &BTreeMap<String, Disposition>,
+    scripts: &[String],
+    baseline_names: &BTreeSet<String>,
+) -> Result<(usize, usize), String> {
+    let mut covered = 0usize;
+    let mut exempted = 0usize;
+    for script in scripts {
+        match dispositions.get(script) {
+            None => {
+                return Err(format!(
+                    "脚本 `{script}` 没有处置：必须在 crates/app/zela-app/scripts/dispositions.txt \
+                     登记 `baseline` 或 `exempt: <理由>`（「无保护且不声明」不再允许）"
+                ));
+            }
+            Some(Disposition::Baseline) => {
+                // 作品名与文件名不一定相同：`surface_matrix.lua` 的基线键是
+                // `surface_matrix`（无扩展名），`.js` 变体则自带扩展名。
+                let stem = script.rsplit_once('.').map_or(script.as_str(), |(stem, _)| stem);
+                if !baseline_names.contains(script) && !baseline_names.contains(stem) {
+                    return Err(format!(
+                        "脚本 `{script}` 声明了 `baseline`，但 baselines.txt 的 [native] / [vector] \
+                         段里既没有 `{script}` 也没有 `{stem}` —— 先把基线录进去，或改成显式豁免"
+                    ));
+                }
+                covered += 1;
+            }
+            Some(Disposition::Exempt(_)) => exempted += 1,
+        }
+    }
+    Ok((covered, exempted))
+}
+

@@ -12,6 +12,34 @@
 > 用途：渲染回归对拍。**不覆盖 mp4 / PNG 容器**，只覆盖帧缓冲像素 ⇒ 浏览器侧
 > 无需导出、无需 ffmpeg。
 
+## 结构指纹基线（[`structures.txt`](structures.txt)，**等式**判据）
+
+> 执行计划《可观测性与性能基准_结构指纹与统一门禁》阶段 1。像素是**投影**
+> （被 GPU / 字体 / 编码器钉死在本机），结构指纹是**状态本身**。
+
+- **口径**：`zela-scene-ecs::fingerprint_world` —— 对象按 `ObjectId` 升序，逐字段读
+  `TARGETS`（精确 f32 位），再叠 `WorldTransforms`（父子累乘后的 16×f32）。
+- **排除**：派生几何（字形轮廓 / `Path` 展平）。它进 payload，是**本机**口径
+  （见本文件头与 `baselines.txt` 的字体说明），不得混入跨设备判据。
+- **每帧独立**（不链式）⇒ 分歧可直接定位到帧；`ZELA_OBSERVE=<path>` 的
+  `data.frames` 是逐帧摘要数组。
+- **一件作品一个值**：wgpu 与 vector、`--script` 与 `--bundle` 必须**相同**。
+  不同就是状态真的变了（或某条路径偷改了状态）—— 这比"两个后端像素相同"更强。
+- **与设备无关**（目标性质，不是承诺已完成跨设备验证）：重录不需要
+  `--record` / `--rebind`，用
+
+  ```bash
+  ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes
+  ```
+
+`cargo verify --step hashes` 同时跑两套判据：
+像素序列哈希（`baselines.txt`，同机口径）+ 结构指纹（`structures.txt`，等式）。
+
+> CI 边界与像素相同：`--skip-baseline`（托管 runner 的软件 Vulkan）时**只断言**
+> 跨 pass / 跨后端一致（`script == bundle`、`wgpu == vector`），不比对 `structures.txt`。
+> 结构指纹「跨设备」目前是**目标性质**：动画表达式走 std libm，1 ulp 的跨 OS 分歧
+> 尚未实测排除（见 AP-11 的同类教训）。
+
 ## `@ <commit>` 口径（B4 P1-4 定案：D，补充 B）
 
 值行 `key = <hash> @ <commit>` 里的 commit 表示**产生该哈希值时的代码状态**。

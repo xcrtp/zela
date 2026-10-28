@@ -370,6 +370,11 @@ pub struct FrameRun {
     pub vector_overflow: zela_render_vector::OverflowTotals,
     /// **PB Step 1**：本次运行投影光源超过上限（`shadow::MOST`）的最坏一次。
     pub vector_shadows: zela_render_vector::ShadowTotals,
+    /// **执行计划阶段 1**：逐帧结构指纹（与 [`Self::timings`] 等长；每帧独立）。
+    ///
+    /// 纯数值状态（组件字段 + `WorldTransforms`），不含像素 / 派生几何 ⇒
+    /// 这是回归判据的**等式**一侧（像素仍是投影）。
+    pub structure: Vec<zela_scene_ecs::StructureFingerprint>,
 }
 
 impl FrameRun {
@@ -448,6 +453,9 @@ pub fn run_frames(
     let dt = 1.0 / options.fps as f32;
     let frames = frames_for(runtime, options.fps);
     let mut timings = Vec::with_capacity(frames as usize);
+    // 执行计划阶段 1：逐帧结构指纹（状态 = f(t) 的等式一侧）。
+    let mut structure: Vec<zela_scene_ecs::StructureFingerprint> =
+        Vec::with_capacity(frames as usize);
     // B12 Step 2：决策日志（相邻重复只留一条；`AutoFrame` 可能真的换后端）。
     let mut decisions: Vec<RoutingDecision> = Vec::new();
 
@@ -492,6 +500,15 @@ pub fn run_frames(
             .submit(DriverCommand::Advance { dt })
             .wait();
         timing.advance = mark.elapsed();
+
+        // 结构指纹：**推进之后、渲染之前** —— 与"这一帧画的就是这个状态"同口径。
+        // 纯数值层（组件字段 + 世界矩阵），每帧独立（可定位到具体帧）。
+        structure.push(runtime.driver.with_scheduler(|scheduler| {
+            zela_scene_ecs::fingerprint_world(
+                scheduler.world(),
+                scheduler.resources().get::<zela_scene_ecs::WorldTransforms>(),
+            )
+        }));
 
         // B12 Step 4：起始标记（空 compute pass 只写 timestamp；队列按提交顺序执行）。
         let begin_error = gpu_span.as_ref().and_then(|span| span.begin().err());
@@ -689,5 +706,6 @@ pub fn run_frames(
         resource_frames,
         vector_overflow,
         vector_shadows,
+        structure,
     })
 }

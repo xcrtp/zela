@@ -17,7 +17,7 @@
 //! 本 crate 是**独立 workspace**（`xtask/Cargo.toml` 中的空 `[workspace]`），
 //! 因此不会被根 workspace 的 `--workspace` 或 wasm gate 收进去。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -267,6 +267,7 @@ fn run(options: &Options) -> Result<(), String> {
             Step::Demo => step_demo(&root)?,
             Step::Smoke => step_smoke(&root, options.skip_baseline)?,
             Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent)?,
+            Step::Bench => step_bench(&root)?,
             Step::Fixtures => step_fixtures(&root)?,
         }
     }
@@ -328,7 +329,7 @@ fn run_record(root: &Path, options: &Options) -> Result<(), String> {
         map
     } else {
         println!("[xtask] 对拍模式：批量（一次 GPU 初始化）");
-        batch_hashes(root)?.into_iter().collect()
+        batch_hashes(root)?.hashes.into_iter().collect()
     };
     let recorded = |work: &str| -> Result<String, String> {
         hashes
@@ -1096,7 +1097,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
-        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.",
+        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1138,7 +1139,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("AM-")
                     || id.starts_with("AN-")
                     || id.starts_with("AO-")
-                    || id.starts_with("AP-"));
+                    || id.starts_with("AP-")
+                    || id.starts_with("AQ-"));
             if !is_item {
                 continue;
             }
@@ -1960,6 +1962,8 @@ fn step_hashes(root: &Path, skip_baseline: bool, independent: bool) -> Result<()
         format!("读取 {} 失败：{error}", baseline_path.display())
     })?)?;
     let baselines = load_baselines(&baseline_path)?;
+    // 执行计划阶段 5：覆盖率补洞 —— 每个脚本必须有处置（基线或显式豁免）。
+    check_script_dispositions(root, &baselines)?;
     prepare_hashes_dir(root)?;
     announce_baselines(&baseline_path);
 
@@ -1968,7 +1972,7 @@ fn step_hashes(root: &Path, skip_baseline: bool, independent: bool) -> Result<()
         .map_err(|error| format!("读取 {} 失败：{error}", baseline_path.display()))?;
     let mut current: Vec<(&str, &str, &str)> = Vec::new();
 
-    let hashes = if independent {
+    let (hashes, structures) = if independent {
         println!("[xtask] 对拍模式：独立进程（--independent 诊断路径）");
         let mut out = Vec::new();
         for (work, backend) in HASHES_WORKS {
@@ -1986,12 +1990,16 @@ fn step_hashes(root: &Path, skip_baseline: bool, independent: bool) -> Result<()
             )?;
             out.push((work_label(work, *backend), hash));
         }
-        out
+        println!(
+            "[xtask] 结构指纹：独立进程诊断路径不产出观测（批量路径负责等式比对）—— \
+             这不是「通过」，是「没测」"
+        );
+        (out, Vec::new())
     } else {
         println!("[xtask] 对拍模式：批量（一次 GPU 初始化；--independent 可切回独立进程）");
-        let hashes = batch_hashes(root)?;
+        let batch = batch_hashes(root)?;
         if !skip_baseline {
-            for ((work, backend), (label, hash)) in HASHES_WORKS.iter().zip(hashes.iter()) {
+            for ((work, backend), (label, hash)) in HASHES_WORKS.iter().zip(batch.hashes.iter()) {
                 let expected = baseline_for(&baselines, work, *backend)?;
                 if *hash != expected {
                     return Err(format!(
@@ -2001,8 +2009,21 @@ fn step_hashes(root: &Path, skip_baseline: bool, independent: bool) -> Result<()
                 println!("[xtask] {label}: 基线（{hash}）");
             }
         }
-        hashes
+        (batch.hashes, batch.structures)
     };
+
+    // 执行计划阶段 1 / 4：**等式比对器**（结构指纹，逐位相等）。
+    if !structures.is_empty() {
+        compare_structure_baseline(root, &structures, skip_baseline)?;
+        println!(
+            "[xtask] 统一观测产物：{}（schema = zela.observation/1）",
+            root.join("target")
+                .join("xtask")
+                .join("hashes")
+                .join("observe.jsonl")
+                .display()
+        );
+    }
 
     // B9 Step 5：V3-12 自动化（挂/不挂 HashSink 的像素产出逐位相同）。
     assert_sink_bypass(root)?;
@@ -2021,6 +2042,277 @@ fn prepare_hashes_dir(root: &Path) -> Result<(), String> {
     let dir = root.join("target").join("xtask").join("hashes");
     fs::create_dir_all(&dir)
         .map_err(|error| format!("创建 {} 失败：{error}", dir.display()))
+}
+
+/// **结构指纹基线**的比对 / 重录（执行计划阶段 1 / 4：等式判据）。
+///
+/// - 普通模式：逐位相等，失配即失败（点名作品 + 指向逐帧定位方法）；
+/// - `skip_baseline`（CI 软件适配器）：只做**跨 pass / 跨后端一致性**（进程内已断言
+///   script == bundle），**不比对基线** —— 与像素口径同一条 CI 边界，且明确打印；
+/// - `ZELA_STRUCTURE_RECORD=1`：用本次观测重录（结构指纹与设备无关，不需要 `--record`）。
+fn compare_structure_baseline(
+    root: &Path,
+    structures: &[xtask::StructureObservation],
+    skip_baseline: bool,
+) -> Result<(), String> {
+    let path = scripts_dir(root).join("structures.txt");
+    let record = env::var("ZELA_STRUCTURE_RECORD").is_ok_and(|value| value != "0");
+    if record {
+        let mut entries = BTreeMap::new();
+        for observation in structures {
+            entries.insert(observation.work.clone(), observation.digest.clone());
+        }
+        // 先做跨 pass / 跨后端一致性校验（不一致时写进基线 = 把 bug 固化）。
+        xtask::compare_structures(&entries, structures)?;
+        fs::write(&path, xtask::render_structures(&entries))
+            .map_err(|error| format!("写入 {} 失败：{error}", path.display()))?;
+        println!(
+            "[xtask] 结构指纹基线已重录：{}（{} 件作品）",
+            path.display(),
+            entries.len()
+        );
+        println!("[xtask] 重录后请与代码一起提交（结构指纹与设备无关，不需要 --record / --rebind）");
+        return Ok(());
+    }
+    if skip_baseline {
+        // 与像素同一条 CI 边界：软件适配器上不比对录制设备的值。
+        // 但跨 pass / 跨后端一致性**仍然检查**（与适配器无关）。
+        let mut entries = BTreeMap::new();
+        for observation in structures {
+            entries.insert(observation.work.clone(), observation.digest.clone());
+        }
+        xtask::compare_structures(&entries, structures)?;
+        println!(
+            "[xtask] 结构指纹：--skip-baseline ⇒ 只断言跨 pass / 跨后端一致（{} 件作品），\
+             **不比对** structures.txt（CI 软件适配器口径）",
+            entries.len()
+        );
+        return Ok(());
+    }
+    let text = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "读取 {} 失败：{error}\n  首次启用：ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes",
+            path.display()
+        )
+    })?;
+    let baseline = xtask::parse_structures(&text)?;
+    let checked = xtask::compare_structures(&baseline, structures)?;
+    println!(
+        "[xtask] 结构指纹：{checked} 件作品与基线一致（等式；wgpu/vector × script/bundle 同值）"
+    );
+    Ok(())
+}
+
+/// **脚本覆盖处置门禁**（执行计划阶段 5）：每个脚本必须有基线或显式豁免。
+///
+/// 「无保护且不声明」是比浪费更该先修的洞：改坏了不会红，也没人知道它没被保护。
+fn check_script_dispositions(root: &Path, baselines: &Baselines) -> Result<(), String> {
+    let dir = scripts_dir(root);
+    let mut scripts = Vec::new();
+    for entry in fs::read_dir(&dir)
+        .map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?
+    {
+        let path = entry
+            .map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?
+            .path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("lua" | "py" | "js")
+        ) {
+            scripts.push(name.to_string());
+        }
+    }
+    scripts.sort();
+
+    let path = dir.join("dispositions.txt");
+    let text = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "读取 {} 失败：{error}\n  每个脚本都必须登记 `baseline` 或 `exempt: <理由>`",
+            path.display()
+        )
+    })?;
+    let dispositions = xtask::parse_dispositions(&text)?;
+
+    let mut names = BTreeSet::new();
+    names.extend(baselines.native.keys().cloned());
+    names.extend(baselines.vector.keys().cloned());
+    names.extend(baselines.smoke.keys().cloned());
+    let (covered, exempted) = xtask::check_dispositions(&dispositions, &scripts, &names)?;
+    println!(
+        "[xtask] 脚本覆盖处置：{} 个脚本（基线 {covered} · 显式豁免 {exempted}）",
+        scripts.len()
+    );
+    Ok(())
+}
+
+/// **性能门禁**（执行计划阶段 4：不等式判据）。
+///
+/// 数据源 = criterion 自己的 `target/criterion/**/new/estimates.json`（不重造基准框架）。
+/// 没跑过 `cargo bench` ⇒ **显式跳过**（打印「不是通过」），绝不伪造绿灯。
+/// `> 20%` 警告（上报告，不阻断）；`> 50%` 失败（阻断）。
+fn step_bench(root: &Path) -> Result<(), String> {
+    let criterion = root.join("target").join("criterion");
+    let mut current = BTreeMap::new();
+    collect_bench_estimates(&criterion, &criterion, &mut current)?;
+    if current.is_empty() {
+        println!(
+            "[xtask] 性能（不等式）：未发现 criterion 产物（{}）⇒ **未测**，跳过（不是通过）",
+            criterion.display()
+        );
+        println!("[xtask] 先跑 `cargo bench`（CI / nightly），本步只做比对与告警");
+        return Ok(());
+    }
+
+    let path = root.join("bench_baselines.txt");
+    if env::var("ZELA_BENCH_RECORD").is_ok_and(|value| value != "0") {
+        let device = env::var("ZELA_RECORD_DEVICE").unwrap_or_else(|_| "unknown-device".to_string());
+        let mut text = format!(
+            "# 性能基线（不等式判据：>20% 警告，>50% 失败）\n\
+             # 单位 = 纳秒（criterion estimates.json 的 median.point_estimate 原生单位）；\n\
+             # 本文件是**本机口径**，不可跨设备比较。\n\
+             # device = {device}\n\
+             # 重录：cargo bench && ZELA_BENCH_RECORD=1 cargo verify --step bench\n\
+             \n"
+        );
+        for (key, seconds) in &current {
+            text.push_str(&format!("{key} = {seconds}\n"));
+        }
+        fs::write(&path, text)
+            .map_err(|error| format!("写入 {} 失败：{error}", path.display()))?;
+        println!(
+            "[xtask] 性能基线已重录：{}（{} 个 bench）",
+            path.display(),
+            current.len()
+        );
+        return Ok(());
+    }
+
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(_) => {
+            println!(
+                "[xtask] 性能（不等式）：{} 个 bench 产物存在，但 {} 尚未登记 ⇒ **未测**，跳过（不是通过）",
+                current.len(),
+                path.display()
+            );
+            println!(
+                "[xtask] 登记本机基线：cargo bench && ZELA_BENCH_RECORD=1 cargo verify --step bench"
+            );
+            return Ok(());
+        }
+    };
+    let baseline = xtask::parse_bench_baselines(&text)?;
+    let missing: Vec<&String> = current
+        .keys()
+        .filter(|key| !baseline.contains_key(*key))
+        .collect();
+    if !missing.is_empty() {
+        // 新 bench / 换机后新增的 bench：不进本机门禁，但**必须打印**（不静默）。
+        println!(
+            "[xtask] 性能：{} 个 bench 未登记基线（不参与本机门禁）：{}",
+            missing.len(),
+            missing
+                .iter()
+                .take(8)
+                .map(|key| key.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        if missing.len() > 8 {
+            println!("[xtask] 性能：…其余 {} 个略", missing.len() - 8);
+        }
+        println!(
+            "[xtask] 登记：cargo bench && ZELA_BENCH_RECORD=1 cargo verify --step bench"
+        );
+    }
+
+    let (warnings, failures) = xtask::compare_bench(&baseline, &current);
+    for warning in &warnings {
+        println!(
+            "[bench][warn] {} {:+.1}%（{:.3} → {:.3} ms）",
+            warning.key,
+            warning.percent(),
+            warning.baseline_nanos / 1e6,
+            warning.current_nanos / 1e6,
+        );
+    }
+    if !failures.is_empty() {
+        let detail = failures
+            .iter()
+            .map(|failure| {
+                format!(
+                    "  {} {:+.1}%（{:.3} → {:.3} ms）",
+                    failure.key,
+                    failure.percent(),
+                    failure.baseline_nanos / 1e6,
+                    failure.current_nanos / 1e6,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!(
+            "性能回归 >{}%（阻断，执行计划阶段 4）：\n{detail}",
+            ((xtask::BENCH_FAIL_RATIO - 1.0) * 100.0) as u32
+        ));
+    }
+    println!(
+        "[xtask] 性能（不等式）：{} 个 bench；>20% 警告 {} 条（不阻断），>50% 失败 0 条",
+        current.len(),
+        warnings.len()
+    );
+    Ok(())
+}
+
+/// 递归收集 criterion 的 `*/new/estimates.json`；键 = 相对 `target/criterion` 的 bench id。
+fn collect_bench_estimates(
+    dir: &Path,
+    root: &Path,
+    out: &mut BTreeMap<String, f64>,
+) -> Result<(), String> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir).map_err(|error| format!("读取 {} 失败：{error}", dir.display()))? {
+        let path = entry
+            .map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?
+            .path();
+        if path.is_dir() {
+            collect_bench_estimates(&path, root, out)?;
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) != Some("estimates.json") {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| format!("基准路径不在 {} 下：{error}", root.display()))?;
+        let mut parts: Vec<String> = relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        // `<bench id>/new/estimates.json` ⇒ 去掉最后两段。
+        if parts.len() < 3 || parts[parts.len() - 2] != "new" {
+            continue;
+        }
+        parts.truncate(parts.len() - 2);
+        let key = parts.join("/");
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+        let Some(nanos) = xtask::criterion_median_nanos(&text) else {
+            return Err(format!(
+                "{} 里没有 median.point_estimate（criterion 版本变了？）",
+                path.display()
+            ));
+        };
+        out.insert(key, nanos);
+    }
+    Ok(())
 }
 
 fn scripts_dir(root: &Path) -> PathBuf {
@@ -2138,14 +2430,25 @@ fn json_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     Some(&rest[..end])
 }
 
+/// 批量对拍的结果：像素序列哈希 + 结构指纹观测。
+struct BatchHashes {
+    /// `(label, 序列哈希)`，顺序与 [`HASHES_WORKS`] 一致。
+    hashes: Vec<(String, String)>,
+    /// 逐作品逐遍的结构指纹（等式判据的输入）。
+    structures: Vec<xtask::StructureObservation>,
+}
+
 /// **批量对拍**（B9 Step 3）：一次进程跑完全部作品（脚本 + bundle 两条路径）。
 ///
 /// 渲染循环与 `zela-render` **共用**（`zela_app::frame_loop`），这里只负责拼参数、
 /// 解析结果、以及"script == bundle"的断言（§4.4：失败要点名作品与路径）。
-fn batch_hashes(root: &Path) -> Result<Vec<(String, String)>, String> {
+fn batch_hashes(root: &Path) -> Result<BatchHashes, String> {
     prepare_hashes_dir(root)?;
     let scripts = scripts_dir(root);
     let tmp = root.join("target").join("xtask").join("hashes");
+    // 执行计划阶段 3：统一观测产物（每次运行重写，不追加旧跑次）。
+    let observe = tmp.join("observe.jsonl");
+    let _ = fs::remove_file(&observe);
     let mut args = strings(&["run", "-q", "--profile", "verify", "-p", "zela-app"]);
     args.extend(hashes_app_args());
     args.extend(strings(&["--bin", "zela-verify", "--"]));
@@ -2167,6 +2470,7 @@ fn batch_hashes(root: &Path) -> Result<Vec<(String, String)>, String> {
 
     println!("[xtask] $ cargo {}", args.join(" "));
     let output = cargo_command(root)?
+        .env("ZELA_OBSERVE", &observe)
         .args(&args)
         .output()
         .map_err(|error| format!("启动 cargo 失败：{error}"))?;
@@ -2178,10 +2482,26 @@ fn batch_hashes(root: &Path) -> Result<Vec<(String, String)>, String> {
     }
 
     let mut verified: Vec<(String, String, String)> = Vec::new();
+    let mut structures: Vec<xtask::StructureObservation> = Vec::new();
     for line in stdout.lines() {
         // B12 Step 2 / B13：决策日志原样转出（每作品每遍一条，含拒绝理由）。
         if let Some(rest) = line.strip_prefix("[decision] ") {
             println!("[xtask] [decision] {rest}");
+            continue;
+        }
+        // 执行计划阶段 1：结构指纹观测（等式判据的输入；不进像素报告）。
+        if let Some(rest) = line.strip_prefix("[structure] ") {
+            let field = |name: &str| {
+                json_field(rest, name)
+                    .ok_or_else(|| format!("无法解析结构指纹的 {name}：{line}"))
+                    .map(str::to_string)
+            };
+            structures.push(xtask::StructureObservation {
+                work: field("work")?,
+                backend: field("backend")?,
+                pass: field("pass")?,
+                digest: field("digest")?,
+            });
             continue;
         }
         let Some(rest) = line.strip_prefix("[verify] ") else {
@@ -2217,7 +2537,15 @@ fn batch_hashes(root: &Path) -> Result<Vec<(String, String)>, String> {
         println!("[xtask] {label}: script == bundle（{script}）");
         hashes.push((label, script.clone()));
     }
-    Ok(hashes)
+    // 每件作品两遍（script / bundle）各一行结构指纹；数量不符 ⇒ 批量进程漏跑。
+    if structures.len() != HASHES_WORKS.len() * 2 {
+        return Err(format!(
+            "批量对拍产出了 {} 行 [structure]，期望 {}（每作品 script + bundle 各一行）",
+            structures.len(),
+            HASHES_WORKS.len() * 2
+        ));
+    }
+    Ok(BatchHashes { hashes, structures })
 }
 
 /// **V3-12 自动化**（B9 Step 5 → B7 Step 0.3 并入批进程）：挂 / 不挂 `HashSink` 时，

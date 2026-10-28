@@ -16,6 +16,7 @@ pub mod director_state;
 pub mod driver;
 pub mod errors;
 pub mod expr_mono;
+pub mod fingerprint;
 #[cfg(test)]
 mod expr_binding_tests;
 pub mod geometry;
@@ -52,6 +53,10 @@ pub use director_state::{DirectorAdvanceSystem, DirectorState};
 pub use driver::{DriverCommand, DriverEvent, DriverPod};
 pub use errors::Error;
 pub use expr_mono::SceneMono;
+// 执行计划阶段 1：结构指纹（纯数值状态层）。
+pub use fingerprint::{
+    StructureFingerprint, WorldRead, fingerprint_world, sequence_digest,
+};
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 pub use input::{ParamPanelSystem, TimeControlSystem};
 pub use lifetime::{

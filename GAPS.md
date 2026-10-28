@@ -1136,6 +1136,27 @@
 
 ---
 
+## AQ. 可观测性与性能基准批次（结构指纹 + 统一门禁，2026-10-28）
+
+> 计划《可观测性与性能基准执行计划_结构指纹与统一门禁》。
+> 核心设计：**一套框架，两个比对器** —— 结构指纹是**等式**（逐位相等），性能是**不等式**（20% 警告 / 50% 失败）。
+> 合并的是工具，不是判据：把性能硬做成「逐位一致」会让 CI 天天红然后被关掉。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AQ-01 | **阶段 0：砍纯浪费** —— 每帧无条件 PNG 编码 + 写盘，只有第 0 帧被读 | zela-verify | **已关闭（0）** | `render_png` 回调只在 `index == 0` 时 `write_png` + 读回；`run_sink_bypass` 的 V3-12 判据只比较首帧字节，899/900 次编码结果无人读取。像素基线不动（36/36 逐位不变），证明砍的是纯浪费。 |
+| AQ-02 | **W-B：`WorldSnapshot` 的 `HashMap`**（迭代序不确定 / Debug 截断 / 未注册静默降级） | zela-schedule telemetry | **已关闭（0）** | `TypeId` 不实现 `Ord`，注册表本身无法换 `BTreeMap` ⇒ 确定性钉在**输出边**：实体按 `id`、组件与 Resource 按 `type_name` 升序（排序键显式写死，`snapshot_json_is_deterministic_across_component_order` 钉住逐字节相同）。文件头改为显式声明 **UI 专用、不参与指纹线**；结构指纹另有纯数值入口（AQ-03）。 |
+| AQ-03 | **阶段 1：结构指纹（主力回归网）** —— 没有「全量对象 × 全量字段」入口 | ze-scene-core / zela-scene-ecs / zela-app | **已关闭（0）** | `zela_scene_ecs::fingerprint`：`fingerprint_world(world, Option<&WorldTransforms>)` 枚举 `ObjectId` 升序 × `TARGETS` 全部 read 端（精确 f32 位）× `WorldTransforms`（父子累乘后 16×f32）；派生几何（`AnimValue::Path`）只写占位标记并计入 `derived_excluded`（硬约束 1）。每帧独立、不链式 ⇒ 首次能**定位到具体帧**：`assert_structure_matches` 在 script / bundle 之间逐帧比对并点名第一个分歧帧。`zela-verify` 打印 `[structure]` 行；xtask 与 `structures.txt` 做等式比对（`compare_structures`：wgpu / vector × script / bundle 必须同值）。 |
+| AQ-04 | **阶段 2：像素层缩水（每作品 3–5 关键帧）** | zela-verify / baselines.txt | **未执行（3）** | 机制与验收都要求**重录 36 条像素基线**；`--record` 要求干净工作树 + 提交后 `--rebind`，本批工作树带着 AQ 改动 ⇒ 录制流程不可执行。**不静默改判据**：像素仍是全帧序列哈希，结构指纹已提供全量覆盖，等提交后单独一批做「旧值 → 关键帧集合」。 |
+| AQ-05 | **阶段 3：统一观测产物与报告** —— 三种产物（结构 / 帧 / bench）各说各话 | zela-verify / xtask | **已关闭（0）** | 统一信封 `{"schema":"zela.observation/1","kind":"structure" 或 "frame",...}` 写入 `ZELA_OBSERVE`（hashes 步固定写 `target/xtask/hashes/observe.jsonl`，每次重写）；结构产物带逐帧摘要数组（可反推帧）。旧 `ZELA_FRAME_REPORT` 格式**逐字段保留**（已有工具在读）。bench 侧不重造框架：criterion 的 `target/criterion/**/new/estimates.json` 就是数据源（AQ-06）。 |
+| AQ-06 | **阶段 4：双比对器与分档告警** | xtask | **已关闭（0）** | 等式：`compare_structures`（缺基线 / 跨后端不一致 / 与基线不符都 fail）。不等式：`compare_bench` + `BENCH_WARN_RATIO = 1.20` / `BENCH_FAIL_RATIO = 1.50`；新 step `cargo verify --step bench`（已进 full 列表）。**CI 只拦 >50%**；`>20%` 打印 `[bench][warn]` 不阻断。没跑过 `cargo bench` ⇒ 打印「**未测**，跳过（不是通过）」；产物存在但基线未登记 ⇒ 同样只打印不阻断（换机 / 新 bench 不该红）。基线 `bench_baselines.txt` 已按本机录制 **88 条**（单位 = 纳秒，criterion `estimates.json` 的 `median.point_estimate` 原生单位；`ZELA_RECORD_DEVICE` 记设备），不承诺跨设备。**结构指纹的 CI 边界与像素一致**：`--skip-baseline` 时只断言跨 pass / 跨后端一致（`script == bundle`、`wgpu == vector`），不比对 `structures.txt` —— 跨 OS libm 的 1 ulp 分歧尚未排除（与 AP-11 同类），不拿未经验证的判据去红 CI。 |
+| AQ-07 | **阶段 5：覆盖率补洞** —— 改坏了不会红且没人知道 | scripts / xtask | **部分关闭（1）** | `scripts/dispositions.txt` + `check_dispositions`：30 个脚本 **23 有像素基线 + 7 显式豁免（理由必填）**，未登记 / 假声明 `baseline` / 空理由都 fail（`--step hashes` 恒开）。**残余**：cap_channels2d / cap_channels3d / expr_demo / expr_read / sine_trace 5 件 demo 只有 manifest payload 断言，补 `[vector]` 基线需一次录制设备运行（与 AQ-04 同一批）。 |
+| AQ-08 | **阶段 0 记账**：9 个 bench 与 248 处 `println!`/`eprintln!` 登记 | 记账 | **已关闭（0）** | bench（9 个 / 7 crate）：`ze-comb` eval_bench + expr_bench、`ze-func` lookup_bench、`ze-graph-core` graph_bench、`ze-reflect` reflect_bench、`zela-schedule` scheduler_bench、`ze-pod-core` assembly_bench + function_lookup、`ze-pod-tests` pod_bench（criterion，已接 AQ-06）。`println!`/`eprintln!` 实测 **248** 处（计划写 221，按代码重算）；其中 `xtask` + `zela-app` 是 CLI 输出，本来就该给人读 ⇒ **不全改**，只治理「想被机器消费的那部分」（B12 起已有 `[decision]` / `[verify]` / `[timing]` / `[structure]` / `[observe]` 五种机器行）。`tracing::` 13 处 / 7 个文件，kernel 仍**零 tracing**（no_std 门禁守着，硬约束 3）。 |
+
+**AQ 段小计**：已关闭 6（AQ-01、AQ-02、AQ-03、AQ-05、AQ-06、AQ-08）· 部分关闭 1（AQ-07）· 记账 0 · 未执行 1（AQ-04）· 落档 0。
+
+---
+
 ## 附录. crate 能力表（阶段 0.5 门禁）
 
 > **门禁 1**：`crates/**/Cargo.toml` 的每个 crate 必须在本表登记（新增 crate 未登记 ⇒ `cargo verify --step structure` 失败）。
@@ -1199,8 +1220,8 @@
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AF**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AE 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
+> （**D–AQ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AQ 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
 
 | 类别 | 数量 |
 |---|---|

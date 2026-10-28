@@ -205,6 +205,9 @@ fn run() -> Result<(), String> {
             .map_err(|e| format!("[{}] bundle 装配失败：{e}", work.name))?;
         let bundle_hash = render_hash(&ctx, &mut runtime, work, args.fps, "bundle", &env)?;
 
+        // 阶段 1：脚本 / bundle 两条路径的**结构**必须逐位相同（不只像素）。
+        assert_structure_matches(&work.name, &script_hash.1, &bundle_hash.1)?;
+
         println!(
             "[verify] {{\"work\":\"{}\",\"size\":\"{}x{}\",\"frames\":{},\"script\":\"{}\",\
              \"bundle\":\"{}\",\"payload\":\"{}\"}}",
@@ -212,8 +215,8 @@ fn run() -> Result<(), String> {
             work.width,
             work.height,
             frames_for(&runtime, args.fps),
-            script_hash,
-            bundle_hash,
+            script_hash.0,
+            bundle_hash.0,
             payload,
         );
     }
@@ -341,11 +344,13 @@ fn report_decisions(work: &str, pass: &str, decisions: &[RoutingDecision]) {
 /// 目标 = `ZELA_FRAME_REPORT=<path>`（JSONL，追加）。不设 ⇒ 完全不写（门禁无副作用）。
 /// 环境指纹由调用方预先算好（`frame_loop::environment_json`）且**必填**：
 /// 没有 GPU / profile / 架构的计时数字不可比（B8 的 dev-release 与 X1-11 是同一类教训）。
+///
+/// **执行计划阶段 3**：`ZELA_OBSERVE=<path>` 时同一份数据再写一行**统一观测产物**
+/// （`schema = zela.observation/1`，`kind = frame`）。旧格式保持不变（已有工具在读）。
 fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) {
-    let Ok(path) = std::env::var("ZELA_FRAME_REPORT") else {
-        return;
-    };
-    if path.trim().is_empty() {
+    let frame_path = report_path("ZELA_FRAME_REPORT");
+    let observe_path = report_path("ZELA_OBSERVE");
+    if frame_path.is_none() && observe_path.is_none() {
         return;
     }
     let (all, all_n) = accumulate(&run.timings, false, None);
@@ -363,39 +368,121 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
     let peak = |f: fn(&zela_render_vector::ResourceTotals) -> usize| {
         run.resource_frames.iter().map(f).max().unwrap_or(0)
     };
-    let line = format!(
-        "{{\"work\":\"{}\",\"pass\":\"{pass}\",\"size\":\"{}x{}\",\"frames\":{frames},\
-         \"env\":{env},\"timings\":{{\"all\":{},\"window\":{}}},\"gpu\":{},\
-         \"cache\":{},\"textures_created\":{},\"textures_created_scope\":\"wgpu-only\",\
-         \"vector_resources\":{},\"vector_resource_curve\":{{\"frames\":{},\"first\":{},\"last\":{},\
-         \"max_textures\":{},\"max_texture_bytes\":{},\"max_buffers\":{},\"max_buffer_bytes\":{}}},\
-         \"vector_overflow\":{},\"vector_shadows\":{},\
-         \"verify_note\":\"verify_ms 未启用（GPU 校验 pass 未实现，B12 Step 1.3）\",\
-         \"decisions\":[{}]}}",
+    let all_body = summary_body(&all, "all", all_n);
+    let window_body = summary_body(&window, &format!("1..{window_n}"), window_n);
+    let gpu = run.gpu_json();
+    let cache = run.cache.json();
+
+    if let Some(path) = &frame_path {
+        let line = format!(
+            "{{\"work\":\"{}\",\"pass\":\"{pass}\",\"size\":\"{}x{}\",\"frames\":{frames},\
+             \"env\":{env},\"timings\":{{\"all\":{all_body},\"window\":{window_body}}},\"gpu\":{gpu},\
+             \"cache\":{cache},\"textures_created\":{},\"textures_created_scope\":\"wgpu-only\",\
+             \"vector_resources\":{},\"vector_resource_curve\":{{\"frames\":{},\"first\":{},\"last\":{},\
+             \"max_textures\":{},\"max_texture_bytes\":{},\"max_buffers\":{},\"max_buffer_bytes\":{}}},\
+             \"vector_overflow\":{},\"vector_shadows\":{},\
+             \"verify_note\":\"verify_ms 未启用（GPU 校验 pass 未实现，B12 Step 1.3）\",\
+             \"decisions\":[{}]}}",
+            work.name,
+            work.width,
+            work.height,
+            run.textures_created,
+            run.vector_resources.json(),
+            run.resource_frames.len(),
+            first.json(),
+            last.json(),
+            peak(|r| r.textures),
+            peak(|r| r.texture_bytes),
+            peak(|r| r.buffers),
+            peak(|r| r.buffer_bytes),
+            run.vector_overflow.json(),
+            run.vector_shadows.json(),
+            decisions.join(","),
+        );
+        append_jsonl(path, &line);
+    }
+
+    if let Some(path) = &observe_path {
+        let data = format!(
+            "{{\"timings\":{{\"all\":{all_body},\"window\":{window_body}}},\"gpu\":{gpu},\
+             \"cache\":{cache},\"textures_created\":{},\"vector_resources\":{},\
+             \"vector_overflow\":{},\"vector_shadows\":{},\"decisions\":[{}]}}",
+            run.textures_created,
+            run.vector_resources.json(),
+            run.vector_overflow.json(),
+            run.vector_shadows.json(),
+            decisions.join(","),
+        );
+        append_jsonl(
+            path,
+            &observation_line("frame", work, pass, env, &data),
+        );
+    }
+}
+
+/// **结构指纹报告**（执行计划阶段 1）：门禁 stdout 一行 + 可选统一产物一行。
+///
+/// stdout 行是**等式比对器**的输入（xtask 解析后与 `structures.txt` 比对）；
+/// 摘要按「逐帧摘要再摘要」汇总，帧仍可反推（`ZELA_OBSERVE` 里带逐帧值）。
+fn report_structure(work: &Work, pass: &str, env: &str, run: &FrameRun) {
+    let Some(last) = run.structure.last() else {
+        return;
+    };
+    let digest = zela_scene_ecs::sequence_digest(&run.structure);
+    let backend = match work.backend {
+        LoopBackend::Wgpu => "wgpu",
+        LoopBackend::Vector => "vector",
+        LoopBackend::Auto => "auto",
+        LoopBackend::AutoFrame => "auto-frame",
+    };
+    println!(
+        "[structure] {{\"work\":\"{}\",\"backend\":\"{backend}\",\"pass\":\"{pass}\",\
+         \"frames\":{},\"objects\":{},\"fields\":{},\"derived_excluded\":{},\
+         \"digest\":\"{digest:016x}\"}}",
         work.name,
-        work.width,
-        work.height,
-        summary_body(&all, "all", all_n),
-        summary_body(&window, &format!("1..{window_n}"), window_n),
-        run.gpu_json(),
-        run.cache.json(),
-        run.textures_created,
-        run.vector_resources.json(),
-        run.resource_frames.len(),
-        first.json(),
-        last.json(),
-        peak(|r| r.textures),
-        peak(|r| r.texture_bytes),
-        peak(|r| r.buffers),
-        peak(|r| r.buffer_bytes),
-        run.vector_overflow.json(),
-        run.vector_shadows.json(),
-        decisions.join(","),
+        run.structure.len(),
+        last.objects,
+        last.fields,
+        last.derived_excluded,
     );
+    let Some(path) = report_path("ZELA_OBSERVE") else {
+        return;
+    };
+    let frames = run
+        .structure
+        .iter()
+        .map(|frame| format!("\"{:016x}\"", frame.digest))
+        .collect::<Vec<_>>()
+        .join(",");
+    let data = format!(
+        "{{\"objects\":{},\"fields\":{},\"derived_excluded\":{},\"digest\":\"{digest:016x}\",\
+         \"frames\":[{frames}]}}",
+        last.objects, last.fields, last.derived_excluded,
+    );
+    append_jsonl(&path, &observation_line("structure", work, pass, env, &data));
+}
+
+/// 统一观测产物的**信封**（阶段 3）：`schema / kind / work / pass / size / frames / env / data`。
+fn observation_line(kind: &str, work: &Work, pass: &str, env: &str, data: &str) -> String {
+    format!(
+        "{{\"schema\":\"zela.observation/1\",\"kind\":\"{kind}\",\"work\":\"{}\",\"pass\":\"{pass}\",\
+         \"size\":\"{}x{}\",\"env\":{env},\"data\":{data}}}",
+        work.name, work.width, work.height,
+    )
+}
+
+/// 读取一个"报告路径"环境变量；未设置 / 空 ⇒ `None`（门禁无副作用）。
+fn report_path(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+}
+
+fn append_jsonl(path: &str, line: &str) {
     match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
     {
         Ok(mut file) => {
             use std::io::Write;
@@ -465,12 +552,14 @@ fn render_png(
         options,
         true,
         &mut |index, frame| {
-            // 与 `PngSink` 同一个写盘函数（同一套编码参数）。
-            let path = dir.join(format!("frame_{index:05}.png"));
-            zela_app::export::write_png(&path, work.width, work.height, frame.rgba)
-                .map_err(|e| e.to_string())?;
+            // 只写第 0 帧：V3-12 只比较首帧字节，旧实现每帧编码 + 写盘，
+            // 899/900 次结果无人读取（执行计划 §1.2）。编码参数与 `PngSink` 完全相同。
             if index == 0 {
-                first = std::fs::read(&path).map_err(|e| format!("读回 {} 失败：{e}", path.display()))?;
+                let path = dir.join(format!("frame_{index:05}.png"));
+                zela_app::export::write_png(&path, work.width, work.height, frame.rgba)
+                    .map_err(|e| e.to_string())?;
+                first = std::fs::read(&path)
+                    .map_err(|e| format!("读回 {} 失败：{e}", path.display()))?;
             }
             if hash {
                 sequence.push_frame(frame.rgba);
@@ -482,10 +571,11 @@ fn render_png(
     report_decisions(&work.name, "png", &run.decisions);
     report_timings(&work.name, "png", &run.timings)?;
     report_work(work, "png", frames, env, &run);
+    report_structure(work, "png", env, &run);
     Ok(first)
 }
 
-/// 一个作品的一遍渲染 → 序列哈希。
+/// 一个作品的一遍渲染 → `(序列哈希, 逐帧结构摘要)`。
 ///
 /// **每个作品新建 `StandardBackends`**（§4.2 的安全取舍）：`wgpu_3d` 的离屏 / 深度目标
 /// 按 `LayerId` 索引，复用后端可能让残留目标串味。GPU 初始化（大头）已在外面摊平。
@@ -496,7 +586,7 @@ fn render_hash(
     fps: f64,
     path: &str,
     env: &str,
-) -> Result<String, String> {
+) -> Result<(String, Vec<u64>), String> {
     let mut backends = StandardBackends::new(ctx);
     let mut target = HeadlessTarget::new();
     let mut hash = FrameSequenceHash::new(work.width, work.height);
@@ -525,5 +615,32 @@ fn render_hash(
     report_decisions(&work.name, path, &run.decisions);
     report_timings(&work.name, path, &run.timings)?;
     report_work(work, path, frames, env, &run);
-    Ok(hash.hex())
+    report_structure(work, path, env, &run);
+    Ok((
+        hash.hex(),
+        run.structure.iter().map(|frame| frame.digest).collect(),
+    ))
+}
+
+/// **等式比对器（进程内）**：脚本 / bundle 两条路径的逐帧结构必须完全相同。
+///
+/// 与像素哈希的区别：这里是 `state = f(t)` 的等式，不含 GPU / 字体 / 编码器；
+/// 失败时**点名第一个分歧帧**（旧像素链式哈希做不到）。
+fn assert_structure_matches(work: &str, script: &[u64], bundle: &[u64]) -> Result<(), String> {
+    if script.len() != bundle.len() {
+        return Err(format!(
+            "[{work}] 结构指纹帧数不同：script {} / bundle {}",
+            script.len(),
+            bundle.len()
+        ));
+    }
+    for (index, (a, b)) in script.iter().zip(bundle.iter()).enumerate() {
+        if a != b {
+            return Err(format!(
+                "[{work}] 结构指纹在**第 {index} 帧**分歧：script {a:016x} / bundle {b:016x}\n  \
+                 该帧状态不同 ⇒ 优先查表达式绑定 / 装配顺序，而不是渲染"
+            ));
+        }
+    }
+    Ok(())
 }
