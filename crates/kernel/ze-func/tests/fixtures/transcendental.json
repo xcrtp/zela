@@ -1,0 +1,23 @@
+{
+  "name": "transcendental",
+  "cross_language": false,
+  "expr": {
+    "node": {
+      "type": "call",
+      "data": {
+        "op": { "namespace": "zela.math", "name": "sin" },
+        "args": [
+          {
+            "node": {
+              "type": "channel",
+              "data": { "channel": { "namespace": "", "name": "time" } }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "channels": { "time": [0.117, 0.1] },
+  "expect": [0.11673324714446584, 0.09983341664682815],
+  "expect_hash": "0x186b252c32406b48"
+}

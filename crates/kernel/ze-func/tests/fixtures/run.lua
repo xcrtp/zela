@@ -355,8 +355,13 @@ if #files == 0 then
 end
 
 local ok = 0
+local skipped = 0
 for _, path in ipairs(files) do
   local fixture = parse_json(read_file(path))
+  -- W5：超越函数不保证跨语言逐位一致 ⇒ `cross_language = false` 的 fixture 只跑 Rust。
+  if fixture.cross_language == false then
+    skipped = skipped + 1
+  else
   local samples = #fixture.expect
   for _, series in pairs(fixture.channels or {}) do
     if #series > samples then samples = #series end
@@ -384,6 +389,8 @@ for _, path in ipairs(files) do
   assert(actual_text == expected_text,
     fixture.name .. " 哈希不符：" .. actual_text .. " != " .. expected_text)
   ok = ok + 1
+  end
 end
 
-print(string.format("[fixtures-lua] %d/%d ok", ok, #files))
+print(string.format("[fixtures-lua] %d/%d ok（跳过 %d 个跨语言不安全 fixture）",
+  ok, #files - skipped, skipped))

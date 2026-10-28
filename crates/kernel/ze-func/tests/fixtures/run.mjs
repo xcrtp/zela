@@ -282,8 +282,16 @@ const files = listed.length > 0
 if (files.length === 0) throw new Error("fixture 目录为空");
 
 let ok = 0;
+let skipped = 0;
 for (const file of files) {
   const fixture = JSON.parse(fs.readFileSync(file, "utf8"));
+  // W5：超越函数（sin / cos …）在 JS / Lua / Rust 之间不保证逐位一致
+  // （实测 JS 与 Rust 在 6283 个采样点上有 160 处差 1 ulp），
+  // 因此这类 fixture 明确排除在跨语言集合之外，只由 Rust harness 负责。
+  if (fixture.cross_language === false) {
+    skipped += 1;
+    continue;
+  }
   const samples = Math.max(
     fixture.expect.length,
     ...Object.values(fixture.channels ?? {}).map((series) => series.length),
@@ -317,4 +325,4 @@ for (const file of files) {
   }
   ok += 1;
 }
-console.log(`[fixtures-js] ${ok}/${files.length} ok`);
+console.log(`[fixtures-js] ${ok}/${files.length - skipped} ok（跳过 ${skipped} 个跨语言不安全 fixture）`);

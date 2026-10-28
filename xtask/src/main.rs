@@ -1020,6 +1020,8 @@ fn check_no_hashmap_in_graph_paths(root: &Path) -> Result<(), String> {
         "crates/scene/ze-scene-core/src/animation/timeline.rs",
         "crates/ze/pod/ze-pod-func/src/expr_pod.rs",
         "crates/ze/pod/ze-pod-func/src/infer.rs",
+        // 阶段 0（AP-01）：父子变换遍历此前只靠注释保证"不依赖 HashMap 顺序"。
+        "crates/scene/zela-scene-ecs/src/transform_hierarchy.rs",
     ];
 
     let mut offenders = Vec::new();
@@ -1095,7 +1097,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
-        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.",
+        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1136,7 +1138,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("AL-")
                     || id.starts_with("AM-")
                     || id.starts_with("AN-")
-                    || id.starts_with("AO-"));
+                    || id.starts_with("AO-")
+                    || id.starts_with("AP-"));
             if !is_item {
                 continue;
             }

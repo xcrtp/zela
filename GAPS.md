@@ -1099,6 +1099,19 @@
 
 ---
 
+## AP. 作者面兑现批次（5b 退役 + 时钟身份化 + 方法/Query/Bounds，2026-10-28）
+
+> 计划《作者面兑现执行计划_5b退役与时钟身份化》。顺序铁律：先证明等价、后重录基线；
+> A（纯减法）先于 B（作者面兑现）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AP-01 | **阶段 0：记账归位** | scene / xtask / fixtures | **已关闭（0）** | ① `TransformHierarchyError(Option<String>)` → `{ chain: Option<Vec<ObjectId>> }`（与其余四处环诊断同口径，`message()` 只留调试用）；② 该文件的 `locals` / `parents` / `out` 从 `HashMap` 改 `BTreeMap`，并把 `crates/scene/zela-scene-ecs/src/transform_hierarchy.rs` 纳入确定性门禁（`WorldTransforms::from_map` 改收 `IntoIterator`）——从"注释保证"变成"机器保证"；③ **W5 实测**：Rust `f64::sin` 与 JS `Math.sin` 在 6283 个采样点上有 **160 处差 1 ulp**（cos 195 处），首个反例 `x = 0.117`；新增 fixture `transcendental.json`（`cross_language: false`），JS/Lua runner 显式跳过并回报跳过数，Rust harness 照常守护；④ 累计项 AN-03 / AN-05 / AO-04 / W-B 保持原状态（不在本批做）。 |
+
+**AP 段小计**：已关闭 1（AP-01）· 部分关闭 0 · 记账 0 · 未执行 0。
+
+---
+
 ## 附录. crate 能力表（阶段 0.5 门禁）
 
 > **门禁 1**：`crates/**/Cargo.toml` 的每个 crate 必须在本表登记（新增 crate 未登记 ⇒ `cargo verify --step structure` 失败）。

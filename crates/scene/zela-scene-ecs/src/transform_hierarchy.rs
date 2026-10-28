@@ -21,12 +21,12 @@
 //
 // # 确定性 / 环路
 //
-// - 遍历按 `ObjectId` 升序（不依赖 HashMap 顺序）；
+// - 遍历按 `ObjectId` 升序（容器一律 `BTreeMap`，不存在"依赖哈希序"的口子）；
 // - `Parent(DANGLING)` 视为**无父**（声明期合法占位）；
-// - 环路写入 `TransformHierarchyError`（明确字符串），并跳过该子树（返回 local）。
-//   不静默截断：错误 Resource 可由测试 / 宿主读取。
+// - 环路写入 `TransformHierarchyError`（**完整环路径 `Vec<ObjectId>`**），并跳过该子树
+//   （返回 local）。不静默截断：错误 Resource 可由测试 / 宿主读取。
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use ze_notion::Transform3D;
 use ze_scene_core::Transform;
@@ -42,17 +42,31 @@ use crate::contract::WorldView;
 /// （渲染层只读它，不该依赖 ECS 实现）；**生产**仍是本文件的 System。
 pub use ze_scene_core::world_transforms::WorldTransforms;
 
-/// 父子环路错误（S5）：`None` = 本帧无环。
-#[derive(Debug, Clone, Default)]
-pub struct TransformHierarchyError(pub Option<String>);
+/// 父子环路错误（S5）：`chain = None` = 本帧无环。
+///
+/// **完整环路径**（阶段 0）：与其余四处环诊断（`Cycle(Vec<Id>)` / `Cycle { chain }` /
+/// `ParentCycle { chain }` / `CycleDetected { chain }`）同口径 —— 首尾相同，
+/// 不再把结构化路径降级成字符串。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TransformHierarchyError {
+    pub chain: Option<Vec<ObjectId>>,
+}
 
 impl TransformHierarchyError {
     pub fn is_err(&self) -> bool {
-        self.0.is_some()
+        self.chain.is_some()
     }
 
-    pub fn message(&self) -> Option<&str> {
-        self.0.as_deref()
+    /// 完整环路径（首尾相同）；判定请用它，不要解析字符串。
+    pub fn chain(&self) -> Option<&[ObjectId]> {
+        self.chain.as_deref()
+    }
+
+    /// 可读诊断（调试 / 日志用）。
+    pub fn message(&self) -> Option<String> {
+        self.chain
+            .as_ref()
+            .map(|chain| format!("父子变换环路：{chain:?}（v0 → … → v0）"))
     }
 }
 
@@ -67,8 +81,8 @@ impl System for TransformHierarchySystem {
         // 先在世界只读借用内收集 local / parent（收集完即释放）。
         let (locals, parents) = {
             let world = WorldView::new(ctx.borrow_world());
-            let mut locals: HashMap<ObjectId, Transform3D> = HashMap::new();
-            let mut parents: HashMap<ObjectId, ObjectId> = HashMap::new();
+            let mut locals: BTreeMap<ObjectId, Transform3D> = BTreeMap::new();
+            let mut parents: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
             world.for_each::<Transform>(|id, transform| {
                 locals.insert(id, transform.to_affine3d());
             });
@@ -80,7 +94,7 @@ impl System for TransformHierarchySystem {
             (locals, parents)
         };
 
-        // 拓扑序由 ObjectId 升序决定（确定性；不依赖 HashMap 遍历顺序）。
+        // 拓扑序由 ObjectId 升序决定（确定性；BTreeMap 的键序即最终序）。
         let mut ids: Vec<ObjectId> = locals
             .keys()
             .copied()
@@ -89,39 +103,39 @@ impl System for TransformHierarchySystem {
         ids.sort_unstable();
         ids.dedup();
 
-        let mut out: HashMap<ObjectId, Transform3D> = HashMap::with_capacity(ids.len());
+        let mut out: BTreeMap<ObjectId, Transform3D> = BTreeMap::new();
         let mut visiting: Vec<ObjectId> = Vec::new();
-        let mut error: Option<String> = None;
+        let mut chain: Option<Vec<ObjectId>> = None;
         for id in ids {
-            let _ = world_of(id, &locals, &parents, &mut out, &mut visiting, &mut error);
+            let _ = world_of(id, &locals, &parents, &mut out, &mut visiting, &mut chain);
         }
 
         if let Some(resource) = ctx.get_mut::<WorldTransforms>() {
             *resource = WorldTransforms::from_map(out);
         }
         if let Some(resource) = ctx.get_mut::<TransformHierarchyError>() {
-            resource.0 = error;
+            resource.chain = chain;
         }
     }
 }
 
 fn world_of(
     id: ObjectId,
-    locals: &HashMap<ObjectId, Transform3D>,
-    parents: &HashMap<ObjectId, ObjectId>,
-    out: &mut HashMap<ObjectId, Transform3D>,
+    locals: &BTreeMap<ObjectId, Transform3D>,
+    parents: &BTreeMap<ObjectId, ObjectId>,
+    out: &mut BTreeMap<ObjectId, Transform3D>,
     visiting: &mut Vec<ObjectId>,
-    error: &mut Option<String>,
+    error: &mut Option<Vec<ObjectId>>,
 ) -> Transform3D {
     if let Some(world) = out.get(&id) {
         return *world;
     }
     if let Some(start) = visiting.iter().position(|visited| *visited == id) {
         if error.is_none() {
-            // 完整环路径：从首次出现的节点到当前节点。
+            // 完整环路径：从首次出现的节点到当前节点（首尾相同）。
             let mut chain: Vec<ObjectId> = visiting[start..].to_vec();
             chain.push(id);
-            *error = Some(format!("父子变换环路：{chain:?}（v0 → … → v0）"));
+            *error = Some(chain);
         }
         return Transform3D::identity();
     }
@@ -271,11 +285,11 @@ mod tests {
 
         let (_, error) = run(world);
         assert!(error.is_err(), "环路必须产生明确错误");
-        let message = error.message().unwrap();
-        assert!(message.contains("环路"));
-        assert!(
-            message.contains(&format!("{a_id:?}")) && message.contains(&format!("{b_id:?}")),
-            "诊断必须携带完整环路径，实测：{message}"
+        let chain = error.chain().expect("环路必须携带完整路径");
+        assert_eq!(
+            chain,
+            &[a_id, b_id, a_id],
+            "诊断必须是结构化完整环路径（首尾相同），实测：{chain:?}"
         );
     }
 

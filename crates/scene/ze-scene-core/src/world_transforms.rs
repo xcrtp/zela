@@ -20,8 +20,12 @@ pub struct WorldTransforms {
 
 impl WorldTransforms {
     /// 由"对象 → 世界矩阵"映射构造（生成侧每帧重建时用）。
-    pub fn from_map(world: HashMap<ObjectId, Transform3D>) -> Self {
-        Self { world }
+    ///
+    /// 接受任意 `IntoIterator`：生成侧用 `BTreeMap`（排序确定），测试可用数组 / 哈希表。
+    pub fn from_map(world: impl IntoIterator<Item = (ObjectId, Transform3D)>) -> Self {
+        Self {
+            world: world.into_iter().collect(),
+        }
     }
 
     /// 写入 / 覆盖一个对象的世界矩阵（测试与增量构建用）。
