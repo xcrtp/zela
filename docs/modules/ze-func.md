@@ -11,18 +11,19 @@
 - 路径：`crates/kernel/ze-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`ze-pod-func`、`ze-scene-core`、`zela-scene-ecs`
-- 源文件：6 个 · 2057 行
+- 源文件：7 个 · 2330 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/layout.rs` | 102 | **Layout / Codec 的门面**：实现已迁至 `ze-type`（纯代数）与 `ze-reflect`（运行时注册表）。 |
-| `src/lib.rs` | 39 | ze-func：**基础函子库**（namespace `zela.math`）。 |
+| `src/lib.rs` | 41 | ze-func：**基础函子库**（namespace `zela.math`）。 |
 | `src/mono.rs` | 347 | **单态解析器**：把 `(算子, 实参槽类型)` 解析成具体类型的函数指针。 |
 | `src/op.rs` | 479 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
 | `src/ops.rs` | 762 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
 | `src/simplify.rs` | 328 | **符号化简**（阶段 4）：常量折叠 + **层间迁移**（离散层 → 连续层）。 |
+| `src/wgsl.rs` | 271 | **WGSL codegen 后端**（阶段 4-A）：把 `zela.math` 的算子渲染成 WGSL 表达式。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -81,6 +82,8 @@ graph LR
 | `src/simplify.rs` | `pub fn simplify(expr: &Expr) -> Expr` |
 | `src/simplify.rs` | `pub struct Simplify` |
 | `src/simplify.rs` | `pub fn register_passes(registry: &mut PassRegistry)` |
+| `src/wgsl.rs` | `pub struct MathWgsl` |
+| `src/wgsl.rs` | `pub fn backend() -> &'static MathWgsl` |
 <!-- AUTO:END -->
 
 ## 职责

@@ -25,6 +25,7 @@ pub mod mono;
 pub mod op;
 pub mod ops;
 pub mod simplify;
+pub mod wgsl;
 
 pub use layout::{
     ENDIAN, Endian, FieldLayout, Layout, LayoutError, PATH_TYPE, Record, Scalar, Transcode,
@@ -37,3 +38,4 @@ pub use op::{
 };
 pub use ops::{eval, is_known};
 pub use simplify::{SIMPLIFY_REC_LIMIT, Simplify, simplify};
+pub use wgsl::{MathWgsl, PRELUDE as WGSL_PRELUDE, backend as wgsl_backend};

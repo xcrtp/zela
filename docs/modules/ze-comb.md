@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：12 个 · 5616 行
+- 源文件：13 个 · 6093 行
 
 ### 文件清单
 
@@ -19,11 +19,12 @@
 |---|---|---|
 | `src/analysis.rs` | 169 | **表达式图分析**：`ze-graph-core` 的 SCC / reachable / dirty 在表达式 DAG 上的落点。 |
 | `src/codata.rs` | 215 | codata：**生产性展开**（不是图灵完备）。 |
+| `src/codegen.rs` | 473 | **WGSL codegen（2 阶）**：把 [`Expr`] 编译成一个**确定性的纯函数**。 |
 | `src/compiled.rs` | 164 | **装配期程序的两种形态**：`lowered`（语义基准）+ 可选 `typed`（单态化快路径）。 |
 | `src/expr.rs` | 1243 | 表达式树：节点、字面量、通道、算子引用，以及装配期校验。 |
 | `src/graph_view.rs` | 221 | **Expr DAG 图视图**：把表达式树投影成 [`ze_graph_core::Topology`]。 |
 | `src/iter.rs` | 286 | 可迭代类型：**`Iter`（有穷）与 `Stream`（余归纳）是两个类型**。 |
-| `src/lib.rs` | 105 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
+| `src/lib.rs` | 109 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
 | `src/pass.rs` | 293 | **Pass 抽象**：把已有的能力收进一个约定（不是为假想需求预付）。 |
 | `src/program.rs` | 1901 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
 | `src/reference.rs` | 287 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
@@ -35,20 +36,23 @@
 ```mermaid
 graph LR
     f0["src/analysis.rs"]
-    f5["src/codata.rs"]
+    f7["src/codata.rs"]
+    f3["src/codegen.rs"]
     f1["src/expr.rs"]
     f2["src/graph_view.rs"]
-    f4["src/iter.rs"]
-    f6["src/pass.rs"]
-    f8["src/program.rs"]
-    f7["src/reference.rs"]
-    f3["src/walk.rs"]
+    f6["src/iter.rs"]
+    f8["src/pass.rs"]
+    f10["src/program.rs"]
+    f9["src/reference.rs"]
+    f4["src/typed.rs"]
+    f5["src/walk.rs"]
     f0 --> f1
     f0 --> f2
-    f1 --> f3
-    f4 --> f5
+    f3 --> f4
+    f1 --> f5
     f6 --> f7
-    f8 --> f1
+    f8 --> f9
+    f10 --> f1
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -65,6 +69,13 @@ graph LR
 | `src/codata.rs` | `pub struct Expanded<S>` |
 | `src/codata.rs` | `pub fn expand<U: Unfold>(` |
 | `src/codata.rs` | `pub fn observe<U: Unfold>(` |
+| `src/codegen.rs` | `pub struct WgslParam` |
+| `src/codegen.rs` | `pub struct WgslFunction` |
+| `src/codegen.rs` | `pub trait WgslBackend` |
+| `src/codegen.rs` | `pub enum CodegenError` |
+| `src/codegen.rs` | `pub fn emit_wgsl(expr: &Expr, backend: &dyn WgslBackend) -> Result<WgslFunction, CodegenError>` |
+| `src/codegen.rs` | `pub fn wgsl_type(ty: SlotType) -> &'static str` |
+| `src/codegen.rs` | `pub fn slot_of_channel(ty: ChannelType) -> Option<SlotType>` |
 | `src/compiled.rs` | `pub struct ExprProgram` |
 | `src/compiled.rs` | `pub struct NoMonomorphizer` |
 | `src/expr.rs` | `pub enum Node` |

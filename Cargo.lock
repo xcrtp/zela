@@ -7041,6 +7041,8 @@ dependencies = [
  "thiserror 2.0.20",
  "web-time",
  "wgpu",
+ "ze-comb",
+ "ze-func",
  "ze-notion",
  "ze-pod-core",
  "ze-render-ir",

@@ -52,6 +52,9 @@ hecs.workspace = true
 # B3-2：渲染契约探针（`render_pod_probe`）要**真的实现 Pod trait** 并走慢路径。
 # 仅 dev 边：生产依赖图仍与 B3-0.5 一致（structure 判据只查生产边）。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
+# 阶段 4-A：WGSL codegen 的三后端对拍（生成器在 ze-comb / ze-func，执行在 wgpu）。
+ze-comb = { path = "../../kernel/ze-comb" }
+ze-func = { path = "../../kernel/ze-func" }
 serde.workspace = true
 serde_json.workspace = true
 

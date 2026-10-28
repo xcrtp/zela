@@ -59,6 +59,7 @@
 //! ```
 
 pub mod analysis;
+pub mod codegen;
 pub mod codata;
 pub mod compiled;
 pub mod expr;
@@ -71,6 +72,9 @@ pub mod typed;
 pub mod walk;
 
 pub use analysis::{affected_consumers, reference_groups, shared_definitions, unreachable};
+pub use codegen::{
+    CodegenError, WgslBackend, WgslFunction, WgslParam, emit_wgsl, slot_of_channel, wgsl_type,
+};
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use compiled::{ExprProgram, NoMonomorphizer};
 pub use expr::{
