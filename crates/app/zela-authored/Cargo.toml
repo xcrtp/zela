@@ -17,5 +17,7 @@ ze-scene-core = { path = "../../scene/ze-scene-core" }
 ze-notion = { path = "../../kernel/ze-notion" }
 ze-render-ir = { path = "../../kernel/ze-render-ir" }
 ze-time = { path = "../../kernel/ze-time" }
+# 作品用**表达式绑定**（`expr.bind` 的 Rust 等价物）声明时间轴。
+ze-comb = { path = "../../kernel/ze-comb" }
 ze-content = { path = "../../kernel/ze-content" }
 ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }

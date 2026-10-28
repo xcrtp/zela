@@ -6885,6 +6885,7 @@ dependencies = [
 name = "zela-authored"
 version = "0.1.1"
 dependencies = [
+ "ze-comb",
  "ze-content",
  "ze-notion",
  "ze-prerender",

@@ -9,7 +9,6 @@ use ze_scene_core::{
 use ze_render_ir::{
     BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
 };
-use zela_scene_ecs::animation::Timeline;
 use zela_scene_ecs::contract::{
     Components, Group, GroupId, Name, ObjectId, Parent, SceneRead, Visibility,
 };
@@ -19,7 +18,7 @@ use zela_scene_ecs::persist::{
 };
 use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene::components::{ContentTextureItem, MorphShape, PhaseAnim, Reveal};
-use zela_scene_ecs::{AnimValue, Curve, Interp, SceneEncoder, SceneScript};
+use zela_scene_ecs::{SceneEncoder, SceneScript};
 
 /// 32 个登记组件的样例（与 `known_component_table!` 一一对应）。
 fn samples() -> zela_scene_ecs::contract::Components {
@@ -217,8 +216,7 @@ fn scene_script_round_trips_through_json() {
         Box::new(Name::new("hero")),
         Box::new(Opacity::new(0.75)),
     ]);
-    enc.animate::<zela_scene_ecs::animation::OpacityValue>(h, ramp(1.0), 1.0);
-    enc.wait(0.5);
+    bind_fade(&mut enc, h, 1.0);
     let script = enc.finish();
 
     let json = script.to_json().expect("序列化成功");
@@ -262,7 +260,7 @@ fn cloned_script_can_be_committed_again() {
         Box::new(Circle::new((0.0, 0.0), 2.0)),
         Box::new(Name::new("dot")),
     ]);
-    enc.animate::<zela_scene_ecs::animation::OpacityValue>(h, ramp(2.0), 2.0);
+    bind_fade(&mut enc, h, 2.0);
     let script = enc.finish();
     let twin = script.clone();
 
@@ -288,30 +286,47 @@ fn cloned_script_can_be_committed_again() {
     );
 }
 
-/// `Ready` 目标不可持久化（明确错误）。
-#[test]
-fn ready_target_is_not_persistable() {
-    let mut tl = Timeline::new();
-    tl.play(
-        Curve::Const(AnimValue::Scalar(1.0)),
-        zela_scene_ecs::animation::CircleRadius {
-            id: ObjectId::DANGLING,
-        },
-        1.0,
-    );
-    let err = serde_json::to_string(&tl).expect_err("Ready 目标必须报错");
-    assert!(
-        err.to_string().contains("不可持久化"),
-        "错误信息必须明确，实际 {err}"
-    );
-}
+/// 一条**可持久化**的表达式绑定：`Opacity.value` 在 `[0, dur)` 恒为 1（Hold）。
+///
+/// 旧 `Timeline::play` 的曲线绑定已随 5b 退役；`Step::Expr` 的待解析目标
+/// （`PendingTarget`）仍是唯一可序列化形态 —— 本用例钉住它仍能往返。
+fn bind_fade(enc: &mut SceneEncoder, object: zela_scene_ecs::Handle, dur: f64) {
+    use ze_comb::{ChannelRef, Expr};
+    use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
+    use zela_scene_ecs::ClockProgram;
 
-fn ramp(dur: f64) -> Curve {
-    Curve::Keyframes {
-        keys: vec![
-            (0.0, zela_scene_ecs::AnimValue::Scalar(0.0)),
-            (dur, zela_scene_ecs::AnimValue::Scalar(1.0)),
+    let window = Expr::call(
+        ze_comb::OpRef::new("zela.math", "and"),
+        [
+            Expr::call(
+                ze_comb::OpRef::new("zela.math", "ge"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(0.0),
+                ],
+            ),
+            Expr::call(
+                ze_comb::OpRef::new("zela.math", "lt"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(dur),
+                ],
+            ),
         ],
-        interpolation: Interp::Linear,
-    }
+    );
+    enc.bind_expr_gated(
+        object,
+        "Opacity.value",
+        Expr::pure(1.0),
+        LibraryRef {
+            namespace: "zela.math".to_string(),
+            version: "12".to_string(),
+            op_revisions: Default::default(),
+        },
+        ClockProgram::new(),
+        Some(window),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("表达式绑定合法");
 }

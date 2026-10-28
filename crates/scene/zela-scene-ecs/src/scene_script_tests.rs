@@ -7,9 +7,9 @@ mod tests {
     use ze_scene_contract::{
         Components, ObjectId, Scene as SceneContract, Visibility, VisibilityTag,
     };
-    use ze_time::{ClockForest, Curve, Interp};
-    use crate::animation::target::{OpacityValue, Target};
-    use ze_scene_core::animation::{BindingTable, Timeline};
+    use ze_time::ClockForest;
+    use crate::animation::Target;
+    use ze_scene_core::animation::BindingTable;
     use ze_scene_core::scene_write::SceneWrite;
     use ze_scene_contract::SceneRead;
     use crate::scene::Scene as SceneStruct;
@@ -49,11 +49,59 @@ mod tests {
     fn recording_needs_no_scene() {
         let mut enc = SceneEncoder::new();
         let h = enc.spawn(circle_components(0.0));
-        enc.wait(0.5);
-        enc.animate::<OpacityValue>(h, ramp(1.0), 1.0);
+        // 时钟起点 0.5 + 窗口 1.0 ⇒ 静止时刻 = 1.5（不再有顺序游标）。
+        bind_window(&mut enc, h, 0.5, 1.0);
         let script = enc.finish();
         assert_eq!(script.len(), 1);
         assert!((script.still_time().expect("可分析") - 1.5).abs() < 1e-9);
+    }
+
+    /// 一条 `Opacity.value` 的窗口绑定：`clock.shift(start)` + `predicate = t < dur`。
+    fn bind_window(enc: &mut SceneEncoder, object: Handle, start: f64, dur: f64) {
+        use ze_comb::{ChannelRef, Expr, OpRef};
+        use ze_scene_core::animation::{LibraryRef, ResetBehavior};
+        use ze_time::ClockProgram;
+
+        // 窗口 `[0, dur)`：显式写 `t >= 0`（`time` 是局部时间，起点后的绑定在 t<start 时为负）。
+        let predicate = Expr::call(
+            OpRef::new("zela.math", "and"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "ge"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(0.0),
+                    ],
+                ),
+                Expr::call(
+                    OpRef::new("zela.math", "lt"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(dur),
+                    ],
+                ),
+            ],
+        );
+        let clock = if start == 0.0 {
+            ClockProgram::new()
+        } else {
+            ClockProgram::nested(&ClockProgram::new(), start, 1.0)
+        };
+        enc.bind_expr_gated(
+            object,
+            "Opacity.value",
+            Expr::pure(1.0),
+            LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "12".to_string(),
+                op_revisions: Default::default(),
+            },
+            clock,
+            Some(predicate),
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("窗口绑定合法");
     }
 
     /// **§7.2.2 + §7.2.3**：两个对象 + 一个引用另一个 ⇒ commit 后引用解析正确，
@@ -172,41 +220,43 @@ mod tests {
             }
         }
 
-        let mut enc = SceneEncoder::new();
-        let h = enc.spawn(vec![
-            Box::new(Circle::new((0.0, 0.0), 1.0)),
-            Box::new(Opacity::new(1.0)),
-        ]);
-        enc.animate::<TestOpacity>(h, ramp(1.0), 1.0);
-
+        // 构造期直接往绑定表里放一个**本地定义**的 target：全仓没有任何集中清单参与。
         let mut scene = SceneStruct::new();
-        let recipe = enc.finish().commit(&mut scene).expect("组件均已登记");
-        assert_eq!(recipe.bindings.bindings.len(), 1);
-        let b = &recipe.bindings.bindings[0];
+        let id = scene
+            .spawn_dyn(vec![
+                Box::new(Circle::new((0.0, 0.0), 1.0)),
+                Box::new(Opacity::new(1.0)),
+            ])
+            .expect("组件均已登记");
+
+        let mut forest = ClockForest::new();
+        let clock = forest.insert(ze_time::ClockNode::new(None)).expect("插入节点");
+        let program = ze_comb::CompiledExpr::compile(&ze_comb::Expr::pure(1.0)).expect("可编译");
+        let mut table = BindingTable::new();
+        table.bind_expr(clock, program, Arc::new(TestOpacity { id }));
+
+        assert_eq!(table.bindings.len(), 1);
+        let b = &table.bindings[0];
         assert_eq!(b.target.name(), "TestOpacity", "名字由 target 自带");
-        assert_eq!(
-            b.target.target_id(),
-            recipe.handles[0],
-            "目标必须指向脚本创建的那个对象"
-        );
+        assert_eq!(b.target.target_id(), id, "目标必须指向那个对象");
         assert_eq!(SceneRead::len(&scene), 1);
     }
 
     /// **§7.2.4 合并三条**：句柄不撞号 / 对象数 = 两段之和 / `b` 首段起始 = `a` 总时长。
     #[test]
     fn append_splices_handles_and_timeline() {
-        // a：一个对象 + 一段 2.0s 动画。
+        // a：一个对象 + 一段 2.0s 窗口。
         let mut a = SceneEncoder::new();
         let _ = a.spawn(circle_components(0.0));
         let ha = Handle(0);
-        a.animate::<OpacityValue>(ha, ramp(1.0), 2.0);
+        bind_window(&mut a, ha, 0.0, 2.0);
         let a = a.finish();
         let a_dur = a.still_time().expect("可分析");
 
-        // b：一个对象 + 一段 1.0s 动画（句柄在 b 内是 0）。
+        // b：一个对象 + 一段 1.0s 窗口（句柄在 b 内是 0）。
         let mut b = SceneEncoder::new();
         let hb = b.spawn(circle_components(5.0));
-        b.animate::<OpacityValue>(hb, ramp(1.0), 1.0);
+        bind_window(&mut b, hb, 0.0, 1.0);
         let b = b.finish();
 
         let mut merged = a;
@@ -279,16 +329,16 @@ mod tests {
     fn append_keeps_animation_target_on_its_own_object() {
         let mut scene = SceneStruct::new();
 
-        // a：对象 A + 动画（目标 = A）。
+        // a：对象 A + 绑定（目标 = A）。
         let mut a = SceneEncoder::new();
         let ha = a.spawn(circle_components(0.0));
-        a.animate::<OpacityValue>(ha, ramp(1.0), 1.0);
+        bind_window(&mut a, ha, 0.0, 1.0);
         let a = a.finish();
 
-        // b：对象 B + 动画（目标 = B）。
+        // b：对象 B + 绑定（目标 = B）。
         let mut b = SceneEncoder::new();
         let hb = b.spawn(circle_components(9.0));
-        b.animate::<OpacityValue>(hb, ramp(1.0), 1.0);
+        bind_window(&mut b, hb, 0.0, 1.0);
         let b = b.finish();
 
         let mut merged = a;
@@ -311,31 +361,14 @@ mod tests {
         );
     }
 
-    /// 段内从 0 线性到 1 的曲线（供脚本测试构造"名义"动画）。
-    fn ramp(dur: f64) -> Curve {
-        Curve::Keyframes {
-            keys: vec![(0.0, AnimValue::Scalar(0.0)), (dur, AnimValue::Scalar(1.0))],
-            interpolation: Interp::Linear,
-        }
-    }
-
-    /// 段内把标量从 `from` 插到 `to`（供等价性对照）。
-    fn keyframes(dur: f64, from: f32, to: f32) -> Curve {
-        Curve::Keyframes {
-            keys: vec![(0.0, AnimValue::Scalar(from)), (dur, AnimValue::Scalar(to))],
-            interpolation: Interp::Linear,
-        }
-    }
-
-    /// **B2 等价性对照（§8 验收）**：同一场编排，Encoder 写法 vs 手写
-    /// `Timeline` + `find_by_name` ⇒ `BindingTable` 的**时钟（offset/span）**与
-    /// **目标类别**逐条相同。
-    ///
-    /// 比对口径说明：`Arc<dyn Target>` 无法直接相等比较，故比对
-    /// `target.name()`（自带语义名）+ 时钟节点。这正是"两种写法产出同一条驱动链路"的判据。
+    /// **等价性对照（§8 验收）**：同一场编排，Encoder 写法 vs 手写
+    /// `BindingTable::bind_expr_gated` + `find_by_name` ⇒ 时钟起点与目标逐条相同。
     #[test]
-    fn encoder_matches_handwritten_timeline() {
-        // ── 手写路径：先建对象，再 `find_by_name` 取 id，再手写 Timeline ──
+    fn encoder_matches_handwritten_bindings() {
+        use ze_scene_core::animation::ResetBehavior;
+        use ze_time::ClockProgram;
+
+        // ── 手写路径：先建对象，再 `find_by_name` 取 id，再直接建绑定表 ──
         let mut scene = SceneStruct::new();
         let mut a_comps: Components = circle_components(0.0);
         a_comps.push(Box::new(Name::new("a")));
@@ -346,21 +379,46 @@ mod tests {
         let id_a = crate::contract::find_by_name(&scene, "a").unwrap();
         let id_b = crate::contract::find_by_name(&scene, "b").unwrap();
 
-        let mut hand = Timeline::new();
-        hand.play(keyframes(1.0, 1.0, 0.0), OpacityValue { id: id_a }, 1.0);
-        hand.wait(0.5);
-        hand.play(keyframes(2.0, 0.0, 1.0), OpacityValue { id: id_b }, 2.0);
+        let program = ze_comb::CompiledExpr::compile(&ze_comb::Expr::pure(1.0)).expect("可编译");
+        let predicate = ze_comb::CompiledExpr::compile(&ze_comb::Expr::call(
+            ze_comb::OpRef::new("zela.math", "lt"),
+            [
+                ze_comb::Expr::channel(ze_comb::ChannelRef::builtin("time")),
+                ze_comb::Expr::pure(1.0),
+            ],
+        ))
+        .expect("可编译");
+
         let mut h_forest = ClockForest::new();
         let mut h_bindings = BindingTable::new();
-        hand.compile(&mut h_forest, &mut h_bindings);
+        let make = crate::animation::target::target_ctor_by_name("Opacity.value")
+            .expect("目标已登记")
+            .0;
+        for (id, start) in [(id_a, 0.0), (id_b, 1.5)] {
+            let clock = ze_time::ClockProgram::nested(&ClockProgram::new(), start, 1.0);
+            let mut parent = None;
+            for link in &clock.links {
+                let mut node = ze_time::ClockNode::new(parent);
+                node.local_offset = link.shift;
+                node.rate = link.rate;
+                parent = Some(h_forest.insert(node).expect("插入节点"));
+            }
+            h_bindings.bind_expr_gated(
+                parent.expect("非空链"),
+                program.clone(),
+                make(id),
+                Some(predicate.clone()),
+                None,
+                ResetBehavior::Hold,
+            );
+        }
 
         // ── Encoder 路径：声明期无 id，`commit` 才解析 ──
         let mut enc = SceneEncoder::new();
         let ha = enc.spawn(a_comps_of("a"));
         let hb = enc.spawn(b_comps_of("b"));
-        enc.animate::<OpacityValue>(ha, keyframes(1.0, 1.0, 0.0), 1.0);
-        enc.wait(0.5);
-        enc.animate::<OpacityValue>(hb, keyframes(2.0, 0.0, 1.0), 2.0);
+        bind_window(&mut enc, ha, 0.0, 1.0);
+        bind_window(&mut enc, hb, 1.5, 2.0);
         let mut scene2 = SceneStruct::new();
         let recipe = enc.finish().commit(&mut scene2).expect("ok");
 
@@ -373,15 +431,14 @@ mod tests {
             let h_node = h_forest.get(h_b.clock).expect("节点在");
             assert_eq!(
                 e_node.local_offset, h_node.local_offset,
-                "段起始（offset）必须一致"
+                "时钟起点必须一致"
             );
-            assert_eq!(e_node.span, h_node.span, "段区间（span）必须一致");
+            assert_eq!(e_node.span, h_node.span, "区间语义必须一致");
             assert_eq!(e_node.mode, h_node.mode);
-            // `Curve` 未实现 `PartialEq` ⇒ 用 `Debug` 结构相等比对（同一构造 ⇒ 同一 Debug）。
             assert_eq!(
                 format!("{:?}", enc_b.driver),
                 format!("{:?}", h_b.driver),
-                "曲线必须一致"
+                "表达式程序必须一致"
             );
             assert_eq!(enc_b.target.name(), h_b.target.name(), "目标语义名必须一致");
         }
@@ -465,10 +522,20 @@ mod tests {
             )],
         );
 
-        // ── 正确顺序：写者（root，start=0）写 Circle.radius；读者（root+1，start=1）读它 ──
+        // ── 正确顺序：写者（start=0）写 Circle.radius；读者（start=1）读它 ──
         let mut good = SceneEncoder::new();
         let circle = good.spawn(circle_components(0.0));
-        assert!(good.animate_named(circle, "CircleRadius", ramp(1.0), 1.0));
+        good.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            Expr::pure(1.0),
+            lib.clone(),
+            ClockProgram::new(), // 写者 start=0
+            None,
+            crate::animation::ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("写者绑定装配成功");
         good.bind_expr_gated(
             circle,
             "PhaseAnim.phase",
@@ -491,15 +558,25 @@ mod tests {
             circle,
             "PhaseAnim.phase",
             read_radius,
-            lib,
+            lib.clone(),
             ClockProgram::new(), // 读者 start=0
             None,
             crate::animation::ResetBehavior::Hold,
             1.0,
         )
         .expect("读者绑定装配成功");
-        bad.wait(1.0); // 游标前进到 1.0
-        assert!(bad.animate_named(circle, "CircleRadius", ramp(1.0), 1.0)); // 写者 start=1.0
+        // 写者 start=1.0（时钟整体后移 1 秒）
+        bad.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            Expr::pure(1.0),
+            lib,
+            ClockProgram::nested(&ClockProgram::new(), 1.0, 1.0),
+            None,
+            crate::animation::ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("写者绑定装配成功");
         let mut scene2 = SceneStruct::new();
         let err = bad.finish().commit(&mut scene2).expect_err("读先于写 ⇒ 装配期显式报错");
         assert!(

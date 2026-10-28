@@ -459,20 +459,66 @@ mod tests {
     use zela_scene_ecs::scene::Scene;
 
     fn tiny_script() -> SceneScript {
+        use ze_comb::{ChannelRef, Expr, OpRef};
         let mut enc = SceneEncoder::new();
         let circle = enc.spawn(vec![Box::new(Circle::new((0.0, 0.0), 1.0))]);
-        enc.animate_named(
-            circle,
-            "CircleRadius",
-            zela_scene_ecs::Curve::Keyframes {
-                keys: vec![
-                    (0.0, zela_scene_ecs::AnimValue::Scalar(1.0)),
-                    (2.0, zela_scene_ecs::AnimValue::Scalar(3.0)),
-                ],
-                interpolation: zela_scene_ecs::Interp::Linear,
-            },
-            2.0,
+        // `radius = 1 + 2 · clamp(t/2, 0, 1)`：旧的 `Keyframes (1 → 3) over 2s`。
+        let progress = Expr::call(
+            OpRef::new("zela.math", "clamp"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [
+                        Expr::pure(0.5),
+                        Expr::channel(ChannelRef::builtin("time")),
+                    ],
+                ),
+                Expr::pure(0.0),
+                Expr::pure(1.0),
+            ],
         );
+        let root = Expr::call(
+            OpRef::new("zela.math", "add"),
+            [
+                Expr::pure(1.0),
+                Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(2.0), progress]),
+            ],
+        );
+        // 窗口 `[0, 2)`：静止时刻 = 2.0（与旧 `play(dur = 2.0)` 的段语义一致）。
+        let window = Expr::call(
+            OpRef::new("zela.math", "and"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "ge"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(0.0),
+                    ],
+                ),
+                Expr::call(
+                    OpRef::new("zela.math", "lt"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(2.0),
+                    ],
+                ),
+            ],
+        );
+        enc.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            root,
+            zela_scene_ecs::animation::LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "12".to_string(),
+                op_revisions: Default::default(),
+            },
+            zela_scene_ecs::ClockProgram::new(),
+            Some(window),
+            zela_scene_ecs::animation::ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("表达式绑定合法");
         enc.finish()
     }
 

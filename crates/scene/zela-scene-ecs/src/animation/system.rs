@@ -295,30 +295,52 @@ mod tests {
     #[test]
     fn later_segment_is_not_written_before_start() {
         use crate::animation::target::Camera2DFraming;
-        use crate::animation::timeline::Timeline;
+        use std::sync::Arc;
+        use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
         use ze_scene_core::Framing2D;
-        use ze_time::AnimValue;
 
         let mut world = World::new();
         let entity = world.spawn((Framing2D::default(),));
         let id = crate::contract::object_id_of(entity);
 
-        let mut tl = Timeline::new();
-        tl.play(
-            Curve::Const(AnimValue::Scalar(55.0)),
-            Camera2DFraming { id },
-            1.0,
-        );
-        tl.wait(1.0);
-        tl.play(
-            Curve::Const(AnimValue::Scalar(170.0)),
-            Camera2DFraming { id },
-            1.0,
-        );
-
         let mut forest = XcClockForest::new();
         let mut table = BindingTable::new();
-        tl.compile(&mut forest, &mut table);
+        // 窗口 `[0, 1)`：`time` 是**该绑定的局部时间**（起点 2 的绑定在 t<2 时为负），
+        // 必须显式写 `t >= 0`，否则"段前"会被判成生效。
+        let window = CompiledExpr::compile(&Expr::call(
+            OpRef::new("zela.math", "and"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "ge"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(0.0),
+                    ],
+                ),
+                Expr::call(
+                    OpRef::new("zela.math", "lt"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(1.0),
+                    ],
+                ),
+            ],
+        ))
+        .expect("可编译");
+        // 两条窗口绑定：起点 0 / 2，值 55 / 170（旧 `play 1.0 / wait 1.0 / play 1.0`）。
+        for (shift, value) in [(0.0f64, 55.0f64), (2.0, 170.0)] {
+            let mut node = ClockNode::new(None);
+            node.local_offset = shift;
+            let clock = forest.insert(node).expect("插入节点");
+            table.bind_expr_gated(
+                clock,
+                CompiledExpr::compile(&Expr::pure(value)).expect("可编译"),
+                Arc::new(Camera2DFraming { id }),
+                Some(window.clone()),
+                None,
+                crate::animation::ResetBehavior::Hold,
+            );
+        }
 
         let mut resources = Resources::new();
         resources.insert(TimeState::at(0.0));
@@ -347,32 +369,32 @@ mod tests {
         assert_eq!(scale_at(&mut sched, 2.5), 170.0, "第二段段内");
     }
 
-    /// **S1 边界（§2.3）**：同段 `parallel` 写同一字段时，后声明者胜（稳定排序）。
+    /// **S1 边界（§2.3）**：同起点写同一字段时，后声明者胜（稳定排序）。
     #[test]
     fn same_start_same_field_last_declaration_wins() {
         use crate::animation::target::Camera2DFraming;
-        use crate::animation::timeline::Timeline;
+        use std::sync::Arc;
+        use ze_comb::{CompiledExpr, Expr};
         use ze_scene_core::Framing2D;
-        use ze_time::AnimValue;
 
         let mut world = World::new();
         let entity = world.spawn((Framing2D::default(),));
         let id = crate::contract::object_id_of(entity);
 
-        let mut tl = Timeline::new();
-        tl.play(
-            Curve::Const(AnimValue::Scalar(10.0)),
-            Camera2DFraming { id },
-            1.0,
-        );
-        tl.parallel(
-            Curve::Const(AnimValue::Scalar(20.0)),
-            Camera2DFraming { id },
-        );
-
         let mut forest = XcClockForest::new();
         let mut table = BindingTable::new();
-        tl.compile(&mut forest, &mut table);
+        // 同一 clock、同一字段：两条恒定值绑定，后者必须覆盖前者。
+        let clock = forest.insert(ClockNode::new(None)).expect("插入节点");
+        for value in [10.0f64, 20.0f64] {
+            table.bind_expr_gated(
+                clock,
+                CompiledExpr::compile(&Expr::pure(value)).expect("可编译"),
+                Arc::new(Camera2DFraming { id }),
+                None,
+                None,
+                crate::animation::ResetBehavior::Hold,
+            );
+        }
 
         let mut resources = Resources::new();
         resources.insert(TimeState::at(0.5));
@@ -387,31 +409,56 @@ mod tests {
         assert_eq!(sched.world().get::<&Framing2D>(entity).unwrap().scale, 20.0);
     }
 
-    /// **T1 验收 5**：`Timeline` 驱动 `TransformChannelValue`（Position）—— 段内插值、段外冻结（`Hold`）。
+    /// **T1 验收 5**：表达式驱动 `Transform.position` —— 窗口内插值、窗口外冻结。
     #[test]
-    fn timeline_drives_transform_channel_with_hold() {
+    fn expression_drives_transform_position_with_clamp() {
         use crate::animation::target::{TransformChannel, TransformChannelValue};
-        use crate::animation::timeline::Timeline;
+        use std::sync::Arc;
+        use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
         use ze_scene_core::Transform;
-        use ze_time::{AnimValue, Curve, Interp};
 
         let mut world = World::new();
         let entity = world.spawn((Transform::default(),));
         let id = crate::contract::object_id_of(entity);
 
-        let curve = Curve::Keyframes {
-            keys: vec![
-                (0.0, AnimValue::Vec2(vec2(0.0, 0.0))),
-                (2.0, AnimValue::Vec2(vec2(2.0, 0.0))),
+        // x = 2 · clamp(t / 2, 0, 1)（旧 `Keyframes (0,0) → (2,0)` 的线性段 + 两端冻结）。
+        let math = |op: &str, args: [Expr; 3]| Expr::call(OpRef::new("zela.math", op), args);
+        let progress = math(
+            "clamp",
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [
+                        Expr::pure(0.5),
+                        Expr::channel(ChannelRef::builtin("time")),
+                    ],
+                ),
+                Expr::pure(0.0),
+                Expr::pure(1.0),
             ],
-            interpolation: Interp::Linear,
-        };
-        let mut tl = Timeline::new();
-        tl.play(curve, TransformChannelValue { id, channel: TransformChannel::Position }, 2.0);
+        );
+        let root = Expr::call(
+            OpRef::new("zela.math", "vec2"),
+            [
+                Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(2.0), progress]),
+                Expr::pure(0.0),
+            ],
+        );
 
         let mut forest = XcClockForest::new();
         let mut table = BindingTable::new();
-        tl.compile(&mut forest, &mut table);
+        let clock = forest.insert(ClockNode::new(None)).expect("插入节点");
+        table.bind_expr_gated(
+            clock,
+            CompiledExpr::compile(&root).expect("可编译"),
+            Arc::new(TransformChannelValue {
+                channel: TransformChannel::Position,
+                id,
+            }),
+            None,
+            None,
+            crate::animation::ResetBehavior::Hold,
+        );
 
         let mut resources = Resources::new();
         resources.insert(TimeState::at(0.0));

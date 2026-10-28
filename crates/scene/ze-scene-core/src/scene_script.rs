@@ -40,16 +40,14 @@
 // 装配时写 [`handle_ref(h)`](handle_ref)，`commit` / `append` 在[**唯一改写点**](resolve_component_refs)
 // 里统一解析 / 偏移。新增"携带句柄引用的组件"只需在那个函数里加一条 —— 不散落。
 
-use std::sync::Arc;
-
 use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
 use ze_scene_contract::{
     Components, ObjectId, Parent, Scene as SceneContract, Visibility, VisibilityTag,
 };
-use ze_time::{ClockForest, ClockProgram, Curve};
+use ze_time::{ClockForest, ClockProgram};
 
 use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
-use crate::animation::target::{TargetCtor, target_ctor_by_name};
+use crate::animation::target::target_ctor_by_name;
 use crate::animation::timeline::Timeline;
 use crate::surface::SurfaceTextureRef;
 
@@ -349,71 +347,6 @@ impl SceneEncoder {
         self.despawns.push(handle);
     }
 
-    /// 录一段动画：`T` 是目标**类型**（`commit` 时按 `handle` 的真实 id 生成）。
-    pub fn animate<T: TargetCtor>(&mut self, handle: Handle, curve: Curve, dur: f64) -> &mut Self {
-        self.timeline.play_pending(curve, T::make, handle.0, dur);
-        self
-    }
-
-    /// 与上一段 `animate` **同区间**的额外动作。
-    pub fn parallel<T: TargetCtor>(&mut self, handle: Handle, curve: Curve) -> &mut Self {
-        self.timeline.parallel_pending(curve, T::make, handle.0);
-        self
-    }
-
-    /// 按 target **名字**录一段动画（脚本层入口：target 在 Lua 侧是字符串）。
-    ///
-    /// 名字 → 构造器复用持久化路径的集中表 [`target_ctor_by_name`]（该表因此获得
-    /// 第二个真实消费方）。未知名字 ⇒ 返回 `false`，且**不录制任何东西**。
-    pub fn animate_named(&mut self, handle: Handle, target: &str, curve: Curve, dur: f64) -> bool {
-        let Some((make, _)) = target_ctor_by_name(target) else {
-            return false;
-        };
-        self.timeline.play_pending(curve, make, handle.0, dur);
-        true
-    }
-
-    /// [`SceneEncoder::animate_named`] 的"与上一段同区间"版本。
-    pub fn parallel_named(&mut self, handle: Handle, target: &str, curve: Curve) -> bool {
-        let Some((make, _)) = target_ctor_by_name(target) else {
-            return false;
-        };
-        self.timeline.parallel_pending(curve, make, handle.0);
-        true
-    }
-
-    /// 按**构造器函数**录一段动画（S3：Transform 通道用）。
-    ///
-    /// 与 [`SceneEncoder::animate_named`] 的差别只在目标来源：调用方已持有
-    /// `fn(ObjectId) -> Arc<dyn Target>`（通道已闭包在函数里），不必再查字符串表。
-    pub fn animate_with(
-        &mut self,
-        handle: Handle,
-        make: fn(ObjectId) -> Arc<dyn crate::animation::Target>,
-        curve: Curve,
-        dur: f64,
-    ) -> &mut Self {
-        self.timeline.play_pending(curve, make, handle.0, dur);
-        self
-    }
-
-    /// [`SceneEncoder::animate_with`] 的"与上一段同区间"版本。
-    pub fn parallel_with(
-        &mut self,
-        handle: Handle,
-        make: fn(ObjectId) -> Arc<dyn crate::animation::Target>,
-        curve: Curve,
-    ) -> &mut Self {
-        self.timeline.parallel_pending(curve, make, handle.0);
-        self
-    }
-
-    /// 推进时序游标（不产生节点）。
-    pub fn wait(&mut self, d: f64) -> &mut Self {
-        self.timeline.wait(d);
-        self
-    }
-
     /// 声明一条**表达式驱动**的动画（S3）：对象用本脚本内的句柄，目标按名字查表。
     ///
     /// 表达式在这里就完成结构校验（悬空 Ref / 环 / 尚未注入的通道），
@@ -709,8 +642,10 @@ impl SceneScript {
         }
         self.despawns.append(&mut other.despawns);
 
-        // 3. 时序：时间游标接续 + 待解析目标句柄偏移。
-        self.timeline.append_shifted(&other.timeline, base);
+        // 3. 时序：后一段的时钟整体后移到本脚本静止时刻 + 待解析目标句柄偏移。
+        //    5b 之后没有顺序游标，"接在后面"必须显式落到时钟上。
+        let time_base = self.timeline.still_time().unwrap_or(0.0);
+        self.timeline.append_shifted(&other.timeline, base, time_base);
 
         HandleRange {
             start: base,

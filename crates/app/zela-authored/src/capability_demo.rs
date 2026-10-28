@@ -29,16 +29,17 @@
 // 3. **`Opacity` 组件缺席 ⇒ 动画静默失效** —— `OpacityValue` 只是每帧写字段，
 //    `with_component` 在组件缺席时静默跳过（不 panic、不报错），表现为"淡出没反应"。
 
+use ze_comb::{ChannelRef, Expr, OpRef};
 use ze_notion::{MeasureSpace, Path2D};
 use ze_scene_core::{Camera2DHandle, Framing2D, Path};
 use ze_render_ir::{Opacity, StrokeSolid};
 
-use zela_scene_ecs::animation::OpacityValue;
+use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
 use zela_scene_ecs::contract::{Group, GroupId, GroupVisibility, Name, ObjectId, Visibility, find_by_name};
 use zela_scene_ecs::handle_ref;
 use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene_script::SceneEncoder;
-use zela_scene_ecs::{AnimValue, BindingTable, ClockForest, Curve, Interp};
+use zela_scene_ecs::{BindingTable, ClockForest, ClockProgram};
 
 /// 主 2D 相机的初始取景（世界原点居中、45 px/世界单位）。
 const CAMERA_SCALE: f32 = 45.0;
@@ -152,7 +153,17 @@ pub fn build(scene: &mut Scene) -> CapabilityDemo {
     ]);
 
     // ── N4：`curve_cos` 的 `Opacity` 1.0 → 0.0（淡出）── 目标 = `cos` 脚本句柄 ──
-    enc.animate::<OpacityValue>(cos_h, fade_out(FADE_SECONDS), FADE_SECONDS);
+    enc.bind_expr_gated(
+        cos_h,
+        "Opacity.value",
+        fade_expr(FADE_SECONDS),
+        fade_library(),
+        ClockProgram::new(),
+        None,
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("淡出绑定合法");
 
     // ── 提交到**已有 Scene**（不新建）──
     let recipe = enc
@@ -201,10 +212,34 @@ fn control_samples() -> Vec<ze_notion::Vec2> {
     ]
 }
 
-/// 段内把标量从 1.0 线性插到 0.0（`Keyframes`，定义域是**段内局部时间**）。
-fn fade_out(dur: f64) -> Curve {
-    Curve::Keyframes {
-        keys: vec![(0.0, AnimValue::Scalar(1.0)), (dur, AnimValue::Scalar(0.0))],
-        interpolation: Interp::Linear,
+/// 淡出表达式：`mix(1, 0, clamp(t / dur, 0, 1))`。
+///
+/// 与旧 `Keyframes` 段语义等价：窗口内线性 1 → 0，窗口前恒 1、窗口后恒 0
+/// （`clamp` 承担两端的冻结，不再依赖 `Hold` 的段钳制）。
+fn fade_expr(dur: f64) -> Expr {
+    let math = |op: &str, args: [Expr; 3]| Expr::call(OpRef::new("zela.math", op), args);
+    let progress = math(
+        "clamp",
+        [
+            Expr::call(
+                OpRef::new("zela.math", "scale"),
+                [
+                    Expr::pure(1.0 / dur),
+                    Expr::channel(ChannelRef::builtin("time")),
+                ],
+            ),
+            Expr::pure(0.0),
+            Expr::pure(1.0),
+        ],
+    );
+    math("mix", [Expr::pure(1.0), Expr::pure(0.0), progress])
+}
+
+/// 函子库身份（与 `ze_pod_func::LIBRARY_VERSION` 同步；作品层不依赖 Pod 层）。
+fn fade_library() -> LibraryRef {
+    LibraryRef {
+        namespace: "zela.math".to_string(),
+        version: "12".to_string(),
+        op_revisions: Default::default(),
     }
 }

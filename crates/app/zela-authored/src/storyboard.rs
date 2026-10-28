@@ -21,17 +21,18 @@
 
 use std::f32::consts::FRAC_PI_2;
 
+use ze_comb::{ChannelRef, Expr, OpRef};
 use ze_notion::{MeasureSpace, Path2D};
 use ze_scene_core::{Arrow, Axes2D, Camera2DHandle, Framing2D, Path, Transform};
 use ze_prerender::InMemoryEngine;
 use ze_render_ir::{FillSolid, StrokeSolid};
 
-use zela_scene_ecs::animation::{Camera2DFraming, RevealRange};
+use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
 use zela_scene_ecs::content;
 use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene::components::Reveal;
 use zela_scene_ecs::scene_script::{Handle, SceneEncoder};
-use zela_scene_ecs::{AnimValue, BindingTable, ClockForest, Curve, Interp};
+use zela_scene_ecs::{BindingTable, ClockForest, ClockProgram};
 
 /// 主 2D 相机初始取景（世界原点居中、40 px/世界单位）。
 const CAMERA_START: Framing2D = Framing2D {
@@ -123,31 +124,71 @@ pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Storyboard {
         Box::new(FillSolid::new((255, 220, 120, 255))),
     ]);
 
-    // ── 时间编排（顺序 + 段内并行）─────────────────────────────────────
-    // 0–2s：曲线书写（`end` 在段内 0 → 1）
-    enc.animate::<RevealRange>(curve_h, ramp(2.0), 2.0);
-    // 2–2.5s：停
-    enc.wait(0.5);
-    // 2.5–3.5s：镜头推进 —— `scale` 与 `center` 在**同一区间**并行驱动
-    enc.animate::<Camera2DFraming>(
-        camera_h,
-        keyframes_scalar(1.0, CAMERA_START.scale, CAMERA_SCALE_PUSHED),
-        1.0,
+    // ── 时间编排（表达式绑定：时钟显式、区间由 predicate 决定）────────────
+    // 与 `storyboard.lua` 逐项同构：顺序 = `clock.shift(起点)`，并行 = 共用同一 clock。
+    // 0–2s：曲线书写（`end` 在窗口内 0 → 1）
+    enc.bind_expr_gated(
+        curve_h,
+        "Reveal.end",
+        ramp(0.0, 1.0, 2.0),
+        library(),
+        ClockProgram::new(),
+        Some(in_segment(2.0)),
+        ResetBehavior::Hold,
+        0.0,
     )
-    .parallel::<Camera2DFraming>(
+    .expect("曲线书写绑定合法");
+    // 2–2.5s：停（没有绑定生效 ⇒ 上一步的值由 Hold 保持）
+    // 2.5–3.5s：镜头推进 —— `scale` 与 `center` 共用同一 clock（= 并行）
+    let push_clock = ClockProgram::nested(&ClockProgram::new(), 2.5, 1.0);
+    enc.bind_expr_gated(
         camera_h,
-        keyframes_vec2(1.0, CAMERA_START.center, CAMERA_PEAK),
-    );
-    // 3.5–4.5s：公式书写（**逐轮廓依次写出** —— 每个描边子轮廓占一段，顺序游标自动排期；
-    // 共用 `parallel` 会让全部轮廓**同时**被写出，那不是"写字"）
-    if let Some((first, rest)) = formula_h.split_first() {
-        // 把 1s 平摊给各轮廓：N 个轮廓 ⇒ 每段 `1/N`，段间严格首尾相接。
-        let n = 1 + rest.len();
-        let each = FORMULA_WRITE_SECONDS / n as f64;
-        // 用 `Keyframes` 而非 `Phase{omega: N}`：端点值精确为 0 / 1（不受浮点除法影响）。
-        enc.animate::<RevealRange>(*first, keyframes_scalar(each, 0.0, 1.0), each);
-        for h in rest {
-            enc.animate::<RevealRange>(*h, keyframes_scalar(each, 0.0, 1.0), each);
+        "Framing2D.scale",
+        ramp(
+            CAMERA_START.scale as f64,
+            CAMERA_SCALE_PUSHED as f64,
+            1.0,
+        ),
+        library(),
+        push_clock.clone(),
+        Some(in_segment(1.0)),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("镜头 scale 绑定合法");
+    enc.bind_expr_gated(
+        camera_h,
+        "Framing2D.center",
+        ramp2(
+            0.0,
+            0.0,
+            FRAC_PI_2 as f64,
+            1.0,
+            1.0,
+        ),
+        library(),
+        push_clock,
+        Some(in_segment(1.0)),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("镜头 center 绑定合法");
+    // 3.5–4.5s：公式书写（**逐轮廓依次写出**：每个轮廓一个 clock 起点，平摊 1s）
+    if !formula_h.is_empty() {
+        let each = FORMULA_WRITE_SECONDS / formula_h.len() as f64;
+        for (i, h) in formula_h.iter().enumerate() {
+            let start = 3.5 + i as f64 * each;
+            enc.bind_expr_gated(
+                *h,
+                "Reveal.end",
+                ramp(0.0, 1.0, each),
+                library(),
+                ClockProgram::nested(&ClockProgram::new(), start, 1.0),
+                Some(in_segment(each)),
+                ResetBehavior::Hold,
+                0.0,
+            )
+            .expect("公式轮廓绑定合法");
         }
     }
 
@@ -179,27 +220,64 @@ fn sin_samples() -> Vec<ze_notion::Vec2> {
         .collect()
 }
 
-/// 段内从 0 线性到 1 的曲线（`Phase{omega: 1/dur}`）。
-fn ramp(dur: f64) -> Curve {
-    Curve::Phase {
-        omega: (1.0 / dur) as f32,
+/// 函子库身份（与 `ze_pod_func::LIBRARY_VERSION` 同步；作品层不依赖 Pod 层）。
+const MATH_LIBRARY_VERSION: &str = "12";
+
+fn library() -> LibraryRef {
+    LibraryRef {
+        namespace: "zela.math".to_string(),
+        version: MATH_LIBRARY_VERSION.to_string(),
+        op_revisions: Default::default(),
     }
 }
 
-/// 段内把标量从 `from` 插值到 `to`（`Keyframes`，定义域是**段内局部时间**）。
-fn keyframes_scalar(dur: f64, from: f32, to: f32) -> Curve {
-    Curve::Keyframes {
-        keys: vec![(0.0, AnimValue::Scalar(from)), (dur, AnimValue::Scalar(to))],
-        interpolation: Interp::Linear,
-    }
+fn math(op: &str, args: impl IntoIterator<Item = Expr>) -> Expr {
+    Expr::call(OpRef::new("zela.math", op), args)
 }
 
-/// 段内把 `Vec2` 从 `from` 插值到 `to`（驱动 `Framing2D.center`）。
-fn keyframes_vec2(dur: f64, from: ze_notion::Vec2, to: ze_notion::Vec2) -> Curve {
-    Curve::Keyframes {
-        keys: vec![(0.0, AnimValue::Vec2(from)), (dur, AnimValue::Vec2(to))],
-        interpolation: Interp::Linear,
-    }
+/// 时钟**局部时间**（`clock.shift` 之后即"窗口内时间"）。
+fn time() -> Expr {
+    Expr::channel(ChannelRef::builtin("time"))
+}
+
+/// 窗口内归一化进度：`clamp(t / dur, 0, 1)`（等价旧 `Phase` 的线性段 + 两端冻结）。
+fn progress(dur: f64) -> Expr {
+    math(
+        "clamp",
+        [
+            math("scale", [Expr::pure(1.0 / dur), time()]),
+            Expr::pure(0.0),
+            Expr::pure(1.0),
+        ],
+    )
+}
+
+/// 标量 `from → to`（窗口内线性）。
+fn ramp(from: f64, to: f64, dur: f64) -> Expr {
+    math("mix", [Expr::pure(from), Expr::pure(to), progress(dur)])
+}
+
+/// `Vec2` `(ax, ay) → (bx, by)`（窗口内线性）。
+fn ramp2(ax: f64, ay: f64, bx: f64, by: f64, dur: f64) -> Expr {
+    math(
+        "mix",
+        [vec2(ax, ay), vec2(bx, by), progress(dur)],
+    )
+}
+
+fn vec2(x: f64, y: f64) -> Expr {
+    math("vec2", [Expr::pure(x), Expr::pure(y)])
+}
+
+/// 窗口 `[0, dur)`（与旧 `Step::Play` 的段语义一致）。
+fn in_segment(dur: f64) -> Expr {
+    math(
+        "and",
+        [
+            math("ge", [time(), Expr::pure(0.0)]),
+            math("lt", [time(), Expr::pure(dur)]),
+        ],
+    )
 }
 
 /// 公式 `y = \sin x` → **每个字形**一个书写动画对象，返回其**脚本句柄**
@@ -275,7 +353,7 @@ fn spawn_text_label(enc: &mut SceneEncoder, engine: &InMemoryEngine) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zela_scene_ecs::animation::{Target, Timeline};
+    use zela_scene_ecs::animation::{Camera2DFraming, Target};
     use zela_scene_ecs::contract::{ObjectId, SceneRead};
     use ze_prerender::placeholder_engine;
 
@@ -303,48 +381,71 @@ mod tests {
         scene.for_each::<Reveal>(|_, _| reveals += 1);
         assert!(reveals >= 2, "曲线 + 公式至少两个书写对象，实际 {reveals}");
 
-        // 分镜 4/5/6 的时序：0–2 / (wait 0.5) / 2.5–3.5 / 3.5–4.5。
-        // 由编译产物反推：节点 offset + span 即区间。
-        let segs = timeline_segments(&sb);
-        assert_eq!(segs[0], (0.0, 2.0), "曲线书写 0–2s");
-        assert_eq!(segs[1], (2.5, 1.0), "镜头推进 2.5–3.5s");
+        // 分镜 4/5/6 的时序：起点由**时钟**决定（0 / 2.5 / 3.5…）。
+        let offsets = binding_offsets(&sb);
 
-        // 分镜 6 是**逐轮廓顺序段**（不是一段并行动作）：每个轮廓各自一个 `play`
-        // ⇒ 各有自己的节点；段数与轮廓数相同、严格首尾相接、合计 1s。
-        let formula = &segs[2..];
+        // 分镜 5 是**并行**两动作（scale + center）：共用同一 clock（同起点）。
+        let cam_rows: Vec<_> = offsets
+            .iter()
+            .filter(|(_, target)| target.starts_with("Framing2D."))
+            .collect();
+        assert_eq!(cam_rows.len(), 2, "scale 与 center 各一条绑定");
+        assert_eq!(cam_rows[0].0, 2.5, "镜头推进 2.5–3.5s");
+        assert_eq!(cam_rows[0].1, "Framing2D.scale");
+        assert_eq!(cam_rows[1].0, 2.5, "同起点 = 同区间（并行）");
+        assert_eq!(cam_rows[1].1, "Framing2D.center");
+
+        // 分镜 3：曲线书写从 0 开始。
+        assert_eq!(offsets[0], (0.0, "Reveal.end".to_string()), "曲线书写 0–2s");
+
+        // 分镜 6 是**逐轮廓顺序段**：起点 `3.5 + i·each`，严格递增、合计 1s。
+        let formula: Vec<f64> = offsets
+            .iter()
+            .skip(3)
+            .map(|(offset, _)| *offset)
+            .collect();
         assert!(
             formula.len() >= 2,
-            "公式应逐轮廓分段（≥2 段），实际 {} 段：{segs:?}",
+            "公式应逐轮廓分段（≥2 段），实际 {} 段：{offsets:?}",
             formula.len()
         );
-        assert_eq!(formula[0].0, 3.5, "公式书写始于 3.5s");
-        let total: f64 = formula.iter().map(|(_, dur)| dur).sum();
-        assert!(
-            (total - FORMULA_WRITE_SECONDS).abs() < 1e-9,
-            "公式书写共占 1s（各轮廓平摊），实际 {total}"
-        );
-        assert!(
-            formula.iter().all(|(_, dur)| *dur > 0.0),
-            "每段必须有正时长：{formula:?}"
-        );
-        for w in formula.windows(2) {
+        assert_eq!(formula[0], 3.5, "公式书写始于 3.5s");
+        let each = FORMULA_WRITE_SECONDS / formula.len() as f64;
+        for (i, start) in formula.iter().enumerate() {
+            let expected = 3.5 + i as f64 * each;
             assert!(
-                (w[0].0 + w[0].1 - w[1].0).abs() < 1e-9,
-                "逐轮廓段必须**首尾相接**（顺序游标）：{w:?}"
+                (start - expected).abs() < 1e-9,
+                "逐轮廓段必须**首尾相接**（第 {i} 段 {start} ≠ {expected}）"
             );
         }
+        assert!(
+            (formula.last().unwrap() + each - 4.5).abs() < 1e-9,
+            "公式书写共占 1s（各轮廓平摊）"
+        );
 
-        // 分镜 5 是**并行**两动作（scale + center）：同区间、同节点。
-        // T0-②：按**对象**筛选（指向本分镜那台 2D 相机的绑定），比按类别更精确。
-        let cam_nodes: Vec<_> = sb
+        // 分镜 5 的 scale / center 必须**同区间**：5b 之后"并行"由**相同的时钟链**
+        // 表达（每条绑定各自展开节点），判据是 offset / rate 相同，而不是 node id 相同。
+        let cam_offsets: Vec<f64> = sb
             .bindings
             .bindings
             .iter()
             .filter(|b| b.target.target_id() == sb.camera.0)
-            .map(|b| b.clock)
+            .map(|b| sb.forest.get(b.clock).expect("节点在").local_offset)
             .collect();
-        assert_eq!(cam_nodes.len(), 2, "scale 与 center 各一条绑定");
-        assert_eq!(cam_nodes[0], cam_nodes[1], "两者共享同一时钟节点（同区间）");
+        assert_eq!(cam_offsets.len(), 2, "scale 与 center 各一条绑定");
+        assert_eq!(cam_offsets[0], cam_offsets[1], "两者同起点 = 同区间（并行）");
+    }
+
+    /// 每条绑定的 `(时钟起点, target 名)`（按声明顺序）。
+    fn binding_offsets(sb: &Storyboard) -> Vec<(f64, String)> {
+        sb.bindings
+            .bindings
+            .iter()
+            .map(|b| {
+                let node = sb.forest.get(b.clock).expect("节点在");
+                (node.local_offset, b.target.name().to_string())
+            })
+            .collect()
     }
 
     /// **书写方向**：公式轮廓必须按包围盒 `min_x` **升序**排期（从左往右写），
@@ -432,52 +533,4 @@ mod tests {
         assert_eq!(t.target_id(), ObjectId::DANGLING);
     }
 
-    /// §11.3：改掉第一段动画的时长后，后续动画的时刻**自动跟随**。
-    #[test]
-    fn later_shots_follow_first_duration_change() {
-        let mut tl = Timeline::new();
-        // 与 `build` 相同的编排（此处只关心时间，不需要场景对象）。
-        tl.play(
-            ramp(2.0),
-            RevealRange {
-                id: ObjectId::DANGLING,
-            },
-            2.0,
-        );
-        tl.wait(0.5);
-        tl.play(
-            keyframes_scalar(1.0, 40.0, 110.0),
-            Camera2DFraming {
-                id: ObjectId::DANGLING,
-            },
-            1.0,
-        );
-        tl.play(
-            ramp(1.0),
-            RevealRange {
-                id: ObjectId::DANGLING,
-            },
-            1.0,
-        );
-
-        assert_eq!(tl.schedule()[2].start, 3.5);
-        tl.set_duration(0, 3.0);
-        assert_eq!(tl.schedule()[1].start, 3.5, "镜头推进自动顺延");
-        assert_eq!(tl.schedule()[2].start, 4.5, "公式书写自动顺延");
-    }
-
-    /// 从编译产物反推每个 `play` 的时间区间（`(offset, span_hi - span_lo)`）。
-    fn timeline_segments(sb: &Storyboard) -> Vec<(f64, f64)> {
-        let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for b in &sb.bindings.bindings {
-            if !seen.insert(b.clock) {
-                continue;
-            }
-            let node = sb.forest.get(b.clock).expect("节点在");
-            let (lo, hi) = node.span.expect("Timeline 编译的节点必有 span");
-            out.push((node.local_offset, hi - lo));
-        }
-        out
-    }
 }
