@@ -85,12 +85,8 @@ local morph = scene.spawn({
 -- ⑤ Morph：形变进度由 `MorphShape.t` 线性推进到 0.9（显式时钟，段 [0, T)）。
 expr.bind {
     object = morph,
-    -- `Morph` 的存储组件是 `MorphShape`（通道挂在存储组件上，故显式构造键）。
-    target = Channel {
-        namespace = "zela.scene",
-        name = "MorphShape.t",
-        ty = ChannelType.Number,
-    },
+    -- `Morph` 的存储组件是 `MorphShape`，常量挂在脚本组件 `Morph` 上。
+    target = Morph.channel.t,
     root = phase(0.3),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },

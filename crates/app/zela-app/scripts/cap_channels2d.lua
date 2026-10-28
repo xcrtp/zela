@@ -158,15 +158,6 @@ local window = scene.spawn({
 bind(window, CurveWindow.channel.lo, ramp(0.0, 0.5, T))
 bind(window, CurveWindow.channel.hi, ramp(4.0, 2.0, T))
 
--- ── 2D 相机：缩放 + 中心（存储组件是 Framing2D）──────────────────────
--- `Framing2D` 是存储组件（`Camera2D` 是派生视图，没有通道表）⇒ 显式构造键。
-bind(
-    cam,
-    Channel { namespace = "zela.scene", name = "Framing2D.scale", ty = ChannelType.Number },
-    ramp(58.0, 54.0, T)
-)
-bind(
-    cam,
-    Channel { namespace = "zela.scene", name = "Framing2D.center", ty = ChannelType.Vec2 },
-    ramp2(0.0, 0.0, 0.0, 0.15, T)
-)
+-- ── 2D 相机：缩放 + 中心 ─────────────────────────────────────────────
+bind(cam, Camera2D.channel.scale, ramp(58.0, 54.0, T))
+bind(cam, Camera2D.channel.center, ramp2(0.0, 0.0, 0.0, 0.15, T))

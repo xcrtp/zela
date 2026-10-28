@@ -797,6 +797,30 @@ pub fn target_ctor_by_name(name: &str) -> Option<(fn(ObjectId) -> Arc<dyn Target
     target_entry(name).map(|entry| (entry.make, entry.spec.name))
 }
 
+/// **存储组件 → 脚本组件**的登记表（只有两者不同时才需要一行）。
+///
+/// 单一真源：`channel_home` 与 xtask 的能力覆盖门禁都读这里（后者解析本文件源码）。
+pub const CHANNEL_HOMES: &[(&str, &str)] = &[
+    // `Camera2D { center, scale }` 的存储组件。
+    ("Framing2D", "Camera2D"),
+    // `Morph` 的存储组件。
+    ("MorphShape", "Morph"),
+];
+
+/// 通道常量的**作者侧组件名**：常量挂在"脚本能 spawn 的那个组件"上。
+///
+/// 有些字段存在**内部组件**里，脚本没有对应的构造器（见 [`CHANNEL_HOMES`]）：
+/// 通道常量若按存储组件命名（`Framing2D.channel.center`），`Framing2D` 就不是
+/// 脚本世界里的名字 ⇒ 常量在三种绑定里都挂不出去（以前是静默 `continue`）。
+/// 这里映射回脚本组件，**地址（持久化名）不变** ⇒ payload 与像素都不动。
+pub fn channel_home(component: &'static str) -> &'static str {
+    CHANNEL_HOMES
+        .iter()
+        .find(|(storage, _)| *storage == component)
+        .map(|(_, home)| *home)
+        .unwrap_or(component)
+}
+
 /// `Transform` 的写入通道（B7：只有三条显式通道）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransformChannel {

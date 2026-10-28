@@ -121,24 +121,14 @@ expr.bind {
 -- 2.5–3.5s：镜头推进（scale 与 center 同区间 —— 旧 `parallel` 的两条 action）
 expr.bind {
     object = camera,
-    -- `Framing2D` 是**存储组件**（`Camera2D` 是派生视图，没有自己的通道表），
-    -- 因此这里显式构造通道键（与 `Camera2D { … }` 的构造器不是一回事）。
-    target = Channel {
-        namespace = "zela.scene",
-        name = "Framing2D.scale",
-        ty = ChannelType.Number,
-    },
+    target = Camera2D.channel.scale,
     root = ramp(40.0, 110.0, 1.0),
     clock = clock.shift(2.5),
     predicate = Predicate.Of { expr = clock.range(0.0, 1.0) },
 }
 expr.bind {
     object = camera,
-    target = Channel {
-        namespace = "zela.scene",
-        name = "Framing2D.center",
-        ty = ChannelType.Vec2,
-    },
+    target = Camera2D.channel.center,
     root = ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
     clock = clock.shift(2.5),
     predicate = Predicate.Of { expr = clock.range(0.0, 1.0) },

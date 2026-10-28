@@ -146,11 +146,7 @@ hop(1.2, rgba(140, 170, 255, 255))
 -- 收尾推近（最后一段）。
 expr.bind {
     object = camera,
-    target = Channel {
-        namespace = "zela.scene",
-        name = "Framing2D.scale",
-        ty = ChannelType.Number,
-    },
+    target = Camera2D.channel.scale,
     root = ramp(55.0, 74.0, 1.3),
     clock = clock.shift(cursor),
     predicate = Predicate.Of { expr = clock.range(0.0, 1.3) },

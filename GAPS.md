@@ -1128,7 +1128,9 @@
 
 | AP-11 | **W5 明确记账：超越函数跨端一致性不转绿** | ze-func / 代码生成 | **仍成立（记账）** | 阶段 0 已让 fixture `transcendental.json`（`cross_language: false`）变红并留档：Rust `f64::sin` 与 JS `Math.sin` 在 6283 个采样点上 160 处差 1 ulp（`cos` 195 处，首个反例 `x = 0.117`）。本批**不转绿**：两条路线（① 自带可移植算子实现 ② 限制可代码生成的算子集，见 W-E）都需要独立批次的设计与验证成本，且现有 7 个 fixture 无一依赖超越函数。⇒ 保持 `cross_language: false`，是**已声明的债**而不是漏抓；代码生成路线开工前必须先收掉它。 |
 
-**AP 段小计**：已关闭 9（AP-01..AP-07、AP-09、AP-10）· 部分关闭 1（AP-08）· 记账 1（AP-11）· 未执行 0。
+| AP-12 | **通道常量挂错组件（静默丢失）** | scene-core / scene-api / 三语言绑定 / scripts | **已关闭（收尾）** | 反例：`Framing2D.center` / `MorphShape.t` 的 `FieldSpec.component` 是**存储组件**，而脚本世界没有 `Framing2D` / `MorphShape` 这两个名字 ⇒ 三种绑定的 `attach_channels` 都走 `continue`（**静默**丢掉常量），脚本只能手写 `Channel { namespace, name, ty }` 字符串。修复：`target::channel_home` 把存储组件映射回脚本组件（`Framing2D → Camera2D`、`MorphShape → Morph`，**地址与 payload 不变**），`channels()` 用它做常量归属；新增门禁用例 `every_channel_constant_hangs_on_a_script_component`（常量必须挂在 `SceneApi` 的构造器上，否则将来再挂错就 red）；fourier / storyboard / spring / cap_channels2d / capability_gaps 与 fourier.py / storyboard.py 全部改用 `Camera2D.channel.scale|center` / `Morph.channel.t`（payload 逐字节不变，五件作品实测 hash 与 manifest 一致）。 |
+
+**AP 段小计**：已关闭 10（AP-01..AP-07、AP-09、AP-10、AP-12）· 部分关闭 1（AP-08）· 记账 1（AP-11）· 未执行 0。
 
 ---
 

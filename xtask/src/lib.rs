@@ -868,8 +868,11 @@ pub fn collect_capabilities(
     for (struct_name, kind) in [("SceneApi", "scene"), ("ContentApi", "content")] {
         out.extend(collect_methods(api_rs, "api.rs", struct_name, kind));
     }
+    // 通道常量的落点可能在**脚本组件**上（`Framing2D` → `Camera2D`）：
+    // 映射表在 `target.rs` 的 `CHANNEL_HOMES`，两条抽取路径都要用它。
+    let homes = parse_channel_homes(target_rs);
     out.extend(collect_targets(target_rs));
-    out.extend(collect_channel_capabilities(channel_sources));
+    out.extend(collect_channel_capabilities(channel_sources, &homes));
     for kind in ["scene", "content", "Target"] {
         if !out.iter().any(|capability| capability.kind == kind) {
             return Err(format!(
@@ -889,7 +892,10 @@ pub fn collect_capabilities(
 ///
 /// 若解析规则与源码结构脱节，这里会**安静地少检查** —— 与 `collect_targets`
 /// 同样的风险，因此 `collect_capabilities` 的 `Target` 守卫也覆盖本函数。
-pub fn collect_channel_capabilities(sources: &[(&str, &str)]) -> Vec<Capability> {
+pub fn collect_channel_capabilities(
+    sources: &[(&str, &str)],
+    homes: &std::collections::BTreeMap<String, String>,
+) -> Vec<Capability> {
     let mut out = Vec::new();
     for (file, src) in sources {
         // (显式 name, 字段名, 行号)——归给下一个 `pub struct`。
@@ -922,6 +928,11 @@ pub fn collect_channel_capabilities(sources: &[(&str, &str)]) -> Vec<Capability>
                     spellings.push(format!("{struct_name}.channel.{field}"));
                     // Lua 里 `end` 等是关键字 ⇒ 常量用下标写法 `Reveal.channel["end"]`。
                     spellings.push(format!("{struct_name}.channel[\"{field}\"]"));
+                    // 常量可能挂在**脚本组件**上（存储组件 `Framing2D` → `Camera2D`）。
+                    if let Some(home) = homes.get(&struct_name) {
+                        spellings.push(format!("{home}.channel.{field}"));
+                        spellings.push(format!("{home}.channel[\"{field}\"]"));
+                    }
                     out.push(Capability {
                         kind: "Target".to_string(),
                         name,
@@ -1035,6 +1046,7 @@ fn constructor_alias(signature: &str) -> Option<String> {
 /// （持久化名 / 规范地址 / `Transform` 通道）⇒ 全部收进 `spellings`，
 /// 任一被作品用到即算覆盖。
 fn collect_targets(src: &str) -> Vec<Capability> {
+    let homes = parse_channel_homes(src);
     let mut out = Vec::new();
     let mut start: Option<usize> = None;
     let (mut name, mut address, mut component, mut field) = (None, None, None, None);
@@ -1049,7 +1061,7 @@ fn collect_targets(src: &str) -> Vec<Capability> {
                 continue;
             }
             if let Some(spec) = parse_spec_invocation(&text) {
-                out.push(target_capability(spec, line_number));
+                out.push(target_capability(spec, line_number, &homes));
             }
             continue;
         }
@@ -1057,7 +1069,7 @@ fn collect_targets(src: &str) -> Vec<Capability> {
             let line_number = index + 1;
             if line.contains(");") {
                 if let Some(spec) = parse_spec_invocation(line) {
-                    out.push(target_capability(spec, line_number));
+                    out.push(target_capability(spec, line_number, &homes));
                 }
             } else {
                 invocation = Some((line_number, line.to_string()));
@@ -1094,6 +1106,7 @@ fn collect_targets(src: &str) -> Vec<Capability> {
                                     field,
                                 },
                                 line_number,
+                                &homes,
                             ));
                         }
                     }
@@ -1118,10 +1131,14 @@ struct SpecFields {
     field: String,
 }
 
-fn target_capability(spec: SpecFields, line_number: usize) -> Capability {
+fn target_capability(
+    spec: SpecFields,
+    line_number: usize,
+    homes: &std::collections::BTreeMap<String, String>,
+) -> Capability {
     let mut spellings = vec![spec.name.clone()];
     if spec.address != spec.name {
-        spellings.push(spec.address);
+        spellings.push(spec.address.clone());
     }
     // 作者侧的常量路径（`Gradient.channel.from`）：表达式 API 只能经常量引用
     // 通道（没有裸地址字符串入口），所以常量路径命中同样算"作品用到了它"。
@@ -1129,6 +1146,11 @@ fn target_capability(spec: SpecFields, line_number: usize) -> Capability {
         "{}.channel.{}",
         spec.component, spec.field
     ));
+    // 常量的真实落点可能挂在**脚本组件**上（存储组件 `Framing2D` → `Camera2D`）：
+    // 映射表在 `target.rs` 的 `CHANNEL_HOMES`（与运行时 `channel_home` 同源）。
+    if let Some(home) = homes.get(&spec.component) {
+        spellings.push(format!("{home}.channel.{}", spec.field));
+    }
     Capability {
         kind: "Target".to_string(),
         name: spec.name,
@@ -1136,6 +1158,43 @@ fn target_capability(spec: SpecFields, line_number: usize) -> Capability {
         spellings,
         location: format!("target.rs:{line_number}"),
     }
+}
+
+/// 从 `target.rs` 读 `CHANNEL_HOMES`（**存储组件 → 脚本组件**）。
+///
+/// 覆盖门禁跟着运行时的常量落点走：脚本写 `Camera2D.channel.scale`，
+/// 而 `FieldSpec.component` 是存储组件 `Framing2D` —— 两边不映射就会报
+/// "能力没人用"（假红），或者更糟：真没人用时也看不出来。
+fn parse_channel_homes(src: &str) -> std::collections::BTreeMap<String, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut in_block = false;
+    for raw in src.lines() {
+        let line = raw.trim();
+        if line.starts_with("pub const CHANNEL_HOMES") {
+            in_block = true;
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        if line.starts_with("];") {
+            break;
+        }
+        let Some(inner) = line
+            .strip_prefix('(')
+            .and_then(|rest| rest.strip_suffix("),"))
+        else {
+            continue;
+        };
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+        if let [storage, home] = parts.as_slice() {
+            out.insert(
+                storage.trim_matches('"').to_string(),
+                home.trim_matches('"').to_string(),
+            );
+        }
+    }
+    out
 }
 
 fn is_spec_invocation(line: &str) -> bool {

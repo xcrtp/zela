@@ -6,15 +6,15 @@
 --
 --   · 书写进度 `Reveal.end = t / T`：**显式时钟**（`clock = clock.scale(1.0)`）
 --     的局部时间经表达式算出，没有"当前游标"这种隐式状态；
---   · 小球不自己算曲线：它通过 `expr.read` 读曲线对象的 **`Reveal.current_pos`**
---     （只读派生通道 = 归一化弧长 `end` 处的笔尖位置，渲染裁剪同一口径）；
+--   · 小球不自己算曲线：它通过 **方法** `Reveal.current_pos` 读曲线对象的笔尖
+--     （派生量 = 方法，不是字段 ⇒ 不可能被写端选中；`reads` 由方法目录静态声明）；
 --   · 因此"小球在笔尖上"是**结构上成立**的，不依赖采样密度或插值巧合。
 --
 -- 脚本里唯一的循环是**几何采样**（生成正弦折线本身），与动画无关。
 --
--- 能力使用：Reveal（S2 书写）+ `Reveal.end` / `Reveal.current_pos` /
--- `Circle.center` 通道 + `expr.read`（G 批读端）+ `clock`（B 批显式时钟）+
--- `Polyline`（静态坐标轴）。数值量化到 1e-4，保证跨平台逐位一致。
+-- 能力使用：Reveal（S2 书写）+ `Reveal.end` / `Circle.center` 通道 +
+-- `expr.method`（B2 方法调用）+ `clock`（B 批显式时钟）+ `Polyline`（静态坐标轴）。
+-- 数值量化到 1e-4，保证跨平台逐位一致。
 
 local TAU = 2.0 * math.pi
 

@@ -136,12 +136,6 @@ scene.spawn(
 )
 
 # ── 时间编排（显式时钟；旧 scene.animate / parallel / wait 的段序）──────
-CAMERA_SCALE = expr.Channel(
-    namespace="zela.scene", name="Framing2D.scale", ty=expr.ChannelType.Number
-)
-CAMERA_CENTER = expr.Channel(
-    namespace="zela.scene", name="Framing2D.center", ty=expr.ChannelType.Vec2
-)
 
 # 0–2s：曲线书写（phase(0.5) × 2s = 1）
 expr.bind(
@@ -158,7 +152,7 @@ expr.bind(
 expr.bind(
     expr.Bind(
         object=camera,
-        target=CAMERA_SCALE,
+        target=Camera2D.channel.scale,
         root=ramp(40.0, 110.0, 1.0),
         clock=expr.clock.shift(2.5),
         predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 1.0)),
@@ -167,7 +161,7 @@ expr.bind(
 expr.bind(
     expr.Bind(
         object=camera,
-        target=CAMERA_CENTER,
+        target=Camera2D.channel.center,
         root=ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
         clock=expr.clock.shift(2.5),
         predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 1.0)),

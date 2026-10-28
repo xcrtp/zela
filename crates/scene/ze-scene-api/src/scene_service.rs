@@ -326,7 +326,9 @@ pub fn channels() -> &'static [ze_pod_core::ChannelDecl] {
             .filter(|spec| !spec.is_composite)
             .map(|spec| ze_pod_core::ChannelDecl {
                 namespace: "zela.scene",
-                component: spec.component,
+                // 存储组件可能不是脚本世界里的名字（`Framing2D` / `MorphShape`）
+                // ⇒ 常量挂到脚本能 spawn 的组件上（`Camera2D` / `Morph`）。
+                component: ze_scene_core::animation::target::channel_home(spec.component),
                 name: spec.field,
                 address: spec.address,
                 ty: spec.ty,
@@ -336,6 +338,44 @@ pub fn channels() -> &'static [ze_pod_core::ChannelDecl] {
             })
             .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ze_pod_core::{Capability, TypeSpec};
+
+    /// 通道常量必须挂在**脚本能 spawn 的组件**上。
+    ///
+    /// 反例（本用例挡住）：`Framing2D.channel.center` —— `Framing2D` 是 `Camera2D`
+    /// 的存储组件，脚本世界没有这个名字；三种绑定都会静默丢掉这个常量
+    ///（以前就是 `attach_channels` 的 `continue`），脚本只能手写 `Channel { … }`。
+    #[test]
+    fn every_channel_constant_hangs_on_a_script_component() {
+        let ctors: Vec<&'static str> =
+            <crate::api::SceneApi<'static> as Capability<'static>>::calls()
+                .iter()
+                .filter(|item| item.io.params.len() == 1 && item.io.ret.is_opaque())
+                .filter_map(|item| match item.io.params[0].ty {
+                    TypeSpec::Struct { name, .. } => Some(*name),
+                    _ => None,
+                })
+                .collect();
+        let mut missing: Vec<&'static str> = Vec::new();
+        for channel in channels() {
+            let reachable = ctors
+                .iter()
+                .any(|full| full.rsplit('.').next() == Some(channel.component));
+            if !reachable && !missing.contains(&channel.component) {
+                missing.push(channel.component);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "通道常量挂到了脚本拿不到的组件上：{missing:?}\n  \
+             ⇒ 在 `channel_home` 里映射到脚本组件（存储组件 ≠ 脚本组件）"
+        );
+    }
 }
 
 fn color32(color: crate::types::Color) -> Color32 {

@@ -324,16 +324,10 @@ expr.bind(
 )
 
 # ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
-CAMERA_SCALE = expr.Channel(
-    namespace="zela.scene", name="Framing2D.scale", ty=expr.ChannelType.Number
-)
-CAMERA_CENTER = expr.Channel(
-    namespace="zela.scene", name="Framing2D.center", ty=expr.ChannelType.Vec2
-)
 expr.bind(
     expr.Bind(
         object=camera,
-        target=CAMERA_SCALE,
+        target=Camera2D.channel.scale,
         root=ramp(55.0, 90.0, ZOOM),
         clock=expr.clock.shift(ZOOM_IN_START),
         predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),
@@ -342,7 +336,7 @@ expr.bind(
 expr.bind(
     expr.Bind(
         object=camera,
-        target=CAMERA_CENTER,
+        target=Camera2D.channel.center,
         root=ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
         clock=expr.clock.shift(ZOOM_IN_START),
         predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),
@@ -351,7 +345,7 @@ expr.bind(
 expr.bind(
     expr.Bind(
         object=camera,
-        target=CAMERA_SCALE,
+        target=Camera2D.channel.scale,
         root=ramp(90.0, 55.0, ZOOM),
         clock=expr.clock.shift(ZOOM_OUT_START),
         predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),
@@ -360,7 +354,7 @@ expr.bind(
 expr.bind(
     expr.Bind(
         object=camera,
-        target=CAMERA_CENTER,
+        target=Camera2D.channel.center,
         root=ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
         clock=expr.clock.shift(ZOOM_OUT_START),
         predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),

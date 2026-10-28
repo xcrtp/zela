@@ -288,40 +288,30 @@ expr.bind {
 }
 
 -- ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
-local CAMERA_SCALE = Channel {
-    namespace = "zela.scene",
-    name = "Framing2D.scale",
-    ty = ChannelType.Number,
-}
-local CAMERA_CENTER = Channel {
-    namespace = "zela.scene",
-    name = "Framing2D.center",
-    ty = ChannelType.Vec2,
-}
 expr.bind {
     object = camera,
-    target = CAMERA_SCALE,
+    target = Camera2D.channel.scale,
     root = ramp(55.0, 90.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
-    target = CAMERA_CENTER,
+    target = Camera2D.channel.center,
     root = ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
-    target = CAMERA_SCALE,
+    target = Camera2D.channel.scale,
     root = ramp(90.0, 55.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
-    target = CAMERA_CENTER,
+    target = Camera2D.channel.center,
     root = ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
