@@ -32,6 +32,28 @@ pub struct ChannelDecl {
     pub value_type: &'static str,
 }
 
+/// 一个可被脚本调用的**方法声明**（B2 方法目录的自述面）。
+///
+/// 与 [`ChannelDecl`] 同构：语言绑定据此把方法挂到组件构造器上
+/// （`Reveal.current_pos(curve)` 等价于 `expr.method { name = "Reveal.current_pos", object = curve }`）。
+///
+/// 与通道的区别是**类型级的**：方法不在写表里 ⇒ 永远选不中作绑定目标。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MethodDecl {
+    /// 命名词汇表的 namespace（如 `zela.scene`）。
+    pub namespace: &'static str,
+    /// 所属组件（`Reveal`）。
+    pub component: &'static str,
+    /// 成员名（`current_pos`）。
+    pub name: &'static str,
+    /// 规范方法名（`Reveal.current_pos`；`expr.method.name` 用它）。
+    pub qualified: &'static str,
+    /// **显式**参数个数（接收者不计）。
+    pub arity: usize,
+    /// 返回类型（声明文件 / 编辑期提示用）。
+    pub ret: &'static TypeSpec,
+}
+
 /// 函数句柄：**per-Pod 局部槽位 + generation**（计划 §0.2 的第六个句柄）。
 ///
 /// 旧形态是裸 `u64`（只有编号、没有 owner / generation），查找靠
@@ -161,6 +183,14 @@ pub trait Pod: 'static {
     /// 语言绑定用它把 `Circle.channel.radius` 挂到组件构造器上；端点（写方向）仍由
     /// 各语言的地址表/宿主校验决定。
     fn channels(&self) -> &'static [ChannelDecl] {
+        &[]
+    }
+
+    /// 本 Pod 可被脚本调用的**方法**（默认空）。
+    ///
+    /// 语言绑定用它把 `Reveal.current_pos(curve)` 挂到组件构造器上 ——
+    /// 方法不在写表里，作者面只有这一条调用路径（`expr.method { … }` 是底层形态）。
+    fn methods(&self) -> &'static [MethodDecl] {
         &[]
     }
 

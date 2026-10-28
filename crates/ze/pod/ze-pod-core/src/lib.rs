@@ -119,4 +119,4 @@ pub use value::{
     PodBytes, ScalarValue, PodType, PodValue, PodValueError, describe, expect_enum, expect_struct,
     field,
 };
-pub use pod::{ChannelDecl, FunctionId, Pod, SyncPod, negotiate_dyn};
+pub use pod::{ChannelDecl, FunctionId, MethodDecl, Pod, SyncPod, negotiate_dyn};

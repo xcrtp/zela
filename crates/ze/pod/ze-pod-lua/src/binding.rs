@@ -170,6 +170,7 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
         }
     }
     attach_channels(lua, service.channels())?;
+    attach_methods(lua, service.methods())?;
     Ok(())
 }
 
@@ -232,6 +233,52 @@ fn attach_channels(
         )?;
         value.set_metatable(Some(mt))?;
         channel_table.set(channel.name, value)?;
+    }
+    Ok(())
+}
+
+/// 把 `Pod::methods()` 的**方法**挂到组件构造器上：`Reveal.current_pos(curve)`。
+///
+/// 与通道常量同一套路（`Reveal.channel.*`），区别是值是**函数**：调用时组
+/// `MethodCallSpec { name, object, args }` 再走 `expr.method` —— 作者不必手写表，
+/// 也不会漏 `args` / 写错方法名（未注册的方法由 `expr.method` 装配期拒绝）。
+///
+/// `expr` 在另一个 capability 里注册，故在**调用时**才解析（与通道常量一致）。
+fn attach_methods(
+    lua: &Lua,
+    methods: &'static [ze_pod_core::MethodDecl],
+) -> mlua::Result<()> {
+    for method in methods {
+        let Value::Table(ctor) = lua.globals().get::<Value>(method.component)? else {
+            continue;
+        };
+        let qualified = method.qualified;
+        let arity = method.arity;
+        let function = lua.create_function(move |lua, args: MultiValue| {
+            let values: Vec<Value> = args.into_iter().collect();
+            if values.len() != arity + 1 {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "`{qualified}(object, …)` 需要 1 个接收者 + {arity} 个参数，实际 {}",
+                    values.len()
+                )));
+            }
+            let expr: Table = lua.globals().get("expr")?;
+            let Value::Function(method_fn) = expr.get::<Value>("method")? else {
+                return Err(mlua::Error::RuntimeError(
+                    "`expr.method` 尚未注册（宿主未装配表达式能力）".into(),
+                ));
+            };
+            let spec = lua.create_table()?;
+            spec.set("name", qualified)?;
+            spec.set("object", values[0].clone())?;
+            let args = lua.create_table()?;
+            for (index, value) in values[1..].iter().enumerate() {
+                args.set(index + 1, value.clone())?;
+            }
+            spec.set("args", args)?;
+            method_fn.call::<Value>(spec)
+        })?;
+        ctor.set(method.name, function)?;
     }
     Ok(())
 }

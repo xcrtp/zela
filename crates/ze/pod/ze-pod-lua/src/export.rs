@@ -54,6 +54,14 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
             channels.entry(channel.component).or_default().push(channel);
         }
     }
+    // 组件短名 → 方法（`Reveal.current_pos(obj)`）：直接挂成字段函数。
+    let mut methods: BTreeMap<&'static str, Vec<&'static ze_pod_core::MethodDecl>> =
+        BTreeMap::new();
+    for capability in capabilities {
+        for method in capability.methods {
+            methods.entry(method.component).or_default().push(method);
+        }
+    }
     // `zela.math.Channel` 结构体会被类型循环渲染成 `Channel<T>`；
     // 只有它缺席时才需要一个独立的泛型类兜底（避免两个同名 `@class`）。
     let has_channel_type = types.contains_key("zela.math.Channel");
@@ -79,6 +87,7 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
         match spec {
             TypeSpec::Struct { name, fields, .. } => {
                 let own_channels = channels.get(lua_name).map(Vec::as_slice).unwrap_or(&[]);
+                let own_methods = methods.get(lua_name).map(Vec::as_slice).unwrap_or(&[]);
                 // `zela.math.Channel` 是 `Channel<T>` 的值形状（namespace + name）：
                 // 与组件通道常量共用同一个泛型类，避免两个同名 `@class`。
                 let is_channel = full_name == "zela.math.Channel";
@@ -105,21 +114,33 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     ));
                 }
                 // 通道常量收在 `X.channel.*` 下（与组件字段不撞名）。
-                if !own_channels.is_empty() {
-                    out.push_str(&format!("---@field channel {lua_name}Channel\n"));
+                // 方法（`Reveal.current_pos(obj)`）直接挂成字段函数。
+                if !own_channels.is_empty() || !own_methods.is_empty() {
+                    for method in own_methods {
+                        out.push_str(&format!(
+                            "---@field {} {}\n",
+                            method.name,
+                            lua_method_type(method)
+                        ));
+                    }
+                    if !own_channels.is_empty() {
+                        out.push_str(&format!("---@field channel {lua_name}Channel\n"));
+                    }
                     // ⚠️ 类的全局必须紧跟自己的 `---@class` 块：LuaLS 把**最后一个**
                     // 紧邻的 doc 块绑给赋值语句；若先写 `XChannel` 再写 `X = {}`，
                     // `X` 会被当成 `XChannel`，于是 `X.channel` 诊断成 unknown。
                     out.push_str(&format!("{lua_name} = {{}}\n\n"));
-                    out.push_str(&format!("---@class {lua_name}Channel\n"));
-                    for channel in own_channels {
-                        out.push_str(&format!(
-                            "---@field {} Channel<{}>\n",
-                            channel.name,
-                            lua_type_name(channel.ty)
-                        ));
+                    if !own_channels.is_empty() {
+                        out.push_str(&format!("---@class {lua_name}Channel\n"));
+                        for channel in own_channels {
+                            out.push_str(&format!(
+                                "---@field {} Channel<{}>\n",
+                                channel.name,
+                                lua_type_name(channel.ty)
+                            ));
+                        }
+                        out.push('\n');
                     }
-                    out.push('\n');
                     continue;
                 }
                 out.push('\n');
@@ -314,6 +335,21 @@ fn lua_call_return(
         "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr<any>".to_string(),
         _ => lua_type_name(item.io.ret).to_string(),
     })
+}
+
+/// 方法常量的类型：`fun(object: Handle): Expr<Vec2>`（返回值是表达式句柄）。
+///
+/// 与通道常量并列：`Reveal.channel.end`（值）vs `Reveal.current_pos(obj)`（函数）。
+fn lua_method_type(method: &ze_pod_core::MethodDecl) -> String {
+    let mut params = vec!["object: Handle".to_string()];
+    for _ in 0..method.arity {
+        params.push("arg: Expr<any>".to_string());
+    }
+    format!(
+        "fun({}): Expr<{}>",
+        params.join(", "),
+        lua_type_name(method.ret)
+    )
 }
 
 /// 算子的返回类型候选：`Expr<number>` / `Expr<Vec2> | Expr<Vec3>` …

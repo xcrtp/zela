@@ -282,6 +282,11 @@ impl Pod for SceneServicePod {
         channels()
     }
 
+    /// 方法目录 → 可挂到组件构造器上的**方法**（`Reveal.current_pos(obj)`）。
+    fn methods(&self) -> &'static [ze_pod_core::MethodDecl] {
+        methods()
+    }
+
     fn call(&self, id: FunctionId, _args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
         let name = self
             .functions()
@@ -338,6 +343,44 @@ pub fn channels() -> &'static [ze_pod_core::ChannelDecl] {
             })
             .collect()
     })
+}
+
+/// 方法目录 → 脚本侧**方法声明**（`Reveal.current_pos(object)`）。
+///
+/// 与 [`channels`] 同构：名字拆成「组件 + 成员」，语言绑定据此把方法挂到
+/// 组件构造器上 —— 作者不必手写 `expr.method { name = …, object = …, args = {} }`。
+///
+/// 只导出**返回值有表达式层表示**的方法：`Object.bounds` / `Circle.bounds`
+/// 返回 `Rect2D`（`Bytes`），要等值系统收敛（W-A / GAPS AP-08）才够得着。
+pub fn methods() -> &'static [ze_pod_core::MethodDecl] {
+    static METHODS: OnceLock<Vec<ze_pod_core::MethodDecl>> = OnceLock::new();
+    METHODS.get_or_init(|| {
+        use ze_scene_core::animation::target::METHODS as SPECS;
+        SPECS
+            .iter()
+            .filter(|spec| expressible(spec.ret))
+            .filter_map(|spec| {
+                Some(ze_pod_core::MethodDecl {
+                    namespace: "zela.scene",
+                    component: spec.component,
+                    name: spec.name.rsplit('.').next()?,
+                    qualified: spec.name,
+                    arity: spec.params.len(),
+                    ret: spec.ret,
+                })
+            })
+            .collect()
+    })
+}
+
+/// 返回值有没有表达式层表示（数值 / 布尔 / `Vec2` / `Vec3`）。
+fn expressible(ret: &'static ze_pod_core::TypeSpec) -> bool {
+    use ze_pod_core::TypeSpec as Ty;
+    match ret {
+        Ty::Scalar(_) => true,
+        Ty::Struct { name, .. } => matches!(*name, "zela.Vec2" | "zela.Vec3"),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

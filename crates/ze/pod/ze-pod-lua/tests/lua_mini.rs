@@ -258,6 +258,7 @@ fn docs_are_complete_and_structural() {
         docs: MiniApi::docs(),
         meta: MiniApi::meta(),
         channels: &[],
+        methods: &[],
         ops: &[],
     }];
 

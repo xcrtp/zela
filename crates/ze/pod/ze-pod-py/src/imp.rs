@@ -458,6 +458,79 @@ fn register_types(
         }
     }
     attach_channels(py, this, service_module, &service)?;
+    attach_methods(py, this, service_module, &service)?;
+    Ok(())
+}
+
+/// 表达式能力的模块（方法糖经它的 `method` 入口；与脚本里 `import zela.math as expr` 同源）。
+const EXPR_MODULE: &str = "zela.math";
+
+/// 把 `Pod::methods()` 的**方法**挂到组件构造器上：`Reveal.current_pos(curve)`。
+///
+/// 与通道常量同一套路（`Reveal.channel.*`），区别是值是函数：调用时组
+/// `MethodCallSpec { name, object, args }` 再走 `zela.math.method`。
+///
+/// 表达式能力在**后**注册 ⇒ 模块在调用时才解析（拿父包 `zela` 现取 `math`）。
+fn attach_methods(
+    py: Python<'_>,
+    this: &PyPod,
+    service_module: &Bound<'_, PyModule>,
+    service: &Arc<dyn SyncPod>,
+) -> PyResult<()> {
+    let methods = service.methods();
+    if methods.is_empty() {
+        return Ok(());
+    }
+    let root = match EXPR_MODULE.rsplit_once('.') {
+        Some((root, _)) => root,
+        None => return Ok(()),
+    };
+    let Some(parent) = this
+        .packages
+        .lock()
+        .expect("Python 包表锁中毒")
+        .get(root)
+        .map(|module| module.clone_ref(py))
+    else {
+        return Ok(());
+    };
+    let child = EXPR_MODULE.rsplit('.').next().unwrap_or(EXPR_MODULE);
+    for method in methods {
+        let qualified = method.qualified;
+        let arity = method.arity;
+        let parent = parent.clone_ref(py);
+        let function = PyCFunction::new_closure(
+            py,
+            Some(method.name),
+            None,
+            move |args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>| {
+                let py = args.py();
+                if args.len() != arity + 1 {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "`{qualified}(object, …)` 需要 1 个接收者 + {arity} 个参数，实际 {}",
+                        args.len()
+                    )));
+                }
+                let expr = parent.bind(py).getattr(child)?;
+                let method_fn = expr.getattr("method")?;
+                let spec = PyDict::new(py);
+                spec.set_item("name", qualified)?;
+                spec.set_item("object", args.get_item(0)?)?;
+                let list = PyList::empty(py);
+                for index in 1..args.len() {
+                    list.append(args.get_item(index)?)?;
+                }
+                spec.set_item("args", list)?;
+                method_fn.call1((spec,))
+            },
+        )?;
+        for module in [this.module.bind(py), service_module] {
+            let Ok(ctor) = module.getattr(method.component) else {
+                continue;
+            };
+            ctor.setattr(method.name, &function)?;
+        }
+    }
     Ok(())
 }
 

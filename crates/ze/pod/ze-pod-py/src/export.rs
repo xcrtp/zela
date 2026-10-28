@@ -225,12 +225,22 @@ fn channels_by_component(
     out
 }
 
+/// 方法常量的形参表（`Callable[[...]]` 的实参部分）：`Handle, Expr[Any], …`。
+fn py_method_params(method: &ze_pod_core::MethodDecl) -> String {
+    let mut params = vec!["Handle".to_string()];
+    for _ in 0..method.arity {
+        params.push("Expr[Any]".to_string());
+    }
+    params.join(", ")
+}
+
 fn render_type(
     out: &mut String,
     full_name: &'static str,
     spec: &'static TypeSpec,
     components: &BTreeSet<&'static str>,
     channels: &[&'static ze_pod_core::ChannelDecl],
+    methods: &[&'static ze_pod_core::MethodDecl],
     capabilities: &[CapabilityDocs],
     typed_expr: bool,
 ) {
@@ -249,25 +259,39 @@ fn render_type(
                 } else {
                     "Handle".to_string()
                 };
-                if channels.is_empty() {
+                if channels.is_empty() && methods.is_empty() {
                     out.push_str(&format!(
                         "def {name}({}) -> {returns}: ...\n",
                         params(fields, components, type_name, full_name, typed_expr)
                     ));
                 } else {
-                    // 带通道常量的组件在运行期是"可调用对象"⇒ 用 Protocol 建模，
+                    // 带通道常量 / 方法的组件在运行期是"可调用对象"⇒ 用 Protocol 建模，
                     // 这样 `Circle(channel=...)` 与 `Circle(...)` 都是合法表达式。
-                    // 常量收在 `channel` 命名空间下（与组件字段不撞名）。
-                    out.push_str(&format!("class _{name}Channel:\n"));
-                    for channel in channels {
-                        out.push_str(&format!(
-                            "    {}: Channel[{}]\n",
-                            channel.name,
-                            py_type(channel.ty, components)
-                        ));
+                    // 常量收在 `channel` 命名空间下（与组件字段不撞名）；
+                    // 方法是**属性函数**（`Reveal.current_pos(curve)`），不是实例方法
+                    // ⇒ 声明成 `Callable[[Handle], Expr[Vec2]]`，否则形参会被 self 吃掉。
+                    if !channels.is_empty() {
+                        out.push_str(&format!("class _{name}Channel:\n"));
+                        for channel in channels {
+                            out.push_str(&format!(
+                                "    {}: Channel[{}]\n",
+                                channel.name,
+                                py_type(channel.ty, components)
+                            ));
+                        }
                     }
                     out.push_str(&format!("class _{name}Ctor(Protocol):\n"));
-                    out.push_str(&format!("    channel: _{name}Channel\n"));
+                    if !channels.is_empty() {
+                        out.push_str(&format!("    channel: _{name}Channel\n"));
+                    }
+                    for method in methods {
+                        out.push_str(&format!(
+                            "    {}: Callable[[{}], Expr[{}]]\n",
+                            method.name,
+                            py_method_params(method),
+                            py_type(method.ret, components)
+                        ));
+                    }
                     out.push_str(&format!(
                         "    def __call__(self, {}) -> {returns}: ...\n",
                         params(fields, components, type_name, full_name, typed_expr)
@@ -388,6 +412,10 @@ fn py_expr_returns(op: &OpDef, components: &BTreeSet<&'static str>) -> String {
 pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
     let types = ze_pod_binding::reachable_types(capabilities);
     let typed_expr = has_ops(capabilities);
+    // 方法（`Reveal.current_pos(obj)`）要用 `Callable` 标注属性函数。
+    let has_methods = capabilities
+        .iter()
+        .any(|capability| !capability.methods.is_empty());
 
     // 组件类型（运行时是函数，不产生类）。
     let mut components: BTreeSet<&'static str> = BTreeSet::new();
@@ -478,10 +506,16 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
             "# 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。\n",
         );
         if needs_generic {
-            out.push_str("from typing import Any, Generic, List, Protocol, TypeVar\n\n");
+            out.push_str(&format!(
+                "from typing import Any, {}Generic, List, Protocol, TypeVar\n\n",
+                if has_methods { "Callable, " } else { "" }
+            ));
             out.push_str("T = TypeVar(\"T\")\n\n");
         } else {
-            out.push_str("from typing import Any, List, Protocol\n\n");
+            out.push_str(&format!(
+                "from typing import Any, {}List, Protocol\n\n",
+                if has_methods { "Callable, " } else { "" }
+            ));
         }
         if package == root {
             out.push_str(
@@ -563,12 +597,18 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
                 .get(short_name(full_name))
                 .cloned()
                 .unwrap_or_default();
+            let own_methods: Vec<&'static ze_pod_core::MethodDecl> = capabilities
+                .iter()
+                .flat_map(|capability| capability.methods)
+                .filter(|method| method.component == short_name(full_name))
+                .collect();
             render_type(
                 &mut out,
                 full_name,
                 spec,
                 &components,
                 &own,
+                &own_methods,
                 capabilities,
                 typed_expr,
             );
@@ -708,6 +748,7 @@ mod tests {
                 docs: MiniScene::docs(),
                 meta: MiniScene::meta(),
                 channels: &[],
+                methods: &[],
                 ops: &[],
             },
             CapabilityDocs {
@@ -716,6 +757,7 @@ mod tests {
                 docs: PythonApi::docs(),
                 meta: PythonApi::meta(),
                 channels: &[],
+                methods: &[],
                 ops: &[],
             },
         ])

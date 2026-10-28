@@ -137,19 +137,37 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                     .flat_map(|capability| capability.channels)
                     .filter(|channel| channel.component == name)
                     .collect();
-                if !channels.is_empty() {
-                    out.push_str(&format!("export interface {name}Channel {{\n"));
-                    for channel in &channels {
+                // 方法（`Reveal.current_pos(curve)`）也挂在这个命名空间里。
+                let methods: Vec<&ze_pod_core::MethodDecl> = capabilities
+                    .iter()
+                    .flat_map(|capability| capability.methods)
+                    .filter(|method| method.component == name)
+                    .collect();
+                if !channels.is_empty() || !methods.is_empty() {
+                    if !channels.is_empty() {
+                        out.push_str(&format!("export interface {name}Channel {{\n"));
+                        for channel in &channels {
+                            out.push_str(&format!(
+                                "  {}: Channel<{}>;\n",
+                                channel.name,
+                                ts_type_name(channel.ty)
+                            ));
+                        }
+                        out.push_str("}\n");
+                    }
+                    out.push_str(&format!("export declare namespace {name} {{\n"));
+                    if !channels.is_empty() {
+                        out.push_str(&format!("  const channel: {name}Channel;\n"));
+                    }
+                    for method in &methods {
                         out.push_str(&format!(
-                            "  {}: Channel<{}>;\n",
-                            channel.name,
-                            ts_type_name(channel.ty)
+                            "  function {}({}): Expr<{}>;\n",
+                            method.name,
+                            ts_method_params(method),
+                            ts_type_name(method.ret)
                         ));
                     }
                     out.push_str("}\n");
-                    out.push_str(&format!(
-                        "export declare namespace {name} {{\n  const channel: {name}Channel;\n}}\n"
-                    ));
                 }
                 out.push('\n');
             }
@@ -276,6 +294,15 @@ fn ts_call_return(capabilities: &[CapabilityDocs], item: &ze_pod_core::ErasedFn)
         "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr<any>".to_string(),
         _ => ts_type_name(item.io.ret),
     }
+}
+
+/// 方法常量的形参表：`object: Handle, arg1: Expr<any>, …`。
+fn ts_method_params(method: &ze_pod_core::MethodDecl) -> String {
+    let mut params = vec!["object: Handle".to_string()];
+    for index in 0..method.arity {
+        params.push(format!("arg{index}: Expr<any>"));
+    }
+    params.join(", ")
 }
 
 /// 算子的返回类型候选：`Expr<number>` / `Expr<Vec2> | Expr<Vec3>` …

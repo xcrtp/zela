@@ -148,6 +148,7 @@ fn all_languages_generate_docs_from_the_same_calls() {
         docs: MiniApi::docs(),
         meta: MiniApi::meta(),
         channels: &[],
+        methods: &[],
         ops: &[],
     }];
 

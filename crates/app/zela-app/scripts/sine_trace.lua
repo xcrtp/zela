@@ -88,7 +88,8 @@ expr.bind {
 }
 
 -- ── 小球：读端管道 —— 位置完全由 `Reveal.current_pos` 决定 ────────────
--- **方法**（B2）：`expr.method { name = "Reveal.current_pos", object = curve }`。
+-- **方法**（B2）：`Reveal.current_pos(curve)` 是方法常量（等价于
+-- `expr.method { name = "Reveal.current_pos", object = curve }`）。
 -- 它不是字段，因此不可能被写端选中；`reads` 由方法目录静态声明。
 local ball = scene.spawn({
     Circle { x = start_x, y = start_y, r = 0.16 },
@@ -98,5 +99,5 @@ local ball = scene.spawn({
 expr.bind {
     object = ball,
     target = Circle.channel.center,
-    root = expr.method { name = "Reveal.current_pos", object = curve, args = {} },
+    root = Reveal.current_pos(curve),
 }

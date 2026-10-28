@@ -1130,7 +1130,9 @@
 
 | AP-12 | **通道常量挂错组件（静默丢失）** | scene-core / scene-api / 三语言绑定 / scripts | **已关闭（收尾）** | 反例：`Framing2D.center` / `MorphShape.t` 的 `FieldSpec.component` 是**存储组件**，而脚本世界没有 `Framing2D` / `MorphShape` 这两个名字 ⇒ 三种绑定的 `attach_channels` 都走 `continue`（**静默**丢掉常量），脚本只能手写 `Channel { namespace, name, ty }` 字符串。修复：`target::channel_home` 把存储组件映射回脚本组件（`Framing2D → Camera2D`、`MorphShape → Morph`，**地址与 payload 不变**），`channels()` 用它做常量归属；新增门禁用例 `every_channel_constant_hangs_on_a_script_component`（常量必须挂在 `SceneApi` 的构造器上，否则将来再挂错就 red）；fourier / storyboard / spring / cap_channels2d / capability_gaps 与 fourier.py / storyboard.py 全部改用 `Camera2D.channel.scale|center` / `Morph.channel.t`（payload 逐字节不变，五件作品实测 hash 与 manifest 一致）。 |
 
-**AP 段小计**：已关闭 10（AP-01..AP-07、AP-09、AP-10、AP-12）· 部分关闭 1（AP-08）· 记账 1（AP-11）· 未执行 0。
+| AP-13 | **方法没有作者面调用形态**（只能手写 `expr.method { … }`） | ze-pod-core / 三语言绑定 / 声明文件 / scripts | **已关闭（收尾）** | 反例：`Reveal.current_pos(curve)` 这种最自然的写法**不可用** —— 方法只能写成 `expr.method { name = "Reveal.current_pos", object = curve, args = {} }`（表名 / 句柄 / 空 `args` 三处都靠手写）。修复：`Pod::methods()` 自述面（`MethodDecl { component, name, qualified, arity, ret }`，与 `channels()` 同构）+ `ze-scene-api::methods()`（只导出返回值有表达式层表示的方法：`Object.bounds` / `Circle.bounds` 是 `Rect2D`，等 W-A）；Lua / JS / Py 三种绑定把方法挂到组件构造器上（调用时组 `MethodCallSpec` 走 `expr.method`，未注册方法仍由装配期拒绝），声明文件同步出 `current_pos`（`fun(object: Handle): Expr<Vec2>` / `Callable[[Handle], Expr[Vec2]]`）。等价性证据：`sine_trace.lua` 改用 `Reveal.current_pos(curve)` 后 payload 仍为 `771dc4cf…`（与 `expr.method` 逐字节相同）。 |
+
+**AP 段小计**：已关闭 11（AP-01..AP-07、AP-09、AP-10、AP-12、AP-13）· 部分关闭 1（AP-08）· 记账 1（AP-11）· 未执行 0。
 
 ---
 

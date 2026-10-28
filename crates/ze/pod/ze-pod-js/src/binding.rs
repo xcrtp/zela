@@ -292,7 +292,73 @@ fn register_types(
         }
     }
     attach_channels(ctx, service_index)?;
+    attach_methods(ctx, service_index)?;
     Ok(())
+}
+
+/// 把 `Pod::methods()` 的**方法**挂到构造器函数对象上：`Reveal.current_pos(curve)`。
+///
+/// 与通道常量同一套路（`Reveal.channel.*`），区别是值是函数：调用时组
+/// `MethodCallSpec { name, object, args }` 再走 `expr.method`。
+fn attach_methods(ctx: &mut Context, service_index: usize) -> Result<(), PodError> {
+    let Some(service) = host_state(ctx).service(service_index) else {
+        return Ok(());
+    };
+    for method in service.methods() {
+        let ctor = ctx
+            .global_object()
+            .get(JsString::from(method.component), ctx)
+            .map_err(js_err_to_pod)?;
+        let Some(ctor) = ctor.as_object() else {
+            continue;
+        };
+        let qualified = method.qualified;
+        let arity = method.arity;
+        let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+            if args.len() != arity + 1 {
+                return Err(js_native(format!(
+                    "`{qualified}(object, …)` 需要 1 个接收者 + {arity} 个参数，实际 {}",
+                    args.len()
+                )));
+            }
+            let expr = ctx
+                .global_object()
+                .get(JsString::from("expr"), ctx)?;
+            let call_args = array_of(ctx, &args[1..])?;
+            let spec = ObjectInitializer::new(ctx)
+                .property(JsString::from("name"), JsString::from(qualified), Attribute::all())
+                .property(JsString::from("object"), args[0].clone(), Attribute::all())
+                .property(JsString::from("args"), call_args, Attribute::all())
+                .build();
+            let Some(expr) = expr.as_object() else {
+                return Err(js_native("`expr` 尚未注册".to_string()));
+            };
+            let method_fn = expr.get(JsString::from("method"), ctx)?;
+            method_fn
+                .as_object()
+                .ok_or_else(|| js_native("`expr.method` 尚未注册".to_string()))?
+                .call(&JsValue::undefined(), &[spec.into()], ctx)
+        };
+        let function = FunctionObjectBuilder::new(
+            ctx.realm(),
+            NativeFunction::from_copy_closure(closure),
+        )
+        .name(method.name)
+        .length(arity + 1)
+        .build();
+        ctor.set(JsString::from(method.name), function, false, ctx)
+            .map_err(js_err_to_pod)?;
+    }
+    Ok(())
+}
+
+/// 实参切片 → JS 数组（`MethodCallSpec.args`）。
+fn array_of(ctx: &mut Context, values: &[JsValue]) -> JsResult<JsArray> {
+    let array = JsArray::new(ctx)?;
+    for (index, value) in values.iter().enumerate() {
+        array.set(index, value.clone(), false, ctx)?;
+    }
+    Ok(array)
 }
 
 /// 把 `Pod::channels()` 的常量挂到构造器函数对象的 `channel` 字段上

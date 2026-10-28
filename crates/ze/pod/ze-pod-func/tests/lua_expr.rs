@@ -253,6 +253,7 @@ fn table_constructors_are_generated_for_expression_ops() {
         docs: MathApi::docs(),
         meta: MathApi::meta(),
         channels: &[],
+        methods: &[],
         ops: ze_pod_func::SIGNATURES,
     }];
     let lua = ze_pod_lua::lua_ls(&capabilities);
@@ -292,6 +293,7 @@ fn typed_stubs_carry_l2_signatures() {
         docs: MathApi::docs(),
         meta: MathApi::meta(),
         channels: &[],
+        methods: &[],
         ops: ze_pod_func::SIGNATURES,
     }];
 
