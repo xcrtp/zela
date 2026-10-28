@@ -1941,65 +1941,6 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         );
     }
 
-    /// **S4 验收**：`Curve.Keyframes` / `ScalarKey` / `KeyframeInterp` 在两侧语言都可构造。
-    #[cfg(feature = "python")]
-    #[test]
-    fn python_keyframes_curve_matches_lua() {
-        use ze_prerender::placeholder_engine;
-
-        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
-            .expect("脚本 Pod 装配成功");
-        if !python_ready(&assembly) {
-            return;
-        }
-        let lua_source = r#"
-local o = scene.spawn({ Transform { x = 0.0, y = 0.0, z = 0.0 } })
-scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes {
-    keys = {
-        ScalarKey { t = 0.0, value = 0.0 },
-        ScalarKey { t = 1.0, value = 1.5 },
-    },
-    interpolation = KeyframeInterp.Linear,
-}), 1.0)
-"#;
-        let py_source = r#"
-o = scene.spawn([Transform(x=0.0, y=0.0, z=0.0)])
-scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes(
-    keys=[
-        ScalarKey(t=0.0, value=0.0),
-        ScalarKey(t=1.0, value=1.5),
-    ],
-    interpolation=KeyframeInterp.Linear,
-)), 1.0)
-"#;
-        let lua = assembly.run_script(lua_source).expect("Lua Keyframes 脚本");
-        let py = assembly
-            .run_python_script(py_source)
-            .expect("Python Keyframes 脚本");
-        assert_eq!(lua.still_time(), py.still_time());
-
-        let mut scene_lua = Scene::new();
-        let mut scene_py = Scene::new();
-        let recipe_lua = lua.commit(&mut scene_lua).expect("Lua commit");
-        let recipe_py = py.commit(&mut scene_py).expect("Python commit");
-        let ids_lua = fourier_ids(&scene_lua);
-        let ids_py = fourier_ids(&scene_py);
-        assert_eq!(
-            ids_lua
-                .iter()
-                .map(|id| fourier_fingerprint(&scene_lua, *id))
-                .collect::<Vec<_>>(),
-            ids_py
-                .iter()
-                .map(|id| fourier_fingerprint(&scene_py, *id))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            binding_rows(&recipe_lua.forest, &recipe_lua.bindings, &ids_lua),
-            binding_rows(&recipe_py.forest, &recipe_py.bindings, &ids_py)
-        );
-    }
-
     /// **D+ 验收**：capability 是普通 Python 模块 —— `import zela.scene` 可用。
     #[cfg(feature = "python")]
     #[test]
@@ -2123,60 +2064,6 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
         assert!((circles[0].0.radius - 0.5).abs() < 1e-4);
     }
 
-    /// **B3-Pd 验收（真实 domain）**：同一小段场景由 Lua 与 JS 编排，
-    /// 装配产物（`SceneScript` 规范 JSON）**逐字节相同**。
-    ///
-    /// 覆盖：相机 / 圆 + 填充 / 折线书写 / 半径动画（含枚举变体与数组）。
-    #[cfg(feature = "js")]
-    #[test]
-    fn js_and_lua_produce_the_same_scene_script() {
-        use ze_prerender::placeholder_engine;
-
-        let lua_source = r#"
-scene.spawn({ Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 } })
-local dot = scene.spawn({
-    Circle { x = -0.8, y = 0.0, r = 0.8 },
-    Fill { color = Color { r = 80, g = 200, b = 255, a = 255 } },
-})
-local points = {}
-for i = 0, 8 do
-    local x = -2.0 + 4.0 * i / 8
-    points[#points + 1] = Vec2 { x = x, y = 0.7 }
-end
-scene.spawn({ Reveal { points = points, closed = false } })
-scene.animate(dot, scene.clip("CircleRadius", Curve.Ramp { from = 0.8, to = 1.6, dur = 0.5 }), 0.5)
-"#;
-        let js_source = r#"
-scene.spawn([Camera2D({ center: Vec2({ x: 0.0, y: 0.0 }), scale: 40.0 })]);
-const dot = scene.spawn([
-  Circle({ x: -0.8, y: 0.0, r: 0.8 }),
-  Fill({ color: Color({ r: 80, g: 200, b: 255, a: 255 }) }),
-]);
-const points = [];
-for (let i = 0; i <= 8; i += 1) {
-  const x = -2.0 + 4.0 * i / 8;
-  points.push(Vec2({ x: x, y: 0.7 }));
-}
-scene.spawn([Reveal({ points: points, closed: false })]);
-scene.animate(dot, scene.clip("CircleRadius", Curve.Ramp({ from: 0.8, to: 1.6, dur: 0.5 })), 0.5);
-"#;
-
-        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
-            .expect("装配成功（含 js）");
-        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
-        let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
-
-        assert_eq!(
-            lua.still_time(),
-            js.still_time(),
-            "两侧静止时刻必须一致"
-        );
-        assert_eq!(
-            lua.to_json().expect("serialize lua"),
-            js.to_json().expect("serialize js"),
-            "Lua 与 JS 的装配产物必须逐字节相同"
-        );
-    }
 
     /// **提案 #6 C 验收**：位置参数 + `Color.a` 默认值 + 通道常量（`Circle.channel.radius`）
     /// 在 Lua / JS 两侧产出的装配产物**逐字节相同**。

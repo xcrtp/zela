@@ -11,8 +11,6 @@
 use std::any::Any;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use ze_time::Curve as NativeCurve;
-use ze_scene_core::animation::target::{Target, target_ctor_by_name};
 use ze_scene_core::components::Reveal as NativeReveal;
 use ze_scene_core::scene_script::{
     Handle as ScriptHandle, SceneEncoder, SceneScript, handle_ref,
@@ -29,11 +27,10 @@ use ze_scene_contract::{Components, Group as NativeGroup, GroupId as NativeGroup
 use crate::content_service::PathStore;
 use crate::RegisterSceneComponent;
 use crate::types::{
-    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, Curve, CurveWindow, Dash,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, CurveWindow, Dash,
     Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
     Path, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, ShaderVariant, Stroke,
     Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D,
-    TransformChannel,
 };
 use ze_scene_core::components::{
     Light as NativeLight, Material3D as NativeMaterial3D, MorphShape as NativeMorphShape,
@@ -56,31 +53,6 @@ pub const FINISH_PATH: &str = "zela.scene::__finish";
 /// 内部交接函数：丢弃上一轮录制状态（每次 `run` 前调用）。
 pub const RESET_PATH: &str = "zela.scene::__reset";
 
-/// 一个"动画动作"：**目标**（枚举或 Transform 通道）+ 已转换的曲线。
-#[derive(Clone)]
-struct Clip {
-    target: ClipTarget,
-    curve: NativeCurve,
-}
-
-/// 脚本侧动作目标：**地址 → 构造器**（提案 #6：不再有集中枚举）。
-#[derive(Clone, Copy)]
-enum ClipTarget {
-    /// 地址表里查到的构造器（`CircleRadius` / `Circle.radius` 都落到这里）。
-    Ctor(fn(ze_scene_contract::ObjectId) -> std::sync::Arc<dyn Target>),
-    /// S3：显式 Transform 通道（B7 起没有 `Auto`）。
-    Transform(TransformChannel),
-}
-
-impl ClipTarget {
-    fn make(self) -> fn(ze_scene_contract::ObjectId) -> std::sync::Arc<dyn Target> {
-        match self {
-            ClipTarget::Ctor(make) => make,
-            ClipTarget::Transform(channel) => channel.to_native().make(),
-        }
-    }
-}
-
 /// Service 的全部可变状态（`Pod` 只有 `&self` ⇒ 内部可变性）。
 struct Recording {
     /// 一个句柄 → 一组组件（组件组；`spawn` 时展开）。
@@ -89,7 +61,6 @@ struct Recording {
     /// 把对象句柄当组件传给 `spawn` 会得到 `CrossPodHandle`（明确错误），
     /// 而不是撞上同槽位的组件。
     components: HandleTable<Components>,
-    clips: HandleTable<Clip>,
     objects: HandleTable<ScriptHandle>,
     /// 与 `objects` 同步的记录（`HandleTable` 不提供遍历）：`finish` 时快照，
     /// 供表达式绑定把 pod 句柄转成脚本句柄（提案 #6 B）。
@@ -103,7 +74,6 @@ impl Recording {
     fn new() -> Self {
         Self {
             components: HandleTable::new(PodId::next()),
-            clips: HandleTable::new(PodId::next()),
             objects: HandleTable::new(PodId::next()),
             object_log: Vec::new(),
             encoder: SceneEncoder::new(),
@@ -202,23 +172,6 @@ impl SceneServicePod {
         // ── 对象 ────────────────────────────────────────────────────────
         registry.register_fn1::<Vec<Handle>, Handle>("zela.scene::spawn", scene_spawn);
         registry.register_fn1::<Handle, ()>("zela.scene::despawn", scene_despawn);
-
-        // ── 动画：目标地址 + 曲线枚举 ───────────────────────────────────
-        registry.register_fn2::<String, Curve, Handle>("zela.scene::clip", scene_clip);
-        registry.register_fn2::<TransformChannel, Curve, Handle>(
-            "zela.scene::clip_transform",
-            scene_clip_transform,
-        );
-        registry.register_fn3_named::<Handle, Handle, f64, ()>(
-            "zela.scene::animate",
-            "ze_pod_core.Handle",
-            "ze_pod_core.Handle",
-            "f64",
-            "()",
-            scene_animate,
-        );
-        registry.register_fn2::<Handle, Handle, ()>("zela.scene::parallel", scene_parallel);
-        registry.register_fn1::<f64, ()>("zela.scene::wait", scene_wait);
 
         // ── 内部交接（不是脚本可见 API；走 erased / `Pod::call`）────────────
         registry.register_erased(
@@ -846,62 +799,4 @@ fn scene_despawn(pod: &dyn Pod, object: Handle) {
     if let Ok(handle) = rec.objects.get(&object).copied() {
         rec.encoder.despawn(handle);
     }
-}
-
-fn scene_clip(pod: &dyn Pod, target: String, curve: Curve) -> Handle {
-    let mut rec = service(pod).rec.borrow_mut();
-    let make = match target_ctor_by_name(&target) {
-        Some((make, _)) => make,
-        None => {
-            rec.fail(format!(
-                "未知动画目标：`{target}`（可用：`Circle.radius` / `Reveal.end` / …）"
-            ));
-            // 装配已失败；这里放一个占位目标，保证句柄表形状一致。
-            ze_scene_core::animation::target::make_circle_radius
-        }
-    };
-    rec.clips.insert(Clip {
-        target: ClipTarget::Ctor(make),
-        curve: curve.to_native(),
-    })
-}
-
-fn scene_clip_transform(pod: &dyn Pod, channel: TransformChannel, curve: Curve) -> Handle {
-    service(pod).rec.borrow_mut().clips.insert(Clip {
-        target: ClipTarget::Transform(channel),
-        curve: curve.to_native(),
-    })
-}
-
-fn scene_animate(pod: &dyn Pod, object: Handle, clip: Handle, duration: f64) {
-    let mut rec = service(pod).rec.borrow_mut();
-    let object = rec.objects.get(&object).copied().ok();
-    let clip = rec
-        .clips
-        .get(&clip)
-        .ok()
-        .map(|c| (c.target, c.curve.clone()));
-    let (Some(object), Some((target, curve))) = (object, clip) else {
-        return;
-    };
-    rec.encoder
-        .animate_with(object, target.make(), curve, duration);
-}
-
-fn scene_parallel(pod: &dyn Pod, object: Handle, clip: Handle) {
-    let mut rec = service(pod).rec.borrow_mut();
-    let object = rec.objects.get(&object).copied().ok();
-    let clip = rec
-        .clips
-        .get(&clip)
-        .ok()
-        .map(|c| (c.target, c.curve.clone()));
-    let (Some(object), Some((target, curve))) = (object, clip) else {
-        return;
-    };
-    rec.encoder.parallel_with(object, target.make(), curve);
-}
-
-fn scene_wait(pod: &dyn Pod, seconds: f64) {
-    service(pod).rec.borrow_mut().encoder.wait(seconds);
 }

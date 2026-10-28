@@ -10,10 +10,10 @@
 // `binding.rs` 按 `TypeSpec` **自动生成**。
 
 use crate::types::{
-    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, Curve, CurveWindow, Dash,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, CurveWindow, Dash,
     Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathList,
     PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, Stroke, Surface, Text,
-    Transform, Transform3D, TransformChannel,
+    Transform, Transform3D,
 };
 use ze_pod_core::Handle;
 use ze_pod_macro::capability;
@@ -38,7 +38,7 @@ use ze_pod_macro::capability;
 /// `Reveal.end` / … 同时可用；未知地址在装配期显式失败。
 #[capability(
     namespace = "zela.scene",
-    version = "11",
+    version = "12",
     description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
     bindings
 )]
@@ -106,26 +106,6 @@ pub struct SceneApi<'a> {
     /// 销毁对象（`commit` 时执行）。
     pub despawn: fn(&'a dyn Pod, object: Handle) -> (),
 
-    /// 构造动画动作：**目标地址** + **曲线枚举**（未知地址在装配期即报错）。
-    ///
-    /// 地址可写旧名（`CircleRadius`）或规范形式（`Circle.radius`）。
-    pub clip: fn(&'a dyn Pod, target: String, curve: Curve) -> Handle,
-
-    /// 构造 **Transform 通道**动作（S3：Position / Rotation / Scale）。
-    ///
-    /// 显式指定写哪一列，因此 `Position` 与 `Rotation` 可以在 `parallel` 里并存。
-    /// B7 起这是写 `Transform` 的**唯一**入口（`Target.TransformValue` 已删除）。
-    pub clip_transform: fn(&'a dyn Pod, channel: TransformChannel, curve: Curve) -> Handle,
-
-    /// 顺序播放一段动画（动作 + 时长，秒）。
-    pub animate: fn(&'a dyn Pod, object: Handle, clip: Handle, duration: f64) -> (),
-
-    /// 与**上一段**动画同区间的额外动作。
-    pub parallel: fn(&'a dyn Pod, object: Handle, clip: Handle) -> (),
-
-    /// 推进时序游标（不产生动画段）。
-    pub wait: fn(&'a dyn Pod, seconds: f64) -> (),
-
     /// 构造 Surface（B3 Step 0）：`Surface` + `SurfaceRenderer` + `SurfaceTexture` 组件组。
     pub surface: fn(&'a dyn Pod, surface: Surface) -> Handle,
 
@@ -179,9 +159,9 @@ pub struct ContentApi<'a> {
 // 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
 
 /// `zela.scene` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
-pub const SCENE_API_VERSION: &str = "11";
+pub const SCENE_API_VERSION: &str = "12";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 16_274_693_131_949_166_351;
+pub const SCENE_API_FINGERPRINT: u64 = 133_947_965_974_789_799;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

@@ -1108,7 +1108,9 @@
 |---|---|---|---|---|
 | AP-01 | **阶段 0：记账归位** | scene / xtask / fixtures | **已关闭（0）** | ① `TransformHierarchyError(Option<String>)` → `{ chain: Option<Vec<ObjectId>> }`（与其余四处环诊断同口径，`message()` 只留调试用）；② 该文件的 `locals` / `parents` / `out` 从 `HashMap` 改 `BTreeMap`，并把 `crates/scene/zela-scene-ecs/src/transform_hierarchy.rs` 纳入确定性门禁（`WorldTransforms::from_map` 改收 `IntoIterator`）——从"注释保证"变成"机器保证"；③ **W5 实测**：Rust `f64::sin` 与 JS `Math.sin` 在 6283 个采样点上有 **160 处差 1 ulp**（cos 195 处），首个反例 `x = 0.117`；新增 fixture `transcendental.json`（`cross_language: false`），JS/Lua runner 显式跳过并回报跳过数，Rust harness 照常守护；④ 累计项 AN-03 / AN-05 / AO-04 / W-B 保持原状态（不在本批做）。 |
 
-**AP 段小计**：已关闭 1（AP-01）· 部分关闭 0 · 记账 0 · 未执行 0。
+| AP-02 | **子阶段 A1：删脚本侧旧动画 API** | scene-api / app / xtask | **已关闭（A1）** | `SceneApi` 删除 `clip` / `clip_transform` / `animate` / `parallel` / `wait` 五个字段（`zela.scene` 11 → **12**，指纹重钉 `133_947_965_974_789_799`）；`scene_service` 删除 `Clip` / `ClipTarget` / `clips` 句柄表与五个注册/实现；`capability_exemptions.txt` 的 5 条 `scene:*` 一并清空（coverage 56/68 + 豁免 12）；仅存的两条使用方测试（`python_keyframes_curve_matches_lua` / `js_and_lua_produce_the_same_scene_script`）随 API 删除。Rust 侧 `SceneEncoder` / `Timeline` 旧接口与 `Name` 组件保留到 A3（脚本已不调用）。 |
+
+**AP 段小计**：已关闭 2（AP-01、AP-02）· 部分关闭 0 · 记账 0 · 未执行 0。
 
 ---
 
