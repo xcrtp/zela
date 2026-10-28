@@ -180,6 +180,8 @@ fn value_to_literal(value: &Value) -> Option<Literal> {
             None => return None,
         },
         Value::Bytes(_) => return None,
+        // `Iter` / `Stream` 没有字面量形态 ⇒ 不折叠（保守保留原节点，不猜值）。
+        Value::Iter(_) | Value::Stream(_) => return None,
     })
 }
 

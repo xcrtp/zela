@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：9 个 · 4285 行
+- 源文件：10 个 · 4632 行
 
 ### 文件清单
 
@@ -21,9 +21,10 @@
 | `src/codata.rs` | 215 | codata：**生产性展开**（不是图灵完备）。 |
 | `src/expr.rs` | 1206 | 表达式树：节点、字面量、通道、算子引用，以及装配期校验。 |
 | `src/graph_view.rs` | 221 | **Expr DAG 图视图**：把表达式树投影成 [`ze_graph_core::Topology`]。 |
-| `src/lib.rs` | 99 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
+| `src/iter.rs` | 286 | 可迭代类型：**`Iter`（有穷）与 `Stream`（余归纳）是两个类型**。 |
+| `src/lib.rs` | 101 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
 | `src/pass.rs` | 293 | **Pass 抽象**：把已有的能力收进一个约定（不是为假想需求预付）。 |
-| `src/program.rs` | 1664 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
+| `src/program.rs` | 1723 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
 | `src/reference.rs` | 253 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
 | `src/walk.rs` | 165 | — |
 
@@ -32,17 +33,20 @@
 ```mermaid
 graph LR
     f0["src/analysis.rs"]
+    f5["src/codata.rs"]
     f1["src/expr.rs"]
     f2["src/graph_view.rs"]
-    f4["src/pass.rs"]
-    f6["src/program.rs"]
-    f5["src/reference.rs"]
+    f4["src/iter.rs"]
+    f6["src/pass.rs"]
+    f8["src/program.rs"]
+    f7["src/reference.rs"]
     f3["src/walk.rs"]
     f0 --> f1
     f0 --> f2
     f1 --> f3
     f4 --> f5
-    f6 --> f1
+    f6 --> f7
+    f8 --> f1
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -70,6 +74,8 @@ graph LR
 | `src/expr.rs` | `pub struct Expr` |
 | `src/expr.rs` | `pub enum ExprError` |
 | `src/graph_view.rs` | `pub struct ExprGraphView<'a>` |
+| `src/iter.rs` | `pub struct ValueIter` |
+| `src/iter.rs` | `pub struct ValueStream` |
 | `src/pass.rs` | `pub enum PassKind` |
 | `src/pass.rs` | `pub enum Semantics` |
 | `src/pass.rs` | `pub struct PassInfo` |

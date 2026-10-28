@@ -67,6 +67,11 @@ pub enum Value {
     /// `Layout` ⇒ 永远慢路径）。下沉的意义是让文本与 `zela.Path` / `acme.Tensor`
     /// 走**同一套**协商机制，而不是"看起来快"。
     Bytes(ValueBytes),
+    /// **阶段 3**：有穷序列（长度已知 ⇒ 折叠，归纳侧；见 [`crate::iter::ValueIter`]）。
+    Iter(crate::iter::ValueIter),
+    /// **阶段 3**：余归纳前沿（`depth` 上界随值走，越界显式失败；
+    /// 见 [`crate::iter::ValueStream`]）。
+    Stream(crate::iter::ValueStream),
 }
 
 /// 文本的命名类型（阶段 2：`Text` 下沉为 `Bytes + zela.Text`）。
@@ -473,6 +478,22 @@ impl Value {
         }
     }
 
+    /// 有穷序列视图（`Iter`）。
+    pub fn as_iter(&self) -> Option<&crate::iter::ValueIter> {
+        match self {
+            Value::Iter(iter) => Some(iter),
+            _ => None,
+        }
+    }
+
+    /// 余归纳前沿视图（`Stream`）。
+    pub fn as_stream(&self) -> Option<&crate::iter::ValueStream> {
+        match self {
+            Value::Stream(stream) => Some(stream),
+            _ => None,
+        }
+    }
+
     /// `Vec2` 视图。
     pub fn as_vec2(&self) -> Option<[f32; 2]> {
         self.scalar().and_then(Scalar::as_vec2)
@@ -517,6 +538,26 @@ impl Value {
                     out.extend_from_slice(bytes.ty.as_bytes());
                     out.extend_from_slice(&(bytes.bytes.len() as u32).to_le_bytes());
                     out.extend_from_slice(&bytes.bytes);
+                }
+            }
+            // **阶段 3**：`Iter` / `Stream` 各有独立标签（8 / 9）；元素逐个走同一套
+            // 规范编码（每个元素自身是自定界的）⇒ 逐位可复现。
+            Value::Iter(iter) => {
+                out.push(8);
+                out.extend_from_slice(&(iter.len() as u32).to_le_bytes());
+                for item in iter.items() {
+                    out.extend_from_slice(&item.canonical_bytes());
+                }
+            }
+            Value::Stream(stream) => {
+                out.push(9);
+                out.extend_from_slice(&stream.depth().to_le_bytes());
+                out.extend_from_slice(&(stream.levels().len() as u32).to_le_bytes());
+                for level in stream.levels() {
+                    out.extend_from_slice(&(level.len() as u32).to_le_bytes());
+                    for item in level {
+                        out.extend_from_slice(&item.canonical_bytes());
+                    }
                 }
             }
         }
@@ -632,6 +673,22 @@ pub enum EvalError {
     /// `exists` 没有在装配期折叠（对象集只有装配期才知道）⇒ 显式失败。
     #[error("`exists` 必须在装配期折叠成常量（求值期没有对象集）")]
     UnfoldedExists,
+    /// `Iter` 的元素必须同型（`Iter<T>` 的 `T` 不是装饰：`sum` / `map` 都依赖它）。
+    #[error("Iter 的元素必须同型：第 {index} 个是 {actual}，序列是 {expected}")]
+    IterElemType {
+        index: usize,
+        expected: &'static str,
+        actual: &'static str,
+    },
+    /// `Iter` 的元素不是数值 ⇒ 不能求和（不做隐式提升）。
+    #[error("Iter 的元素 `{actual}` 不能参与求和")]
+    IterNotSummable { actual: &'static str },
+    /// `Stream` 的观察深度超过**产物里登记的上界**（不静默截断）。
+    #[error("Stream 的观察深度 {requested} 超过产物上界 {depth}")]
+    StreamDepth { requested: u32, depth: u32 },
+    /// `Stream` 的层数与 `depth` 不一致（构造期就拒绝，不留"看起来对"的产物）。
+    #[error("Stream 的层数 {levels} 与 depth {depth} 不一致")]
+    StreamShape { depth: u32, levels: usize },
 }
 
 impl EvalError {
@@ -899,6 +956,8 @@ pub(crate) fn value_kind(value: &Value) -> &'static str {
         // 文本是 `Bytes + zela.Text`：诊断词汇仍叫 `text`（与通道 / 错误消息一致）。
         Value::Bytes(bytes) if bytes.ty == TEXT_TYPE => "text",
         Value::Bytes(_) => "bytes",
+        Value::Iter(_) => "iter",
+        Value::Stream(_) => "stream",
     }
 }
 

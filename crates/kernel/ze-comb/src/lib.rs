@@ -62,6 +62,7 @@ pub mod analysis;
 pub mod codata;
 pub mod expr;
 pub mod graph_view;
+pub mod iter;
 pub mod pass;
 pub mod program;
 pub mod reference;
@@ -74,6 +75,7 @@ pub use expr::{
     Node, OpRef,
 };
 pub use graph_view::ExprGraphView;
+pub use iter::{ValueIter, ValueStream};
 pub use pass::{
     AnalysisPass, Lower, LoweredEval, PassInfo, PassKind, PassRegistry, PassRegistryError,
     ReferenceEval, Semantics, TransformPass, Validate, kernel_registry,
