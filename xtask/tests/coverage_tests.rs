@@ -62,8 +62,6 @@ fn capabilities_come_from_source() {
             "scene:spawn",
             "scene:animate",
             "content:text",
-            "TransformChannel:Position",
-            "TransformChannel:Rotation",
             "Target:CircleRadius",
             "Target:MorphT",
             "Target:TransformPosition",
@@ -89,8 +87,7 @@ fn usage_accepts_method_and_constructor_forms() {
         content.text(Text { source = "AB" })
         scene.animate(c, scene.clip("MorphT", Curve.Phase { omega = 1.0 }), 1.0)
         scene.parallel(c, scene.clip("Circle.radius", Curve.Const { value = 1.0 }))
-        scene.clip_transform(TransformChannel.Position, Curve.Const { value = 1.0 })
-        scene.clip_transform(TransformChannel.Rotation, Curve.Const { value = 1.0 })
+        expr.bind { target = Transform.channel.position }
     "#;
     let exemptions: Vec<Exemption> = Vec::new();
     let report = check_coverage(&caps, scripts, &exemptions, GAPS).expect("全部覆盖");

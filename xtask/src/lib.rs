@@ -850,14 +850,17 @@ pub struct CoverageReport {
     pub exempted: Vec<Exemption>,
 }
 
-/// 从源码抽能力清单：`SceneApi` / `ContentApi` 的方法 + 两个动画枚举的变体 +
+/// 从源码抽能力清单：`SceneApi` / `ContentApi` 的方法 +
 /// **目标寻址表**（提案 #6 后是 `FieldSpec` 数据，不再是 `TargetKind` 枚举）。
+///
+/// 5b 之后脚本侧不再有动画枚举（`Curve` / `TransformChannel`）⇒ 不再从
+/// `types.rs` 抽变体；该参数保留只为调用点稳定（`_types_rs`）。
 ///
 /// 任何**整类抽不到**（例如寻址表被挪走）都显式报错 —— 解析规则与源码结构
 /// 脱节时最危险的失败是"安静地少检查"。
 pub fn collect_capabilities(
     api_rs: &str,
-    types_rs: &str,
+    _types_rs: &str,
     target_rs: &str,
     channel_sources: &[(&str, &str)],
 ) -> Result<Vec<Capability>, String> {
@@ -865,15 +868,9 @@ pub fn collect_capabilities(
     for (struct_name, kind) in [("SceneApi", "scene"), ("ContentApi", "content")] {
         out.extend(collect_methods(api_rs, "api.rs", struct_name, kind));
     }
-    out.extend(collect_variants(
-        types_rs,
-        "types.rs",
-        "TransformChannel",
-        "TransformChannel",
-    ));
     out.extend(collect_targets(target_rs));
     out.extend(collect_channel_capabilities(channel_sources));
-    for kind in ["scene", "content", "Target", "TransformChannel"] {
+    for kind in ["scene", "content", "Target"] {
         if !out.iter().any(|capability| capability.kind == kind) {
             return Err(format!(
                 "从源码抽不到任何 `{kind}` 能力 —— 能力清单的解析规则可能已与源码结构脱节\
@@ -1027,41 +1024,6 @@ fn constructor_alias(signature: &str) -> Option<String> {
     is_ident.then(|| ty.to_string())
 }
 
-/// 抽 `pub enum X { … }` 的变体名（跳过注释 / 属性 / 空行）。
-fn collect_variants(src: &str, file: &str, enum_name: &str, owner: &str) -> Vec<Capability> {
-    let header = format!("pub enum {enum_name} {{");
-    let mut out = Vec::new();
-    let mut inside = false;
-    for (index, raw) in src.lines().enumerate() {
-        let line = raw.trim();
-        if !inside {
-            inside = line == header;
-            continue;
-        }
-        if line.starts_with('}') {
-            break;
-        }
-        if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
-            continue;
-        }
-        let name: String = line
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        if name.is_empty() || !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
-            continue;
-        }
-        out.push(Capability {
-            kind: owner.to_string(),
-            name,
-            alias: None,
-            spellings: Vec::new(),
-            location: format!("{file}:{}", index + 1),
-        });
-    }
-    out
-}
-
 /// 抽目标寻址表：两种写法都要认 ——
 ///
 /// ```text
@@ -1076,6 +1038,7 @@ fn collect_targets(src: &str) -> Vec<Capability> {
     let mut out = Vec::new();
     let mut start: Option<usize> = None;
     let (mut name, mut address, mut component, mut field) = (None, None, None, None);
+    let mut composite = false;
     let mut invocation: Option<(usize, String)> = None;
     for (index, raw) in src.lines().enumerate() {
         let line = raw.trim();
@@ -1109,29 +1072,35 @@ fn collect_targets(src: &str) -> Vec<Capability> {
                     address = None;
                     component = None;
                     field = None;
+                    composite = false;
                 }
             }
             Some(line_number) => {
                 if line.starts_with("};") {
-                    if let (Some(name), Some(address), Some(component), Some(field)) = (
-                        name.clone(),
-                        address.clone(),
-                        component.clone(),
-                        field.clone(),
-                    ) {
-                        out.push(target_capability(
-                            SpecFields {
-                                name,
-                                address,
-                                component,
-                                field,
-                            },
-                            line_number,
-                        ));
+                    // **复合目标**（`Camera2DFraming` / `RevealRange`）在 5b 后只剩
+                    // **旧 payload 解码**用途，不再是对作者可见的能力 ⇒ 不进覆盖矩阵。
+                    if !composite {
+                        if let (Some(name), Some(address), Some(component), Some(field)) = (
+                            name.clone(),
+                            address.clone(),
+                            component.clone(),
+                            field.clone(),
+                        ) {
+                            out.push(target_capability(
+                                SpecFields {
+                                    name,
+                                    address,
+                                    component,
+                                    field,
+                                },
+                                line_number,
+                            ));
+                        }
                     }
                     start = None;
                     continue;
                 }
+                composite = composite || line.contains("is_composite: true");
                 name = name.or_else(|| literal_field(line, "name:"));
                 address = address.or_else(|| literal_field(line, "address:"));
                 component = component.or_else(|| literal_field(line, "component:"));
@@ -1160,13 +1129,6 @@ fn target_capability(spec: SpecFields, line_number: usize) -> Capability {
         "{}.channel.{}",
         spec.component, spec.field
     ));
-    if spec.component == "Transform" {
-        spellings.push(format!(
-            "TransformChannel.{}{}",
-            spec.field[..1].to_ascii_uppercase(),
-            &spec.field[1..]
-        ));
-    }
     Capability {
         kind: "Target".to_string(),
         name: spec.name,

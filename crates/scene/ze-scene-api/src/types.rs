@@ -5,7 +5,6 @@
 //   `TypeSpec` + 双向转换 + `IntoPodTypeName`；
 // - 宿主侧 Service 把它们的值转成场景原语（`ze_object` / `ze_time` …）。
 
-use ze_scene_core::animation::target::TransformChannel as NativeTransformChannel;
 use ze_time::Interp as NativeInterp;
 use ze_pod_core::Handle;
 use ze_pod_macro::PodType;
@@ -288,25 +287,6 @@ pub struct Morph {
     pub closed: bool,
     pub t: f32,
     pub samples: u32,
-}
-
-/// Transform 的写入通道（S3；B7 起只有三条显式通道 —— `Auto` 已删除）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PodType)]
-#[pod_type(name = "zela.TransformChannel")]
-pub enum TransformChannel {
-    Position,
-    Rotation,
-    Scale,
-}
-
-impl TransformChannel {
-    pub fn to_native(self) -> NativeTransformChannel {
-        match self {
-            Self::Position => NativeTransformChannel::Position,
-            Self::Rotation => NativeTransformChannel::Rotation,
-            Self::Scale => NativeTransformChannel::Scale,
-        }
-    }
 }
 
 /// 线样式（**纯值**；与组件 `Stroke` 分开，避免"类型构造器返回句柄"的歧义）。

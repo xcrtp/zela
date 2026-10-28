@@ -934,7 +934,6 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("TextureFilter", "render-ir 的采样参数 vs scene-api 的组件视图"),
     ("Transform", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("Transform3D", "ze-notion 的数学变换 vs scene-api 的组件视图"),
-    ("TransformChannel", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
 ];
 
 /// 测试专用 crate 不参与跨 crate 重名门禁（ publish = false，不进生产图）。

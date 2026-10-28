@@ -12,10 +12,10 @@
 # · GAPS 编号必须是 GAPS.md 里**真实存在的表格行**（`| W1-01 |` / `| AG-02 |`），否则检查失败
 # · 该能力一旦被作品覆盖，这一行就会变成"豁免过期"⇒ 检查失败，必须删掉
 #
-# 当前清单：第 5a 批（AK-05）把 manifest 作品全部迁到 `expr.bind` 后，旧动画 API
-# 与 `zela.Curve` 已在 5b 删除（A1 / A2）；下面只剩仍未进作品的 Target / 通道。
-TransformChannel:Position -> AK-05
-TransformChannel:Rotation -> AK-05
-TransformChannel:Scale -> AK-05
-Target:Camera2DFraming -> AK-05
-Target:RevealRange -> AK-05
+# 当前清单：**空**。
+#
+# 5b（A1–A4）删除了脚本侧全部旧动画 API：
+#   · `zela.Curve` 与 `zela.TransformChannel`（Pod 类型）已删除；
+#   · 复合目标 `Camera2DFraming` / `RevealRange` 只剩**旧 payload 解码**用途，
+#     不再是作者可见能力（`collect_targets` 显式跳过 `is_composite: true`）。
+# ⇒ AK-05 的九条豁免已全部兑现并清空。
