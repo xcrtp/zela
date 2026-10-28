@@ -386,7 +386,7 @@ impl VectorFrame {
             -self.origin[1],
         ))
         .compose(ze_notion::Transform2D::scale(ze_notion::Vec2::splat(scale)));
-        let mut items: Vec<zela_render_vector::SceneItem<'_>> = self
+        let items: Vec<zela_render_vector::SceneItem<'_>> = self
             .draws
             .iter()
             .map(|recorded| {
@@ -401,26 +401,24 @@ impl VectorFrame {
                 }
             })
             .collect();
-        let reveal_items: Vec<(ze_render_ir::Shape2D, ze_render_ir::Style2D)> = self
-            .reveals
-            .iter()
-            .filter_map(|reveal| {
-                clip_reveal(&reveal.path, reveal.start, reveal.end)
-                    .map(|shape| (shape, reveal.style.clone()))
-            })
-            .collect();
-        items.extend(reveal_items.iter().map(|(shape, style)| {
-            let mut style = style.clone();
-            style.stroke_width *= scale;
-            style.paint.background_width *= scale;
-            zela_render_vector::SceneItem {
-                shape,
-                transform: to_canvas,
-                style,
-            }
-        }));
         let mut records =
             zela_render_vector::scene_records(&items, canvas).map_err(|error| error.to_string())?;
+        // **阶段 2（降格）**：reveal 不再逐帧裁剪几何 —— 完整折线 + 曲线窗口，
+        // 逐帧只变两个 f32（`curve_window` 的单位是曲线索引 + t）。
+        // 与 wgpu 的 reveal 管线同语义（着色器丢弃区间外参数），只是换算发生在 CPU。
+        for reveal in &self.reveals {
+            let Some([lo, hi]) = reveal_window(&reveal.path, reveal.start, reveal.end) else {
+                continue; // 空区间 / 退化路径 ⇒ 本帧没有可见段
+            };
+            let base = reveal_base(&reveal.path);
+            let mut style = reveal.style.clone();
+            style.stroke_width *= scale;
+            style.paint.background_width *= scale;
+            records.extend(
+                zela_render_vector::window_records(&base, lo, hi, &style, to_canvas, canvas)
+                    .map_err(|error| format!("reveal：{error}"))?,
+            );
+        }
         // **PH Step 1**：形变项排在 reveal 之后（两者同为 z = 0 的稳定序，与 wgpu 的
         // `MorphQueue` / `RevealQueue` 都在 `DrawQueue` 之后一致）。
         for (index, morph) in self.morphs.iter().enumerate() {
@@ -941,10 +939,62 @@ fn overlay_records(
         .collect()
 }
 
-/// 把 reveal 的 `[start, end]`（归一化弧长）裁成一条**开放折线**（B14 / X4-01）。
+/// **阶段 2**：reveal 的几何基座 —— 完整折线（**只由路径决定，与 `[start, end]` 无关**）。
 ///
-/// 与 wgpu 的 reveal 管线同语义：几何按弧长参数化、区间外不可见；区别只是
-/// wgpu 在着色器里丢弃，这里在 CPU 裁剪。`None` = 本帧没有可见段。
+/// 与裁剪版的区别：这里**不截断**，可见部分交给 `curve_window` 在着色器里丢弃。
+/// 同一份路径逐帧产出逐字节相同的几何（每段一条直线三次曲线）。
+fn reveal_base(path: &Path2D) -> Path2D {
+    Path2D::from_polyline(&path.flatten(0.25), false)
+}
+
+/// **阶段 2**：把 reveal 的归一化弧长 `[start, end]` 换算成**曲线窗口**（曲线索引 + t）。
+///
+/// 口径与后端 `params_of` 一致：把展开后的折线按弦长参数化，第 `i` 段占
+/// `[i, i+1)`；区间端点落在段内就带小数。`None` = 本帧没有可见段。
+fn reveal_window(path: &Path2D, start: f32, end: f32) -> Option<[f32; 2]> {
+    let (start, end) = (start.clamp(0.0, 1.0), end.clamp(0.0, 1.0));
+    if end <= start {
+        return None;
+    }
+    let flat = path.flatten(0.25);
+    if flat.len() < 2 {
+        return None;
+    }
+    let mut cumulative = Vec::with_capacity(flat.len());
+    let mut total = 0.0f32;
+    cumulative.push(0.0);
+    for pair in flat.windows(2) {
+        total += (pair[1] - pair[0]).length();
+        cumulative.push(total);
+    }
+    if total <= f32::EPSILON {
+        return None;
+    }
+    let locate = |fraction: f32| -> f32 {
+        let target = fraction * total;
+        for i in 0..flat.len() - 1 {
+            if cumulative[i + 1] >= target {
+                let span = cumulative[i + 1] - cumulative[i];
+                let t = if span > f32::EPSILON {
+                    (target - cumulative[i]) / span
+                } else {
+                    0.0
+                };
+                return i as f32 + t.clamp(0.0, 1.0);
+            }
+        }
+        (flat.len() - 1) as f32
+    };
+    let lo = locate(start);
+    let hi = locate(end);
+    (hi > lo).then_some([lo, hi])
+}
+
+/// **A/B 参考实现（仅测试）**：旧口径 —— 在 CPU 上按弧长裁成开放折线。
+///
+/// 保留它是为了 `reveal_window_matches_the_cpu_clip` 的像素对拍：新口径（窗口）与
+/// 旧口径（裁剪）必须在容差内一致。生产路径不再调用它。
+#[cfg(test)]
 fn clip_reveal(path: &Path2D, start: f32, end: f32) -> Option<ze_render_ir::Shape2D> {
     let (start, end) = (start.clamp(0.0, 1.0), end.clamp(0.0, 1.0));
     if end <= start {
@@ -1084,5 +1134,90 @@ mod tests {
         // 区间倒置 / 空区间 ⇒ 不可见（不是"整段"）。
         assert!(clip_reveal(&path, 0.5, 0.5).is_none());
         assert!(clip_reveal(&path, 0.8, 0.2).is_none());
+    }
+
+    /// **阶段 2**：归一化弧长 → 曲线索引 + t（窗口口径）。
+    #[test]
+    fn reveal_window_maps_arc_length_to_curve_index() {
+        let path = Path2D::from_polyline(
+            &[
+                Vec2::new(0.0, 0.0),
+                Vec2::new(5.0, 0.0),
+                Vec2::new(10.0, 0.0),
+            ],
+            false,
+        );
+        assert_eq!(reveal_window(&path, 0.0, 1.0), Some([0.0, 2.0]));
+        let half = reveal_window(&path, 0.0, 0.5).expect("半段可见");
+        assert!((half[1] - 1.0).abs() < 1e-3, "半程应落在第 1 段末尾，实测 {half:?}");
+        assert!(reveal_window(&path, 0.5, 0.5).is_none());
+        assert!(reveal_window(&path, 0.8, 0.2).is_none());
+    }
+
+    /// **E2 对拍（阶段 2）**：新口径（完整折线 + 窗口）与旧口径（CPU 裁剪）
+    /// 必须在**容差内**一致 —— 判据是像素，不是"没有报错"。
+    ///
+    /// 允许差异来自两条路径的浮点运算顺序不同（着色器在 `t` 处求值 vs CPU 插值）；
+    /// 视觉上不可见的 1–2 级通道差不算不一致。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn reveal_window_matches_the_cpu_clip() {
+        use ze_notion::{Color32, Transform2D};
+        use ze_render_ir::Style2D;
+
+        let path = Path2D::from_polyline(
+            &[
+                Vec2::new(8.0, 32.0),
+                Vec2::new(20.0, 18.0),
+                Vec2::new(32.0, 46.0),
+                Vec2::new(44.0, 22.0),
+                Vec2::new(56.0, 34.0),
+            ],
+            false,
+        );
+        let style = Style2D {
+            fill: None,
+            stroke: Some(Color32::WHITE),
+            stroke_width: 3.0,
+            ..Default::default()
+        };
+        let canvas = (64u32, 64u32);
+        let base = reveal_base(&path);
+        let [lo, hi] = reveal_window(&path, 0.25, 0.75).expect("区间有效");
+        let via_window = zela_render_vector::window_records(
+            &base,
+            lo,
+            hi,
+            &style,
+            Transform2D::identity(),
+            canvas,
+        )
+        .expect("窗口记录");
+        let shape = clip_reveal(&path, 0.25, 0.75).expect("裁剪记录");
+        let via_clip = zela_render_vector::scene_records(
+            &[zela_render_vector::SceneItem {
+                shape: &shape,
+                transform: Transform2D::identity(),
+                style: style.clone(),
+            }],
+            canvas,
+        )
+        .expect("裁剪映射");
+
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let a = zela_render_vector::render_2d(64, 64, 1, clear, &via_window).expect("窗口渲染");
+        let b = zela_render_vector::render_2d(64, 64, 1, clear, &via_clip).expect("裁剪渲染");
+        let mut max_diff = 0u8;
+        let mut changed = 0usize;
+        for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
+            let diff = x.iter().zip(y).map(|(p, q)| p.abs_diff(*q)).max().unwrap_or(0);
+            max_diff = max_diff.max(diff);
+            changed += usize::from(diff > 0);
+        }
+        assert!(max_diff <= 4, "窗口与裁剪的最大通道差 {max_diff} 超出容差");
+        assert!(
+            changed < 200,
+            "差异像素 {changed} 过多（应只在抗锯齿边缘的 1–2 级差异）"
+        );
     }
 }

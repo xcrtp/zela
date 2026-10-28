@@ -737,9 +737,10 @@ mod tests {
         assert!(scene.contains(handle));
     }
 
-    /// M4-3b 消费方：`FunctionGraph::refresh` 用 `Scene::set` 覆盖既有 `Path`。
+    /// **阶段 2**：`FunctionGraph::refresh` 在边距内**只移动 `CurveWindow`**，
+    /// 几何（`Path`）逐位不变；超出边距才回落为重采样 + 整窗。
     #[test]
-    fn function_graph_refresh_rewrites_path() {
+    fn function_graph_refresh_moves_the_window() {
         let mut scene = crate::scene::Scene::new();
         let graph = FunctionGraph::new(
             ze_notion::FunctionX2Y::new(|x: f32| x),
@@ -748,23 +749,35 @@ mod tests {
         let handle = graph
             .build(&mut scene, StrokeSolid::new(1.0, (0, 0, 0, 255)))
             .expect("FunctionGraph 已登记");
+        let sampled: Vec<ze_notion::PathCommand> =
+            scene.get_mut::<Path>(handle).expect("Path 组件在").0.commands.clone();
 
-        assert!(graph.refresh(&mut scene, handle, 1.0));
-        let path = scene.get_mut::<Path>(handle).expect("Path 组件在");
+        // 边距内（span = 1，phase = 0.5）：只改窗口，不改几何。
+        assert!(graph.refresh(&mut scene, handle, 0.5));
+        let window = *scene.get_mut::<CurveWindow>(handle).expect("窗口组件在");
+        let expected = graph.window_for(0.5).expect("相位在边距内");
+        assert_eq!([window.lo, window.hi], expected);
+        let after: Vec<ze_notion::PathCommand> =
+            scene.get_mut::<Path>(handle).expect("Path 组件在").0.commands.clone();
+        assert_eq!(sampled, after, "边距内刷新不得重写几何");
+
+        // 超出边距（phase = 5 > span）：回落重采样，Path 变成 [0,1] 上的 f(x + 5)。
+        assert!(graph.refresh(&mut scene, handle, 5.0));
         let mut pts = Vec::new();
-        for cmd in &path.0.commands {
+        for cmd in &scene.get_mut::<Path>(handle).expect("Path 组件在").0.commands {
             if let ze_notion::PathCommand::MoveTo(p) | ze_notion::PathCommand::LineTo(p) = cmd {
                 pts.push(*p);
             }
         }
-        // 相位 1.0 加在自变量上：x = {0,1} ⇒ y = {1,2}。
         assert_eq!(
             pts,
             vec![
-                ze_notion::Vec2::new(0.0, 1.0),
-                ze_notion::Vec2::new(1.0, 2.0)
+                ze_notion::Vec2::new(0.0, 5.0),
+                ze_notion::Vec2::new(1.0, 6.0)
             ]
         );
+        let window = *scene.get_mut::<CurveWindow>(handle).expect("窗口组件在");
+        assert_eq!([window.lo, window.hi], [0.0, 1.0], "重采样后窗口应为整条");
 
         // 句柄失效 ⇒ 写入失败（不 panic）。
         assert!(!graph.refresh(&mut scene, ObjectId::DANGLING, 0.0));

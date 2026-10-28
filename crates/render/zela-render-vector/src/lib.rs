@@ -82,7 +82,10 @@ pub fn forget_player_targets() {
 pub mod scene;
 #[cfg(not(target_arch = "wasm32"))]
 pub use scene::render_scene_2d;
-pub use scene::{SceneItem, SceneMapError, fill_paths, morph_records, scene_records};
+pub use scene::{
+    SceneItem, SceneMapError, fill_paths, grow_records, morph_records, param_records,
+    scene_records, window_records,
+};
 
 /// 内容 key：xxh3（64 位，0 保留）。等值内容只上传一次。
 pub fn digest<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> u64 {

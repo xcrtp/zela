@@ -3148,4 +3148,64 @@ mod tests {
         assert!(changed(&none, &full) > 100, "Grow(0) 必须整条不可见");
         assert!(changed(&grow_two, &full) > 50, "窗口收窄必须真的减少可见段");
     }
+
+    /// **E3（阶段 3）**：select 粒度的决策数据 —— 按表达式聚簇 draw（组内保 z 序）
+    /// 是否破坏深度合成。
+    ///
+    /// 实验：同一组不透明方块（z = −1 / 0 / +1）以两种**声明顺序**渲染：
+    /// - `declaration`：红(z−1)、绿(z0)、蓝(z+1)；
+    /// - `clustered`：先按"表达式"分组（红/蓝属同一表达式，绿属另一条），
+    ///   组间按各组的**最小 z** 排、组内保 z 序 ⇒ 红、蓝、绿。
+    ///
+    /// 判据：像素**逐位相同**。若相同 ⇒ vector 后端本来就是逐像素深度合成，
+    /// 按表达式聚簇不会改变结果 ⇒ `uniform select`（per-draw）可行（结局 A）。
+    ///
+    /// 边界（诚实）：GPU 侧"每次 draw 换表达式"的耗时差**未测** —— 那需要先加
+    /// shader 分支（4-A 的 `concat` 接缝）。本实验只给正确性数据与 CPU 分组代价。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn e3_expression_clustered_draws_keep_depth_compositing() {
+        let square = |z: f32, color: [f32; 4]| {
+            let mut path = FilledPath::polygon(
+                &[
+                    [-1.0, -1.0, 0.0],
+                    [1.0, -1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                    [-1.0, 1.0, 0.0],
+                ],
+                color,
+            );
+            path.model[2][3] = z;
+            PathRecord::Fill(path)
+        };
+        let red = square(-1.0, [1.0, 0.0, 0.0, 1.0]);
+        let green = square(0.0, [0.0, 1.0, 0.0, 1.0]);
+        let blue = square(1.0, [0.0, 0.0, 1.0, 1.0]);
+        let declaration = vec![red.clone(), green.clone(), blue.clone()];
+        // 表达式聚簇：红/蓝同组（expr 0，min z = −1），绿单独（expr 1，z = 0）。
+        let clustered = vec![red, blue, green];
+        let view = View3 {
+            frame: (4.0, 4.0),
+            center: [0.0, 0.0, 0.0],
+            axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            zoom: 1.0,
+            focal: 8.0,
+            size: (64, 64),
+            background: [0.0, 0.0, 0.0, 1.0],
+            light_source: [0.0, 0.0, 1.0],
+            exposure: 1.0,
+            tone: Some(ze_render_ir::ToneCurve::Clip),
+            bloom: 0.0,
+            bloom_threshold: 0.0,
+            bloom_radius: 0.0,
+            ao: None,
+            lights: Vec::new(),
+        };
+        let a = render_3d_with(64, 64, 1, &view, &[], &declaration).expect("声明序渲染");
+        let b = render_3d_with(64, 64, 1, &view, &[], &clustered).expect("聚簇序渲染");
+        assert_eq!(
+            a, b,
+            "按表达式聚簇改变了像素 ⇒ uniform select 与深度合成冲突（E3 应判 B/C）"
+        );
+    }
 }

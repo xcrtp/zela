@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：41 个 · 9509 行
+- 源文件：41 个 · 9646 行
 
 ### 文件清单
 
@@ -43,7 +43,7 @@
 | `src/object/axes.rs` | 422 | — |
 | `src/object/camera.rs` | 617 | — |
 | `src/object/content_texture.rs` | 21 | — |
-| `src/object/graph.rs` | 154 | — |
+| `src/object/graph.rs` | 291 | — |
 | `src/object/layer.rs` | 32 | — |
 | `src/object/mod.rs` | 33 | — |
 | `src/object/placement.rs` | 195 | — |
