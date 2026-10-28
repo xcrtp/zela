@@ -903,10 +903,10 @@ fn overlay_records(
         }
         options.background_width *= scale;
     };
-    // **PH Step 1**：形变的第二项是差值几何，与首形状同一坐标系 ⇒ 一起缩放进 overlay。
-    let scale_morph = |morph: &mut Option<zela_render_vector::MorphGeometry>| {
-        if let Some(morph) = morph {
-            scale_path(&mut morph.delta);
+    // **阶段 1**：形变 / 窗口的逐帧参数与首形状同一坐标系 ⇒ 差值几何一起缩放进 overlay。
+    let scale_param = |param: &mut Option<zela_render_vector::ParamGeometry>| {
+        if let Some(param) = param {
+            scale_path(&mut param.delta);
         }
     };
     records
@@ -915,14 +915,14 @@ fn overlay_records(
             zela_render_vector::PathRecord::Fill(mut path) => {
                 path.options.overlay = true;
                 scale_path(&mut path.points);
-                scale_morph(&mut path.morph);
+                scale_param(&mut path.param);
                 scale_options(&mut path.options);
                 Ok(zela_render_vector::PathRecord::Fill(path))
             }
             zela_render_vector::PathRecord::Stroke(mut path) => {
                 path.options.overlay = true;
                 scale_path(&mut path.points);
-                scale_morph(&mut path.morph);
+                scale_param(&mut path.param);
                 path.width *= scale;
                 scale_options(&mut path.options);
                 Ok(zela_render_vector::PathRecord::Stroke(path))

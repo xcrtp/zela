@@ -37,9 +37,9 @@ mod render;
 
 pub mod api;
 pub use api::{
-    CameraView, Dash, FilledPath, Gradient, Light, MeshRecord, MorphGeometry, PathOptions,
-    PathRecord, PointsRecord, SecondPaint, StrokedPath, TextureSource, View3, ViewOptions,
-    add_environment,
+    CameraView, Dash, FilledPath, Gradient, Light, MeshRecord, ParamGeometry, ParamKind,
+    PathOptions, PathRecord, PointsRecord, SecondPaint, StrokedPath, TextureSource, View3,
+    ViewOptions, add_environment,
 };
 // B15：同步读回只在 native 存在；浏览器只有异步面（没有阻塞读回）。
 #[cfg(not(target_arch = "wasm32"))]

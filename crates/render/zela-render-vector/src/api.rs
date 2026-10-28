@@ -124,27 +124,111 @@ pub struct FilledPath {
     pub material: Option<[f32; 3]>,
     /// **PD**：可选的后端已实现参数（默认 = 当前行为）。
     pub options: PathOptions,
-    /// **PH Step 1**：形变的第二项（`None` = 普通路径）。
+    /// **PH Step 1 / 参数化几何**：逐帧只变数字的那一半（`None` = 普通路径）。
     ///
-    /// 后端语义是"首形状 + 第二形状"，第二项**不带平移**、权重烤进 `m2`
-    /// ⇒ 公开面收的是**差值形状**（`to − from`），不是目标形状。
-    pub morph: Option<MorphGeometry>,
+    /// 阶段 1 起三种几何动画共用同一 idiom（[`ParamGeometry`]）：
+    /// `Lerp`（形变）/ `Window`（部分显示）/ `Grow`（按曲线数生长）。
+    pub param: Option<ParamGeometry>,
 }
 
-/// 形变的第二项（PH Step 1）：一条**差值形状**与混合权重。
+/// 参数化几何的种类（阶段 1）。
 ///
-/// 后端把第一条记录的位置算成 `m1·from + m2·delta`（`vector.wgsl::curve_h`：第二项
-/// 只加不减、且不加 `m2` 的平移列）⇒ 想要 `from + t·(to − from)`，就传
-/// `delta = to − from`、`mix = t`（打包成 `m2 = t·I`）。
+/// 三者的共同点才是这个类型的意义：**结构（控制点）与逐帧参数分离**。
+/// 作者眼里 `Morph` / `Reveal` / `Grow` 都是"几何上传一次，每帧只换几个数"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    /// 两个同长形状之间按 `mix` 线性插值（`PH` 的形变）。
+    Lerp,
+    /// 只显示曲线索引窗口 `[lo, hi]`（`PE` 的 `curve_window`）。
+    Window,
+    /// 只显示前 `curves` 条曲线 —— `Window` 的特例（`[0, curves]`）。
+    Grow,
+}
+
+/// 一条参数化几何（阶段 1）：`kind` 决定 `params` 的语义，`delta` 只在 `Lerp` 时有内容。
 ///
-/// `delta` 的曲线数必须与首形状一致（后端 `instance()` 显式拒绝
-/// "morph between unaligned shapes"）；本入口在打包前也做同一条检查。
+/// 后端语义不变：`Lerp` 走第二形状（`curve_h` 逐曲线相加，`mix` 烤进 `m2`）；
+/// `Window` / `Grow` 走 `params[0..2]` 的曲线窗口（`vector.wgsl` 的 `params_of`）。
+/// 本类型只负责把三种写法收成**一份**公开面（`param_records`），
+/// 以及给结构指纹一个"只哈希参数、不哈希求值结果"的入口（[`ParamGeometry::param_digest`]）。
 #[derive(Debug, Clone, PartialEq)]
-pub struct MorphGeometry {
-    /// 差值控制点（每段 4 个三次控制点；与首形状同长）。
+pub struct ParamGeometry {
+    /// 参数语义（同时是 digest 的域标签）。
+    pub kind: ParamKind,
+    /// `Lerp` 的差值控制点（`to − from`，与首形状同长；每段 4 个）。其它 kind 为空。
     pub delta: Vec<[f64; 3]>,
-    /// 混合权重 ∈ [0, 1]（`MorphShape.t` 原样带过）。
-    pub mix: f32,
+    /// 定长 f32 参数：
+    /// - `Lerp`：`[mix]`
+    /// - `Window`：`[lo, hi]`（曲线索引 + t，`hi > lo`）
+    /// - `Grow`：`[curves]`（可见曲线数 ≥ 0）
+    pub params: Vec<f32>,
+}
+
+impl ParamGeometry {
+    /// 形变（`Lerp`）：`delta = to − from`，`mix ∈ [0, 1]`。
+    pub fn lerp(delta: Vec<[f64; 3]>, mix: f32) -> Self {
+        Self {
+            kind: ParamKind::Lerp,
+            delta,
+            params: vec![mix],
+        }
+    }
+
+    /// 曲线窗口（`Window`）：单位是**曲线索引 + t**，与后端 `params[0..2]` 同口径。
+    pub fn window(lo: f32, hi: f32) -> Self {
+        Self {
+            kind: ParamKind::Window,
+            delta: Vec::new(),
+            params: vec![lo, hi],
+        }
+    }
+
+    /// 生长（`Grow`）：显示前 `curves` 条曲线（闭合形状的 0 条 = 不可见）。
+    pub fn grow(curves: f32) -> Self {
+        Self {
+            kind: ParamKind::Grow,
+            delta: Vec::new(),
+            params: vec![curves],
+        }
+    }
+
+    /// `Lerp` 的混合权重（其它 kind 为 `None`）。
+    pub fn mix(&self) -> Option<f32> {
+        (self.kind == ParamKind::Lerp).then(|| self.params[0])
+    }
+
+    /// `Window` / `Grow` 对应的曲线窗口 `[lo, hi]`（`Lerp` 为 `None`）。
+    pub fn window_range(&self) -> Option<[f32; 2]> {
+        match (self.kind, self.params.as_slice()) {
+            (ParamKind::Window, [lo, hi]) => Some([*lo, *hi]),
+            (ParamKind::Grow, [curves]) => Some([0.0, *curves]),
+            _ => None,
+        }
+    }
+
+    /// **结构指纹口径**：只哈希 `kind + params`，**不哈希求值结果**（也不哈希 `delta` 的坐标）。
+    ///
+    /// 为什么这样切：几何是派生量（`Path` 对结构指纹失明，见 GAPS AR-05/AR-08）；
+    /// 逐帧真正变化的只有参数。`delta` / `base` 属于"结构上传一次"的一半，由记录本身的
+    /// 结构键负责，不进每帧参数摘要 ⇒ 同一份参数在两次求值后 digest 逐位相同。
+    pub fn param_digest(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        let mut write = |byte: u8| {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        };
+        write(match self.kind {
+            ParamKind::Lerp => b'l',
+            ParamKind::Window => b'w',
+            ParamKind::Grow => b'g',
+        });
+        for param in &self.params {
+            for byte in param.to_bits().to_le_bytes() {
+                write(byte);
+            }
+        }
+        hash
+    }
 }
 
 
@@ -176,7 +260,7 @@ impl FilledPath {
             shade_in_3d: false,
             material: None,
             options: PathOptions::default(),
-            morph: None,
+            param: None,
         }
     }
 }
@@ -407,8 +491,8 @@ pub struct StrokedPath {
     pub model: [[f32; 4]; 3],
     /// **PD**：可选的后端已实现参数（默认 = 当前行为）。
     pub options: PathOptions,
-    /// **PH Step 1**：形变的第二项（`None` = 普通描边）。
-    pub morph: Option<MorphGeometry>,
+    /// **PH Step 1 / 参数化几何**：逐帧只变数字的那一半（`None` = 普通描边）。
+    pub param: Option<ParamGeometry>,
 }
 
 /// 一盏灯（B6 Step 1.2）：编码移植自上游 `rendering/feed.py::lighting`，
@@ -773,10 +857,11 @@ fn prepare_view(
                     path.material,
                 );
                 apply_options(&mut record, &path.options, player, key, true)?;
-                record = attach_morph(
+                record = attach_param(
                     player,
                     record,
-                    path.morph.as_ref(),
+                    path.param.as_ref(),
+                    &path.options,
                     &path.points,
                     &path.ranges,
                     i,
@@ -796,10 +881,11 @@ fn prepare_view(
                     path.shape_bits,
                 );
                 apply_options(&mut record, &path.options, player, key, false)?;
-                record = attach_morph(
+                record = attach_param(
                     player,
                     record,
-                    path.morph.as_ref(),
+                    path.param.as_ref(),
+                    &path.options,
                     &path.points,
                     &path.ranges,
                     i,
@@ -1124,41 +1210,81 @@ async fn frame_to_texture_async(
     player.render_to_async(gpu, &frames, target).await
 }
 
-/// **PH Step 1**：上传形变的**差值形状**并接到记录的第二项（`key2` / `m2`）。
+/// **阶段 1**：把 [`ParamGeometry`] 接进记录 —— 三种 kind 在后端是两条既有通道：
 ///
-/// 第二项的键区与首形状分开（首形状 `1..=n`，这里从 `n+1` 起），否则同一帧里两条
-/// 记录会在同一个 `key` 上互相覆盖；相机视图的 `key_base` 是 `(i+1) << 48`，
-/// 同段内加 `2n` 也不会串到相邻视图。
+/// - `Lerp`：上传**差值形状**并接到第二项（`key2` / `m2 = mix·I`）。第二项的键区与首形状
+///   分开（首形状 `1..=n`，这里从 `n+1` 起），否则同一帧里两条记录会在同一个 `key` 上互相
+///   覆盖；相机视图的 `key_base` 是 `(i+1) << 48`，同段内加 `2n` 也不会串到相邻视图。
+///   `mix = 0` ⇒ **不挂第二项**（`key2 = 0`）：后端完全跳过它，输出逐位等于普通路径。
+/// - `Window` / `Grow`：写 `params[0..2]`（曲线索引 + t）。`Grow` 是 `[0, curves]` 的特例；
+///   `curves = 0` 合法（整条不可见，与窗口 `[0,0]` 同口径）。
 ///
-/// `mix = 0` ⇒ **不挂第二项**（`key2 = 0`）：后端完全跳过它，输出逐位等于普通路径
-/// （这也让 `t = 0` 的首帧与 wgpu 的"起点形状"同口径）。
-fn attach_morph(
+/// 两条通道都不改结构 ⇒ 逐帧只变数字。窗口与 `PathOptions::curve_window` 同义，同时给出
+/// 会**显式报错**（不猜哪一个优先）。
+fn attach_param(
     player: &mut crate::render::Player,
     record: crate::render::Record,
-    morph: Option<&MorphGeometry>,
+    param: Option<&ParamGeometry>,
+    options: &PathOptions,
     points: &[[f64; 3]],
     ranges: &[[u32; 4]],
     index: usize,
     records: usize,
     key_base: u64,
 ) -> Result<crate::render::Record, String> {
-    let Some(morph) = morph else { return Ok(record) };
-    if morph.delta.len() != points.len() || morph.delta.len() % 4 != 0 {
-        return Err(format!(
-            "record {index}: 形变差值控制点数 {} ≠ 首形状 {}（后端逐曲线相加；每段必须 4 个控制点）",
-            morph.delta.len(),
-            points.len()
-        ));
+    let Some(param) = param else { return Ok(record) };
+    match param.kind {
+        ParamKind::Lerp => {
+            let delta = &param.delta;
+            let mix = param.mix().expect("Lerp 的 params 恒为 [mix]");
+            if delta.len() != points.len() || delta.len() % 4 != 0 {
+                return Err(format!(
+                    "record {index}: 形变差值控制点数 {} ≠ 首形状 {}（后端逐曲线相加；每段必须 4 个控制点）",
+                    delta.len(),
+                    points.len()
+                ));
+            }
+            if !mix.is_finite() {
+                return Err(format!("record {index}: 形变权重必须是有限数（收到 {mix}）"));
+            }
+            if mix <= 0.0 {
+                return Ok(record);
+            }
+            let key2 = key_base + records as u64 + index as u64 + 1;
+            upload_path(player, key2, index, delta, ranges)?;
+            Ok(record.morph(key2, mix.min(1.0)))
+        }
+        ParamKind::Window | ParamKind::Grow => {
+            if options.curve_window.is_some() {
+                return Err(format!(
+                    "record {index}: 参数化窗口与 `curve_window` 同时给出（二者同义，只留一个）"
+                ));
+            }
+            let [lo, hi] = param
+                .window_range()
+                .expect("Window / Grow 的 params 形状固定");
+            if !(lo.is_finite() && hi.is_finite()) {
+                return Err(format!(
+                    "record {index}: 窗口端点必须是有限数（收到 [{lo}, {hi}]）"
+                ));
+            }
+            let valid = match param.kind {
+                ParamKind::Window => hi > lo,
+                ParamKind::Grow => hi >= lo && lo >= 0.0,
+                ParamKind::Lerp => unreachable!(),
+            };
+            if !valid {
+                return Err(format!(
+                    "record {index}: {:?} 的参数非法（收到 [{lo}, {hi}]；Window 要求 hi > lo，Grow 要求 0 ≤ lo ≤ hi）",
+                    param.kind
+                ));
+            }
+            let mut record = record;
+            record.params[0] = lo;
+            record.params[1] = hi;
+            Ok(record)
+        }
     }
-    if !morph.mix.is_finite() {
-        return Err(format!("record {index}: 形变权重必须是有限数（收到 {}）", morph.mix));
-    }
-    if morph.mix <= 0.0 {
-        return Ok(record);
-    }
-    let key2 = key_base + records as u64 + index as u64 + 1;
-    upload_path(player, key2, index, &morph.delta, ranges)?;
-    Ok(record.morph(key2, morph.mix.min(1.0)))
 }
 
 /// 上传一条路径并返回曲线数（填充与描边共用）。
@@ -1541,7 +1667,7 @@ mod tests {
                 [0.0, 0.0, 1.0, 0.0],
             ],
             options: Default::default(),
-            morph: None,
+            param: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[line.clone().into()]) {
             Ok(frame) => frame,
@@ -1596,7 +1722,7 @@ mod tests {
             shade_in_3d: false,
             material: None,
             options: Default::default(),
-            morph: None,
+            param: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[fill.into()]) {
             Ok(frame) => frame,
@@ -1621,7 +1747,7 @@ mod tests {
                 [0.0, 0.0, 1.0, 0.0],
             ],
             options: Default::default(),
-            morph: None,
+            param: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[stroke.into()]) {
             Ok(frame) => frame,
@@ -2274,7 +2400,7 @@ mod tests {
                 shade_in_3d: false,
                 material: None,
                 options: Default::default(),
-                morph: None,
+                param: None,
             }
         };
         // 外圈 CCW、内圈 CW（世界 y 向上）。
@@ -2502,7 +2628,7 @@ mod tests {
                 dash,
                 ..Default::default()
             },
-            morph: None,
+            param: None,
         };
         let clear = [0.0, 0.0, 0.0, 1.0];
         let white = |p: &[u8]| p[0] > 160 && p[1] > 160 && p[2] > 160;
@@ -2552,7 +2678,7 @@ mod tests {
                 curve_window: window,
                 ..Default::default()
             },
-            morph: None,
+            param: None,
         };
         let clear = [0.0, 0.0, 0.0, 1.0];
         let white = |p: &[u8]| p[0] > 160 && p[1] > 160 && p[2] > 160;
@@ -2893,5 +3019,133 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("未对齐"), "{error}");
+    }
+
+    /// **E1（阶段 1）**：参数摘要只哈希 `kind + params`，**不哈希求值结果 / 结构坐标**。
+    ///
+    /// 这是"结构指纹改哈希参数"的可执行判据：同参数的两次求值必须同摘要，
+    /// 参数一变摘要就变；几何（`delta`）变但参数不变时摘要**不动**
+    /// —— 几何是派生量，不该进跨设备层（GAPS AR-05 / AR-08）。
+    #[test]
+    fn param_digest_hashes_the_numbers_not_the_geometry() {
+        let delta = vec![[1.0, 2.0, 3.0]; 8];
+        let other_delta = vec![[9.0, 9.0, 9.0]; 8];
+        let a = ParamGeometry::lerp(delta.clone(), 0.25);
+        let same = ParamGeometry::lerp(delta, 0.25);
+        let moved = ParamGeometry::lerp(other_delta, 0.25);
+        let different_mix = ParamGeometry::lerp(vec![[1.0, 2.0, 3.0]; 8], 0.5);
+        assert_eq!(a.param_digest(), same.param_digest(), "同参数 ⇒ 同摘要");
+        assert_eq!(
+            a.param_digest(),
+            moved.param_digest(),
+            "只改几何（delta）⇒ 摘要不动（几何不进跨设备层）"
+        );
+        assert_ne!(
+            a.param_digest(),
+            different_mix.param_digest(),
+            "参数变 ⇒ 摘要必须变"
+        );
+        assert_ne!(
+            ParamGeometry::window(0.0, 2.0).param_digest(),
+            ParamGeometry::grow(2.0).param_digest(),
+            "同数字不同 kind ⇒ 摘要必须不同（域标签）"
+        );
+    }
+
+    fn four_segment_line() -> ze_notion::Path2D {
+        use ze_notion::{Path2D, Vec2};
+        Path2D::from_polyline(
+            &[
+                Vec2::new(8.0, 32.0),
+                Vec2::new(20.0, 32.0),
+                Vec2::new(32.0, 32.0),
+                Vec2::new(44.0, 32.0),
+                Vec2::new(56.0, 32.0),
+            ],
+            false,
+        )
+    }
+
+    fn stroke_style() -> ze_render_ir::Style2D {
+        ze_render_ir::Style2D {
+            fill: None,
+            stroke: Some(ze_notion::Color32::WHITE),
+            stroke_width: 4.0,
+            ..Default::default()
+        }
+    }
+
+    /// **E1**：`Window`（参数化几何）与 `PathOptions::curve_window`（PE 的样式位）
+    /// 是同一件事 —— 像素必须逐位相同。
+    #[test]
+    fn window_param_and_curve_window_render_alike() {
+        use crate::scene::param_records;
+        use ze_notion::Transform2D;
+        use ze_render_ir::PathOptions;
+
+        let path = four_segment_line();
+        let style = stroke_style();
+        let options = PathOptions {
+            curve_window: Some([1.0, 2.0]),
+            ..Default::default()
+        };
+        let via_options = crate::scene::scene_records(
+            &[crate::scene::SceneItem {
+                shape: &ze_render_ir::Shape2D::Path(path.clone()),
+                transform: Transform2D::identity(),
+                style: ze_render_ir::Style2D {
+                    paint: options,
+                    ..style.clone()
+                },
+            }],
+            (64, 64),
+        )
+        .expect("样式窗口映射");
+        let via_param = param_records(
+            &path,
+            Some(ParamGeometry::window(1.0, 2.0)),
+            &style,
+            Transform2D::identity(),
+            (64, 64),
+        )
+        .expect("参数窗口映射");
+        let clear = [0.0, 0.0, 0.0, 1.0];
+
+        let a = render_2d_or_panic(&via_options, clear);
+        let b = render_2d_or_panic(&via_param, clear);
+        assert_eq!(a, b, "Window 与 curve_window 必须逐位相同");
+    }
+
+    /// **E1**：`Grow(n)` 就是 `Window(0, n)`；`Grow(0)` 整条不可见（与窗口 [0,0] 同口径）。
+    #[test]
+    fn grow_is_a_window_prefix() {
+        let path = four_segment_line();
+        let style = stroke_style();
+        let clear = [0.0, 0.0, 0.0, 1.0];
+        let render = |param: ParamGeometry| {
+            let records = crate::scene::param_records(
+                &path,
+                Some(param),
+                &style,
+                ze_notion::Transform2D::identity(),
+                (64, 64),
+            )
+            .expect("参数化几何映射");
+            render_2d_or_panic(&records, clear)
+        };
+        let grow_two = render(ParamGeometry::grow(2.0));
+        let window_two = render(ParamGeometry::window(0.0, 2.0));
+        assert_eq!(grow_two, window_two, "Grow(n) 必须等于 Window(0, n)");
+
+        let full = render(ParamGeometry::grow(4.0));
+        let none = render(ParamGeometry::grow(0.0));
+        let changed = |a: &[u8], b: &[u8]| {
+            a.chunks_exact(4)
+                .zip(b.chunks_exact(4))
+                .filter(|(x, y)| x != y)
+                .count()
+        };
+        assert!(changed(&none, &full) > 100, "Grow(0) 必须整条不可见");
+        assert!(changed(&grow_two, &full) > 50, "窗口收窄必须真的减少可见段");
     }
 }

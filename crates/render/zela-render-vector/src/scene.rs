@@ -22,7 +22,7 @@
 use ze_notion::{Color32, Path2D, PathCommand, Transform2D, Vec2};
 use ze_render_ir::{Shape2D, Style2D};
 
-use crate::api::{FilledPath, MorphGeometry, PathRecord, StrokedPath};
+use crate::api::{FilledPath, ParamGeometry, ParamKind, PathRecord, StrokedPath};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::api::render_2d;
 
@@ -243,7 +243,7 @@ fn open_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         shade_in_3d: false,
         material: None,
         options: Default::default(),
-        morph: None,
+        param: None,
     }
 }
 
@@ -263,7 +263,7 @@ fn polygon_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         shade_in_3d: false,
         material: None,
         options: Default::default(),
-        morph: None,
+        param: None,
     }
 }
 
@@ -321,7 +321,7 @@ fn ellipse_path(at: Vec2, rx: f32, ry: f32, m: &Transform2D, center: Vec2) -> Fi
         shade_in_3d: false,
         material: None,
         options: Default::default(),
-        morph: None,
+        param: None,
     }
 }
 
@@ -380,7 +380,7 @@ fn push_shape(
                     shade_in_3d: false,
                     material: None,
                     options: Default::default(),
-                    morph: None,
+                    param: None,
                 });
             }
         }
@@ -521,7 +521,7 @@ pub fn scene_records(
                         shape_bits: shape_bits(item.style.stroke_shape),
                         model: IDENTITY,
                         options: options.clone(),
-                        morph: None,
+                        param: None,
                     }));
                 }
             }
@@ -530,14 +530,70 @@ pub fn scene_records(
     Ok(out)
 }
 
-/// **PH Step 1**：一条形变项 → 矢量记录（填充 / 描边按样式各一条）。
+/// **阶段 1（参数化几何）**：一条基形状 + 一份逐帧参数 → 矢量记录（填充 / 描边各一条）。
+///
+/// 三种 kind 走同一个入口，这就是计划要的「同一 idiom」：
+/// - `Lerp`：`base` 是起点形状，`param.delta = to − from`（弧长等点重采样后逐曲线相减）；
+/// - `Window`：`base` 完整上传，只改可见窗口 `[lo, hi]`（曲线索引 + t）；
+/// - `Grow`：`Window` 的特例 `[0, curves]`。
+///
+/// 三者产出的记录在**结构上相同**（同一份控制点），差别只在 `param` 里那几个 f32
+/// ⇒ 结构指纹可以只哈希参数（[`ParamGeometry::param_digest`]），等式判据成立。
+pub fn param_records(
+    base: &Path2D,
+    param: Option<ParamGeometry>,
+    style: &Style2D,
+    transform: Transform2D,
+    canvas: (u32, u32),
+) -> Result<Vec<PathRecord>, SceneMapError> {
+    let center = Vec2::new(canvas.0 as f32 * 0.5, canvas.1 as f32 * 0.5);
+    let (points, ranges) = path_subpaths(base, &transform, center);
+    if points.is_empty() {
+        return Ok(Vec::new()); // 退化成一个点 ⇒ 没有可画的几何
+    }
+    if let Some(param) = &param {
+        if param.kind == ParamKind::Lerp && param.delta.len() != points.len() {
+            return Err(SceneMapError::UnalignedMorph {
+                from: points.len() / 4,
+                to: param.delta.len() / 4,
+            });
+        }
+    }
+    let options = path_options(&style.paint, &transform, center);
+    let mut out = Vec::new();
+    if let Some(fill) = style.fill {
+        out.push(PathRecord::Fill(FilledPath {
+            points: points.clone(),
+            ranges: ranges.clone(),
+            fill: rgba(fill),
+            model: IDENTITY,
+            shade_in_3d: false,
+            material: None,
+            options: options.clone(),
+            param: param.clone(),
+        }));
+    }
+    if let Some(stroke) = style.stroke {
+        if style.stroke_width > 0.0 {
+            out.push(PathRecord::Stroke(StrokedPath {
+                points,
+                ranges,
+                stroke: rgba(stroke),
+                width: style.stroke_width,
+                shape_bits: shape_bits(style.stroke_shape),
+                model: IDENTITY,
+                options,
+                param,
+            }));
+        }
+    }
+    Ok(out)
+}
+
+/// **PH Step 1**：形变记录 —— `param_records` 的 `Lerp` 便捷入口。
 ///
 /// `from` / `to` 必须已经**按弧长等点重采样**（`MorphItem::sampled_endpoints`），
 /// 否则曲线数不一致 —— 后端逐曲线相加，本函数会显式拒绝而不是画错。
-///
-/// 接缝层的口径转换全在这里：
-/// - 后端第二项是**差值形状**且不带平移 ⇒ 传 `to − from` 的控制点；
-/// - 权重 `mix = t` 由后端烤进 `m2`（`api.rs::attach_morph` / `render.rs::Record::morph`）。
 pub fn morph_records(
     from: &Path2D,
     to: &Path2D,
@@ -547,7 +603,7 @@ pub fn morph_records(
     canvas: (u32, u32),
 ) -> Result<Vec<PathRecord>, SceneMapError> {
     let center = Vec2::new(canvas.0 as f32 * 0.5, canvas.1 as f32 * 0.5);
-    let (start, ranges) = path_subpaths(from, &transform, center);
+    let (start, _) = path_subpaths(from, &transform, center);
     let (end, _) = path_subpaths(to, &transform, center);
     let curves = |points: &[[f64; 3]]| points.len() / 4;
     if curves(&start) != curves(&end) {
@@ -556,47 +612,56 @@ pub fn morph_records(
             to: curves(&end),
         });
     }
-    if curves(&start) == 0 {
-        return Ok(Vec::new()); // 两端都退化成一个点 ⇒ 没有可画的几何
-    }
     let delta: Vec<[f64; 3]> = start
         .iter()
         .zip(&end)
         .map(|(a, b)| [b[0] - a[0], b[1] - a[1], b[2] - a[2]])
         .collect();
-    let morph = MorphGeometry {
-        delta,
-        mix: mix.clamp(0.0, 1.0),
-    };
-    let options = path_options(&style.paint, &transform, center);
-    let mut out = Vec::new();
-    if let Some(fill) = style.fill {
-        out.push(PathRecord::Fill(FilledPath {
-            points: start.clone(),
-            ranges: ranges.clone(),
-            fill: rgba(fill),
-            model: IDENTITY,
-            shade_in_3d: false,
-            material: None,
-            options: options.clone(),
-            morph: Some(morph.clone()),
-        }));
-    }
-    if let Some(stroke) = style.stroke {
-        if style.stroke_width > 0.0 {
-            out.push(PathRecord::Stroke(StrokedPath {
-                points: start,
-                ranges,
-                stroke: rgba(stroke),
-                width: style.stroke_width,
-                shape_bits: shape_bits(style.stroke_shape),
-                model: IDENTITY,
-                options,
-                morph: Some(morph),
-            }));
-        }
-    }
-    Ok(out)
+    param_records(
+        from,
+        Some(ParamGeometry::lerp(delta, mix.clamp(0.0, 1.0))),
+        style,
+        transform,
+        canvas,
+    )
+}
+
+/// **阶段 1**：曲线窗口记录（`Window`）—— 完整几何 + 逐帧窗口。
+///
+/// `lo` / `hi` 的单位是**曲线索引 + t**（与 `PathOptions::curve_window` 同口径），
+/// 不是像素、也不是归一化弧长（`Reveal` 的换算见 `zela-playback`）。
+pub fn window_records(
+    base: &Path2D,
+    lo: f32,
+    hi: f32,
+    style: &Style2D,
+    transform: Transform2D,
+    canvas: (u32, u32),
+) -> Result<Vec<PathRecord>, SceneMapError> {
+    param_records(
+        base,
+        Some(ParamGeometry::window(lo, hi)),
+        style,
+        transform,
+        canvas,
+    )
+}
+
+/// **阶段 1**：生长记录（`Grow`）—— 前 `curves` 条曲线可见（`Window` 的特例）。
+pub fn grow_records(
+    base: &Path2D,
+    curves: f32,
+    style: &Style2D,
+    transform: Transform2D,
+    canvas: (u32, u32),
+) -> Result<Vec<PathRecord>, SceneMapError> {
+    param_records(
+        base,
+        Some(ParamGeometry::grow(curves)),
+        style,
+        transform,
+        canvas,
+    )
 }
 
 /// 离屏渲染一帧 zela 的 2D 图元（`scene_records` + [`render_2d`]）。
