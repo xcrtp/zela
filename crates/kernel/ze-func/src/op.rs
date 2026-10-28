@@ -262,70 +262,94 @@ const fn def(
     }
 }
 
-/// `zela.math` 全部算子（顺序与 [`crate::OPS`] 一致）。
+/// 语义实现签名（`ops.rs` 里的同名函数）。
+pub type EvalFn =
+    fn(&ze_comb::OpRef, &[ze_comb::Value]) -> Result<ze_comb::Value, ze_comb::EvalError>;
+
+/// **唯一登记点**：加一个算子只改这里的一行（元数据 + 语义在同一行）。
 ///
-/// `spec` 是构造器 PodType 的完整名：存根生成器据此把签名挂到
-/// `Sin` / `Mul` … 上（`Sin(...) -> Expr<number>`）。
+/// 一次展开同时产出三样东西，且**名字只写一遍**：
 ///
-/// `since` / `changed` 是**函数级版本**（第 4 批）：revision 取算子库版本的序号
-/// （`1` = 追踪开始前的既有算子，`9` = 第 1 批，`11` = 第 3 批，`12` = 第 5a 批）。
-/// 改某个算子的**语义**（签名不变也算）时只 bump 它的 `changed` —— 用到它的
-/// payload 会在加载时被**点名**拒绝，而不是整库作废。
-pub static DEFS: &[OpDef] = &[
-    def("sin", "zela.math.Sin", &[UNARY_NUM], 1, 1),
-    def("cos", "zela.math.Cos", &[UNARY_NUM], 1, 1),
-    def("add", "zela.math.Add", &[SAME_NUM, SAME_VEC], 1, 1),
-    def(
-        "mul",
-        "zela.math.Mul",
-        &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
-        1,
-        1,
-    ),
-    def(
-        "scale",
-        "zela.math.Scale",
-        &[SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT],
-        1,
-        1,
-    ),
-    def("sum", "zela.math.Sum", &[SUM_NUM, SUM_VEC], 1, 1),
-    def("mix", "zela.math.Mix", &[MIX_NUM, MIX_VEC], 9, 9),
-    def("clamp", "zela.math.Clamp", &[CLAMP], 9, 9),
-    def("vec2", "zela.math.Vec2Of", &[TO_VEC2], 9, 9),
-    def("vec3", "zela.math.Vec3Of", &[TO_VEC3], 9, 9),
-    def("x", "zela.math.Component", &[COMPONENT], 9, 9),
-    def("y", "zela.math.Component", &[COMPONENT], 9, 9),
-    def("z", "zela.math.Component", &[COMPONENT], 9, 9),
-    def("rotate3", "zela.math.Rotate3", &[ROTATE3], 9, 9),
-    def("splat", "zela.math.Splat", &[SPLAT], 11, 11),
-    def(
-        "vec3_from_vec2",
-        "zela.math.Vec3FromVec2",
-        &[VEC3_FROM_VEC2],
-        11,
-        11,
-    ),
-    def(
-        "vec2_from_vec3",
-        "zela.math.Vec2FromVec3",
-        &[VEC2_FROM_VEC3],
-        11,
-        11,
-    ),
-    def("length", "zela.math.Length", &[LENGTH], 11, 11),
-    def("normalize", "zela.math.Normalize", &[NORMALIZE], 11, 11),
-    def("round_f32", "zela.math.RoundF32", &[ROUND_F32], 12, 12),
-    def("lt", "zela.math.Lt", &[CMP_NUM], 1, 1),
-    def("gt", "zela.math.Gt", &[CMP_NUM], 1, 1),
-    def("le", "zela.math.Le", &[CMP_NUM], 1, 1),
-    def("ge", "zela.math.Ge", &[CMP_NUM], 1, 1),
-    def("eq", "zela.math.Eq", &[EQ_NUM, EQ_BOOL], 1, 1),
-    def("ne", "zela.math.Ne", &[EQ_NUM, EQ_BOOL], 1, 1),
-    def("and", "zela.math.And", &[AND], 1, 1),
-    def("or", "zela.math.Or", &[AND], 1, 1),
-    def("not", "zela.math.Not", &[NOT], 1, 1),
-];
+/// - [`DEFS`]：`OpDef` 目录（签名 + `since` / `changed` + pointwise / targets）；
+/// - [`OPS`]：名字清单（装配期符号表据此建立，O(1) 查表）；
+/// - `EVALS`：名称 → 实现（`ops::eval` 查表分派，**没有 `match`**）。
+///
+/// `$name` 同时是 `ops` 模块里的实现函数名 —— 少写实现会直接**编译失败**，
+/// 少写目录行则算子根本不存在（不存在"登记了但没实现"的中间态）。
+macro_rules! math_ops {
+    ($(
+        $name:ident : $spec:literal, [$($sig:expr),*], $since:literal, $changed:literal;
+    )*) => {
+        /// `zela.math` 全部算子（顺序 = 声明顺序）。
+        ///
+        /// `spec` 是构造器 PodType 的完整名：存根生成器据此把签名挂到
+        /// `Sin` / `Mul` … 上（`Sin(...) -> Expr<number>`）。
+        ///
+        /// `since` / `changed` 是**函数级版本**：改某个算子的**语义**（签名不变也算）
+        /// 时只 bump 它的 `changed` —— 用到它的 payload 会在加载时被**点名**拒绝。
+        pub static DEFS: &[OpDef] = &[
+            $( def(stringify!($name), $spec, &[$($sig),*], $since, $changed) ),*
+        ];
+
+        /// 算子名清单（与 [`DEFS`] 同一次展开产生）。
+        pub static OPS: &[&str] = &[ $( stringify!($name) ),* ];
+
+        /// 语义注册表（名称 → 实现），与 [`DEFS`] 同一次展开产生。
+        pub(crate) static EVALS: &[(&str, EvalFn)] =
+            &[ $( (stringify!($name), crate::ops::$name) ),* ];
+    };
+}
+
+math_ops! {
+    sin: "zela.math.Sin", [UNARY_NUM], 1, 1;
+    cos: "zela.math.Cos", [UNARY_NUM], 1, 1;
+    add: "zela.math.Add", [SAME_NUM, SAME_VEC], 1, 1;
+    mul: "zela.math.Mul", [SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT], 1, 1;
+    scale: "zela.math.Scale", [SCALE_NUM, SCALE_VEC_LEFT, SCALE_VEC_RIGHT], 1, 1;
+    sum: "zela.math.Sum", [SUM_NUM, SUM_VEC], 1, 1;
+    mix: "zela.math.Mix", [MIX_NUM, MIX_VEC], 9, 9;
+    clamp: "zela.math.Clamp", [CLAMP], 9, 9;
+    vec2: "zela.math.Vec2Of", [TO_VEC2], 9, 9;
+    vec3: "zela.math.Vec3Of", [TO_VEC3], 9, 9;
+    x: "zela.math.Component", [COMPONENT], 9, 9;
+    y: "zela.math.Component", [COMPONENT], 9, 9;
+    z: "zela.math.Component", [COMPONENT], 9, 9;
+    rotate3: "zela.math.Rotate3", [ROTATE3], 9, 9;
+    splat: "zela.math.Splat", [SPLAT], 11, 11;
+    vec3_from_vec2: "zela.math.Vec3FromVec2", [VEC3_FROM_VEC2], 11, 11;
+    vec2_from_vec3: "zela.math.Vec2FromVec3", [VEC2_FROM_VEC3], 11, 11;
+    length: "zela.math.Length", [LENGTH], 11, 11;
+    normalize: "zela.math.Normalize", [NORMALIZE], 11, 11;
+    round_f32: "zela.math.RoundF32", [ROUND_F32], 12, 12;
+    lt: "zela.math.Lt", [CMP_NUM], 1, 1;
+    gt: "zela.math.Gt", [CMP_NUM], 1, 1;
+    le: "zela.math.Le", [CMP_NUM], 1, 1;
+    ge: "zela.math.Ge", [CMP_NUM], 1, 1;
+    eq: "zela.math.Eq", [EQ_NUM, EQ_BOOL], 1, 1;
+    ne: "zela.math.Ne", [EQ_NUM, EQ_BOOL], 1, 1;
+    and: "zela.math.And", [AND], 1, 1;
+    or: "zela.math.Or", [AND], 1, 1;
+    not: "zela.math.Not", [NOT], 1, 1;
+}
+
+/// 名字 → 语义（`ops::eval` 的查表入口；O(1)）。
+pub(crate) fn eval_entry(name: &str) -> Option<EvalFn> {
+    eval_index().resolve(name).map(|(_, eval)| *eval)
+}
+
+/// 名字 → 实现的符号表（`OnceLock`：只建一次）。
+fn eval_index() -> &'static SymbolTable<&'static str, EvalFn> {
+    static INDEX: OnceLock<SymbolTable<&'static str, EvalFn>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut table = SymbolTable::new();
+        for &(name, eval) in EVALS {
+            table
+                .intern(name, eval, Blame::Assembly)
+                .expect("EVALS 的名字唯一（与 DEFS 同一次展开）");
+        }
+        table
+    })
+}
 
 /// 查一个算子的完整描述（**O(1)**：符号表在首次查询时建立一次）。
 pub fn op_def(name: &str) -> Option<&'static OpDef> {
@@ -373,11 +397,32 @@ pub fn qualified(def: &OpDef) -> String {
 
 #[cfg(test)]
 mod tests {
-    /// 目录与算子表**同名同序**：漏登记 / 顺序漂移会在这里当场暴露。
+    /// 目录与名字清单**同名同序**（两者由同一次 `math_ops!` 展开产生）。
     #[test]
     fn defs_cover_every_op_once() {
         let names: Vec<&str> = super::DEFS.iter().map(|def| def.name).collect();
-        assert_eq!(names.as_slice(), crate::ops::OPS);
+        assert_eq!(names.as_slice(), super::OPS);
+    }
+
+    /// **阶段 4 门禁**：目录里的每个名字都必须能查到语义实现（反之亦然）。
+    ///
+    /// `math_ops!` 已经让"漏写实现"变成编译错误；本用例再钉住**运行期**的注册表
+    /// 与目录逐条对应（防止有人把 `EVALS` 改成手写）。
+    #[test]
+    fn every_def_has_an_eval_implementation() {
+        for def in super::DEFS {
+            assert!(
+                super::eval_entry(def.name).is_some(),
+                "算子 `{}` 没有语义实现",
+                def.name
+            );
+        }
+        assert_eq!(super::EVALS.len(), super::DEFS.len());
+        assert_eq!(
+            super::EVALS.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            super::OPS
+        );
+        assert!(super::eval_entry("warp").is_none(), "未知算子不静默查表命中");
     }
 
     /// 每条目录条目都带签名与构造器名（不再是"半张表"）。

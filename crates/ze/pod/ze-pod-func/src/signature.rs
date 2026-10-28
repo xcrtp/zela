@@ -162,7 +162,30 @@ mod tests {
         assert_eq!(vector[0].ret.type_name(), Some("zela.Vec2"));
     }
 
-    /// 第 4 批：函数级 revision 与批次对应（既有 = 1、第 1 批 = 9、第 3 批 = 11）。
+    /// **阶段 4 门禁**：目录里的每个算子都必须能从脚本侧调到（作者面已登记）。
+    ///
+    /// 加算子少了 `MathApi` 字段 / 注册 / `call` 分支时，这里会点名红 ——
+    /// 而不是等到某个脚本第一次调用才发现"库里登记了但脚本够不着"。
+    #[test]
+    fn every_operator_is_reachable_from_scripts() {
+        use std::collections::BTreeSet;
+        use ze_pod_core::Capability as _;
+
+        let reachable: BTreeSet<&str> = crate::MathApi::docs()
+            .iter()
+            .filter(|doc| doc.namespace == ze_func::LIBRARY_NAMESPACE)
+            .map(|doc| doc.name)
+            .collect();
+        for def in super::SIGNATURES {
+            assert!(
+                reachable.contains(def.name),
+                "算子 `{}` 没有作者面入口（`MathApi` 字段 / 注册 / call 分支漏了）",
+                def.name
+            );
+        }
+    }
+
+    /// 既有算子的 revision 与批次对应（1 = 追踪开始前、9 = 第 1 批、11 = 第 3 批、12 = 第 5a 批）。
     #[test]
     fn op_revisions_follow_the_batches() {
         assert_eq!(super::op_revision("sin"), Some((1, 1)));

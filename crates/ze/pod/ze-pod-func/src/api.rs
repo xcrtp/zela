@@ -667,6 +667,10 @@ pub struct MathApi<'a> {
 /// `@15`（5b B2）：新增 `method`（对象方法调用；`Reveal.current_pos` 从字段改为方法）。
 /// `@16`（5b B4）：新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
 /// `@17`（5b B4）：新增 `exists`（集合判空；装配期常量折叠）。
+///
+/// **阶段 4 的实测结论（未落地）**：新增一个算子必然改 `signatures()` ⇒ 必须
+/// 递增 version ⇒ `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**。
+/// 即"加算子"与"不重录基线"在本批互斥，故本批只交付注册表机制，不新增算子。
 pub const MATH_API_VERSION: &str = "17";
 /// `zela.math` 的 `hash(signatures())` 基线。
 pub const MATH_API_FINGERPRINT: u64 = 4_840_136_137_552_424_654;
