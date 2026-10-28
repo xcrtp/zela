@@ -12,7 +12,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use ze_pod_binding::{
-    BindingPlan, CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
+    CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
 };
 use ze_pod_core::{Field, Kind, OpDef, RetType, ScalarKind, TypeSpec};
 
@@ -98,17 +98,15 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
                     out.push_str("  readonly __zela_channel?: T;\n");
                 }
                 out.push_str("}\n");
-                let component = capabilities.iter().any(|capability| {
-                    BindingPlan::new(capability.calls)
-                        .component_ctor(full_name)
-                        .is_some()
-                });
                 let returns = if let Some(op) = op_by_spec(capabilities, full_name) {
                     ts_expr_returns(op)
                 } else if is_channel {
                     "Channel<any>".to_string()
-                } else if component {
-                    "Handle".to_string()
+                } else if let Some(ctor) =
+                    ze_pod_binding::component_ctor_of(capabilities, full_name)
+                {
+                    // 非算子构造器（`Exists`）也按同一张表给返回值。
+                    ts_call_return(capabilities, &ctor)
                 } else {
                     name.to_string()
                 };

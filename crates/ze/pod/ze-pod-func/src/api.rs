@@ -402,17 +402,18 @@ pub struct BindEachSpec {
     pub target: ChannelSpec,
     /// 根表达式（可用 `expr.query_self(channel)` 引用"当前对象"）。
     pub root: Handle,
-    /// 绑定时钟。
-    pub clock: ClockSpec,
-    pub predicate: PredicateSpec,
-    pub reset: ResetSpec,
     /// 必须**同时**具备的组件名（稳定 Rust 类型名）。
     ///
     /// 字段名是 `requires` / `excludes` 而不是 `with` / `without`：
     /// `with` 是 Python 关键字（同 `Select` 的 `otherwise` 之于 `else`）。
+    /// 必填字段排在可选字段之前 —— 生成的 `.pyi` 里"默认值后接必填"是语法错误。
     pub requires: Vec<String>,
     /// 必须**不**具备的组件名。
     pub excludes: Vec<String>,
+    /// 绑定时钟。
+    pub clock: ClockSpec,
+    pub predicate: PredicateSpec,
+    pub reset: ResetSpec,
 }
 
 /// `exists { requires, excludes }`：集合**判空**（B4 Query）。

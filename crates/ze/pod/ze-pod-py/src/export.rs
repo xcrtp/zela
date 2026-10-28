@@ -241,6 +241,11 @@ fn render_type(
                 // 算子构造器返回**带静态类型的表达式句柄**；其它组件返回 Handle。
                 let returns = if let Some(op) = op_by_spec(capabilities, full_name) {
                     py_expr_returns(op, components)
+                } else if let Some(ctor) =
+                    ze_pod_binding::component_ctor_of(capabilities, full_name)
+                {
+                    // 非算子构造器（`Exists`）也按同一张表给返回值。
+                    py_call_return(capabilities, &ctor, components)
                 } else {
                     "Handle".to_string()
                 };

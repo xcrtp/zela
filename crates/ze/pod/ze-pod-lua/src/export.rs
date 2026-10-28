@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use ze_pod_core::{Field, Kind, RetType, ScalarKind, TypeSpec};
 use ze_pod_binding::{
-    BindingPlan, CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
+    CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
 };
 
 /// Lua 侧类型名（LuaLS 注解用）。
@@ -123,19 +123,15 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     continue;
                 }
                 out.push('\n');
-                // 组件构造器：由"单 struct 参数 + 返回 opaque"识别。
-                let component = capabilities.iter().any(|capability| {
-                    BindingPlan::new(capability.calls)
-                        .component_ctor(full_name)
-                        .is_some()
-                });
                 // 类型能力：算子构造器返回**带静态类型的表达式句柄**（B/C 批的签名表）。
                 let returns = if let Some(op) = op_by_spec(capabilities, full_name) {
                     lua_expr_returns(op)
                 } else if is_channel {
                     "Channel<any>".to_string()
-                } else if component {
-                    "Handle".to_string()
+                } else if let Some(ctor) = ze_pod_binding::component_ctor_of(capabilities, full_name) {
+                    // 非算子构造器（`Exists { … }` 这类）也按同一张表给返回值：
+                    // 否则 `Predicate.Of { expr = Exists { … } }` 在编辑器里是类型错。
+                    lua_call_return(capabilities, &ctor).unwrap_or_else(|| "Handle".to_string())
                 } else {
                     lua_name.to_string()
                 };

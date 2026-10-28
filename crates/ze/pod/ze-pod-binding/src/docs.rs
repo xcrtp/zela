@@ -325,6 +325,19 @@ pub fn op_by_spec<'a>(
         .find(|op| op.spec == spec)
 }
 
+/// 某个类型的**构造器**（"单 struct 参数 + 返回 opaque"的那条能力函数）。
+///
+/// 存根生成器用它把构造函数的返回值也写准（算子走 [`op_by_spec`]，
+/// 非算子的构造器如 `zela.math.Exists` 走这里 ⇒ `exists { … }` 是 `Expr<bool>`）。
+pub fn component_ctor_of(
+    capabilities: &[CapabilityDocs],
+    type_name: &'static str,
+) -> Option<ze_pod_core::ErasedFn> {
+    capabilities.iter().find_map(|capability| {
+        crate::plan::BindingPlan::new(capability.calls).component_ctor(type_name)
+    })
+}
+
 /// 是否存在算子签名（决定存根是否导出 `Expr<T>`）。
 pub fn has_ops(capabilities: &[CapabilityDocs]) -> bool {
     capabilities

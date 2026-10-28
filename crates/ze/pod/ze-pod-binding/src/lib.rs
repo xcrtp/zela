@@ -29,8 +29,8 @@ pub mod plan;
 pub use codec::{ValueCodec, invoke};
 pub use defaults::{field_default, field_default_literal};
 pub use docs::{
-    CapabilityDocs, DOCS_SCHEMA_VERSION, capabilities_json, has_ops, op_by_name, op_by_spec,
-    reachable_types,
+    CapabilityDocs, DOCS_SCHEMA_VERSION, capabilities_json, component_ctor_of, has_ops, op_by_name,
+    op_by_spec, reachable_types,
 };
 pub use plan::{BindingPlan, collect_types, short_name};
 

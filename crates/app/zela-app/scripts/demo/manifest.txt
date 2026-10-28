@@ -28,21 +28,21 @@
 # 条数按**字形**计（如 fourier 63 → 50 个对象），payload 随之变化 —— 属预期。
 #
 # id            title              script          payload-hash
-fourier         傅里叶级数展开      fourier.lua     6f9ad70f64f54db9cdd770b1ae480c147f23f289956eb89e6670b5d01f83c2ad
-storyboard      分镜演示            storyboard.lua  15cfc588890ed21f0ef9b1ab6559bc9cda6832a646f3ef056d9c015cd627cf78
-demo3d          3D 场景             demo3d.lua      96b096256c49c861e827b54eb9d317a2882c2cba30cafe9194d6e84df4ddcf01
-fusion          融合演示(双面+透明) fusion.lua      8bae3433348ecc82072dd4c44036a78d3d3f05da963ae10acd4452e87c647849
-pbr_materials   PBR材质画廊        pbr_materials.lua 4fd43d16566881cf29e8df583315243a24fe0f55765b2b3bbdccda2a35c945b1
-pbr_lights      PBR光照实验室      pbr_lights.lua   8f67f57b9322a0e8a4818c47366219f1671a934c6609254ad0ce038e095ef9c2
-pbr_scene       PBR材质秀          pbr_scene.lua    6e68101bba093bd4cf3d42bab3eed8a18d93e78e50fe77d2dc8a50e8f999c329
-pendulum        钟摆动画            pendulum.lua    a9981ed20d61e5b3665c5fa2b945cbe761c863b7fafc7db265f4878973ae0884
-orbit           公转行星            orbit.lua       cd73083601ab584178c51cffd59e731bc62abfbbb3d15c3ead9da27a9eb60df6
-spring          弹跳小球            spring.lua      c8b32c2a2b5dfa674ce496b594f76fe364d4b71b4e37aaec817f628c62388700
+fourier         傅里叶级数展开      fourier.lua     c7d0dcad0829f92e5ad38447929e1024a5633387c45b8ccee54738e941868fde
+storyboard      分镜演示            storyboard.lua  193eb8f45824889440bb4e9d42ca80b07d600084e00322f0656bbdea878a3037
+demo3d          3D 场景             demo3d.lua      23a6f25e8c09e6ccee505ccb685679534c5468dbc65ccf3e80af305097cc8c97
+fusion          融合演示(双面+透明) fusion.lua      7dc6f1a980821375bd6b83e6aa53fb26841c560100b6c85a241131c1b743eac7
+pbr_materials   PBR材质画廊        pbr_materials.lua d32914b5826c889eb61450d58fb4878b71210881cc0c58eb969dd4d9141a6a1f
+pbr_lights      PBR光照实验室      pbr_lights.lua   28cb431b55658b1a1a8cdd0429296dc51ff0e511f9eb041080ad344576128844
+pbr_scene       PBR材质秀          pbr_scene.lua    3f0f1f3d450eb2dcb7fd8c9a6e2a7c88e0da597919204a867d859ade52d9790a
+pendulum        钟摆动画            pendulum.lua    60c7c4451f0877b9bb0056395073e37de3f4775757e00d4cdf92aa3ff2d844e3
+orbit           公转行星            orbit.lua       32f9939555d0e41b6fa0d728cbe7b28e5a6318dd220f03aef596fde09978f6bf
+spring          弹跳小球            spring.lua      2e7ce1a698f1ac2bb41f4c737860da39b2859cd6d9a569a01d2bd8d63fc1cb2d
 surface_matrix  Surface能力矩阵      surface_matrix.lua  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
 surface_matrix_js  Surface能力矩阵(JS) surface_matrix.js  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
-atlas           2D纹理进3D           atlas.lua       4bef97e997b063f4dc63ee408fde9bd890ab4f1a89177bafd5a74e5f30352eb3
+atlas           2D纹理进3D           atlas.lua       336e0be403f428d22869aee092c94b80ade20e871089f0bfd9d0e15bd890ea34
 vector_paths    矢量后端作品         vector_paths.lua b2f6f4f8eeded354294e64bb8111f49817031c523efa0946579dcc7458605b9c
-capability_gaps 能力缺口补齐        capability_gaps.lua 00d0920d82b004838aa5c3d09970f265e23b3accc1521e48e34d7a632f4ae5de
+capability_gaps 能力缺口补齐        capability_gaps.lua 4c39dc1c6de3ff59ff62b8a023801a25df8b6e065d4cde0470f857b961a3396b
 shaded_meshes   3D网格着色栈        shaded_meshes.lua 7d7081ba5e06f7ff9ec51eba706fd7d7cd7c592a05daed2dd31029f4f65bd40b
 # PE Step 2：能力展示作品（一件能力一件作品；**只进 [vector] 基线**）。
 # 它们用的样式组件在 wgpu 下不生效 —— 这正是路由要显式说明"已忽略"的原因。
@@ -54,11 +54,11 @@ cap_window      曲线窗口            cap_window.lua  90ba47a4a19fa0571ba42aa0
 # PF Step 2：2D/3D 混排（2D 记录以屏幕平面 overlay 叠进 3D 帧）。
 cap_mix         2D/3D混排           cap_mix.lua     1443758a2fe47a469411ae35eb39bfa758d310f16cc82b997a757f1dab26959d
 # S3 验收作品：脚本只提交表达式结构（半径 / 透明度由宿主 M 注入 Time）。
-expr_demo       表达式驱动          expr_demo.lua   9a452772924ca63f40ec6619b38e908e4df041dfba12713beb17bdf3fde68460
+expr_demo       表达式驱动          expr_demo.lua   d8bdf572fd14f6444247d8c403b3f09b0e0cabe90b3425587afa49ae8671e069
 # F / G / H 批验收作品：新字段通道（一个通道一条绑定）+ 通道读端 + 值分支。
-cap_channels2d  2D字段通道          cap_channels2d.lua  bed5f7bc478633f6c2ff4a0dc398c670d7717c2757c02c109fc26d2e5263f445
-cap_channels3d  3D字段通道          cap_channels3d.lua  82b16fb3249f316d2e8c5b0c69481954d34d5d205ca00e38e39cdd8aa23a68b4
-expr_read       通道读端与值分支     expr_read.lua       f40f0aef63e849d57e378d403c563adf517884facbd45e063b5abcd82f24e732
+cap_channels2d  2D字段通道          cap_channels2d.lua  7a0b56b5c6bed5eedaab1c5aa0dfa5e880929b6bfe9d0f073c42b27af0eac478
+cap_channels3d  3D字段通道          cap_channels3d.lua  5b86faa9a8209710331e072cf5e57cbee61844450f642a2357d3a7c4b5b4271a
+expr_read       通道读端与值分支     expr_read.lua       52e00d26b63f17a4dd828947cb1f3f24e12b9a70a694b5a7103045c1a872afec
 # 内容作品：小球随 Reveal 画出正弦（书写进度与小珠位置逐段同步）。
-sine_trace      小球画正弦          sine_trace.lua      3aadcb5d47b57e0db407cf8410a6c26685e63f0c96c96174c472ff896eaba243
+sine_trace      小球画正弦          sine_trace.lua      771dc4cfe33c64372d64f6bf7cdecc2913791c3222fbcb2763a3d2a91c612cfd
 
