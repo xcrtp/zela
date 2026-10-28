@@ -30,6 +30,7 @@
 use std::sync::Arc;
 
 use ze_comb::{ChannelRef, EvalError, Value};
+use ze_notion::Rect2D;
 use ze_pod_core::{ScalarKind, TypeSpec};
 use ze_scene_contract::ObjectId;
 use ze_time::AnimValue;
@@ -385,8 +386,76 @@ pub static REVEAL_CURRENT_POS_METHOD: MethodSpec = MethodSpec {
     },
 };
 
+/// `Rect2D` → 表达式值（`Bytes + zela.Rect2D`，4×f32 小端）。
+///
+/// 表达式值系统还没有 `Rect` 标量（W-A：值系统三套收敛不在本批）⇒ 用命名字节块
+/// 作为**表示**；方法本身已可按名字解析，脚本侧消费等值系统扩展后再开。
+fn encode_rect(rect: Rect2D) -> Value {
+    let mut bytes = Vec::with_capacity(16);
+    for value in [rect.min.x, rect.min.y, rect.max.x, rect.max.y] {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    Value::Bytes(ze_comb::ValueBytes::new("zela.Rect2D", bytes))
+}
+
+/// 读局部包围盒共用的读集（**静态声明**：方法体是黑盒）。
+///
+/// 只列会影响 local bounds 的**可写字段**；`Path` / `Line` / `Rect` 没有可写通道。
+const BOUNDS_READS: &[&str] = &[
+    "Circle.center",
+    "Circle.radius",
+    "Arrow.from",
+    "Arrow.to",
+];
+
+/// `Object.bounds`：对象级聚合（local，多图元取并集）。
+pub static OBJECT_BOUNDS_METHOD: MethodSpec = MethodSpec {
+    name: "Object.bounds",
+    component: "Object",
+    params: &[],
+    ret: &TypeSpec::Struct {
+        name: "zela.Rect2D",
+        layout: None,
+        fields: &[],
+    },
+    reads: BOUNDS_READS,
+    eval: |scene, id, _args| {
+        crate::bounds::object_bounds(scene, id)
+            .map(encode_rect)
+            .ok_or(EvalError::NoGeometry {
+                object: id.to_packed(),
+            })
+    },
+};
+
+/// `Circle.bounds`：组件级局部包围盒。
+pub static CIRCLE_BOUNDS_METHOD: MethodSpec = MethodSpec {
+    name: "Circle.bounds",
+    component: "Circle",
+    params: &[],
+    ret: &TypeSpec::Struct {
+        name: "zela.Rect2D",
+        layout: None,
+        fields: &[],
+    },
+    reads: &["Circle.center", "Circle.radius"],
+    eval: |scene, id, _args| {
+        use crate::bounds::Bounds2D;
+        read_component::<crate::object::Circle, _>(scene, id, |circle| circle.local_bounds())
+            .flatten()
+            .map(encode_rect)
+            .ok_or(EvalError::NoGeometry {
+                object: id.to_packed(),
+            })
+    },
+};
+
 /// 全部方法（脚本面与方法名的**唯一真源**）。
-pub const METHODS: &[&MethodSpec] = &[&REVEAL_CURRENT_POS_METHOD];
+pub const METHODS: &[&MethodSpec] = &[
+    &REVEAL_CURRENT_POS_METHOD,
+    &OBJECT_BOUNDS_METHOD,
+    &CIRCLE_BOUNDS_METHOD,
+];
 
 /// 按名字查方法（未知 ⇒ `None`，装配期显式失败）。
 pub fn method_entry(name: &str) -> Option<&'static MethodSpec> {

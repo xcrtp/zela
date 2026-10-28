@@ -188,11 +188,10 @@ impl Timeline {
     /// 故 payload 里 `Read.object` 仍是脚本句柄下标（与 `handle_ref` 惯例一致）。
     pub(crate) fn rewrite_read_objects(&mut self, resolve: &impl Fn(u64) -> u64) {
         for step in &mut self.steps {
-            if let Step::Expr { expr, predicate, .. } = step {
-                *expr = rewrite_reads(expr, resolve);
-                if let Some(predicate) = predicate {
-                    *predicate = rewrite_reads(predicate, resolve);
-                }
+            let Step::Expr { expr, predicate, .. } = step;
+            *expr = rewrite_reads(expr, resolve);
+            if let Some(predicate) = predicate {
+                *predicate = rewrite_reads(predicate, resolve);
             }
         }
     }

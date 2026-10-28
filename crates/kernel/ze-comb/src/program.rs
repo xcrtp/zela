@@ -235,6 +235,9 @@ pub enum EvalError {
     /// 方法没有由宿主注册（未知方法 ⇒ 显式失败，不静默给 0）。
     #[error("方法 `{method}` 未由宿主注册")]
     MissingMethod { method: String },
+    /// 退化 / 空几何没有包围盒（`None` 贯穿到底，不拿零矩形冒充）。
+    #[error("对象 {object} 没有可用的几何包围盒")]
+    NoGeometry { object: u64 },
     /// 递归叶子出现在没有 `NatRec` 上下文的地方（装配期应已拒绝）。
     #[error("递归叶子 `{leaf}` 不在 NatRec.step 求值上下文里")]
     RecContext { leaf: &'static str },

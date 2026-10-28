@@ -26,6 +26,7 @@ pub mod object;
 
 // 组件 / 图元 / 纯数据（B3-1b 从 `zela-scene` 下沉）。
 pub mod animation;
+pub mod bounds;
 pub mod camera_input;
 pub mod components;
 pub mod composer;

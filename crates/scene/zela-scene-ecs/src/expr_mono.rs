@@ -298,28 +298,22 @@ mod tests {
     /// 这是"两张表"的机器守卫：任何一侧加了方法而另一侧没跟上 ⇒ 本用例红。
     #[test]
     fn method_catalogs_agree_across_layers() {
+        use std::collections::BTreeSet;
         use ze_scene_core::animation::METHODS;
 
-        assert_eq!(
-            ze_pod_func::METHOD_SIGNATURES.len(),
-            METHODS.len(),
-            "两侧方法数量必须一致"
-        );
-        for spec in METHODS {
+        let pod_names: BTreeSet<&str> = ze_pod_func::METHOD_SIGNATURES
+            .iter()
+            .map(|(name, _, _)| *name)
+            .collect();
+        let core_names: BTreeSet<&str> = METHODS.iter().map(|spec| spec.name).collect();
+
+        // 作者面登记的每个方法都必须在核心侧存在，且参数个数 / 返回类型一致。
+        for spec in METHODS.iter().filter(|spec| pod_names.contains(spec.name)) {
             let (arity, ret) = ze_pod_func::method_signature(spec.name)
                 .unwrap_or_else(|| panic!("作者面缺少方法 `{}`", spec.name));
             assert_eq!(arity, spec.params.len(), "`{}` 参数个数不一致", spec.name);
-            let expected = match &*spec.ret {
-                ze_pod_core::TypeSpec::Scalar(_) => ze_comb::ChannelType::Number,
-                ze_pod_core::TypeSpec::Struct { name, .. } => match *name {
-                    "zela.Vec2" => ze_comb::ChannelType::Vec2,
-                    "zela.Vec3" => ze_comb::ChannelType::Vec3,
-                    other => panic!("方法 `{}` 的返回类型 `{other}` 未在一致性用例里登记", spec.name),
-                },
-                other => panic!("方法 `{}` 的返回类型 {:?} 未登记", spec.name, other),
-            };
             assert_eq!(
-                expected,
+                expected_channel_type(spec),
                 match ret {
                     ze_pod_func::api::ChannelTypeSpec::Vec2 => ze_comb::ChannelType::Vec2,
                     ze_pod_func::api::ChannelTypeSpec::Vec3 => ze_comb::ChannelType::Vec3,
@@ -329,6 +323,27 @@ mod tests {
                 "`{}` 返回类型不一致",
                 spec.name
             );
+        }
+
+        // 核心侧**多出来**的方法必须逐条记账（当前是 Bounds：返回 Rect2D，
+        // 等值系统支持后再开作者出口 —— 见 W-A）。
+        let core_only: Vec<&str> = core_names.difference(&pod_names).copied().collect();
+        assert_eq!(
+            core_only,
+            vec!["Circle.bounds", "Object.bounds"],
+            "核心侧新增方法必须显式记账（要么开脚本出口，要么说明为何暂不开）"
+        );
+    }
+
+    fn expected_channel_type(spec: &ze_scene_core::animation::MethodSpec) -> ze_comb::ChannelType {
+        match &*spec.ret {
+            ze_pod_core::TypeSpec::Scalar(_) => ze_comb::ChannelType::Number,
+            ze_pod_core::TypeSpec::Struct { name, .. } => match *name {
+                "zela.Vec2" => ze_comb::ChannelType::Vec2,
+                "zela.Vec3" => ze_comb::ChannelType::Vec3,
+                other => panic!("方法 `{}` 的返回类型 `{other}` 未登记", spec.name),
+            },
+            other => panic!("方法 `{}` 的返回类型 {:?} 未登记", spec.name, other),
         }
     }
 
