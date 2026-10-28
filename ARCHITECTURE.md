@@ -3,6 +3,8 @@
 > **本文件的『依赖图 / 分层 / 合规校验』由 `cargo-workspace-analyzer` 自动生成。**
 > 修改 `Cargo.toml` 后重新运行 `cargo-workspace-analyzer -d .` 即可刷新。
 > **不要手动编辑下方自动生成部分**——手写内容（设计原则、待决问题）请放在末尾『## 设计说明』。
+>
+> 模块细节、设计决策与门禁说明见 [`docs/README.md`](docs/README.md)（本文件只管依赖图与分层，不重复叙述）。
 
 ## 分层总览
 

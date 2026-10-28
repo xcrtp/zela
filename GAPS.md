@@ -1233,7 +1233,7 @@
 | AU-02 | **值侧 `I64` 在类型侧没有对应种类**（`ScalarKind` 缺 `I64`） | ze-type / ze-pod-* | **已关闭（1）** | 反例：`Value::I64` 是离散层索引，而 `ScalarKind` 只有 `F32/F64/I32/U32/U64/U8/Bool/String` ⇒ 参数化后该值没有类型可填。补 `ScalarKind::I64` 并让**穷尽匹配把它逼出来**：`ze-type::unify`（布局 8/8）、`gen::static_of`、`ze-pod-core::ScalarValue::I64` + `impl_pod_type_scalar!(i64)`、三语言绑定（Lua `integer` / Python `int` / JS 精确整数 `MAX_EXACT_INTEGER` 内）与声明文件类型名。这类"新增种类 ⇒ 4 个 crate 编译失败"正是 §0.1 要的门禁。 |
 | AU-03 | **`ChannelType::Bytes` 是死臂**：`zela.Path` 的 schema 投影不到 `Bytes` | ze-comb / ze-pod-func | **已关闭（1）** | 旧 `from_type_spec` 只认 `zela.Vec2` / `zela.Vec3`，`zela.Path`（`Struct { layout: None }`）落到 `None` ⇒ 通道化会在类型投影处被拒。按**定长 / 变长第一判据**接上：`Struct` 有 `Layout` ⇒ 具体数值类型（`Vec2/Vec3/Vec4`），无 `Layout` ⇒ `ChannelType::Bytes`（走 `negotiate_bytes` 同一协商入口）。另补 `ChannelType::Vec4`（`kind_of` → `Kind::Vector`），与值侧 `Vec4` 对齐。 |
 | AU-04 | **精度口径：标量 `f64`、向量 `f32` 不统一成单一宽度** | ze-comb | **记账（1）** | 风险表第 4 条要求"明确选哪个"。裁决：**保持两种显式类型**——`F64 × 1` 是表达式层的数（与 `sin` / `mul` 等 f64 算术逐位一致），`F32 × 2/3/4` 是向量（与 `ze-type::layout` 的 `zela.Vec2/Vec3` 的 f32 字段逐位一致）。统一成 f32 会改全部标量语义、统一成 f64 会改 `mix` / `normalize` / `length` 的 f32 取整 ⇒ 两者都会改像素基线（本批硬门禁禁止）。参数化的意义是把这层差异**写在类型里**（`ty` 显式），而不是藏在一个无类型标签的枚举里。 |
-| AU-05 | **跨 crate 重名白名单**：`Scalar`（ze-comb vs ze-type） | xtask | **已关闭（1）** | `ze-type::layout::Scalar` 是布局标量 trait，`ze_comb::Scalar` 是运行时值（`ty × dim`）——角色不同，按既有机制登记真实理由（白名单 37 → 38 条），`--step structure` 全绿。 |
+| AU-05 | **跨 crate 重名白名单**：`Scalar`（ze-comb vs ze-type） | xtask | **已关闭（1）** | `ze-type::layout::Scalar` 是布局标量 trait，`ze_comb::Scalar` 是运行时值（`ty × dim`）——角色不同，按既有机制登记真实理由。**口径写死**：白名单共 **37 条 = 36 条真实重复 + 1 条 `OpDef` 哨兵**（哨兵条目是"已收敛到 `ze-type`，保留条目让第二份立刻失败"，不是重复本身）；`Scalar` 条目只补理由，**不新增条目**（此前"37 → 38"是手写错值）。`--step structure` 全绿。 |
 | AU-06 | **阶段 2：`Text` 下沉 `Bytes`** | ze-comb / ze-func | **已关闭（2）** | `Value::Text(String)` 删除 ⇒ 文本是 `Bytes + zela.Text`（变长 ⇒ 没有 `Layout` ⇒ 永远慢路径），与 `zela.Path` / `acme.Tensor` 走同一套协商机制。规范编码保留标签 `2` ⇒ 值序列哈希与阶段 1 之前**逐位相同**；`kind()` 仍报 `text`（诊断词汇不变）；`simplify` 的常量折叠可逆还原 `Literal::Text`。`Value` 变体 5 → 5（阶段 1 已 −2；本阶段再 −1 后由阶段 3 的 +2 抵消，见 AU-07 的说明）。 |
 | AU-07 | **阶段 3：`Iter` + `Stream` 是两个类型** | ze-comb / ze-func | **已关闭（3）** | `ze_comb::iter`：`ValueIter`（长度已知 ⇒ `fold` / `map` / `sum`，归纳侧）与 `ValueStream`（余归纳前沿，`depth` 上界**随值走**，越界 `StreamDepth` 显式失败、`StreamShape` 拒绝层数错配）；`ValueStream::from_expanded` 直接吃 `codata::expand` 的产物（同一份 `depth`，第五次"上界进产物"）。对拍 `ze-func/tests/iter_equivalence.rs`：`fold` / `sum` / `map` 与 `NatRec` / `zela.math::sum` **逐位一致**（不重录基线）。**偏差（记账）**：`Value` 变体数为 5（+`Iter` / `Stream`）—— 计划§1.3 的"变体数减少"指**标量四变体合并**（阶段 1 已达成）；可迭代类型是新能力，不能靠合并换数量。 |
 | AU-08 | **阶段 5：Mono 元素身份 + 通道三分法** | ze-comb | **已关闭（5）** | `Mono::read_element(channel, element)`（默认 `MissingElementChannel` 显式失败）；`ChannelRef::class()` 是**地址的函数**（`Frame` / `Element` / `HostState`，机器可检查）；`Step::Channel` 按类别分派 —— 逐元素通道无上下文即 `ElementContext`；`CompiledExpr::eval_elements(mono, len)` 把"每顶点"变成对迭代器的 map（结果 `ValueIter`），参考求值器有同口径入口对拍。用例钉住：`uv.position` 按元素下标读出不同值、lowered == reference、无元素源/无上下文都显式失败、每帧通道在逐元素求值下**广播**。**偏差（诚实）**：场景侧真正的逐顶点数据源（顶点 attribute 注入）属下游批次，本批只交付机制。 |
@@ -1242,8 +1242,10 @@
 | AU-10 | **W-A（值系统三套收敛）显式关闭** | ze-comb / ze-time | **记账（2）** | 计划 §3 判据 6 要求"W-A 显式关闭或显式说明理由"。本批的阶段 1/2 就是它的答案：`Value` 与 `TypeSpec` 已同构（`Scalar{ty,dim}` ↔ `Scalar` / `App`，文本与路径统一为 `Bytes + 命名类型`），`ChannelType` 是 `TypeSpec` 的降级视图（唯一投影点）。`AnimValue`（ze-time 的动画侧值）按计划 §5 明确**不在本批**，留待阶段 1/2 之后的独立评估。 |
 
 | AU-11 | **签名声明了向量重载，求值只吃标量**（`add` / `mul` / `scale` / `sum`） | ze-func / app / scripts | **已关闭（收尾）** | 实现：`add` 同型逐分量；`scale` / `mul` 支持「向量 × 数」与「数 × 向量」两侧（**f32 域**，与向量分量同宽）；`sum` 同型累加（空序列仍是标量零元）；混型一律**显式失败**（不隐式提升、也不静默跳过）。这是**语义变更**（此前这些输入 100% 报错）⇒ 按纪律 bump `changed` 1 → 18（`since` 与签名不变），旧产物在加载时被点名拒绝。代价与证据：17 件作品的 ZSB payload 因 revision 记录变化而更新 `demo/manifest.txt` 哈希（`demo` 27 条断言重绿）；**像素 36/36 与结构指纹逐位不变**（渲染结果与 revision 无关）。用例：`vector_overloads_are_implemented`、`vector_overloads_landed_at_revision_18`。 |
+| AU-12 | **`Vec4` / `F32` 标量能存能传，但算子算不了** | ze-comb / ze-func | **记账（3）** | `Scalar::f32_vec` / `as_vec4` 已具备（`Vec4` 可作通道值与 payload 往返），但：① `ze-comb::typed::SlotType` 没有 `Vec4`，单态化遇 `Vec4` 整棵回落 `CompiledExpr`（`SlotType::from_channel` 对 `Vec4` 返回 `None`）；② `ze-func` 的 29 个算子没有 `Vec4` 签名，`add` / `mul` / `scale` / `sum` 的向量重载只覆盖 `Vec2` / `Vec3`。**裁决：只做通道承载，不做运算**——当前无任何作品 / fixture 使用 `Vec4` 算术，补签名要给四个算子各写分支并扩 `TypedOp` 16 个变体，收益为零；一旦出现 `Vec4` 算术需求（触发条件），按 AU-11 的同一路径补签名 + typed 实例并 bump revision。 |
+| AU-13 | **`Iter` / `Stream` / `read_element` 零作者面** | ze-comb / ze-func / pod | **记账（4）** | 机制已交付（AU-07 / AU-08：`ValueIter` / `ValueStream`、`Mono::read_element`、`CompiledExpr::eval_elements`、`iter_equivalence` 对拍），但脚本层没有任何构造 `Iter` / `Stream` 或注入逐元素数据源的入口——`ze-pod-func` 里没有 `iter` / `stream` / `read_element` 的绑定，`zela.math` 也不暴露 `fold` / `map`。**裁决：机制先到，出口单独排**（计划 §8 明确不把作者面塞进本批）；触发条件是"某个作品需要逐顶点 / 逐元素求值"，届时补 Pod 构造器与能力覆盖，并同步 `cargo verify --step coverage` 的作品矩阵。 |
 
-**AU 段小计**：已关闭 8（AU-01、AU-02、AU-03、AU-05、AU-06、AU-07、AU-08、AU-11）· 部分关闭 1（AU-09）· 记账 2（AU-04、AU-10）· 未执行 0 · 落档 0。
+**AU 段小计**：已关闭 8（AU-01、AU-02、AU-03、AU-05、AU-06、AU-07、AU-08、AU-11）· 部分关闭 1（AU-09）· 记账 4（AU-04、AU-10、AU-12、AU-13）· 未执行 0 · 落档 0。
 
 ---
 
@@ -1333,8 +1335,8 @@
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AT**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AT 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
+> （**D–AU**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AU 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
 
 | 类别 | 数量 |
 |---|---|
