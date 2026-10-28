@@ -2077,7 +2077,7 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
         let lua_source = r#"
 scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
 local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
-local y = Add { a = expr.pure(0.5), b = Sin { of = expr.time() } }
+local y = Add { a = expr.pure(0.5), b = Sin { of = clock.time() } }
 expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
 "#;
         let js_source = r#"
@@ -2086,7 +2086,7 @@ const dot = scene.spawn([
   Circle({ x: 0.0, y: 0.0, r: 0.5 }),
   Fill({ color: Color({ r: 96, g: 196, b: 255 }) }),
 ]);
-const y = Add({ a: expr.pure(0.5), b: Sin({ of: expr.time() }) });
+const y = Add({ a: expr.pure(0.5), b: Sin({ of: clock.time() }) });
 expr.bind({ object: dot, target: Circle.channel.radius, root: y, duration: 2.0 });
 "#;
 
@@ -2108,7 +2108,7 @@ expr.bind({ object: dot, target: Circle.channel.radius, root: y, duration: 2.0 }
     }
 
     /// **B 批验收**：`clock.nest(clock.scale, clock.shift)` 在 Lua / JS 两侧产出**逐字节
-    /// 相同**的装配产物；`clock.time()` 与 `expr.time()` 是同一个通道叶子。
+    /// 相同**的装配产物；`clock.time()` 与 `clock.time()` 是同一个通道叶子。
     #[cfg(feature = "js")]
     #[test]
     fn clock_constructors_agree_across_languages() {
@@ -2199,13 +2199,13 @@ expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y,
         let lua_source = r#"
 scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
 local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
-local y = Add { a = expr.pure(0.5), b = Sin { of = expr.time() } }
+local y = Add { a = expr.pure(0.5), b = Sin { of = clock.time() } }
 expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
 "#;
         let python_source = r#"
 scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)])
 dot = scene.spawn([Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255))])
-y = Add(a=expr.pure(0.5), b=Sin(of=expr.time()))
+y = Add(a=expr.pure(0.5), b=Sin(of=clock.time()))
 expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
 "#;
 
@@ -2268,7 +2268,7 @@ expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
                 local dot = scene.spawn({
                     Circle { x = 0.0, y = 0.0, r = 0.25 },
                 })
-                local y = Sin { of = expr.time() }
+                local y = Sin { of = clock.time() }
                 expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
                 "#,
             )

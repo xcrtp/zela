@@ -311,14 +311,74 @@ pub struct ChannelRef {
     /// 通道承载的类型（装配期推导用；**不进 payload**）。
     #[serde(skip)]
     pub ty: ChannelType,
+    /// **时钟身份**（仅 `time` 通道）：`None` = 读**绑定时钟**的局部时间（现状），
+    /// `Some(shape)` = 读该时钟链在同一帧的局部时间。
+    ///
+    /// 为什么放在通道上：`c.time()` 与 `clock.time()` 的区别就是"读哪条时间轴"，
+    /// 这是叶子自身的属性（与 `Read` 的对象下标同层），不是绑定的属性。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock: Option<ClockShape>,
 }
 
-// 通道的**身份**是 `(namespace, name)`：类型是元数据。
-// 因此 `Eq` / `Hash` 只看名字 —— 这样解码后的 `Unknown` 与原值相等，
+/// 时钟链的**数据形状**：`local = (parent_local − shift) × rate` 逐层复合。
+///
+/// 它只描述**形状**（两列浮点），不含任何时间语义 —— 宿主把它映射回
+/// `ze_time::ClockProgram` 求值。放在这里是因为通道身份要能随 payload 走。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ClockShape {
+    pub links: Vec<ClockLinkShape>,
+}
+
+/// 一层时钟链接（与 `ClockLink` 同形）。
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ClockLinkShape {
+    pub shift: f64,
+    pub rate: f64,
+}
+
+impl ClockShape {
+    /// 是否空链（= 全局时钟，等价于"绑定根时钟"）。
+    pub fn is_global(&self) -> bool {
+        self.links.is_empty()
+    }
+
+    /// 在**全局时间** `t` 上求局部时间（逐层复合；与 `ClockForest::eval_local` 同式）。
+    pub fn eval(&self, t: f64) -> f64 {
+        let mut local = t;
+        for link in &self.links {
+            local = (local - link.shift) * link.rate;
+        }
+        local
+    }
+}
+
+impl PartialEq for ClockShape {
+    fn eq(&self, other: &Self) -> bool {
+        self.links.len() == other.links.len()
+            && self.links.iter().zip(&other.links).all(|(a, b)| {
+                a.shift.to_bits() == b.shift.to_bits() && a.rate.to_bits() == b.rate.to_bits()
+            })
+    }
+}
+
+impl Eq for ClockShape {}
+
+impl std::hash::Hash for ClockShape {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.links.len().hash(state);
+        for link in &self.links {
+            link.shift.to_bits().hash(state);
+            link.rate.to_bits().hash(state);
+        }
+    }
+}
+
+// 通道的**身份**是 `(namespace, name, clock)`：类型是元数据。
+// 因此 `Eq` / `Hash` 只看名字与时钟身份 —— 这样解码后的 `Unknown` 与原值相等，
 // round-trip 逐字段一致的用例仍然成立；类型只在装配期推导时被读。
 impl PartialEq for ChannelRef {
     fn eq(&self, other: &Self) -> bool {
-        self.namespace == other.namespace && self.name == other.name
+        self.namespace == other.namespace && self.name == other.name && self.clock == other.clock
     }
 }
 
@@ -328,6 +388,7 @@ impl std::hash::Hash for ChannelRef {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.namespace.hash(state);
         self.name.hash(state);
+        self.clock.hash(state);
     }
 }
 
@@ -337,6 +398,7 @@ impl ChannelRef {
             namespace: namespace.into(),
             name: name.into(),
             ty: ChannelType::Unknown,
+            clock: None,
         }
     }
 
@@ -353,17 +415,37 @@ impl ChannelRef {
         self
     }
 
+    /// 带上**时钟身份**（`c.time()`）。
+    ///
+    /// 空链也保留为 `Some`：它表示"读**全局**时间"，与 `None`（读绑定时钟的
+    /// 局部时间）在绑定带偏移时**不是**一回事。
+    pub fn with_clock(mut self, clock: ClockShape) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
     /// 是否宿主基础通道（由 `Mono::read` 直接提供）。
     pub fn is_builtin(&self) -> bool {
         self.namespace.is_empty()
     }
 
-    /// `namespace::name`（基础通道只写 name）。
+    /// `namespace::name`（基础通道只写 name；带时钟身份时附 `@clock`）。
     pub fn qualified(&self) -> String {
-        if self.is_builtin() {
+        let base = if self.is_builtin() {
             self.name.clone()
         } else {
             format!("{}::{}", self.namespace, self.name)
+        };
+        match &self.clock {
+            Some(shape) => {
+                let links: Vec<String> = shape
+                    .links
+                    .iter()
+                    .map(|link| format!("{}:{}", link.shift, link.rate))
+                    .collect();
+                format!("{base}@{}({})", shape.links.len(), links.join(","))
+            }
+            None => base,
         }
     }
 }

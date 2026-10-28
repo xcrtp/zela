@@ -68,14 +68,6 @@ local function orbit2d(radius, speed, initial_angle)
 end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
@@ -172,7 +164,7 @@ local function act(a, start)
             target = Transform.channel.rotation,
             root = ramp(from, turns[i][a], ACT),
             clock = clock.shift(start),
-            predicate = in_segment(ACT),
+            predicate = Predicate.Of { expr = clock.range(0.0, ACT) },
         }
     end
 end
@@ -201,7 +193,7 @@ local function light_sweep(a, start)
             z = expr.pure(LIGHTS[a][5]),
         },
         clock = clock.shift(start),
-        predicate = in_segment(ACT),
+        predicate = Predicate.Of { expr = clock.range(0.0, ACT) },
     }
 end
 
@@ -231,7 +223,7 @@ for i = 1, 5 do
         target = Transform.channel.rotation,
         root = ramp(turns[i][4], turns[i][5], FINALE),
         clock = clock.shift(FINALE_START),
-        predicate = in_segment(FINALE),
+        predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
     }
 end
 expr.bind {
@@ -239,7 +231,7 @@ expr.bind {
     target = Transform.channel.position,
     root = orbit2d(1.5, 1.2, 3.7851),
     clock = clock.shift(FINALE_START),
-    predicate = in_segment(FINALE),
+    predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
 }
 -- 银立方体（正中央）缩放呼吸。
 expr.bind {
@@ -247,5 +239,5 @@ expr.bind {
     target = Transform.channel.scale,
     root = sin_curve(1.0, 0.16, 1.4),
     clock = clock.shift(FINALE_START),
-    predicate = in_segment(FINALE),
+    predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
 }

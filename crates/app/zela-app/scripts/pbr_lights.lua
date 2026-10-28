@@ -69,14 +69,6 @@ local function orbit2d(radius, speed, initial_angle)
 end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
@@ -205,14 +197,14 @@ expr.bind {
     target = Transform.channel.rotation,
     root = ramp(0.0, q(TAU * 1.5), MAIN),
     clock = clock.scale(1.0),
-    predicate = in_segment(MAIN),
+    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
 expr.bind {
     object = hero,
     target = Transform.channel.scale,
     root = sin_curve(1.0, 0.12, 1.1),
     clock = clock.scale(1.0),
-    predicate = in_segment(MAIN),
+    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
 -- 绕行立方体：沿各自高度公转。
 for i = 1, 4 do
@@ -221,7 +213,7 @@ for i = 1, 4 do
         target = Transform.channel.position,
         root = orbit2d(MINIS[i][1], MINIS[i][2], MINIS[i][3]),
         clock = clock.scale(1.0),
-        predicate = in_segment(MAIN),
+        predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
     }
 end
 -- 4 盏点光：不同半径 / 速度 / 初始角公转，光色跟着扫过曲面。
@@ -231,7 +223,7 @@ for i = 1, 4 do
         target = Transform.channel.position,
         root = orbit2d(RIG[i][1], RIG[i][2], RIG[i][3]),
         clock = clock.scale(1.0),
-        predicate = in_segment(MAIN),
+        predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
     }
 end
 -- 哑面立方体：±90° 钟摆，展示粗糙 0.95 下高光几乎消失。
@@ -240,5 +232,5 @@ expr.bind {
     target = Transform.channel.rotation,
     root = sin_curve(0.0, q(PI * 0.5), 0.8),
     clock = clock.scale(1.0),
-    predicate = in_segment(MAIN),
+    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }

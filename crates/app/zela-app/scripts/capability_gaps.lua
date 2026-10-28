@@ -22,14 +22,6 @@
 local T = 3.0 -- 唯一动画段时长（秒）
 
 -- 旧 `Step::Play` 区间 `[0, T)`（显式时钟；段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
 local function f32(v)
@@ -101,7 +93,7 @@ expr.bind {
     },
     root = phase(0.3),
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- ④ 相位目标：挂在右侧圆上；`phase` 每帧被写（无消费者 ⇒ 画面不变，见文件头）。
@@ -116,7 +108,7 @@ expr.bind {
     target = PhaseAnim.channel.phase,
     root = phase(1.0),
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- ③ 常量曲线：整段保持 0.6（对照上面两条"随时间变化"的曲线）。
@@ -130,7 +122,7 @@ expr.bind {
     target = Opacity.channel.value,
     root = expr.pure(0.6),
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- ⑥ 相机运镜：3D 相机在 XY 平面绕原点公转。
@@ -150,7 +142,7 @@ expr.bind {
     target = Camera3D.channel.eye,
     root = orbit2d(9.0, 0.5, 0.0),
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- 立方体：Flat 着色不依赖光源 ⇒ 不需要 Light 组件。

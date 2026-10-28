@@ -109,14 +109,6 @@ def orbit2d(radius, speed, initial_angle):
     )
 
 
-def in_segment(dur):
-    """旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。"""
-    return expr.Predicate.Of(
-        expr=expr.And(
-            a=expr.Ge(a=expr.clock.time(), b=expr.pure(0.0)),
-            b=expr.Lt(a=expr.clock.time(), b=expr.pure(dur)),
-        )
-    )
 
 
 MAIN_START = FADE
@@ -274,7 +266,7 @@ expr.bind(
         target=Opacity.channel.value,
         root=ramp(0.0, 1.0, FADE),
         clock=expr.clock.shift(0.0),
-        predicate=in_segment(FADE),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, FADE)),
     )
 )
 expr.bind(
@@ -283,7 +275,7 @@ expr.bind(
         target=Opacity.channel.value,
         root=ramp(0.0, 1.0, FADE),
         clock=expr.clock.shift(0.0),
-        predicate=in_segment(FADE),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, FADE)),
     )
 )
 
@@ -299,7 +291,7 @@ expr.bind(
         target=Transform.channel.rotation,
         root=rotation_expr(1),
         clock=expr.clock.shift(MAIN_START),
-        predicate=in_segment(T),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, T)),
     )
 )
 for i in range(1, len(HARMONICS)):
@@ -309,7 +301,7 @@ for i in range(1, len(HARMONICS)):
             target=Transform.channel.rotation,
             root=rotation_expr(HARMONICS[i] - HARMONICS[i - 1]),
             clock=expr.clock.shift(MAIN_START),
-            predicate=in_segment(T),
+            predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, T)),
         )
     )
 expr.bind(
@@ -318,7 +310,7 @@ expr.bind(
         target=Transform.channel.position,
         root=orbit2d(0.18, TAU / T, 0.0),
         clock=expr.clock.shift(MAIN_START),
-        predicate=in_segment(T),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, T)),
     )
 )
 expr.bind(
@@ -327,7 +319,7 @@ expr.bind(
         target=Reveal.channel.end,
         root=ramp(0.0, 1.0, T),
         clock=expr.clock.shift(MAIN_START),
-        predicate=in_segment(T),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, T)),
     )
 )
 
@@ -344,7 +336,7 @@ expr.bind(
         target=CAMERA_SCALE,
         root=ramp(55.0, 90.0, ZOOM),
         clock=expr.clock.shift(ZOOM_IN_START),
-        predicate=in_segment(ZOOM),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),
     )
 )
 expr.bind(
@@ -353,7 +345,7 @@ expr.bind(
         target=CAMERA_CENTER,
         root=ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
         clock=expr.clock.shift(ZOOM_IN_START),
-        predicate=in_segment(ZOOM),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),
     )
 )
 expr.bind(
@@ -362,7 +354,7 @@ expr.bind(
         target=CAMERA_SCALE,
         root=ramp(90.0, 55.0, ZOOM),
         clock=expr.clock.shift(ZOOM_OUT_START),
-        predicate=in_segment(ZOOM),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),
     )
 )
 expr.bind(
@@ -371,6 +363,6 @@ expr.bind(
         target=CAMERA_CENTER,
         root=ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
         clock=expr.clock.shift(ZOOM_OUT_START),
-        predicate=in_segment(ZOOM),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, ZOOM)),
     )
 )

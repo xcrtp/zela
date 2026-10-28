@@ -69,23 +69,26 @@ impl System for BindingApplySystem {
             let active = match (&b.active, &b.predicate) {
                 (Some(set), _) => set.time_contains(lt),
                 (None, None) => true,
-                (None, Some(predicate)) => match predicate.eval(&SceneMono::new(lt, frame, &scene)) {
-                    Ok(Value::Bool(value)) => value,
-                    Ok(other) => {
-                        eprintln!(
-                            "[expr] 绑定目标 {} 的 predicate 必须返回 Bool，实际 {other:?}（本帧按不生效处理）",
-                            b.target.name()
-                        );
-                        false
+                (None, Some(predicate)) => {
+                    let mono = SceneMono::with_global(lt, t_global, frame, &scene);
+                    match predicate.eval(&mono) {
+                        Ok(Value::Bool(value)) => value,
+                        Ok(other) => {
+                            eprintln!(
+                                "[expr] 绑定目标 {} 的 predicate 必须返回 Bool，实际 {other:?}（本帧按不生效处理）",
+                                b.target.name()
+                            );
+                            false
+                        }
+                        Err(error) => {
+                            eprintln!(
+                                "[expr] 绑定目标 {} 的 predicate 求值失败：{error}",
+                                b.target.name()
+                            );
+                            false
+                        }
                     }
-                    Err(error) => {
-                        eprintln!(
-                            "[expr] 绑定目标 {} 的 predicate 求值失败：{error}",
-                            b.target.name()
-                        );
-                        false
-                    }
-                },
+                }
             };
             // 本帧要**在哪个局部时间求值**：
             // - 生效 ⇒ 当前局部时间；
@@ -116,7 +119,9 @@ impl System for BindingApplySystem {
                 BindingDriver::Curve(curve) => curve.sample(eval_at),
                 // **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 同源），
                 // 不再用全局 elapsed —— G1（两条路径 t 不同源）由此消失。
-                BindingDriver::Expr(program) => match program.eval(&SceneMono::new(eval_at, frame, &scene)) {
+                BindingDriver::Expr(program) => match program
+                    .eval(&SceneMono::with_global(eval_at, t_global, frame, &scene))
+                {
                     Ok(value) => match anim_value(&value) {
                         Some(value) => value,
                         None => {

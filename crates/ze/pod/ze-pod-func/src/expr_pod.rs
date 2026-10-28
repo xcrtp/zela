@@ -21,7 +21,9 @@
 use std::any::Any;
 use std::sync::Mutex;
 
-use ze_comb::{ChannelRef, ChannelType, CompiledExpr, Expr, Literal, OpRef};
+use ze_comb::{
+    ChannelRef, ChannelType, ClockLinkShape, ClockShape, CompiledExpr, Expr, Literal, OpRef,
+};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
@@ -44,7 +46,9 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `11`：**第 3 批**转换算子族（`splat` / `vec3_from_vec2` / `vec2_from_vec3` /
 /// `length` / `normalize`）。
 /// `12`：**第 5a 批**新增 `round_f32`（旧曲线的 f32 精度落位）。
-pub const LIBRARY_VERSION: &str = "12";
+/// `13`：**5b B1** 删除 `time`（`clock.time()` 为唯一入口），新增时钟身份
+/// （`clock_time_of`）与窗口函子（`clock_range` / `clock_range_of`）。
+pub const LIBRARY_VERSION: &str = "13";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -88,7 +92,6 @@ impl ExprPod {
         let id = PodId::next();
         let mut registry = RegistryPod::new();
 
-        registry.register_fn0_named("zela.math::time", HANDLE, time);
         registry.register_fn0_named("zela.math::frame", HANDLE, frame);
         registry.register_fn0_named("zela.math::event", HANDLE, event);
         registry.register_fn0_named(
@@ -228,6 +231,28 @@ impl ExprPod {
             clock_nest,
         );
         registry.register_fn0_named("zela.math::clock_time", HANDLE, clock_time);
+        // B1：时钟身份与窗口函子（`clock.time_of(c)` / `clock.range(lo, hi)`）。
+        registry.register_fn1_named::<ClockSpec, Handle>(
+            "zela.math::clock_time_of",
+            "zela.math.Clock",
+            HANDLE,
+            clock_time_of,
+        );
+        registry.register_fn2_named::<f64, f64, Handle>(
+            "zela.math::clock_range",
+            "f64",
+            "f64",
+            HANDLE,
+            clock_range,
+        );
+        registry.register_fn3_named::<ClockSpec, f64, f64, Handle>(
+            "zela.math::clock_range_of",
+            "zela.math.Clock",
+            "f64",
+            "f64",
+            HANDLE,
+            clock_range_of,
+        );
         registry.register_fn1_named::<ReadSpec, Handle>(
             "zela.math::read",
             "zela.math.Read",
@@ -338,7 +363,6 @@ impl Pod for ExprPod {
             .ok_or_else(|| PodError::UnknownFunction(format!("函数编号 {id}")))?;
         Ok(match name.name() {
             "pure" => Box::new(pure(self, *arg::<f64>(args, 0)?)),
-            "time" => Box::new(time(self)),
             "frame" => Box::new(frame(self)),
             "event" => Box::new(event(self)),
             "component_state" => Box::new(component_state(self)),
@@ -386,6 +410,18 @@ impl Pod for ExprPod {
                 arg::<ClockSpec>(args, 1)?.clone(),
             )),
             "clock_time" => Box::new(clock_time(self)),
+            "clock_time_of" => Box::new(clock_time_of(self, arg::<ClockSpec>(args, 0)?.clone())),
+            "clock_range" => Box::new(clock_range(
+                self,
+                *arg::<f64>(args, 0)?,
+                *arg::<f64>(args, 1)?,
+            )),
+            "clock_range_of" => Box::new(clock_range_of(
+                self,
+                arg::<ClockSpec>(args, 0)?.clone(),
+                *arg::<f64>(args, 1)?,
+                *arg::<f64>(args, 2)?,
+            )),
             "read" => Box::new(read_ctor(self, arg::<ReadSpec>(args, 0)?.clone())),
             "select" => Box::new(select_ctor(self, arg::<SelectSpec>(args, 0)?.clone())),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
@@ -648,9 +684,54 @@ fn clock_nest(_pod: &dyn Pod, parent: ClockSpec, child: ClockSpec) -> ClockSpec 
     ClockSpec { links }
 }
 
-/// 时钟局部时间叶子 —— 与 `expr.time()` 是**同一个**通道。
+/// **绑定时钟**的局部时间叶子（`clock.time()`；叶子不带时钟身份）。
 fn clock_time(pod: &dyn Pod) -> Handle {
-    time(pod)
+    leaf_channel(pod, ChannelRef::builtin("time"))
+}
+
+/// `ClockSpec` → 产物里的时钟形状（只搬两列浮点）。
+fn clock_shape(spec: &ClockSpec) -> ClockShape {
+    ClockShape {
+        links: spec
+            .links
+            .iter()
+            .map(|link| ClockLinkShape {
+                shift: link.shift,
+                rate: link.rate,
+            })
+            .collect(),
+    }
+}
+
+/// `clock.time_of(c)`：叶子带 `c` 的身份（运行期按 `c` 反算同一帧的局部时间）。
+fn clock_time_of(pod: &dyn Pod, clock: ClockSpec) -> Handle {
+    leaf_channel(
+        pod,
+        ChannelRef::builtin("time").with_clock(clock_shape(&clock)),
+    )
+}
+
+/// 窗口 `[lo, hi)`：`And(Ge(t, lo), Lt(t, hi))`（`clock` 为 `None` ⇒ 绑定时钟）。
+fn window(pod: &dyn Pod, clock: Option<&ClockSpec>, lo: f64, hi: f64) -> Handle {
+    let leaf = || match clock {
+        Some(clock) => {
+            Expr::channel(ChannelRef::builtin("time").with_clock(clock_shape(clock)))
+        }
+        None => Expr::channel(ChannelRef::builtin("time")),
+    };
+    let ge = Expr::call(op("ge"), [leaf(), Expr::pure(Literal::F64(lo))]);
+    let lt = Expr::call(op("lt"), [leaf(), Expr::pure(Literal::F64(hi))]);
+    expr_pod(pod).intern(Expr::call(op("and"), [ge, lt]))
+}
+
+/// `clock.range(lo, hi)`：绑定时钟的窗口（四个脚本 `in_segment` helper 的库内形态）。
+fn clock_range(pod: &dyn Pod, lo: f64, hi: f64) -> Handle {
+    window(pod, None, lo, hi)
+}
+
+/// `clock.range_of(c, lo, hi)`：指定时钟的窗口。
+fn clock_range_of(pod: &dyn Pod, clock: ClockSpec, lo: f64, hi: f64) -> Handle {
+    window(pod, Some(&clock), lo, hi)
 }
 
 /// **G 批通道读端**：`Read { channel, object }` → `Expr::read`（叶子）。
@@ -783,6 +864,15 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
             }
         },
     };
+    // **B1 硬约束**：predicate 只允许单时钟（`c.time()` 不得出现在 predicate 里）。
+    // 区间代数假设 predicate 只依赖一个连续变量；多时钟 = 二维区域求交，
+    // `still_time` 的语义要重新定义 ⇒ 装配期显式拒绝。
+    if let Some(tree) = &predicate {
+        if let Err(message) = reject_clock_scoped_time(tree) {
+            push_binding_error(this, format!("predicate 绑定 `{}` 非法：{message}", spec.object));
+            return;
+        }
+    }
     if predicate.is_some() && spec.duration > 0.0 {
         push_binding_error(
             this,
@@ -806,6 +896,33 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
             duration: spec.duration,
             root_type,
         });
+}
+
+/// predicate 里禁止带时钟身份的时间叶子（多时钟只有 root 允许）。
+fn reject_clock_scoped_time(expr: &Expr) -> Result<(), String> {
+    struct Check;
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Check {
+        type Error = String;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, String> {
+            if let Some(channel) = expr.node.channel() {
+                if channel.clock.is_some() {
+                    return Err(format!(
+                        "predicate 只能依赖**绑定时钟**（`clock.time()`），不允许 `clock.time_of(..)` \
+                         —— 多时钟请放到 root（通道 `{channel}`）"
+                    ));
+                }
+            }
+            Ok(true)
+        }
+    }
+
+    expr.walk(&mut Check)
 }
 
 fn push_binding_error(this: &ExprPod, message: String) {
@@ -1011,7 +1128,7 @@ mod tests {
         ));
     }
 
-    /// **B 批**：脚本侧时钟是**数据**（扁平链），`clock.time()` 与 `expr.time()` 同源。
+    /// **B 批 / B1**：脚本侧时钟是**数据**（扁平链）；`clock.time()` 读绑定时钟，\n    /// `clock.time_of(c)` 的叶子带 `c` 的身份（一个表达式可混多条时间轴）。
     #[test]
     fn clock_builders_produce_flat_links() {
         let this = pod();
@@ -1038,7 +1155,7 @@ mod tests {
         assert_eq!(nested.links[0].rate, 0.5);
         assert_eq!(nested.links[1].shift, 1.0);
 
-        // `clock.time()` 与 `expr.time()` 是同一个通道叶子（时钟身份属于绑定）。
+        // `clock.time()` 读绑定时钟；`clock.time_of(c)` 的叶子带 `c` 的身份。
         let a = clock_time(&this);
         let b = time(&this);
         assert_eq!(this.tree(a).unwrap(), this.tree(b).unwrap());
@@ -1046,6 +1163,73 @@ mod tests {
             this.tree(a).unwrap().node,
             Node::Channel { channel } if channel == ChannelRef::builtin("time")
         ));
+    }
+
+    /// **B1 时钟身份**：`clock.time_of(c)` 的叶子带 `c` 的形状；`clock.time()` 不带。
+    #[test]
+    fn clock_time_of_carries_the_clock_identity() {
+        let this = pod();
+        let clock = clock_nest(&this, clock_scale(&this, 0.5), clock_shift(&this, 2.0));
+        let scoped = clock_time_of(&this, clock);
+        let Node::Channel { channel } = &this.tree(scoped).unwrap().node else {
+            panic!("期望 Channel 叶子");
+        };
+        let shape = channel.clock.as_ref().expect("叶子必须带时钟身份");
+        assert_eq!(shape.links.len(), 2);
+        assert_eq!(shape.links[0].rate, 0.5);
+        assert_eq!(shape.links[1].shift, 2.0);
+        // 无身份的 `clock.time()` 仍是 `None`（读绑定时钟）。
+        assert!(this
+            .tree(clock_time(&this))
+            .unwrap()
+            .node
+            .channel()
+            .unwrap()
+            .clock
+            .is_none());
+    }
+
+    /// **B1 窗口函子**：`clock.range(lo, hi)` ≡ `And(Ge(t, lo), Lt(t, hi))`。
+    ///
+    /// 可分析性由场景层区间代数钉住（同一形状）；这里只钉**结构**，
+    /// 保证它与四个脚本里被替换掉的 `in_segment` helper 逐节点一致。
+    #[test]
+    fn clock_range_builds_the_standard_window_shape() {
+        let this = pod();
+        let window = clock_range(&this, 0.0, 2.0);
+        let Node::Call { op, args } = &this.tree(window).unwrap().node else {
+            panic!("期望 And 调用");
+        };
+        assert_eq!(op.name, "and");
+        assert_eq!(args.len(), 2);
+        let Node::Call { op, args: ge } = &args[0].node else {
+            panic!("期望 Ge 调用");
+        };
+        assert_eq!(op.name, "ge");
+        assert_eq!(ge[1].node, Node::Pure { value: Literal::F64(0.0) });
+        let Node::Call { op, args: lt } = &args[1].node else {
+            panic!("期望 Lt 调用");
+        };
+        assert_eq!(op.name, "lt");
+        assert_eq!(lt[1].node, Node::Pure { value: Literal::F64(2.0) });
+    }
+
+    /// **B1 硬约束**：predicate 里出现带时钟身份的时间 ⇒ 装配期显式拒绝。
+    #[test]
+    fn bind_rejects_clock_scoped_time_in_predicate() {
+        let this = pod();
+        let clock = clock_shift(&this, 1.0);
+        let predicate = clock_range_of(&this, clock, 0.0, 1.0);
+        let mut spec = bind_spec(pure(&this, 1.0));
+        spec.predicate = PredicateSpec::Of { expr: predicate };
+        bind(&this, spec);
+        let (_, errors) = this.take_bindings();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("绑定时钟") || error.contains("clock.time_of")),
+            "{errors:?}"
+        );
     }
 
     /// 快慢路径调用同一组 helper ⇒ 结果一致（结构可序列化对比）。

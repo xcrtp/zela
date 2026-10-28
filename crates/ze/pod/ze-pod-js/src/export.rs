@@ -271,7 +271,8 @@ fn ts_call_return(capabilities: &[CapabilityDocs], item: &ze_pod_core::ErasedFn)
         return ts_expr_returns(op);
     }
     match item.signature.name {
-        "pure" | "time" | "frame" | "clock_time" => "Expr<number>".to_string(),
+        "pure" | "frame" | "clock_time" | "clock_time_of" => "Expr<number>".to_string(),
+        "clock_range" | "clock_range_of" => "Expr<boolean>".to_string(),
         "event" | "component_state" | "env" => "Expr<any>".to_string(),
         _ => ts_type_name(item.io.ret),
     }

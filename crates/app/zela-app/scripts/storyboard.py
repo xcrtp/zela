@@ -77,14 +77,6 @@ def ramp2(ax, ay, bx, by, dur):
     )
 
 
-def in_segment(dur):
-    """旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。"""
-    return expr.Predicate.Of(
-        expr=expr.And(
-            a=expr.Ge(a=expr.clock.time(), b=expr.pure(0.0)),
-            b=expr.Lt(a=expr.clock.time(), b=expr.pure(dur)),
-        )
-    )
 
 
 # ── 分镜 1：常驻网格与坐标轴（Axes2D::unbounded() 的默认样式）──────────
@@ -158,7 +150,7 @@ expr.bind(
         target=Reveal.channel.end,
         root=expr.Scale(k=0.5, of=expr.clock.time()),
         clock=expr.clock.scale(1.0),
-        predicate=in_segment(2.0),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 2.0)),
     )
 )
 # 2–2.5s：停（没有绑定生效 ⇒ 上一步的值保持）
@@ -169,7 +161,7 @@ expr.bind(
         target=CAMERA_SCALE,
         root=ramp(40.0, 110.0, 1.0),
         clock=expr.clock.shift(2.5),
-        predicate=in_segment(1.0),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 1.0)),
     )
 )
 expr.bind(
@@ -178,7 +170,7 @@ expr.bind(
         target=CAMERA_CENTER,
         root=ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
         clock=expr.clock.shift(2.5),
-        predicate=in_segment(1.0),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 1.0)),
     )
 )
 # 3.5–4.5s：公式逐轮廓依次书写（1s 平摊；轮廓数可能为 0）
@@ -192,6 +184,6 @@ if len(formula_handles) > 0:
                 target=Reveal.channel.end,
                 root=ramp(0.0, 1.0, each),
                 clock=expr.clock.shift(start),
-                predicate=in_segment(each),
+                predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, each)),
             )
         )

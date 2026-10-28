@@ -81,14 +81,6 @@ local function orbit2d(radius, speed, initial_angle)
 end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 -- 串行段起点（旧 `scene.animate` / `wait` 的全局游标）。
 local MAIN_START = FADE
@@ -249,14 +241,14 @@ expr.bind {
     target = Opacity.channel.value,
     root = ramp(0.0, 1.0, FADE),
     clock = clock.shift(0.0),
-    predicate = in_segment(FADE),
+    predicate = Predicate.Of { expr = clock.range(0.0, FADE) },
 }
 expr.bind {
     object = pulse,
     target = Opacity.channel.value,
     root = ramp(0.0, 1.0, FADE),
     clock = clock.shift(0.0),
-    predicate = in_segment(FADE),
+    predicate = Predicate.Of { expr = clock.range(0.0, FADE) },
 }
 
 -- ── 4. 主段：所有向量自转（S3 Rotation），相位点公转（S4 Orbit），脉冲书写
@@ -269,7 +261,7 @@ expr.bind {
     target = Transform.channel.rotation,
     root = rotation_expr(1),
     clock = clock.shift(MAIN_START),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 for i = 2, #HARMONICS do
     expr.bind {
@@ -277,7 +269,7 @@ for i = 2, #HARMONICS do
         target = Transform.channel.rotation,
         root = rotation_expr(HARMONICS[i] - HARMONICS[i - 1]),
         clock = clock.shift(MAIN_START),
-        predicate = in_segment(T),
+        predicate = Predicate.Of { expr = clock.range(0.0, T) },
     }
 end
 expr.bind {
@@ -285,14 +277,14 @@ expr.bind {
     target = Transform.channel.position,
     root = orbit2d(0.18, TAU / T, 0.0),
     clock = clock.shift(MAIN_START),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 expr.bind {
     object = pulse,
     target = Reveal.channel["end"],
     root = ramp(0.0, 1.0, T),
     clock = clock.shift(MAIN_START),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
@@ -311,26 +303,26 @@ expr.bind {
     target = CAMERA_SCALE,
     root = ramp(55.0, 90.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
-    predicate = in_segment(ZOOM),
+    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
     target = CAMERA_CENTER,
     root = ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
-    predicate = in_segment(ZOOM),
+    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
     target = CAMERA_SCALE,
     root = ramp(90.0, 55.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
-    predicate = in_segment(ZOOM),
+    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
     target = CAMERA_CENTER,
     root = ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
-    predicate = in_segment(ZOOM),
+    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }

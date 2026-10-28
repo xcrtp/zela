@@ -93,7 +93,7 @@ mod tests {
             Expr::pure(1.0),
             LibraryRef {
                 namespace: "zela.math".to_string(),
-                version: "12".to_string(),
+                version: "13".to_string(),
                 op_revisions: Default::default(),
             },
             clock,

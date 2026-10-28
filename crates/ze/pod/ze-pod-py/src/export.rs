@@ -336,7 +336,8 @@ fn py_call_return(
         return py_expr_returns(op, components);
     }
     match item.signature.name {
-        "pure" | "time" | "frame" | "clock_time" => "Expr[float]".to_string(),
+        "pure" | "frame" | "clock_time" | "clock_time_of" => "Expr[float]".to_string(),
+        "clock_range" | "clock_range_of" => "Expr[bool]".to_string(),
         "event" | "component_state" | "env" => "Expr[Any]".to_string(),
         _ => py_type(item.io.ret, components),
     }
@@ -536,7 +537,7 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
         out.push('\n');
 
         // `clock_*` 的别名表挂在根模块上（与 Lua / JS 一致；`clock.time()` 与
-        // `expr.time()` 是同一个通道叶子）。
+        // `clock.time()` 读绑定时钟）。
         if package == root
             && capabilities
                 .iter()

@@ -48,7 +48,7 @@ pub(crate) fn bind<C: Capability<'static>>(
 /// `clock_*` 前缀的函数同时挂到 **`clock` 表**（`clock.shift` / `clock.scale` /
 /// `clock.nest` / `clock.time`）。
 ///
-/// 剧本里 `clock.time()` 与 `expr.time()` 是**同一个**通道叶子：时钟身份属于绑定，
+/// 剧本里 `clock.time()` 读**绑定时钟**；`clock.time_of(c)` 的叶子带 `c` 的身份，
 /// 不属于表达式（见 `BindSpec.clock`）。前缀约定让同一份 capability 暴露两个表，
 /// 不必新增 Service。
 fn install_clock_alias(

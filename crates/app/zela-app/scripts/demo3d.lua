@@ -36,14 +36,6 @@ local function ramp2(ax, ay, bx, by, dur)
 end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 -- 实体立方体（PBR 材质）+ 摆放（旋转 + 缩放 + 平移）。
 local cube = scene.spawn({
@@ -70,7 +62,7 @@ expr.bind {
     target = Transform.channel.rotation,
     root = ramp(0.0, 6.28318530718, T),
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 -- `Transform.position` 的字段类型是 `Vec3`；旧的 `Ramp2`（Vec2）挡位在这里
 -- **显式补 z = 0**（与 `coerce::position3` 保留原 z 的口径一致：该对象 z 恒 0）。
@@ -82,7 +74,7 @@ expr.bind {
         z = expr.pure(0.0),
     },
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- 线框立方体（Lambert），旋转 45° 并缩放，验证 Transform3D 的旋转 / 缩放字段。
@@ -110,7 +102,7 @@ expr.bind {
     target = Transform.channel.scale,
     root = ramp(0.8, 1.6, T),
     clock = clock.shift(T),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- 方向光（方向是光传播方向，世界空间）。

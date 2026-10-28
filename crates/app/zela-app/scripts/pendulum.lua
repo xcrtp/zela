@@ -54,14 +54,6 @@ local function sin_curve(base, amp, omega)
 end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 -- 2D 相机（渲染器要求 Framing2D；世界中心对准钟摆）。
 scene.spawn({
@@ -120,21 +112,21 @@ expr.bind {
     target = Transform.channel.rotation,
     root = sin_curve(0.0, AMP1, q(TAU / 2.0)),
     clock = clock.scale(1.0),
-    predicate = in_segment(T1),
+    predicate = Predicate.Of { expr = clock.range(0.0, T1) },
 }
 expr.bind {
     object = trace,
     target = Reveal.channel["end"],
     root = ramp(0.0, 1.0, T1),
     clock = clock.scale(1.0),
-    predicate = in_segment(T1),
+    predicate = Predicate.Of { expr = clock.range(0.0, T1) },
 }
 expr.bind {
     object = ring,
     target = Circle.channel.radius,
     root = sin_curve(0.34, 0.06, 3.0),
     clock = clock.scale(1.0),
-    predicate = in_segment(T1),
+    predicate = Predicate.Of { expr = clock.range(0.0, T1) },
 }
 for _, object in ipairs({ trace, bob, ring }) do
     expr.bind {
@@ -142,7 +134,7 @@ for _, object in ipairs({ trace, bob, ring }) do
         target = Opacity.channel.value,
         root = ramp(0.0, 1.0, 0.6),
         clock = clock.scale(1.0),
-        predicate = in_segment(T1),
+        predicate = Predicate.Of { expr = clock.range(0.0, T1) },
     }
 end
 
@@ -152,12 +144,12 @@ expr.bind {
     target = Transform.channel.rotation,
     root = sin_curve(0.0, AMP2, q(TAU / 2.5)),
     clock = clock.shift(T1),
-    predicate = in_segment(T2),
+    predicate = Predicate.Of { expr = clock.range(0.0, T2) },
 }
 expr.bind {
     object = ring,
     target = Circle.channel.radius,
     root = sin_curve(0.34, 0.05, 4.0),
     clock = clock.shift(T1),
-    predicate = in_segment(T2),
+    predicate = Predicate.Of { expr = clock.range(0.0, T2) },
 }

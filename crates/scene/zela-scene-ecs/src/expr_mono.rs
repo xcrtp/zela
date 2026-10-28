@@ -42,20 +42,39 @@ pub const FRAME_CHANNEL: &str = "frame";
 ///
 /// 持 `&dyn SceneRead`（每帧构造一次，按值使用 ⇒ 不需要 `Clone` / `Copy`）。
 pub struct SceneMono<'a> {
+    /// 该绑定的**局部时间**（`clock.time()` 的取值）。
     pub time: f64,
+    /// 该帧的**全局时间**（`c.time()` 按 `c` 的时钟链反算用）。
+    pub global: f64,
     pub frame: u64,
     scene: &'a dyn SceneRead,
 }
 
 impl<'a> SceneMono<'a> {
     pub fn new(time: f64, frame: u64, scene: &'a dyn SceneRead) -> Self {
-        Self { time, frame, scene }
+        Self {
+            time,
+            global: time,
+            frame,
+            scene,
+        }
+    }
+
+    /// 同时给出局部 / 全局时间（绑定驱动路径：两者通常不同）。
+    pub fn with_global(local: f64, global: f64, frame: u64, scene: &'a dyn SceneRead) -> Self {
+        Self {
+            time: local,
+            global,
+            frame,
+            scene,
+        }
     }
 
     /// 从 [`TimeState`] 取通道值（每帧构造一次，无状态）。
     pub fn from_time_state(state: &TimeState, scene: &'a dyn SceneRead) -> Self {
         Self {
             time: state.elapsed as f64,
+            global: state.elapsed as f64,
             frame: state.frame,
             scene,
         }
@@ -65,7 +84,12 @@ impl<'a> SceneMono<'a> {
 impl Mono for SceneMono<'_> {
     fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
         match (channel.namespace.as_str(), channel.name.as_str()) {
-            ("", TIME_CHANNEL) => Ok(Value::F64(self.time)),
+            ("", TIME_CHANNEL) => Ok(Value::F64(match &channel.clock {
+                // `c.time()`：按叶子携带的时钟链在**同一个全局时间**上反算。
+                Some(shape) => shape.eval(self.global),
+                // `clock.time()`：绑定时钟的局部时间（`None` = 现状）。
+                None => self.time,
+            })),
             ("", FRAME_CHANNEL) => Ok(Value::F64(self.frame as f64)),
             _ => Err(EvalError::MissingChannel {
                 channel: channel.clone(),
@@ -242,6 +266,28 @@ mod tests {
         assert!(mono
             .read(&ChannelRef::new("zela.scene", "Circle.radius"))
             .is_err());
+    }
+
+    /// **B1 时钟身份**：`c.time()` 按 `c` 的链在**全局时间**上反算；
+    /// `clock.time()`（无身份）仍读绑定局部时间。两者可出现在同一表达式里。
+    #[test]
+    fn clock_scoped_time_uses_the_global_reference() {
+        use ze_comb::{ClockLinkShape, ClockShape};
+        let shape = ClockShape {
+            links: vec![ClockLinkShape {
+                shift: 2.0,
+                rate: 0.5,
+            }],
+        };
+        let scoped = ChannelRef::builtin(TIME_CHANNEL).with_clock(shape);
+        // 绑定局部 = 0.5，全局 = 5.0 ⇒ `c.time()` = (5 − 2) × 0.5 = 1.5。
+        let mono = SceneMono::with_global(0.5, 5.0, 0, &NoScene);
+        assert_eq!(mono.read(&scoped).unwrap(), Value::F64(1.5));
+        assert_eq!(
+            mono.read(&ChannelRef::builtin(TIME_CHANNEL)).unwrap(),
+            Value::F64(0.5),
+            "无身份的 `clock.time()` 读绑定局部时间"
+        );
     }
 
     /// 宿主 M + 函子库语义：`sin(t)` 在 `t = π/2` 处为 1。

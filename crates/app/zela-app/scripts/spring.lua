@@ -52,14 +52,6 @@ local function move2(ax, ay, bx, by, dur)
 end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 -- 地面线（始终可见）。
 scene.spawn({
@@ -99,21 +91,21 @@ local function hop(x, color)
         target = Transform.channel.position,
         root = move2(x, q(HOP_HI), x, q(FLOOR_Y), DOWN),
         clock = clock.shift(down),
-        predicate = in_segment(DOWN),
+        predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
     }
     expr.bind {
         object = b,
         target = Transform.channel.scale,
         root = ramp(1.0, 0.7, DOWN),
         clock = clock.shift(down),
-        predicate = in_segment(DOWN),
+        predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
     }
     expr.bind {
         object = b,
         target = Opacity.channel.value,
         root = ramp(0.0, 1.0, 0.3),
         clock = clock.shift(down),
-        predicate = in_segment(DOWN),
+        predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
     }
 
     -- 弹起 + 离地拉伸（同一段 [up, up+UP)）。
@@ -122,14 +114,14 @@ local function hop(x, color)
         target = Transform.channel.position,
         root = move2(x, q(FLOOR_Y), x, q(HOP_HI), UP),
         clock = clock.shift(up),
-        predicate = in_segment(UP),
+        predicate = Predicate.Of { expr = clock.range(0.0, UP) },
     }
     expr.bind {
         object = b,
         target = Transform.channel.scale,
         root = ramp(0.7, 1.15, UP),
         clock = clock.shift(up),
-        predicate = in_segment(UP),
+        predicate = Predicate.Of { expr = clock.range(0.0, UP) },
     }
 
     -- 回落归一（只动 Scale，Position 不再写）。
@@ -138,7 +130,7 @@ local function hop(x, color)
         target = Transform.channel.scale,
         root = ramp(1.15, 1.0, SETTLE),
         clock = clock.shift(settle),
-        predicate = in_segment(SETTLE),
+        predicate = Predicate.Of { expr = clock.range(0.0, SETTLE) },
     }
 
     cursor = settle + SETTLE
@@ -161,5 +153,5 @@ expr.bind {
     },
     root = ramp(55.0, 74.0, 1.3),
     clock = clock.shift(cursor),
-    predicate = in_segment(1.3),
+    predicate = Predicate.Of { expr = clock.range(0.0, 1.3) },
 }

@@ -4,7 +4,7 @@
 -- 由宿主单子 M 每帧注入 Time；脚本只提交结构。
 --
 -- 用到的表达式 API（zela.math@6）：
---   - 零元通道：expr.time() / clock.time()（后者 = 绑定时钟的局部时间）
+--   - 零元通道：clock.time() / clock.time()（后者 = 绑定时钟的局部时间）
 --   - 表构造器：Add / Scale / Mul / Sin / Cos（与 scene.spawn{} 同构）
 --   - 字面量：expr.pure(k)（自动提升尚未落地，见 GAPS AF-06）
 --   - 通道选择键：组件的 `channel` 常量 `Circle.channel.radius` / `Opacity.channel.value`
@@ -30,7 +30,7 @@ local radius = Add {
     a = expr.pure(0.55),
     b = Scale {
         k = 0.30,
-        of = Sin { of = Mul { a = expr.time(), b = expr.pure(1.6) } },
+        of = Sin { of = Mul { a = clock.time(), b = expr.pure(1.6) } },
     },
 }
 expr.bind { object = dot, target = Circle.channel.radius, root = radius, duration = 4.0 }
@@ -46,7 +46,7 @@ local fade = Add {
     a = expr.pure(0.30),
     b = Scale {
         k = 0.20,
-        of = Cos { of = Mul { a = expr.time(), b = expr.pure(0.8) } },
+        of = Cos { of = Mul { a = clock.time(), b = expr.pure(0.8) } },
     },
 }
 expr.bind {

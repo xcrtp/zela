@@ -48,14 +48,6 @@ local function sin_curve(base, amp, omega)
 end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
-local function in_segment(dur)
-    return Predicate.Of {
-        expr = And {
-            a = Ge { a = clock.time(), b = expr.pure(0.0) },
-            b = Lt { a = clock.time(), b = expr.pure(dur) },
-        },
-    }
-end
 
 local T = 4.0
 
@@ -69,14 +61,14 @@ expr.bind {
     target = Circle.channel.radius,
     root = sin_curve(0.55, 0.25, 2.4),
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 expr.bind {
     object = dot,
     target = Circle.channel.center,
     root = ramp2(-3.6, 2.0, -1.2, 1.2, T),
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- ── 写者 B / C：两个方块的 `Transform.position`（Vec3 源）──────────────
@@ -87,14 +79,14 @@ expr.bind {
     target = Transform.channel.position,
     root = Vec3FromVec2 { v = ramp2(-2.4, -0.8, -3.0, 0.2, T), z = expr.pure(0.0) },
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 expr.bind {
     object = b,
     target = Transform.channel.position,
     root = Vec3FromVec2 { v = ramp2(2.4, -0.8, 3.0, 0.2, T), z = expr.pure(0.0) },
     clock = clock.scale(1.0),
-    predicate = in_segment(T),
+    predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 
 -- ── 读者 1（Vec2）：箭头终点 = 圆点中心 ───────────────────────────────

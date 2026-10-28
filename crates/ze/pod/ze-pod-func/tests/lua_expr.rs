@@ -136,7 +136,7 @@ fn lua_builds_an_expression_and_exports_it() {
     let out = run(
         r#"
         local k = 3.0
-        local t = expr.time()
+        local t = clock.time()
         -- 表构造器（与 `scene.spawn{}` 同构）；字面量仍需显式 `expr.pure`
         -- （自动提升属 AF-06 的剩余项）。
         local y = Scale {
@@ -176,7 +176,7 @@ fn lua_sum_accepts_an_array() {
             local k = i * 2.0
             terms[i] = Scale {
                 k = 4.0 / (3.141592653589793 * k),
-                of = Sin { of = Mul { a = expr.time(), b = expr.pure(k) } },
+                of = Sin { of = Mul { a = clock.time(), b = expr.pure(k) } },
             }
         end
         scene.emit(expr.expression(Sum { terms = terms }))

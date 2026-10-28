@@ -399,16 +399,13 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "12",
+    version = "13",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
 pub struct MathApi<'a> {
     /// 数值字面量（装配期算术的结果落在这里）。
     pub pure: fn(&'a dyn Pod, value: f64) -> Handle,
-
-    /// 时间通道（零元组合子；运行期由宿主注入）。
-    pub time: fn(&'a dyn Pod) -> Handle,
 
     /// 帧号通道（一等通道）。
     pub frame: fn(&'a dyn Pod) -> Handle,
@@ -537,10 +534,20 @@ pub struct MathApi<'a> {
     /// `clock.nest(clock.scale(0.5), clock.shift(2.0))` = "半速时钟，内部再偏移 2s"。
     pub clock_nest: fn(&'a dyn Pod, parent: ClockSpec, child: ClockSpec) -> ClockSpec,
 
-    /// 时钟局部时间叶子（与 `expr.time()` 是**同一个**通道）。
-    ///
-    /// 绑定求值时宿主用该绑定自己的时钟注入 `time` ⇒ 不需要把时钟身份写进表达式。
+    /// **绑定时钟**的局部时间叶子（`clock.time()`；叶子不带时钟身份）。
     pub clock_time: fn(&'a dyn Pod) -> Handle,
+
+    /// **指定时钟**的局部时间叶子（`clock.time_of(c)`）：叶子带上 `c` 的身份，
+    /// 运行期按 `c` 的链在**同一全局时间**上反算 ⇒ 一个表达式里可以混多条时间轴。
+    pub clock_time_of: fn(&'a dyn Pod, clock: ClockSpec) -> Handle,
+
+    /// 窗口 `[lo, hi)`（绑定时钟）：`And(Ge(t, lo), Lt(t, hi))`。
+    ///
+    /// 这是四个脚本里 `in_segment` helper 的库内形态（事实标准库，不再各写一份）。
+    pub clock_range: fn(&'a dyn Pod, lo: f64, hi: f64) -> Handle,
+
+    /// 窗口 `[lo, hi)`（**指定时钟**）：叶子带时钟身份。
+    pub clock_range_of: fn(&'a dyn Pod, clock: ClockSpec, lo: f64, hi: f64) -> Handle,
 
     /// 登记一条**表达式动画**（S3）：对象句柄 + 目标通道 + 根句柄 + 时长。
     ///
@@ -564,9 +571,11 @@ pub struct MathApi<'a> {
 /// `@11`（第 3 批）：新增转换算子族 `splat` / `vec3_from_vec2` / `vec2_from_vec3` /
 /// `length` / `normalize`。
 /// `@12`（第 5a 批）：新增 `round_f32`（旧曲线的 f32 精度落位，供逐位迁移）。
-pub const MATH_API_VERSION: &str = "12";
+/// `@13`（5b B1）：删除 `time`（改由 `clock.time()` 作唯一入口），新增
+/// `clock_time_of` / `clock_range` / `clock_range_of`（时钟身份 + 窗口函子）。
+pub const MATH_API_VERSION: &str = "13";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 14_108_612_611_961_094_925;
+pub const MATH_API_FINGERPRINT: u64 = 13_878_659_082_635_502_658;
 
 #[cfg(test)]
 mod fingerprint_tests {
