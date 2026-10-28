@@ -107,6 +107,17 @@ fn options_unknown_flag_fails() {
     assert!(parse(&["--nope"]).is_err());
 }
 
+/// verify 默认要求 Python：降级必须是**显式**开关（不是静默行为）。
+#[test]
+fn options_allow_no_python_is_opt_in() {
+    assert!(!parse(&["--step", "check"]).unwrap().allow_no_python);
+    assert!(
+        parse(&["--step", "check", "--allow-no-python"])
+            .unwrap()
+            .allow_no_python
+    );
+}
+
 // ─── load_baselines ───────────────────────────────────────────────────────────
 
 #[test]
