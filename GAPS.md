@@ -1272,6 +1272,31 @@
 
 ---
 
+## AW. 参数化几何与 shader codegen 批次（2026-10-29）
+
+> 计划《参数化几何与 shader codegen_执行计划》，代号**参数化几何与 codegen 批次**。
+> 硬纪律：① payload 边界外不保证跨端逐位一致，但**本机逐次一致仍必须保**；
+> ② 危险能力（GPU 求值）必须有语法/值级的分级标记；③ 每个实验必须有 A/B/C 结局。
+> 编号用 `AW-`（`AV` 已被单态化批次占用，`AU` 已被类型地基占用 —— 不复用）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AW-01 | **阶段 1：参数化几何**（`MorphGeometry` → `kind + params`） | render-vector / playback | **已关闭（阶段 1）** | [`api.rs`](crates/render/zela-render-vector/src/api.rs) 的 `ParamGeometry { kind: ParamKind, delta, params }`（`Lerp` / `Window` / `Grow`）+ `ParamGeometry::{lerp,window,grow,param_digest}`；接缝统一在 `zela_render_vector::scene::param_records`，`morph_records` / `window_records` / `grow_records` 都是它的薄入口。`attach_param` 把 `Lerp` 接第二形状、`Window` / `Grow` 写 `params[0..2]`；窗口与 `PathOptions::curve_window` 同时给出**显式报错**。`Grow(n)` 就是 `Window(0, n)`（用例 `grow_is_a_window_prefix` 钉住像素逐位相同）。 |
+| AW-02 | **E1：三种动画是同一 idiom，且结构指纹只哈希参数** | scene / render-vector | **已关闭（E1）** | `ParamGeometry::param_digest` 只哈希 `kind + params`：同参数两次求值同摘要、只改 `delta` 摘要不动、参数变摘要变（用例 `param_digest_hashes_the_numbers_not_the_geometry`）。几何仍是派生量（GAPS AR-05 / AR-08 的 `Path` 盲区不变），但**逐帧真正变化的只有参数** ⇒ 等式判据不再依赖求值结果。`Window` 与 `curve_window` 逐位相同（`window_param_and_curve_window_render_alike`）。**边界（诚实）**：`base` 几何仍在每帧被重新打包并上传 —— `Player::reset` 每帧清 `Store`，真正的"上传一次"需要持久前缀 + 增量上传，见 AW-07。 |
+| AW-03 | **阶段 2：Reveal 降格为曲线窗口** | playback / render-vector | **已关闭（阶段 2）** | [`vector_frame.rs`](crates/app/zela-playback/src/vector_frame.rs) 的 `reveal_window`（归一化弧长 → 曲线索引 + t）+ `reveal_base`（完整折线）；`two_d_records` 不再用 CPU 裁剪，改发 `window_records`。旧裁剪实现保留为 `#[cfg(test)]` 的 A/B 参考：`reveal_window_matches_the_cpu_clip` 判据 = 最大通道差 ≤ 4 且差异像素 < 200。**像素基线变更（点名）**：`[vector] fourier` 的序列哈希变化，原因是书写脉冲的**笔尖端点**由着色器裁剪（没有 CPU 侧的端点 cap），随阶段 2 的重录有独立证据。 |
+| AW-04 | **E2：过采样 + 窗口的精度** | ze-scene-core | **已关闭（E2）** | `FunctionGraph::{extended_path,window_for}`（两侧各扩一个 `span`，相位只移动 `CurveWindow`；超边距才回落重采样，显式 `None`）。实测 `e2_sampling_error_at_four_times_zoom`：`sin` 在 `[0, 2π]` 按 120 段采样，最大弦高 **< 1e-4 世界单位**，4×（4 px/单位）下 **< 0.5 px** ⇒ 4× 放大无可见台阶（结局 **A**）。**边界**：采样密度由 `step` 固定、不随缩放增长；临界倍率 ≈ 0.5 / 弦高（数千 px/单位）之后会露台阶，那时走 4-B 的 GPU 求值。FunctionGraph 目前**无脚本入口**（GAPS W1-06），本阶段不改变任何作品像素。 |
+| AW-05 | **E3：select 粒度 —— uniform（per-draw）vs 属性（per-vertex）** | render-vector | **部分关闭（E3 数据）** | 实验 `e3_expression_clustered_draws_keep_depth_compositing`：三个不透明方块（z = −1 / 0 / +1）按"声明序"与"按表达式聚簇、组间按最小 z 排"两种顺序渲染，**像素逐位相同** ⇒ vector 后端逐像素深度合成对 draw 顺序不敏感，`uniform select` 可行（结局 **A**）。**未测（记账）**：GPU 侧"每次 draw 换表达式"的耗时差 —— 需要先加 shader 分支（4-A 的 `concat` 接缝），留给 codegen 接入时用同一场景复测。 |
+| AW-06 | **阶段 4-A：着色 codegen（插 `concat()` 的 source 位）** | ze-comb / ze-func | **已关闭（4-A）** | [`codegen.rs`](crates/kernel/ze-comb/src/codegen.rs) 的 `ze_comb::codegen::emit_wgsl`：结构递归 + 类型映射 + `BTreeMap` 参数表，输出 `fn eval(p: Params, index: u32) -> T` 纯函数；`HostState` 通道 / 离散层节点 / 非有限字面量**显式失败**。算子规则在 [`wgsl.rs`](crates/kernel/ze-func/src/wgsl.rs)（`ze_func::wgsl::backend`），签名校验复用单态解析器（生成规则与求值实例同源）；`every_operator_has_a_wgsl_rule` 从 `OP_DEFS` 展开、29 个算子全覆盖。**E4**：`zela-render-backends/tests/wgsl_codegen.rs` 把生成的 WGSL 包进最小 compute pass，7 条表达式 × 3 个时间点与参考求值**容差内一致**（f32 vs f64，容差 2e-5）；同 `Expr` 两次生成逐字节相同（`emission_is_byte_identical_across_runs`）。**修正的口径坑**：`round_f32` 是"f64 收窄到 f32"，在 shader 里是恒等，不是 `round()` 到整数。 |
+| AW-07 | **阶段 4-B：几何 codegen 接进矢量后端**（compute pass 写 `ctrl`） | render-vector | **记账（C · 未执行 + 触发条件）** | 机制已验证（AW-08），但**生产接入未做**：需要 ① `Player` 持久几何前缀（`Store::clear` 目前每帧清空，见 AW-02）、② 增量上传以免整块 `generation` 重传、③ 新 binding + compute pass 写 `ctrl`、④ 拓扑变化时同步写 `ranges`（上界进产物，超出显式失败）。触发条件：当"每帧几何上传"被实测为某作品的主瓶颈，或阶段 1/2 的 `base` 需要真正只上传一次时启动。**`FEATURE_CODEGEN` 因此未加**（AW-11）：没有生产入口的能力位是死代码，等 4-B 接入时与路由"已忽略"报告一起加。 |
+| AW-08 | **E5：compute pass 写 `ctrl` 后 flatten 结果正确 + 本机逐次一致** | render-backends（实验） | **已关闭（E5 机制）** | `gpu_geometry_experiments.rs` 的 `e5_compute_pass_written_controls_flatten_correctly`：GPU 对 8 个控制点做 `mix(base, target, t)` 写入 `out`，CPU 按 `Path2D` 三次曲线展开；与"先 mix 再展开"逐点最大距离 < 1e-3；同一输入连跑两次的读回字节**逐位相同**。**边界（诚实）**：这是独立 compute pass 实验，未接渲染链路（接入是 AW-07 的 C）。 |
+| AW-09 | **阶段 5 / E6：GPU bounds reduce 逐位确定** | render-backends（实验） | **部分关闭（E6 数据）** | `e6_gpu_bounds_reduce_is_bit_exact`：单 workgroup 逐点 `min/max` 归约与 CPU 参考**逐位相同**（含 `-0.0`：两端都做 `x + 0.0` 归一）。min/max 只有比较、不涉及舍入 ⇒ 树形归约与顺序无关，可留在 payload 内、进结构指纹（不是容差判据）。**未做（记账）**：接进 `object_bounds` / 相机取景的生产路径；控制点 bounds ≠ 曲线 bounds（凸包偏大，取景会留白），需要紧包时另做"导函数求极值"。 |
+| AW-10 | **阶段 0.6：`bench_baselines.txt` 重录** | xtask | **未执行（需干净树 + 录制设备）** | 本批开发期间工作树持续有改动，按纪律**不在脏树上重录**；且 bench 基线与本批功能无关。触发条件：本批合入后的第一个干净树 + 录制设备（`ZELA_RECORD_DEVICE`）。 |
+| AW-11 | **`FEATURE_CODEGEN = 1 << 5` 未加** | ze-render-ir / routing | **记账（随 AW-07 一起做）** | 计划 §阶段 4 要求几何 codegen 是 vector-only 能力、路由到 wgpu 时必须写明"已忽略"。当前**没有几何 codegen 的生产入口** ⇒ 先加能力位等于登记一个永远不会为真的条件（死位）。触发条件与 AW-07 相同：compute pass 写入生产链路的那次提交同时加位、加 `PathOptions::feature_names` 条目、加 routing 的"已忽略"文案与用例。 |
+
+**AW 段小计**：已关闭 6（AW-01、AW-02、AW-03、AW-04、AW-06、AW-08）· 部分关闭 2（AW-05、AW-09）· 记账 2（AW-07、AW-11）· 未执行 1（AW-10）· 落档 0。
+
+---
+
 ## 附录. crate 能力表（阶段 0.5 门禁）
 
 > **门禁 1**：`crates/**/Cargo.toml` 的每个 crate 必须在本表登记（新增 crate 未登记 ⇒ `cargo verify --step structure` 失败）。
@@ -1335,8 +1360,8 @@
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AU**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AU 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
+> （**D–AW**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AW 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
 
 | 类别 | 数量 |
 |---|---|
