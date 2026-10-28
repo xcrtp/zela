@@ -1940,7 +1940,8 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **`clock.time()` 与 `expr.time()` 是同一个叶子**：时钟身份属于**绑定**（`Bind.clock`），
   不属于表达式 —— 求值时宿主用 `forest.eval_local(clock, t)` 构造 `SceneMono`
   （[`system.rs`](crates/scene/zela-scene-ecs/src/animation/system.rs)）。这是 G1 的根治：
-  两条路径读同一个 `eval_local`。
+  两条路径读同一个 `eval_local`。（**5b AP 起 `expr.time()` 已删除**，见文末
+  「作者面兑现」：时间叶子带时钟身份，`c.time()` 在全局时间上反算。）
 - **产物**：`ClockProgram`（`ze-time`）随 `Step::Expr` 走；空链用
   `skip_serializing_if = "ClockProgram::is_global"` ⇒ **全局时钟的 payload 逐字节不变**。
   `LIBRARY_VERSION 5 → 6`（绑定签名变了）⇒ `expr_demo` 的 payload 重录一次。
@@ -2075,3 +2076,41 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   与组件常量共用一个泛型类）；TS/Py 新增泛型。
   组件常量 `radius: Channel<number>` / `Channel[float]`，`Bind.target: Channel<any>`。
 - **零运行时变化**：只改声明文件与 JSON；payload / 像素基线不受影响。
+
+### 作者面兑现（5b 退役 + 时钟身份化 + 方法 / Query / Bounds，2026-10-28）
+
+> 一句话：**内核已有的能力第一次全部有作者出口，同时把 5b 的老 API 拆干净**。
+> 记账见 [GAPS AP 段](GAPS.md)。
+
+**A · 5b 退役（纯减法）**
+
+- 脚本侧旧动画 API 全删：`scene.animate` / `parallel` / `wait` / `clip`、`Name{}`、
+  双 `Curve`（脚本枚举）、`zela.TransformChannel`。⇒ `zela.scene` 的动画入口**只有**
+  表达式绑定一条路。
+- Rust 侧顺序编排退役：`Timeline` 不再有 `play` / `parallel` / `wait`，`Step` 只剩
+  `Step::Expr`；`SceneScript::append` 的时间接续改为**在时钟链最外层前插 `shift`**
+  （顺序语义 = 时钟链，不再有游标）。
+- `capability_exemptions.txt` **清空**（AK-05 九条兑现）；coverage 55/55、0 豁免。
+
+**B · 作者面兑现**
+
+- **时钟身份化（B1）**：`ChannelRef.clock` 随 payload 走 ⇒ `c.time()` 在**全局时间**上
+  按叶子时钟链反算，"时间只有一个数"的说法正式作废；窗口写成 `clock.range(lo, hi)`，
+  `expr.time()` 删除。predicate 只认**绑定时钟**（`clock.time_of` 进 predicate ⇒ 装配期拒绝）。
+- **方法（B2）**：`Node::Method` / `MethodSpec { params, ret, reads, eval }`；
+  `Reveal.current_pos` 从只读通道改为方法 ⇒ `TargetError::ReadOnly` /
+  `READ_ONLY_SPECS` / `read_only_entry` 与 4 条特殊路径全部消失。方法的区别是**类型级**的
+  （不在写表里 ⇒ 永远选不中作 target），未知方法是 `EvalError::MissingMethod`。
+- **Bounds（B3）**：`Bounds2D` + `object_bounds`（空/退化几何 `None`，聚合顺序固定）；
+  `Object.bounds` / `Circle.bounds` 作为方法注册 —— 返回 `Rect2D` 需要值系统收敛（W-A）
+  才有脚本出口，当前**仅核心侧**可达（GAPS AP-08）。
+- **Query（B4）**：`expr.bind_each { requires, excludes, target, root }` 在**装配期**展开成
+  N 条具体绑定（按 `ObjectId` 升序；产物里既没有 `it` 也没有 query）；`it` 写成
+  `expr.query_self(channel)`（哨兵对象，装配期替换）；展开数 **N 可见**（`N = 0` 不是错误）。
+  `exists` 是 `Node::Exists`，**装配期常量折叠**成 `Bool` —— 于是静态有两类：
+  依赖时间的（区间代数）与完全静态的（常量），**折叠先做**；漏折到求值期即
+  `EvalError::UnfoldedExists`。
+- **NatRec（B5）**：`nat_rec { count, init, step }` 三语言可达；`count` 装配期强制非负整数
+  （非整数请显式 `Floor`）；含 `NatRec` 的绑定 `seek_kind == Replay`。
+- **库版本**：`zela.math@13 → @17`（`time_of/range` → `method` → `nat_rec` 系 →
+  `query_self/bind_each` → `exists`），指纹逐次重钉；`zela.scene` 不受影响。

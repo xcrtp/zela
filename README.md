@@ -201,8 +201,9 @@ crates/
       TimeState.elapsed = global_t
   → BindingApplySystem (SceneSync 阶段, Reads=TimeState+ClockForest+BindingTable)
       对每条 Binding:
-        local_t = ClockForest.eval_local(clock, global_t)   // 纯函数，支持 Loop/PingPong 等
-        value   = Curve.sample(local_t)                      // Const/Sin/Orbit/Phase/Sampled/Morph/Keyframes
+        local_t = ClockForest.eval_local(clock, global_t)   // 纯函数
+        predicate 先判（Bool 表达式）；生效才求 root：
+        value   = CompiledExpr + SceneMono（时钟局部 / 全局时间都在单子里）
         写入目标组件字段 (Circle.radius / Camera3D.eye / Reveal.end / MorphShape.t / ...)
   → SceneRecord → 渲染
 ```
@@ -210,7 +211,9 @@ crates/
 铁律：
 - 动画纯函数：永不累积状态 → seek/倒放免费正确
 - Binding 表取代组件耦合：新增动画 = 加一行 Binding，不改 System 源码
-- `Timeline` 把「先…再…」编译成顺序 `ClockNode` + `Binding`；`parallel()` 表达同区间多动作
+- **作者入口只有表达式绑定**（5b 退役后脚本侧没有 `animate` / `Curve` 枚举）：
+  「先…再…」= `clock.shift`（`SceneScript::append` 在时钟链最外层前插 shift，没有游标），
+   并行 = 共用同一条时钟，窗口 = `Predicate.Of { expr = clock.range(…) }`
 - 时钟树纯数据 + 纯函数：脱离 hecs，可序列化可测试
 - 墙钟时间：`Instant::now()` 算 dt，帧率波动不影响时间流速
 - UI slider 的 seek 只在 `drag_stopped()` 触发，step_by 会把 global_t 对齐到网格导致卡死

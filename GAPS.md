@@ -1112,7 +1112,23 @@
 
 | AP-03 | **子阶段 A2：删双 `Curve`** | scene-api / xtask | **已关闭（A2）** | 删除 `ze-scene-api::Curve`（脚本侧曲线枚举）及其 `to_native`、两条映射测试；`xtask` 能力抽取去掉 `Curve` 类别（`collect_capabilities` 不再要求该种类非空）；豁免再清 7 条 `Curve:*`（现 5 条：`TransformChannel` ×3 + `Target` ×2）。**全仓 `pub enum Curve` 只剩 `ze-time/src/curve.rs` 一处**（`Timeline`/`SceneEncoder` 一直用的是它，不受影响）。 |
 
-**AP 段小计**：已关闭 3（AP-01、AP-02、AP-03）· 部分关闭 0 · 记账 0 · 未执行 0。
+| AP-04 | **子阶段 A3：退役顺序编排** | scene-core / app | **已关闭（A3）** | `Timeline` 删除 `play` / `parallel` / `wait` / `play_pending` / `parallel_pending` 与 `Step::Play` / `Step::Wait`、`Action`、`ActionTarget::Ready` —— 只剩 `Step::Expr`（`PendingTarget` 是唯一可持久化形态）；`SceneEncoder` 删除 `animate*` / `parallel*` / `wait`，`SceneScript::append` 的时间接续改为**在时钟链最外层前插 `shift`**（不再有顺序游标，`append` 的 O(1) 语义保住）；硬编码分镜与能力 demo 改用表达式绑定（顺序 = `clock.shift`、并行 = 共用同一时钟、窗口 = `[0, dur)`），与 Lua 版逐项同构；同步重写 5 个受影响的测试文件。**36/36 像素基线逐位不变**。 |
+
+| AP-05 | **子阶段 A4：清 AK-05 豁免、收窄能力表面** | scene-api / xtask | **已关闭（A4）** | 删除脚本侧 Pod 类型 `zela.TransformChannel`（A1 后无入口）；能力抽取不再从 `types.rs` 抽动画枚举，复合目标（`Camera2DFraming` / `RevealRange`）只剩旧 payload 解码用途 ⇒ `collect_targets` 跳过 `is_composite`；`capability_exemptions.txt` **清空**（AK-05 九条全部兑现），同步删掉 `TransformChannel` 的跨 crate 重名白名单与相关夹具。coverage **55/55、0 豁免**。 |
+
+| AP-06 | **子阶段 B1：时钟身份化 + 窗口函子** | ze-comb / pod-func / ecs / scripts | **已关闭（B1）** | `ChannelRef` 增加 `clock: Option<ClockShape>`（随 payload 走，`Eq`/`Hash` 按 bits 纳入身份）；`SceneMono` 同时持局部与全局时间，`c.time()` 按叶子时钟链在**全局时间**上反算（不再"时间只有一个数"）；新增 `clock.time_of(c)` / `clock.range(lo,hi)` / `clock.range_of(c,lo,hi)`，删除 `expr.time()`（`zela.math` 12 → 13，指纹 `13_878_659_082_635_502_658`）；硬约束：predicate 只允许**绑定时钟**，`clock.time_of` 出现在 predicate 里装配期显式拒绝；12 个脚本的 `in_segment` helper 全部收敛为 `Predicate.Of { expr = clock.range(…) }`。**未决落地**：W-B 不做 `play` 糖（保留 `clock.range`）、W-C 不提供 `range_inclusive`。 |
+
+| AP-07 | **子阶段 B2：`MethodSpec` 取代只读通道** | ze-comb / scene-core / ecs / pod-func | **已关闭（B2）** | `ze-comb` 新增 `MethodRef` / `Node::Method` / `Step::Method` / `Mono::call_method`（默认 `EvalError::MissingMethod`：未注册方法**显式失败**）；`ze-scene-core` 新增 `MethodSpec { params, ret, reads, eval }` 与 `METHODS`，`Reveal.current_pos` 改为方法（`reads = Reveal.end`）；**删除** `TargetError::ReadOnly` / `READ_ONLY_SPECS` / `read_only_entry` 与 4 条特殊路径，`channels()` 不再导出派生量；装配期未知方法 / 参数个数不符 ⇒ `ExprBindError::UnknownMethod`，`method.object` 与 `Read.object` 同一处句柄重写，`reads` 进 `check_read_order`；`zela.math@15` 新增 `method`，`infer` 用 `METHOD_SIGNATURES` 定型（与 `METHODS` 逐条一致性有专门用例守）。 |
+
+| AP-08 | **子阶段 B3：Bounds（方法的第一个应用）** | ze-scene-core | **部分关闭（B3）** | `Bounds2D` trait（`Circle` / `Path` / `Line` / `Arrow` / `Rect` / `Path2D`）与聚合入口 `object_bounds` 就位；**空/退化几何一律 `None`**（不拿零矩形冒充），聚合读取顺序固定（Circle → Path → Line → Arrow → Rect → Reveal），不依赖容器迭代序；`METHODS` 增加 `Object.bounds` / `Circle.bounds`（`reads` 静态声明）。**残余**：两者返回 `Rect2D`，在脚本边界要以 `Bytes + zela.Rect2D` 表示 —— 值系统收敛（W-A）之前**只有核心侧**可达，跨层一致性用例显式列出这两个"仅核心侧"方法。用例钉住：笔尖（`Reveal.current_pos`）与包围盒同一 `flatten` 采样 ⇒ 必落在盒内。 |
+
+| AP-09 | **子阶段 B4：Query + `it` + `exists`** | pod-func / app | **已关闭（B4）** | `bind_each` 在**装配期**展开成 N 条具体绑定：结果集按 `ObjectId` 升序（脚本句柄下标 = create 序 ⇒ 天然稳定，不碰任何 `HashMap`），产物里**既没有 `it` 也没有 query**；`it` 的形态是 `expr.query_self(channel)`（装配期哨兵 `u64::MAX`，无闭包、无 `where` 对象 ⇒ 不违反禁闭包纪律）；过滤条件只认**组件类型组合**（`requires` / `excludes`），未知组件名装配期显式失败；展开数 **N 可见**（`N = 0` 打印但不报错，与 `Sum{n=0}` 同类）；`exists` 为 `Node::Exists` + **装配期常量折叠**成 `Bool` —— `predicate::analyze` 同时支持"依赖时间（区间代数）"与"完全静态（常量）"两类，折叠先做；漏折到求值期是 `EvalError::UnfoldedExists`（不静默算错）。字段名用 `requires`/`excludes` 而非 `with`/`without`（`with` 是 Python 关键字，同 `Select.otherwise` 之于 `else`）。`zela.math@16→@17`，指纹 `4_840_136_137_552_424_654`。验收用例：两次装配逐位一致、`N = 0`、`exists` 折叠为常量（含未知组件名报错）。 |
+
+| AP-10 | **子阶段 B5：`NatRec` 三语言入口** | pod-func | **已关闭（B5）** | `zela.math@14` 新增 `nat_rec` / `rec_prev` / `rec_index`（Lua / JS / Python 同一张签名表）；`count` 过 f64 边界但在装配期**强制非负整数**（非整数显式报错，强制作者写 `Floor` —— 刀刃取整）；`step` 用 `rec_prev()` / `rec_index()` 表达，避免跨 Pod 回调；Lua 用例钉住产物形状（`node type = nat_rec`，`count` 是 `i64` 字面量）；`ze-scene-ecs` 用例钉住：含 `NatRec` 的绑定 `seek_kind == Replay`。 |
+
+| AP-11 | **W5 明确记账：超越函数跨端一致性不转绿** | ze-func / 代码生成 | **仍成立（记账）** | 阶段 0 已让 fixture `transcendental.json`（`cross_language: false`）变红并留档：Rust `f64::sin` 与 JS `Math.sin` 在 6283 个采样点上 160 处差 1 ulp（`cos` 195 处，首个反例 `x = 0.117`）。本批**不转绿**：两条路线（① 自带可移植算子实现 ② 限制可代码生成的算子集，见 W-E）都需要独立批次的设计与验证成本，且现有 7 个 fixture 无一依赖超越函数。⇒ 保持 `cross_language: false`，是**已声明的债**而不是漏抓；代码生成路线开工前必须先收掉它。 |
+
+**AP 段小计**：已关闭 9（AP-01..AP-07、AP-09、AP-10）· 部分关闭 1（AP-08）· 记账 1（AP-11）· 未执行 0。
 
 ---
 
