@@ -12,7 +12,7 @@
 use std::any::Any;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -465,6 +465,28 @@ fn register_types(
 /// 表达式能力的模块（方法糖经它的 `method` 入口；与脚本里 `import zela.math as expr` 同源）。
 const EXPR_MODULE: &str = "zela.math";
 
+/// 方法名 → `&'static CStr`（`PyCFunction::new_closure` 的 `name` 参数）。
+///
+/// pyo3 0.30 的签名是 `Option<&'static CStr>`（它存裸指针，不能是临时值）；
+/// 方法名来自**静态登记表**（`MethodDecl.name: &'static str`），方法总数固定
+/// ⇒ 每个名字泄漏一次是**有界**的，不随 Pod 实例数增长。
+fn method_name_cstr(name: &'static str) -> &'static CStr {
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<&'static str, &'static CStr>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(cached) = cache.get(name) {
+        return *cached;
+    }
+    let leaked: &'static CStr = Box::leak(
+        CString::new(name)
+            .expect("方法名不应含 NUL")
+            .into_boxed_c_str(),
+    );
+    cache.insert(name, leaked);
+    leaked
+}
+
 /// 把 `Pod::methods()` 的**方法**挂到组件构造器上：`Reveal.current_pos(curve)`。
 ///
 /// 与通道常量同一套路（`Reveal.channel.*`），区别是值是函数：调用时组
@@ -501,9 +523,11 @@ fn attach_methods(
         let parent = parent.clone_ref(py);
         let function = PyCFunction::new_closure(
             py,
-            Some(method.name),
+            Some(method_name_cstr(method.name)),
             None,
-            move |args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>| {
+            move |args: &Bound<'_, PyTuple>,
+                  _kwargs: Option<&Bound<'_, PyDict>>|
+                  -> PyResult<Py<PyAny>> {
                 let py = args.py();
                 if args.len() != arity + 1 {
                     return Err(pyo3::exceptions::PyTypeError::new_err(format!(
@@ -521,7 +545,10 @@ fn attach_methods(
                     list.append(args.get_item(index)?)?;
                 }
                 spec.set_item("args", list)?;
-                method_fn.call1((spec,))
+                // 返回 `Py<PyAny>`（**不带生命周期**）：闭包被 pyo3 以 HRTB 调用，
+                // 返回 `Bound<'_, _>` 会让「闭包参数的生命周期」逃进返回值
+                // （E0521 / IntoPyCallbackOutput is not general enough）。
+                method_fn.call1((spec,)).map(|value| value.unbind())
             },
         )?;
         for module in [this.module.bind(py), service_module] {
