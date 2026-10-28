@@ -70,7 +70,8 @@ pub mod walk;
 pub use analysis::{affected_consumers, reference_groups, shared_definitions, unreachable};
 pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use expr::{
-    ChannelRef, ChannelType, ClockLinkShape, ClockShape, Expr, ExprError, Id, Literal, Node, OpRef,
+    ChannelRef, ChannelType, ClockLinkShape, ClockShape, Expr, ExprError, Id, Literal, MethodRef,
+    Node, OpRef,
 };
 pub use graph_view::ExprGraphView;
 pub use pass::{

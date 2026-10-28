@@ -22,7 +22,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::expr::{ChannelRef, Expr, ExprError, Literal, Node, OpRef};
+use crate::expr::{ChannelRef, Expr, ExprError, Literal, MethodRef, Node, OpRef};
 
 /// 运行时值（跨通道 / 算子的最小集）。
 ///
@@ -179,6 +179,20 @@ pub trait Mono {
             channel: channel.clone(),
         })
     }
+
+    /// 调用**某对象**上的方法（B2）。
+    ///
+    /// 默认实现**显式失败**（`MissingMethod`）：宿主没注册这个方法就不该返回值。
+    fn call_method(
+        &self,
+        method: &MethodRef,
+        _object: u64,
+        _args: &[Value],
+    ) -> Result<Value, EvalError> {
+        Err(EvalError::MissingMethod {
+            method: method.qualified(),
+        })
+    }
 }
 
 /// 求值错误：显式、带算子来源（§7.6 的运行时对应物）。
@@ -218,6 +232,9 @@ pub enum EvalError {
     /// `NatRec` 的轮数超过**动态护栏**（库级默认；只有影响语义的才进产物）。
     #[error("NatRec 轮数 {count} 超过上限 {max_steps}（不收敛/过大 ⇒ 显式错误）")]
     RecBudget { count: i64, max_steps: i64 },
+    /// 方法没有由宿主注册（未知方法 ⇒ 显式失败，不静默给 0）。
+    #[error("方法 `{method}` 未由宿主注册")]
+    MissingMethod { method: String },
     /// 递归叶子出现在没有 `NatRec` 上下文的地方（装配期应已拒绝）。
     #[error("递归叶子 `{leaf}` 不在 NatRec.step 求值上下文里")]
     RecContext { leaf: &'static str },
@@ -283,6 +300,12 @@ pub enum Step {
     /// （脚本局部句柄下标）重写为 `index:u32<<32 | generation:u32` 再编译，
     /// 运行期经 [`Mono::read_object`] 解包读组件。
     Read { channel: ChannelRef, object: u64 },
+    /// **方法调用**（B2）：实参在 `args` 里，`object` 是对象打包值。
+    Method {
+        method: MethodRef,
+        object: u64,
+        args: Vec<usize>,
+    },
     Call { op: OpRef, args: Vec<usize> },
     /// **值分支**（H 批）：`cond` 是外层程序里的索引，两个分支各自是**独立子程序**。
     ///
@@ -459,6 +482,14 @@ impl CompiledExpr {
                     Some(frame) => Value::I64(frame.index),
                     None => return Err(EvalError::RecContext { leaf: "rec_index" }),
                 },
+                Step::Method {
+                    method,
+                    object,
+                    args,
+                } => {
+                    let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
+                    mono.call_method(method, *object, &args)?
+                }
                 Step::Call { op, args } => {
                     let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
                     mono.call(op, &args)?
@@ -524,6 +555,22 @@ fn compile_node<'a>(
             steps.push(Step::Read {
                 channel: channel.clone(),
                 object: *object,
+            });
+            steps.len() - 1
+        }
+        Node::Method {
+            method,
+            object,
+            args,
+        } => {
+            let args: Vec<usize> = args
+                .iter()
+                .map(|arg| compile_node(arg, defs, memo, steps))
+                .collect();
+            steps.push(Step::Method {
+                method: method.clone(),
+                object: *object,
+                args,
             });
             steps.len() - 1
         }

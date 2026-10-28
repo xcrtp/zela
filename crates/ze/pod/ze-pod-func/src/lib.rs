@@ -29,8 +29,9 @@ pub mod signature;
 
 pub use api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec, EqSpec, GeSpec,
-    GtSpec, LeSpec, LtSpec, MathApi, MulSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec,
-    ScaleSpec, SinSpec, SumSpec,
+    GtSpec, LeSpec, LtSpec, MathApi, MethodCallSpec, METHOD_SIGNATURES, MulSpec, NatRecSpec,
+    NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec, SinSpec, SumSpec,
+    method_signature,
 };
 pub use expr_pod::{
     ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBinding, SCENE_NAMESPACE,

@@ -19,9 +19,9 @@ pub use predicate::{
     Interval, IntervalSet, MultiIntervalSet, TIME_VARIABLE, analyze as analyze_predicate,
 };
 pub use target::{
-    Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, MorphT, OpacityValue, Phase,
-    READ_ONLY_SPECS, REVEAL_CURRENT_POS, RevealRange, TARGETS, Target, TargetCtor, TargetEntry,
-    TargetError, TransformChannel, TransformChannelValue, read_only_entry, target_ctor_by_name,
-    target_entry,
+    Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, METHODS, MethodSpec, MorphT,
+    OpacityValue, Phase, REVEAL_CURRENT_POS_METHOD, RevealRange, TARGETS, Target, TargetCtor,
+    TargetEntry, TargetError, TransformChannel, TransformChannelValue, method_entry,
+    target_ctor_by_name, target_entry,
 };
 pub use timeline::{StillTimeReport, Timeline};

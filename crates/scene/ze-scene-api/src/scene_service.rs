@@ -298,15 +298,13 @@ fn service(pod: &dyn Pod) -> &SceneServicePod {
 pub fn channels() -> &'static [ze_pod_core::ChannelDecl] {
     static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelDecl>> = OnceLock::new();
     CHANNELS.get_or_init(|| {
-        use ze_scene_core::animation::{READ_ONLY_SPECS, TARGETS};
-        // 可写目标（单字段） + 只读派生量（`Reveal.current_pos`）：两者都挂成常量，
-        // 但只有前者能被 `scene.clip` / `expr.bind` 选中（写端只查 `TARGETS`）。
-        let writable = TARGETS
+        use ze_scene_core::animation::TARGETS;
+        // 只导出可写字段（单字段）：派生量是**方法**（`Reveal.current_pos`），
+        // 不再挂成通道常量（B2）。
+        TARGETS
             .iter()
             .map(|entry| entry.spec)
-            .filter(|spec| !spec.is_composite);
-        writable
-            .chain(READ_ONLY_SPECS.iter().copied())
+            .filter(|spec| !spec.is_composite)
             .map(|spec| ze_pod_core::ChannelDecl {
                 namespace: "zela.scene",
                 component: spec.component,

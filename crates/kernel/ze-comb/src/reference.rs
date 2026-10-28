@@ -58,6 +58,17 @@ fn eval_node<'a>(
         Node::Pure { value } => literal_value(value),
         Node::Channel { channel } => mono.read(channel)?,
         Node::Read { channel, object } => mono.read_object(channel, *object)?,
+        Node::Method {
+            method,
+            object,
+            args,
+        } => {
+            let mut values = Vec::with_capacity(args.len());
+            for arg in args {
+                values.push(eval_node(arg, defs, context, mono)?);
+            }
+            mono.call_method(method, *object, &values)?
+        }
         Node::Call { op, args } => {
             let mut values = Vec::with_capacity(args.len());
             for arg in args {

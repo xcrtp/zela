@@ -104,7 +104,8 @@ fn fold_call(op: &ze_comb::OpRef, args: &[Expr]) -> Option<Literal> {
 fn eval_closed(expr: &Expr, rec: Option<(&Value, i64)>) -> Option<Value> {
     let value = match &expr.node {
         Node::Pure { value } => literal_to_value(value)?,
-        Node::Channel { .. } | Node::Read { .. } => return None,
+        // 方法读对象状态 ⇒ 不是闭合表达式（与通道 / 组件读同一口径）。
+        Node::Channel { .. } | Node::Read { .. } | Node::Method { .. } => return None,
         Node::Call { op, args } => {
             let mut values = Vec::with_capacity(args.len());
             for arg in args {

@@ -29,6 +29,7 @@
 
 use std::sync::Arc;
 
+use ze_comb::{ChannelRef, EvalError, Value};
 use ze_pod_core::{ScalarKind, TypeSpec};
 use ze_scene_contract::ObjectId;
 use ze_time::AnimValue;
@@ -53,8 +54,6 @@ pub enum TargetError {
         expected: &'static str,
         actual: &'static str,
     },
-    /// 目标是**只读派生量**（如 `Reveal.current_pos`）：可以读，不能写。
-    ReadOnly { target: &'static str },
 }
 
 impl TargetError {
@@ -86,9 +85,6 @@ impl std::fmt::Display for TargetError {
                 expected,
                 actual,
             } => write!(f, "目标 `{target}` 期望 {expected}，实际 {actual}"),
-            Self::ReadOnly { target } => {
-                write!(f, "目标 `{target}` 是只读派生量（只能读，不能写）")
-            }
         }
     }
 }
@@ -341,45 +337,60 @@ pub static REVEAL_RANGE_ADDR: FieldSpec = FieldSpec {
     }),
 };
 
-/// **只读派生通道**：`Reveal.current_pos`（书写笔尖位置）。
+// ─── 方法（B2）：状态 + 参数 → 值的**纯函数** ───────────────────────────
+
+/// 一个可被表达式调用的方法。
 ///
-/// 它不是存储字段，而是 `Reveal { path, end }` 的派生量（计划 §5 / W2 的倾向）：
-/// 读端按 `end` 在路径上取点（[`Reveal::current_pos`]），写端**恒失败**
-/// （[`TargetError::ReadOnly`]）。
+/// 与 [`FieldSpec`] 的分工：
+/// - 字段：写表里能选中（`scene.clip` / `expr.bind` 的 target），读写同源；
+/// - 方法：**不在写表里** ⇒ 类型上就不可能作 target（旧的 `TargetError::ReadOnly`
+///   因此整个消失，而不是靠运行时错误兜底）。
 ///
-/// 它**不在 [`TARGETS`] 里** ⇒ `scene.clip` / `expr.bind` 的 target 解析查不到它
-/// （装配期 `UnknownTarget`，不可能写出一个假值）；读端走 [`read_only_entry`]。
-/// 这是"小球跟随笔尖"能全走读端管道的前提。
-pub static REVEAL_CURRENT_POS: FieldSpec = FieldSpec {
+/// `reads` 不是可选元数据：方法体是黑盒，帧内定序器看不见它读了什么 ⇒ 必须
+/// 静态声明（装配期据此检查"读先于写"）。
+pub struct MethodSpec {
+    /// 稳定方法名（`Reveal.current_pos`）。
+    pub name: &'static str,
+    /// 所属组件（声明文件 / 帮助用）。
+    pub component: &'static str,
+    /// 显式参数类型（`object` 是隐式首参，不计入）。
+    pub params: &'static [TypeSpec],
+    /// 返回类型。
+    pub ret: &'static TypeSpec,
+    /// 读了哪些地址（帧内定序 / `still_time` 分析用）。
+    pub reads: &'static [&'static str],
+    /// 求值：**必须**是 (状态, 参数) 的纯函数（不能读时钟 / 随机数 / 帧号）。
+    pub eval: fn(&dyn SceneRead, ObjectId, &[Value]) -> Result<Value, EvalError>,
+}
+
+/// `Reveal.current_pos`：书写笔尖位置（`Reveal { path, end }` 的派生量）。
+pub static REVEAL_CURRENT_POS_METHOD: MethodSpec = MethodSpec {
     name: "Reveal.current_pos",
-    address: "Reveal.current_pos",
     component: "Reveal",
-    field: "current_pos",
-    ty: &TypeSpec::Struct {
+    params: &[],
+    ret: &TypeSpec::Struct {
         name: "zela.Vec2",
         layout: None,
         fields: &[],
     },
-    is_composite: false,
-    write: |_, _, _| {
-        Err(TargetError::ReadOnly {
-            target: "Reveal.current_pos",
-        })
+    reads: &["Reveal.end"],
+    eval: |scene, id, _args| {
+        let tip = read_component::<Reveal, _>(scene, id, |r| r.current_pos()).ok_or_else(|| {
+            EvalError::MissingComponent {
+                object: id.to_packed(),
+                channel: ChannelRef::new("zela.scene", "Reveal.current_pos"),
+            }
+        })?;
+        Ok(Value::Vec2([tip.x, tip.y]))
     },
-    read: |scene, id| read_component::<Reveal, _>(scene, id, |r| AnimValue::Vec2(r.current_pos())),
 };
 
-/// 全部**只读**派生规格（有 read、无 write；**不进** `TARGETS`）。
-pub const READ_ONLY_SPECS: &[&FieldSpec] = &[&REVEAL_CURRENT_POS];
+/// 全部方法（脚本面与方法名的**唯一真源**）。
+pub const METHODS: &[&MethodSpec] = &[&REVEAL_CURRENT_POS_METHOD];
 
-/// 按名字（持久化名或规范地址）查**只读**派生规格 —— 读端专用。
-///
-/// 写端只查 [`target_entry`]，因此只读通道天然不可被 `clip` / `bind` 选中。
-pub fn read_only_entry(name: &str) -> Option<&'static FieldSpec> {
-    READ_ONLY_SPECS
-        .iter()
-        .copied()
-        .find(|spec| spec.name == name || spec.address == name)
+/// 按名字查方法（未知 ⇒ `None`，装配期显式失败）。
+pub fn method_entry(name: &str) -> Option<&'static MethodSpec> {
+    METHODS.iter().copied().find(|spec| spec.name == name)
 }
 
 /// 写 `Transform.position`（`Vec2 → xy`，`Vec3` 整体）。
@@ -984,10 +995,10 @@ mod tests {
         assert!(err.to_string().contains("期望 scalar"));
     }
 
-    /// G 批（管道）：`Reveal.current_pos` 是**只读派生量** —— 笔尖位置按归一化
-    /// 弧长取点；它不在写表里（`scene.clip` / `expr.bind` 选不中），写恒失败。
+    /// **B2**：`Reveal.current_pos` 是**方法**，不是字段 —— 因此根本不在写表里
+    /// （类型上就不可能作 target，不需要运行时 `ReadOnly` 错误）。
     #[test]
-    fn reveal_current_pos_is_a_read_only_derived_channel() {
+    fn reveal_current_pos_is_a_method_not_a_field() {
         let path = ze_notion::Path2D::from_polyline(
             &[
                 ze_notion::Vec2::new(0.0, 0.0),
@@ -1002,21 +1013,16 @@ mod tests {
             (tip.x - 2.0).abs() < 1e-4 && tip.y.abs() < 1e-4,
             "end = 0.5 ⇒ 直线中点，实际 {tip:?}"
         );
-        reveal.end = 0.0;
-        assert!(reveal.current_pos().x.abs() < 1e-4, "end = 0 ⇒ 起点");
 
         assert!(
             target_entry("Reveal.current_pos").is_none(),
-            "只读派生量不得进写表（否则 clip / bind 会写出一个假值）"
+            "方法不得进写表（否则 clip / bind 会写出一个假值）"
         );
-        assert!(read_only_entry("Reveal.current_pos").is_some());
-        let err = (REVEAL_CURRENT_POS.write)(
-            &mut MockScene::default(),
-            ObjectId::new(1, 1),
-            &AnimValue::Scalar(0.0),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("只读"), "写只读通道 ⇒ 显式错误：{err}");
+        let method = method_entry("Reveal.current_pos").expect("方法已注册");
+        assert_eq!(method.component, "Reveal");
+        assert_eq!(method.reads, &["Reveal.end"], "reads 必须静态声明");
+        assert!(method.params.is_empty(), "current_pos 无显式参数");
+        assert!(method_entry("Reveal.no_such_method").is_none());
     }
 
     /// F 批：复合目标（多字段 / 多值型）标记 `is_composite`；其余规格为 `false`。

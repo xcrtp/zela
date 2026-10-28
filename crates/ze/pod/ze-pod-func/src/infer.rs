@@ -398,6 +398,18 @@ struct Infer<'a> {
     rec: Option<ChannelType>,
 }
 
+/// 方法目录里的返回值类型 → 表达式层类型（一一对应）。
+fn channel_type_of_spec(ty: crate::api::ChannelTypeSpec) -> ChannelType {
+    use crate::api::ChannelTypeSpec;
+    match ty {
+        ChannelTypeSpec::Unknown => ChannelType::Unknown,
+        ChannelTypeSpec::Number => ChannelType::Number,
+        ChannelTypeSpec::Bool => ChannelType::Bool,
+        ChannelTypeSpec::Vec2 => ChannelType::Vec2,
+        ChannelTypeSpec::Vec3 => ChannelType::Vec3,
+    }
+}
+
 impl<'a> Infer<'a> {
     fn type_of(&mut self, expr: &'a Expr) -> Result<Inference, TypeError> {
         match &expr.node {
@@ -425,6 +437,31 @@ impl<'a> Infer<'a> {
                     pointwise: PointwiseReport::blocked(format!("read `{channel}`")),
                 }),
             },
+            Node::Method {
+                method,
+                object: _,
+                args,
+            } => {
+                let (arity, ret) = crate::api::method_signature(&method.name).ok_or_else(|| {
+                    TypeError::new(format!("方法 `{method}` 没有签名（方法目录未登记）"))
+                })?;
+                if args.len() != arity {
+                    return Err(TypeError::new(format!(
+                        "方法 `{method}` 参数个数应为 {arity}，实际 {}",
+                        args.len()
+                    )));
+                }
+                // 实参也要逐个推导（类型错误在装配期暴露）。
+                for arg in args {
+                    self.type_of(arg)?;
+                }
+                Ok(Inference {
+                    ty: channel_type_of_spec(ret),
+                    // 方法读对象状态（`reads` 已声明）⇒ 非 pointwise，
+                    // 与组件读同一口径：帧内定序约束它。
+                    pointwise: PointwiseReport::blocked(format!("method `{method}`")),
+                })
+            }
             Node::Call { op, args } => {
                 let arg_infos = args
                     .iter()

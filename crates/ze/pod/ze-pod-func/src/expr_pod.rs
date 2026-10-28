@@ -22,15 +22,16 @@ use std::any::Any;
 use std::sync::Mutex;
 
 use ze_comb::{
-    ChannelRef, ChannelType, ClockLinkShape, ClockShape, CompiledExpr, Expr, Literal, OpRef,
+    ChannelRef, ChannelType, ClockLinkShape, ClockShape, CompiledExpr, Expr, Literal, MethodRef,
+    OpRef,
 };
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 
 use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
     ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LengthSpec, LtSpec, MixSpec, MulSpec,
-    NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec,
-    Rotate3Spec,
+    MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec,
+    ResetSpec, Rotate3Spec,
     RoundF32Spec, ScaleSpec, SelectSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
 };
@@ -50,7 +51,8 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `13`：**5b B1** 删除 `time`（`clock.time()` 为唯一入口），新增时钟身份
 /// （`clock_time_of`）与窗口函子（`clock_range` / `clock_range_of`）。
 /// `14`：**5b B5** 新增离散层入口 `nat_rec` / `rec_prev` / `rec_index`。
-pub const LIBRARY_VERSION: &str = "14";
+/// `15`：**5b B2** 新增 `method`（对象方法；`Reveal.current_pos` 改走方法）。
+pub const LIBRARY_VERSION: &str = "15";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -218,6 +220,13 @@ impl ExprPod {
             "zela.math.NatRec",
             HANDLE,
             nat_rec_ctor,
+        );
+        // 方法（B2）：对象 + 方法名 → 方法调用节点。
+        registry.register_fn1_named::<MethodCallSpec, Handle>(
+            "zela.math::method",
+            "zela.math.Method",
+            HANDLE,
+            method_ctor,
         );
         registry.register_fn0_named("zela.math::rec_prev", HANDLE, rec_prev);
         registry.register_fn0_named("zela.math::rec_index", HANDLE, rec_index);
@@ -413,6 +422,7 @@ impl Pod for ExprPod {
             "and" => Box::new(and_ctor(self, arg::<AndSpec>(args, 0)?.clone())),
             "or" => Box::new(or_ctor(self, arg::<OrSpec>(args, 0)?.clone())),
             "not" => Box::new(not_ctor(self, arg::<NotSpec>(args, 0)?.clone())),
+            "method" => Box::new(method_ctor(self, arg::<MethodCallSpec>(args, 0)?.clone())),
             "nat_rec" => Box::new(nat_rec_ctor(self, arg::<NatRecSpec>(args, 0)?.clone())),
             "rec_prev" => Box::new(rec_prev(self)),
             "rec_index" => Box::new(rec_index(self)),
@@ -672,6 +682,22 @@ fn or_ctor(pod: &dyn Pod, spec: OrSpec) -> Handle {
 
 fn not_ctor(pod: &dyn Pod, spec: NotSpec) -> Handle {
     call1(pod, "not", spec.of)
+}
+
+// ─── 方法（B2）─────────────────────────────────────────────────────────
+
+/// `Method { name, object, args }` → `Node::Method`。
+///
+/// 方法名与参数个数在**装配期**由宿主核对（`ExprBindError::UnknownMethod`）；
+/// Pod 侧只负责把它们编进树（类型由 `infer` 的方法签名目录给）。
+fn method_ctor(pod: &dyn Pod, spec: MethodCallSpec) -> Handle {
+    let this = expr_pod(pod);
+    let args: Vec<Expr> = spec.args.iter().map(|handle| child(this, *handle)).collect();
+    this.intern(Expr::method(
+        MethodRef::new("zela.scene", spec.name),
+        spec.object.slot() as u64,
+        args,
+    ))
 }
 
 // ─── 离散层（B5）：NatRec ───────────────────────────────────────────────

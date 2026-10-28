@@ -339,7 +339,7 @@ fn py_call_return(
         "pure" | "frame" | "clock_time" | "clock_time_of" => "Expr[float]".to_string(),
         "clock_range" | "clock_range_of" => "Expr[bool]".to_string(),
         "rec_index" => "Expr[int]".to_string(),
-        "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr[Any]".to_string(),
+        "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr[Any]".to_string(),
         _ => py_type(item.io.ret, components),
     }
 }

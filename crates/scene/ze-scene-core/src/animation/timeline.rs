@@ -457,6 +457,20 @@ fn rewrite_reads(expr: &Expr, resolve: &impl Fn(u64) -> u64) -> Expr {
             },
         };
     }
+    // 方法调用也带脚本句柄下标（`object`），同一重写规则。
+    if let Some((method, object, args)) = expr.node.method() {
+        return Expr {
+            id: expr.id.clone(),
+            node: Node::Method {
+                method: method.clone(),
+                object: resolve(object),
+                args: args
+                    .iter()
+                    .map(|arg| rewrite_reads(arg, resolve))
+                    .collect(),
+            },
+        };
+    }
     expr.map_children(|child| rewrite_reads(child, resolve))
 }
 

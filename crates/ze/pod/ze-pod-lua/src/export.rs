@@ -314,7 +314,7 @@ fn lua_call_return(
         "pure" | "frame" | "clock_time" | "clock_time_of" => "Expr<number>".to_string(),
         "clock_range" | "clock_range_of" => "Expr<boolean>".to_string(),
         "rec_index" => "Expr<number>".to_string(),
-        "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr<any>".to_string(),
+        "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr<any>".to_string(),
         _ => lua_type_name(item.io.ret).to_string(),
     })
 }

@@ -26,9 +26,9 @@
 //! 不引入新的量化。若将来需要 f64 时间轴，应把 `TimeState` 一起升级，而不是在
 //! 求值器里偷偷改精度。
 
-use ze_comb::{ChannelRef, EvalError, Mono, OpRef, Value};
+use ze_comb::{ChannelRef, EvalError, MethodRef, Mono, OpRef, Value};
 use ze_scene_contract::ObjectId;
-use ze_scene_core::animation::target::{read_only_entry, target_entry};
+use ze_scene_core::animation::target::{method_entry, target_entry};
 use ze_scene_core::scene_write::SceneRead;
 use ze_time::AnimValue;
 
@@ -102,12 +102,8 @@ impl Mono for SceneMono<'_> {
     /// `object` 是 `ObjectId` 打包值（`index:u32<<32 | generation:u32`）；按
     /// `channel.name`（规范地址，如 `Circle.radius`）查 [`TARGETS`] 注册表。
     fn read_object(&self, channel: &ChannelRef, object: u64) -> Result<Value, EvalError> {
-        // 可写目标走 `TARGETS`；只读派生量（`Reveal.current_pos`）走第二张表 ——
-        // 两张表在写端是分开的（只读项不可能被 clip / bind 选中）。
-        let Some(spec) = target_entry(&channel.name)
-            .map(|entry| entry.spec)
-            .or_else(|| read_only_entry(&channel.name))
-        else {
+        // 只有**可写字段**能经 `read_object` 读；派生量是方法（B2），不走这里。
+        let Some(spec) = target_entry(&channel.name).map(|entry| entry.spec) else {
             // 地址未注册 ⇒ 与 `Mono::read` 的缺失通道同一口径（显式失败）。
             return Err(EvalError::MissingChannel {
                 channel: channel.clone(),
@@ -127,6 +123,34 @@ impl Mono for SceneMono<'_> {
 
     fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
         ze_pod_func::eval_op(op, args)
+    }
+
+    /// **B2**：方法经 [`ze_scene_core::animation::method_entry`] 查表求值。
+    ///
+    /// 未注册 / 参数个数不符 ⇒ 显式失败（不静默给 0）。方法体是纯函数：
+    /// 只拿到 `(状态, 参数)`，没有时钟 / 帧号。
+    fn call_method(
+        &self,
+        method: &MethodRef,
+        object: u64,
+        args: &[Value],
+    ) -> Result<Value, EvalError> {
+        let Some(spec) = method_entry(&method.name) else {
+            return Err(EvalError::MissingMethod {
+                method: method.qualified(),
+            });
+        };
+        if args.len() != spec.params.len() {
+            return Err(EvalError::MissingMethod {
+                method: format!(
+                    "{}（参数个数应为 {}，实际 {}）",
+                    method.qualified(),
+                    spec.params.len(),
+                    args.len()
+                ),
+            });
+        }
+        (spec.eval)(self.scene, ObjectId::from_packed(object), args)
     }
 }
 
@@ -266,6 +290,46 @@ mod tests {
         assert!(mono
             .read(&ChannelRef::new("zela.scene", "Circle.radius"))
             .is_err());
+    }
+
+    /// **B2 跨层一致性**：作者面方法目录（`zela.math`）与求值注册表
+    /// （`ze-scene-core::animation::METHODS`）必须**逐条对应**（名字 / 参数个数 / 返回类型）。
+    ///
+    /// 这是"两张表"的机器守卫：任何一侧加了方法而另一侧没跟上 ⇒ 本用例红。
+    #[test]
+    fn method_catalogs_agree_across_layers() {
+        use ze_scene_core::animation::METHODS;
+
+        assert_eq!(
+            ze_pod_func::METHOD_SIGNATURES.len(),
+            METHODS.len(),
+            "两侧方法数量必须一致"
+        );
+        for spec in METHODS {
+            let (arity, ret) = ze_pod_func::method_signature(spec.name)
+                .unwrap_or_else(|| panic!("作者面缺少方法 `{}`", spec.name));
+            assert_eq!(arity, spec.params.len(), "`{}` 参数个数不一致", spec.name);
+            let expected = match &*spec.ret {
+                ze_pod_core::TypeSpec::Scalar(_) => ze_comb::ChannelType::Number,
+                ze_pod_core::TypeSpec::Struct { name, .. } => match *name {
+                    "zela.Vec2" => ze_comb::ChannelType::Vec2,
+                    "zela.Vec3" => ze_comb::ChannelType::Vec3,
+                    other => panic!("方法 `{}` 的返回类型 `{other}` 未在一致性用例里登记", spec.name),
+                },
+                other => panic!("方法 `{}` 的返回类型 {:?} 未登记", spec.name, other),
+            };
+            assert_eq!(
+                expected,
+                match ret {
+                    ze_pod_func::api::ChannelTypeSpec::Vec2 => ze_comb::ChannelType::Vec2,
+                    ze_pod_func::api::ChannelTypeSpec::Vec3 => ze_comb::ChannelType::Vec3,
+                    ze_pod_func::api::ChannelTypeSpec::Number => ze_comb::ChannelType::Number,
+                    _ => panic!("方法 `{}` 的返回类型未登记", spec.name),
+                },
+                "`{}` 返回类型不一致",
+                spec.name
+            );
+        }
     }
 
     /// **B1 时钟身份**：`c.time()` 按 `c` 的链在**全局时间**上反算；
@@ -429,7 +493,7 @@ mod tests {
     /// **管道验收**：`Reveal.current_pos` 是只读派生量 —— 读端经 `SceneRead`
     /// 按 `end` 取笔尖点；整条链路不需要任何"位置字段"。
     #[test]
-    fn read_reveal_current_pos_through_the_pipeline() {
+    fn call_reveal_current_pos_through_the_pipeline() {
         let mut world = World::new();
         let id = {
             let mut ws = WorldScene::new(&mut world);
@@ -446,16 +510,25 @@ mod tests {
         };
         let ws = WorldScene::new(&mut world);
         let mono = SceneMono::new(0.0, 0, &ws);
+        let method = ze_comb::MethodRef::new("zela.scene", "Reveal.current_pos");
         let value = mono
-            .read_object(
-                &ChannelRef::new("zela.scene", "Reveal.current_pos"),
-                id.to_packed(),
-            )
-            .expect("只读派生通道可读");
+            .call_method(&method, id.to_packed(), &[])
+            .expect("方法可调用");
         let Value::Vec2([x, y]) = value else {
             panic!("Reveal.current_pos 必须是 Vec2，实际 {value:?}");
         };
         assert!(x.abs() < 1e-4 && y.abs() < 1e-4, "end = 0.5 ⇒ 线段中点");
+
+        // 未知方法 / 参数个数不符 ⇒ 显式失败。
+        let unknown = ze_comb::MethodRef::new("zela.scene", "Nope.nothing");
+        assert!(matches!(
+            mono.call_method(&unknown, id.to_packed(), &[]),
+            Err(EvalError::MissingMethod { .. })
+        ));
+        assert!(matches!(
+            mono.call_method(&method, id.to_packed(), &[Value::F64(1.0)]),
+            Err(EvalError::MissingMethod { .. })
+        ));
     }
 
     /// **G 批**：地址未注册 ⇒ `MissingChannel`；对象上无该组件 ⇒ `MissingComponent`

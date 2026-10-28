@@ -63,6 +63,9 @@ pub enum ExprBindError {
     /// 表达式结构非法（悬空 Ref / 环 / 重名 id）。
     #[error("表达式非法：{0}")]
     BadExpression(String),
+    /// 方法未注册 / 参数个数不符（**装配期**显式失败，不留给运行期）。
+    #[error("未知或参数不匹配的方法：`{0}`")]
+    UnknownMethod(String),
     /// 该通道尚未由宿主注入（Event / 组件字段 / Env 属后续批次）。
     #[error("通道 `{0}` 尚未由宿主注入")]
     UnsupportedChannel(ChannelRef),
@@ -101,13 +104,42 @@ fn is_injected(channel: &ChannelRef) -> bool {
     if channel.is_builtin() {
         return matches!(channel.name.as_str(), "time" | "frame");
     }
-    channel.namespace == "zela.scene"
-        && (crate::animation::target::target_entry(&channel.name).is_some()
-            || crate::animation::target::read_only_entry(&channel.name).is_some())
+    // 派生量是**方法**（B2），不再作为可读通道；这里只认可写字段地址。
+    channel.namespace == "zela.scene" && crate::animation::target::target_entry(&channel.name).is_some()
 }
 
 fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
     CompiledExpr::compile(expr).map_err(|error| ExprBindError::BadExpression(error.to_string()))?;
+
+    // **B2**：方法先在注册表里解析（未知 / 参数个数不符 ⇒ 显式失败）。
+    struct Methods;
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Methods {
+        type Error = String;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, String> {
+            if let Some((method, _object, args)) = expr.node.method() {
+                return match crate::animation::target::method_entry(&method.name) {
+                    Some(spec) if spec.params.len() == args.len() => Ok(true),
+                    Some(spec) => Err(format!(
+                        "`{method}` 参数个数应为 {}，实际 {}",
+                        spec.params.len(),
+                        args.len()
+                    )),
+                    None => Err(format!("`{method}` 未注册")),
+                };
+            }
+            Ok(true)
+        }
+    }
+
+    if let Some(message) = expr.walk(&mut Methods).err() {
+        return Err(ExprBindError::UnknownMethod(message));
+    }
 
     /// 未注通道检查：命中即用 `ChannelRef` 提前结束遍历（`walk` 的错误通道）。
     struct Unsupported;
@@ -156,6 +188,12 @@ fn check_read_objects(expr: &Expr, object_count: usize) -> Result<(), ExprBindEr
             expr: &'a Expr,
             _parent: Option<&'a ze_comb::Node>,
         ) -> Result<bool, usize> {
+            if let Some((_, object, _)) = expr.node.method() {
+                if object >= self.object_count as u64 {
+                    return Err(object as usize);
+                }
+                return Ok(true);
+            }
             match expr.node.read() {
                 Some((_, object)) if object >= self.object_count as u64 => Err(object as usize),
                 _ => Ok(true),
@@ -754,6 +792,20 @@ fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(),
         for step in program.steps() {
             match step {
                 Step::Read { channel, object } => out.push((channel.clone(), *object)),
+                // **B2**：方法的读集来自 `MethodSpec.reads`（方法体是黑盒，
+                // 定序器看不见它读了什么 ⇒ 必须静态声明）。
+                Step::Method { method, object, .. } => {
+                    if let Some(spec) =
+                        crate::animation::target::method_entry(&method.name)
+                    {
+                        for address in spec.reads {
+                            out.push((
+                                ChannelRef::new("zela.scene", *address),
+                                *object,
+                            ));
+                        }
+                    }
+                }
                 Step::Select { then, r#else, .. } => {
                     collect_reads(then, out);
                     collect_reads(r#else, out);

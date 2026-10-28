@@ -84,6 +84,15 @@ impl Expr {
                 init: Box::new(f(init)),
                 step: Box::new(f(step)),
             },
+            Node::Method {
+                method,
+                object,
+                args,
+            } => Node::Method {
+                method: method.clone(),
+                object: *object,
+                args: args.iter().map(|arg| f(arg)).collect(),
+            },
             other => other.clone(),
         };
         Expr {

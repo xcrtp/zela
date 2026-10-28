@@ -58,6 +58,16 @@ pub enum Node {
     /// `commit` 时被场景层重写为 `ObjectId` 的**打包值**（`index:u32<<32 | generation:u32`，
     /// 见 `ze_scene_contract::ObjectId`），`u32` 装不下打包结果。
     Read { channel: ChannelRef, object: u64 },
+    /// **方法调用**（B2）：`object.method(args…)`。
+    ///
+    /// 方法与字段的区别是**类型级**的：方法不在写表里，因此永远选不中作 target
+    /// （不需要运行期 `ReadOnly` 错误）。`object` 与 [`Node::Read`] 同一编码
+    /// （声明期脚本句柄下标，`commit` 时重写为 `ObjectId` 打包值）。
+    Method {
+        method: MethodRef,
+        object: u64,
+        args: Vec<Expr>,
+    },
     /// **结构递归**（阶段 3，先只做 `NatRec`）：
     /// `value(0) = init`，`value(k) = step(value(k−1), k)`，结果 = `value(count)`。
     ///
@@ -83,6 +93,7 @@ impl Node {
                 cond, then, r#else,
             } => vec![cond, then, r#else],
             Node::NatRec { count, init, step } => vec![count, init, step],
+            Node::Method { args, .. } => args.iter().collect(),
             Node::Pure { .. }
             | Node::Channel { .. }
             | Node::Ref { .. }
@@ -104,6 +115,18 @@ impl Node {
     pub fn read(&self) -> Option<(&ChannelRef, u64)> {
         match self {
             Node::Read { channel, object } => Some((channel, *object)),
+            _ => None,
+        }
+    }
+
+    /// `Method` 节点：`(方法, 对象句柄下标, 实参)`。
+    pub fn method(&self) -> Option<(&MethodRef, u64, &[Expr])> {
+        match self {
+            Node::Method {
+                method,
+                object,
+                args,
+            } => Some((method, *object, args)),
             _ => None,
         }
     }
@@ -456,6 +479,38 @@ impl fmt::Display for ChannelRef {
     }
 }
 
+/// **方法引用**（B2）：`namespace` + `name` 是数据。
+///
+/// 与 [`OpRef`] 同形，但语义不同：算子纯、方法读状态 ⇒ 帧内定序只约束方法
+/// （`MethodSpec.reads` 静态声明读了哪些地址）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MethodRef {
+    /// 命名词汇表的 namespace（场景方法是 `zela.scene`）。
+    pub namespace: String,
+    /// 方法名（`Reveal.current_pos`）。
+    pub name: String,
+}
+
+impl MethodRef {
+    pub fn new(namespace: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+            name: name.into(),
+        }
+    }
+
+    /// `namespace::name`。
+    pub fn qualified(&self) -> String {
+        format!("{}::{}", self.namespace, self.name)
+    }
+}
+
+impl std::fmt::Display for MethodRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.qualified())
+    }
+}
+
 /// 算子引用：`namespace` + `name` 是**数据**，不是 Rust 类型名。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpRef {
@@ -546,6 +601,21 @@ impl Expr {
 
     pub fn reference(to: impl Into<Id>) -> Self {
         Self::new(Node::Ref { to: to.into() })
+    }
+
+    /// **方法调用**（B2）：`object.method(args…)`。
+    ///
+    /// `object` 与 [`Expr::read`] 同一编码（声明期脚本句柄下标）。
+    pub fn method(
+        method: MethodRef,
+        object: u64,
+        args: impl IntoIterator<Item = Expr>,
+    ) -> Self {
+        Self::new(Node::Method {
+            method,
+            object,
+            args: args.into_iter().collect(),
+        })
     }
 
     /// 值分支（格式已定，求值见 [`crate::CompiledExpr`]）。

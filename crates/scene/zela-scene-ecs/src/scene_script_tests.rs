@@ -93,7 +93,7 @@ mod tests {
             Expr::pure(1.0),
             LibraryRef {
                 namespace: "zela.math".to_string(),
-                version: "14".to_string(),
+                version: "15".to_string(),
                 op_revisions: Default::default(),
             },
             clock,
@@ -497,6 +497,74 @@ mod tests {
         assert_eq!(m.get(&Handle(0)), Some(&7));
     }
 
+    /// **B2**：方法在装配期解析 —— 未知方法显式失败；已注册方法可绑定并提交。
+    #[test]
+    fn methods_are_resolved_at_assembly() {
+        use ze_comb::{Expr, MethodRef};
+        use ze_scene_core::animation::{LibraryRef, ResetBehavior};
+        use crate::scene::components::Reveal;
+        use ze_time::ClockProgram;
+
+        let lib = LibraryRef {
+            namespace: "zela.math".to_string(),
+            version: "15".to_string(),
+            op_revisions: Default::default(),
+        };
+
+        // 未知方法 ⇒ 显式错误（不留给运行期）。
+        let mut bad = SceneEncoder::new();
+        let circle = bad.spawn(circle_components(0.0));
+        let unknown = Expr::method(MethodRef::new("zela.scene", "Nope.nothing"), 0, []);
+        let err = bad
+            .bind_expr_gated(
+                circle,
+                "Circle.radius",
+                unknown,
+                lib.clone(),
+                ClockProgram::new(),
+                None,
+                ResetBehavior::Hold,
+                0.0,
+            )
+            .expect_err("未知方法必须被拒绝");
+        assert!(matches!(err, ExprBindError::UnknownMethod(_)), "{err:?}");
+
+        // `Reveal.current_pos`：方法调用连到 `Circle.center`，装配 / commit 都通过。
+        let mut enc = SceneEncoder::new();
+        let curve = enc.spawn(vec![Box::new(Reveal::new(
+            ze_notion::Path2D::from_polyline(
+                &[
+                    ze_notion::Vec2::new(0.0, 0.0),
+                    ze_notion::Vec2::new(1.0, 1.0),
+                ],
+                false,
+            ),
+        ))]);
+        let ball = enc.spawn(circle_components(0.0));
+        assert_ne!(curve, ball);
+        let root = Expr::method(
+            MethodRef::new("zela.scene", "Reveal.current_pos"),
+            curve.0 as u64,
+            [],
+        );
+        enc.bind_expr_gated(
+            ball,
+            "Circle.center",
+            root,
+            lib,
+            ClockProgram::new(),
+            None,
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("已注册方法装配成功");
+
+        let mut scene = SceneStruct::new();
+        let recipe = enc.finish().commit(&mut scene).expect("commit 成功");
+        assert_eq!(recipe.bindings.bindings.len(), 1);
+        assert_eq!(recipe.bindings.bindings[0].target.name(), "Circle.center");
+    }
+
     /// **B5**：含 `NatRec` 的绑定 `seek_kind` 必须是 `Replay`（离散层有记忆）。
     #[test]
     fn nat_rec_binding_requires_replay() {
@@ -516,7 +584,7 @@ mod tests {
             root,
             LibraryRef {
                 namespace: "zela.math".to_string(),
-                version: "14".to_string(),
+                version: "15".to_string(),
                 op_revisions: Default::default(),
             },
             ClockProgram::new(),

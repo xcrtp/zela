@@ -391,6 +391,21 @@ pub struct NotSpec {
     pub of: Handle,
 }
 
+/// `Method { name, object, args }`：调用**对象方法**（B2）。
+///
+/// 方法与字段的区别是类型级的：方法不在写表里，永远选不中作 target。
+/// `name` 是稳定方法名（`Reveal.current_pos`）；`object` 是隐式首参。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Method")]
+pub struct MethodCallSpec {
+    /// 方法名（`Reveal.current_pos`）。
+    pub name: String,
+    /// 接收者对象句柄。
+    pub object: Handle,
+    /// 显式实参（当前已注册的方法都无参）。
+    pub args: Vec<Handle>,
+}
+
 /// `NatRec { count, init, step }`：离散折（阶段 3 的**合法递归**）。
 ///
 /// `count` **必须是非负整数**（脚本侧是 `f64`：值系统还没有 i64 标量；
@@ -415,7 +430,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "14",
+    version = "15",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -534,6 +549,9 @@ pub struct MathApi<'a> {
     /// `Not { of = ... }`：布尔取反（同上：Lua / Python 用 `Not {}`）。
     pub not: fn(&'a dyn Pod, spec: NotSpec) -> Handle,
 
+    /// `Method { name, object, args }`：调用对象方法（`Reveal.current_pos`）。
+    pub method: fn(&'a dyn Pod, spec: MethodCallSpec) -> Handle,
+
     /// `NatRec { count, init, step }`：离散折（合法递归；`count` 必须是非负整数）。
     pub nat_rec: fn(&'a dyn Pod, spec: NatRecSpec) -> Handle,
 
@@ -599,9 +617,27 @@ pub struct MathApi<'a> {
 /// `@13`（5b B1）：删除 `time`（改由 `clock.time()` 作唯一入口），新增
 /// `clock_time_of` / `clock_range` / `clock_range_of`（时钟身份 + 窗口函子）。
 /// `@14`（5b B5）：新增 `nat_rec` / `rec_prev` / `rec_index`（离散层脚本入口）。
-pub const MATH_API_VERSION: &str = "14";
+/// `@15`（5b B2）：新增 `method`（对象方法调用；`Reveal.current_pos` 从字段改为方法）。
+pub const MATH_API_VERSION: &str = "15";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 9_122_647_488_673_774_867;
+pub const MATH_API_FINGERPRINT: u64 = 16_372_683_120_857_373_424;
+
+/// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
+///
+/// 这是 `zela.math` 侧的唯一一份：`infer` 用它给 `Node::Method` 定型。
+/// 求值注册表在 `ze-scene-core::animation::METHODS`；两侧由
+/// `zela-scene-ecs` 的一致性用例逐条对拍（缺失任何一侧都红）。
+pub const METHOD_SIGNATURES: &[(&str, usize, ChannelTypeSpec)] = &[
+    ("Reveal.current_pos", 0, ChannelTypeSpec::Vec2),
+];
+
+/// 按名字查方法签名（未知 ⇒ `None`）。
+pub fn method_signature(name: &str) -> Option<(usize, ChannelTypeSpec)> {
+    METHOD_SIGNATURES
+        .iter()
+        .find(|(method, _, _)| *method == name)
+        .map(|(_, arity, ret)| (*arity, *ret))
+}
 
 #[cfg(test)]
 mod fingerprint_tests {
