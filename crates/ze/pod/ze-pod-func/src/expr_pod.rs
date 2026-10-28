@@ -29,7 +29,8 @@ use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, Qualifi
 use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
     ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LengthSpec, LtSpec, MixSpec, MulSpec,
-    NeSpec, NormalizeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec,
+    NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec, PredicateSpec, ReadSpec, ResetSpec,
+    Rotate3Spec,
     RoundF32Spec, ScaleSpec, SelectSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
 };
@@ -48,7 +49,8 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `12`：**第 5a 批**新增 `round_f32`（旧曲线的 f32 精度落位）。
 /// `13`：**5b B1** 删除 `time`（`clock.time()` 为唯一入口），新增时钟身份
 /// （`clock_time_of`）与窗口函子（`clock_range` / `clock_range_of`）。
-pub const LIBRARY_VERSION: &str = "13";
+/// `14`：**5b B5** 新增离散层入口 `nat_rec` / `rec_prev` / `rec_index`。
+pub const LIBRARY_VERSION: &str = "14";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -210,6 +212,15 @@ impl ExprPod {
         registry.register_fn1_named::<AndSpec, Handle>("zela.math::and", "zela.math.And", HANDLE, and_ctor);
         registry.register_fn1_named::<OrSpec, Handle>("zela.math::or", "zela.math.Or", HANDLE, or_ctor);
         registry.register_fn1_named::<NotSpec, Handle>("zela.math::not", "zela.math.Not", HANDLE, not_ctor);
+        // 离散层（B5）：合法递归的唯一入口。
+        registry.register_fn1_named::<NatRecSpec, Handle>(
+            "zela.math::nat_rec",
+            "zela.math.NatRec",
+            HANDLE,
+            nat_rec_ctor,
+        );
+        registry.register_fn0_named("zela.math::rec_prev", HANDLE, rec_prev);
+        registry.register_fn0_named("zela.math::rec_index", HANDLE, rec_index);
         // 时钟（B 批）：脚本侧构造纯线性时间源；`bind` 收它，取代隐式 cursor。
         registry.register_fn1_named::<f64, ClockSpec>(
             "zela.math::clock_shift",
@@ -402,6 +413,9 @@ impl Pod for ExprPod {
             "and" => Box::new(and_ctor(self, arg::<AndSpec>(args, 0)?.clone())),
             "or" => Box::new(or_ctor(self, arg::<OrSpec>(args, 0)?.clone())),
             "not" => Box::new(not_ctor(self, arg::<NotSpec>(args, 0)?.clone())),
+            "nat_rec" => Box::new(nat_rec_ctor(self, arg::<NatRecSpec>(args, 0)?.clone())),
+            "rec_prev" => Box::new(rec_prev(self)),
+            "rec_index" => Box::new(rec_index(self)),
             "clock_shift" => Box::new(clock_shift(self, *arg::<f64>(args, 0)?)),
             "clock_scale" => Box::new(clock_scale(self, *arg::<f64>(args, 0)?)),
             "clock_nest" => Box::new(clock_nest(
@@ -658,6 +672,38 @@ fn or_ctor(pod: &dyn Pod, spec: OrSpec) -> Handle {
 
 fn not_ctor(pod: &dyn Pod, spec: NotSpec) -> Handle {
     call1(pod, "not", spec.of)
+}
+
+// ─── 离散层（B5）：NatRec ───────────────────────────────────────────────
+
+/// `NatRec { count, init, step }`。
+///
+/// `count` 必须是非负整数：非整数 / 负数 ⇒ 装配期显式报错（并返回 `init` 句柄
+/// 占位；装配在错误表非空时整体失败，不会产出半个绑定）。
+fn nat_rec_ctor(pod: &dyn Pod, spec: NatRecSpec) -> Handle {
+    let this = expr_pod(pod);
+    if !spec.count.is_finite() || spec.count < 0.0 || spec.count.fract() != 0.0 {
+        push_binding_error(
+            this,
+            format!(
+                "`NatRec.count` 必须是非负整数，实际 {}（非整数请显式写 Floor）",
+                spec.count
+            ),
+        );
+        return spec.init;
+    }
+    let count = Expr::pure(Literal::I64(spec.count as i64));
+    let init = child(this, spec.init);
+    let step = child(this, spec.step);
+    this.intern(Expr::nat_rec(count, init, step))
+}
+
+fn rec_prev(pod: &dyn Pod) -> Handle {
+    expr_pod(pod).intern(Expr::rec_prev())
+}
+
+fn rec_index(pod: &dyn Pod) -> Handle {
+    expr_pod(pod).intern(Expr::rec_index())
 }
 
 // ─── 时钟（B 批）───────────────────────────────────────────────────────
@@ -1228,6 +1274,40 @@ mod tests {
             errors
                 .iter()
                 .any(|error| error.contains("绑定时钟") || error.contains("clock.time_of")),
+            "{errors:?}"
+        );
+    }
+
+    /// **B5**：`nat_rec` 建出 `Node::NatRec`；`count` 必须是非负整数（否则显式报错）。
+    #[test]
+    fn nat_rec_builds_the_discrete_fold_and_rejects_fractional_counts() {
+        let this = pod();
+        let step = call2(&this, "add", rec_prev(&this), pure(&this, 2.0));
+        let ok = nat_rec_ctor(
+            &this,
+            NatRecSpec {
+                count: 4.0,
+                init: pure(&this, 1.0),
+                step,
+            },
+        );
+        let Node::NatRec { count, .. } = &this.tree(ok).unwrap().node else {
+            panic!("期望 NatRec 节点");
+        };
+        assert_eq!(count.node, Node::Pure { value: Literal::I64(4) });
+
+        let bad = nat_rec_ctor(
+            &this,
+            NatRecSpec {
+                count: 2.5,
+                init: pure(&this, 1.0),
+                step: rec_index(&this),
+            },
+        );
+        let _ = bad;
+        let (_, errors) = this.take_bindings();
+        assert!(
+            errors.iter().any(|error| error.contains("非负整数")),
             "{errors:?}"
         );
     }

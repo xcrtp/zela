@@ -189,6 +189,29 @@ fn lua_sum_accepts_an_array() {
     assert_eq!(args.len(), 3);
 }
 
+/// **B5**：Lua 侧能构造 `NatRec`（离散层的脚本入口），且 `rec_prev` 落在 step 内。
+#[test]
+fn lua_can_build_a_nat_rec() {
+    let out = run(
+        r#"
+        local fold = NatRec {
+            count = 4.0,
+            init = expr.pure(1.0),
+            step = Add { a = expr.rec_prev(), b = expr.pure(2.0) },
+        }
+        scene.emit(expr.expression(fold))
+        "#,
+    );
+    let json: serde_json::Value = serde_json::from_str(&out).expect("产物必须是合法 JSON");
+    let node = &json["expr"]["node"];
+    assert_eq!(node["type"], "nat_rec");
+    assert_eq!(node["data"]["count"]["node"]["data"]["value"]["type"], "i64");
+    assert_eq!(
+        node["data"]["step"]["node"]["data"]["args"][0]["node"]["type"],
+        "rec_prev"
+    );
+}
+
 /// 能力身份：namespace 是 `zela.math`，与 `zela.scene` 隔离。
 #[test]
 fn capability_lives_in_its_own_namespace() {

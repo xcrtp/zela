@@ -93,7 +93,7 @@ mod tests {
             Expr::pure(1.0),
             LibraryRef {
                 namespace: "zela.math".to_string(),
-                version: "13".to_string(),
+                version: "14".to_string(),
                 op_revisions: Default::default(),
             },
             clock,
@@ -495,6 +495,44 @@ mod tests {
         let mut m: HashMap<Handle, u32> = HashMap::new();
         m.insert(Handle(0), 7);
         assert_eq!(m.get(&Handle(0)), Some(&7));
+    }
+
+    /// **B5**：含 `NatRec` 的绑定 `seek_kind` 必须是 `Replay`（离散层有记忆）。
+    #[test]
+    fn nat_rec_binding_requires_replay() {
+        use ze_scene_core::animation::{LibraryRef, ResetBehavior};
+        use ze_time::ClockProgram;
+
+        let mut enc = SceneEncoder::new();
+        let circle = enc.spawn(circle_components(0.0));
+        let root = ze_comb::Expr::nat_rec(
+            ze_comb::Expr::pure(3i64),
+            ze_comb::Expr::pure(0.0),
+            ze_comb::Expr::rec_prev(),
+        );
+        enc.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            root,
+            LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "14".to_string(),
+                op_revisions: Default::default(),
+            },
+            ClockProgram::new(),
+            None,
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("NatRec 绑定装配成功");
+
+        let mut scene = SceneStruct::new();
+        let recipe = enc.finish().commit(&mut scene).expect("commit 成功");
+        assert_eq!(
+            recipe.bindings.bindings[0].seek_kind,
+            crate::animation::SeekKind::Replay,
+            "含 NatRec 的绑定必须整段重放"
+        );
     }
 
     /// **G 批帧内定序**：装配期（`commit`）显式拒绝"读先于写"。

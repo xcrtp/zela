@@ -391,6 +391,22 @@ pub struct NotSpec {
     pub of: Handle,
 }
 
+/// `NatRec { count, init, step }`：离散折（阶段 3 的**合法递归**）。
+///
+/// `count` **必须是非负整数**（脚本侧是 `f64`：值系统还没有 i64 标量；
+/// 非整数在装配期显式报错，强制作者自己写 `Floor` —— 刀刃取整只做一次）。
+/// `step` 里只能用 `rec_prev()` 与 `rec_index()` 引用前一项 / 下标。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.NatRec")]
+pub struct NatRecSpec {
+    /// 折几次（非负整数）。
+    pub count: f64,
+    /// 初值表达式。
+    pub init: Handle,
+    /// 递推步表达式（可引用 `rec_prev()` / `rec_index()`）。
+    pub step: Handle,
+}
+
 /// 表达式叶子算子集合。
 ///
 /// 字段名就是脚本侧函数名（`expr.sin` / `expr.mul` …）。
@@ -399,7 +415,7 @@ pub struct NotSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "13",
+    version = "14",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -518,6 +534,15 @@ pub struct MathApi<'a> {
     /// `Not { of = ... }`：布尔取反（同上：Lua / Python 用 `Not {}`）。
     pub not: fn(&'a dyn Pod, spec: NotSpec) -> Handle,
 
+    /// `NatRec { count, init, step }`：离散折（合法递归；`count` 必须是非负整数）。
+    pub nat_rec: fn(&'a dyn Pod, spec: NatRecSpec) -> Handle,
+
+    /// `NatRec.step` 内的前一项（只能出现在 `step` 内，装配期校验）。
+    pub rec_prev: fn(&'a dyn Pod) -> Handle,
+
+    /// `NatRec.step` 内的当前下标（I64）。
+    pub rec_index: fn(&'a dyn Pod) -> Handle,
+
     /// 把表达式导出为 JSON（**产物侧证据**：含库 namespace + version）。
     pub expression: fn(&'a dyn Pod, root: Handle) -> String,
 
@@ -573,9 +598,10 @@ pub struct MathApi<'a> {
 /// `@12`（第 5a 批）：新增 `round_f32`（旧曲线的 f32 精度落位，供逐位迁移）。
 /// `@13`（5b B1）：删除 `time`（改由 `clock.time()` 作唯一入口），新增
 /// `clock_time_of` / `clock_range` / `clock_range_of`（时钟身份 + 窗口函子）。
-pub const MATH_API_VERSION: &str = "13";
+/// `@14`（5b B5）：新增 `nat_rec` / `rec_prev` / `rec_index`（离散层脚本入口）。
+pub const MATH_API_VERSION: &str = "14";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 13_878_659_082_635_502_658;
+pub const MATH_API_FINGERPRINT: u64 = 9_122_647_488_673_774_867;
 
 #[cfg(test)]
 mod fingerprint_tests {
