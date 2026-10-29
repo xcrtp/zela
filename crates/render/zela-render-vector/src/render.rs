@@ -413,6 +413,9 @@ pub struct ShaderFill {
     pub source: String,
     /// `Params` 的 **uniform 字节**（调用方按 WGSL 布局打包；长度需为 16 的倍数或 0）。
     pub params: Vec<u8>,
+    /// **逐片元**：颜色随像素变（读了 `zela.shader.fragment.*`）⇒ 走颜色画布，
+    /// 而不是"每对象一个填充色"的 compute 通道。
+    pub fragment: bool,
 }
 
 /// `Object` / `Instance` 里 `paint.fill` 的字节偏移（写填充槽的唯一口径）。
@@ -430,6 +433,9 @@ struct ZelaTarget { index: u32, object: u32, kind: u32, pad: u32 };
 @group(0) @binding(2) var<uniform> zela_target: ZelaTarget;
 var<private> zela_center: vec2<f32>;
 var<private> zela_size: vec2<f32>;
+var<private> zela_pos2: vec2<f32>;
+var<private> zela_local: vec2<f32>;
+var<private> zela_uv: vec2<f32>;
 @compute @workgroup_size(1)
 fn zela_fill() {
     let base = zela_target.index;
@@ -451,6 +457,49 @@ fn zela_fill() {
     zela_words[base] = bitcast<u32>(c.x);
     zela_words[base + 1u] = bitcast<u32>(c.y);
     zela_words[base + 2u] = bitcast<u32>(c.z);
+}
+"#;
+
+/// **阶段 3**：逐片元着色通道的入口参数（`FRAG_TAIL` 的 `ZelaFrag`）。
+///
+/// `dispatch` = 本次写入的窗口（视图像素，y 向下）：xy 起点、zw 覆盖范围；
+/// `rect` = 对象包围盒：xy 角、zw 尺寸（`center` / `size` / `local` / `uv` 都以它为准）。
+/// `tag` = 程序标签（从 1 起；合成时用它认领颜色，0 表示没有程序）。
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub(crate) struct ZelaFrag {
+    pub(crate) dispatch: [f32; 4],
+    pub(crate) rect: [f32; 4],
+    pub(crate) tag: [u32; 4],
+}
+
+/// 逐片元着色的入口尾部：一个线程一个像素，写进 `Rgba32Float` 颜色画布
+/// （rgb = 颜色，a = 程序标签）。坐标与 `center` / `size` 同框架（视图像素，y 向下）。
+const FRAG_TAIL: &str = r#"
+struct ZelaFrag { dispatch: vec4<f32>, rect: vec4<f32>, tag: vec4<u32> };
+@group(0) @binding(0) var<uniform> zela_params: Params;
+@group(0) @binding(1) var zela_out: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(2) var<uniform> zela_frag: ZelaFrag;
+var<private> zela_center: vec2<f32>;
+var<private> zela_size: vec2<f32>;
+var<private> zela_pos2: vec2<f32>;
+var<private> zela_local: vec2<f32>;
+var<private> zela_uv: vec2<f32>;
+@compute @workgroup_size(8, 8)
+fn zela_fill(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (f32(id.x) >= zela_frag.dispatch.z || f32(id.y) >= zela_frag.dispatch.w) {
+        return;
+    }
+    let pixel = vec2<i32>(zela_frag.dispatch.xy) + vec2<i32>(id.xy);
+    let at = vec2<f32>(pixel) + vec2<f32>(0.5);
+    let rect = zela_frag.rect;
+    zela_center = rect.xy + 0.5 * rect.zw;
+    zela_size = rect.zw;
+    zela_pos2 = at;
+    zela_local = at - rect.xy;
+    zela_uv = zela_local / max(rect.zw, vec2<f32>(1.0));
+    let c: vec3<f32> = eval(zela_params, 0u);
+    textureStore(zela_out, pixel, vec4<f32>(c, f32(zela_frag.tag.x)));
 }
 "#;
 
@@ -1802,6 +1851,9 @@ impl Gpu {
         if program.source.contains("zela_center") || program.source.contains("zela_size") {
             return Err("着色 codegen 的对象级内建只支持解析路径（点云 / 网格没有 rect）".to_string());
         }
+        if program.fragment {
+            return Err("着色 codegen 的逐片元内建只支持解析路径（点云 / 网格没有颜色画布）".to_string());
+        }
         Self::encode_fill_impl(&self.device, &self.queue, &self.fill_layout, &mut self.fill_pipelines, encoder, words, word_base, word_base, 1, program)
     }
     /// **阶段 2**：装配一段生成 WGSL 的 compute 管线（同 `source` ⇒ 同管线）。
@@ -1893,6 +1945,108 @@ impl Gpu {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.dispatch_workgroups(1, 1, 1);
+        Ok(())
+    }
+
+    /// **阶段 3**：装配一段"逐片元"生成 WGSL 的 compute 管线（同 `source` ⇒ 同管线）。
+    fn frag_pipeline_impl<'a>(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
+        source: &str,
+    ) -> Result<&'a wgpu::ComputePipeline, String> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let key = hasher.finish();
+        if !pipelines.contains_key(&key) {
+            let text = format!("{source}{FRAG_TAIL}");
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("frag codegen"),
+                source: wgpu::ShaderSource::Wgsl(text.into()),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("frag codegen"),
+                bind_group_layouts: &[Some(layout)],
+                immediate_size: 0,
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("frag codegen"),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some("zela_fill"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            pipelines.insert(key, pipeline);
+        }
+        pipelines.get(&key).ok_or_else(|| "着色 codegen 管线缺失".to_string())
+    }
+
+    /// **阶段 3**：跑一次"逐片元着色"的 compute pass：对象包围盒里的每个像素算一个颜色，
+    /// 写进颜色画布（rgb = 颜色，a = 程序标签；合成按标签认领）。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_frag_impl(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        pipelines: &mut HashMap<u64, wgpu::ComputePipeline>,
+        encoder: &mut wgpu::CommandEncoder,
+        program: &ShaderFill,
+        rect: [f32; 4],
+        tag: u32,
+        canvas: [u32; 2],
+        out: &wgpu::TextureView,
+    ) -> Result<(), String> {
+        if program.params.len() % 16 != 0 {
+            return Err(format!(
+                "着色 codegen 的 Params 字节数必须是 16 的倍数（收到 {}）",
+                program.params.len()
+            ));
+        }
+        // 窗口 = 包围盒 ∩ 画布（包围盒是视图像素，y 向下）。
+        let [w, h] = canvas;
+        let (x0, y0) = (rect[0].floor().max(0.0), rect[1].floor().max(0.0));
+        let (x1, y1) = ((rect[0] + rect[2]).ceil().min(w as f32), (rect[1] + rect[3]).ceil().min(h as f32));
+        if x1 <= x0 || y1 <= y0 {
+            return Ok(());
+        }
+        let pipeline = Self::frag_pipeline_impl(device, layout, pipelines, &program.source)?;
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frag params"),
+            size: program.params.len().max(16) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut packed = program.params.clone();
+        packed.resize(program.params.len().max(16), 0);
+        queue.write_buffer(&params, 0, &packed);
+        let frag = ZelaFrag {
+            dispatch: [x0, y0, x1 - x0, y1 - y0],
+            rect,
+            tag: [tag, 0, 0, 0],
+        };
+        let target = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("frag target"),
+            size: std::mem::size_of::<ZelaFrag>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&target, 0, bytemuck::bytes_of(&frag));
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("frag codegen"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(out) },
+                wgpu::BindGroupEntry { binding: 2, resource: target.as_entire_binding() },
+            ],
+        });
+        let groups = (((x1 - x0) as u32).div_ceil(8), ((y1 - y0) as u32).div_ceil(8));
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("frag codegen"), timestamp_writes: None });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(groups.0.min(65535), groups.1.min(65535), 1);
         Ok(())
     }
 

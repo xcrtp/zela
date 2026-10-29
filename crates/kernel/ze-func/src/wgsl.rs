@@ -119,10 +119,15 @@ impl WgslBackend for MathWgsl {
     }
 
     fn builtin(&self, channel: &ze_comb::ChannelRef) -> Option<(SlotType, String)> {
-        // **阶段 2**：对象级内建（由后端在入口处赋值；不进 uniform）。
+        // **阶段 2 / 3**：着色内建（由后端在入口处赋值；不进 uniform）。
+        // 坐标口径：`center` / `size` / `pos2` 都是视图像素、y 向下（与 `Object.rect` 同框架）；
+        // `local` 是包围盒内的偏移（从左上角起，像素）；`uv` = `local / size`。
         match (channel.namespace.as_str(), channel.name.as_str()) {
             ("zela.shader", "center") => Some((SlotType::Vec2, "zela_center".to_string())),
             ("zela.shader", "size") => Some((SlotType::Vec2, "zela_size".to_string())),
+            ("zela.shader", "fragment.pos2") => Some((SlotType::Vec2, "zela_pos2".to_string())),
+            ("zela.shader", "fragment.local") => Some((SlotType::Vec2, "zela_local".to_string())),
+            ("zela.shader", "fragment.uv") => Some((SlotType::Vec2, "zela_uv".to_string())),
             _ => None,
         }
     }

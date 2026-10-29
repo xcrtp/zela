@@ -39,6 +39,7 @@ fn program() -> (ShaderFill, [f32; 3]) {
         ShaderFill {
             source: emitted.source,
             params,
+            fragment: false,
         },
         [(TIME).sin(), 0.25, 0.5],
     )
@@ -166,11 +167,50 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
     let builtin = ShaderFill {
         source: emitted.source,
         params: Vec::new(),
+        fragment: false,
     };
     let frame = render(canvas_fill(Some(builtin)));
     let [cr, cg, _cb, _ca] = center(&frame);
     assert!(
         (cr as i32 - 128).abs() <= 6 && (cg as i32 - 128).abs() <= 6,
         "内建 center 应让整幅填充呈 ~(128,128,128)，得到 ({cr},{cg})"
+    );
+
+    // ④ **逐片元内建**：`zela.shader::fragment.uv` 让颜色随像素变
+    // （画布铺满 ⇒ 中心像素的 uv ≈ (0.508, 0.508)）。
+    let uv_channel = Expr::channel(
+        ChannelRef::new("zela.shader", "fragment.uv").with_type(ChannelType::Vec2),
+    );
+    let expr = Expr::call(
+        math("vec3"),
+        [
+            Expr::call(math("x"), [uv_channel.clone()]),
+            Expr::call(math("y"), [uv_channel]),
+            Expr::pure(0.5),
+        ],
+    );
+    let emitted = ze_comb::emit_wgsl(&expr, ze_func::wgsl::backend()).expect("逐片元内建可生成");
+    assert!(emitted.params.is_empty(), "逐片元内建也不能进 uniform");
+    assert!(emitted.source.contains("zela_uv"), "{}", emitted.source);
+    let fragment = ShaderFill {
+        source: emitted.source,
+        params: Vec::new(),
+        fragment: true,
+    };
+    let first = render(canvas_fill(Some(fragment.clone())));
+    let second = render(canvas_fill(Some(fragment)));
+    assert_eq!(first, second, "逐片元着色连跑两次应逐位相同");
+    let [fr, fg, fb, fa] = center(&first);
+    assert_eq!(fa, 255, "逐片元着色的 alpha 仍取记录原值");
+    // 中心像素：local = 32.5 ⇒ uv = 32.5 / 64 = 0.5078 ⇒ ≈129/255。
+    for (got, name) in [(fr as i32, "r"), (fg as i32, "g")] {
+        assert!(
+            (got - 130).abs() <= 6,
+            "逐片元 uv 的 {name} 分量应 ≈130（0.508×255），得到 {got}（整帧中心 {fr},{fg},{fb}）"
+        );
+    }
+    assert!(
+        (fb as i32 - 128).abs() <= 6,
+        "第三个分量是常量 0.5 ⇒ ≈128，得到 {fb}"
     );
 }

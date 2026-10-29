@@ -1301,6 +1301,24 @@ fn before(a: Layer, b: Layer) -> bool {
     return a.z > b.z || (a.z == b.z && a.key < b.key);
 }
 
+// **阶段 3**：对象 o 的逐片元着色在像素 `up` 上的颜色（straight RGBA），或 `a = 0`（没有程序 / 标签不匹配）。
+// 颜色画布与视图像素一一对应（y 向下），标签由写它的 compute pass 盖上。
+fn shaded_fill(o: u32, up: vec2<f32>) -> vec4<f32> {
+    if (o >= arrayLength(&shader_programs)) {
+        return vec4<f32>(0.0);
+    }
+    let tag = shader_programs[o];
+    if (tag == 0u) {
+        return vec4<f32>(0.0);
+    }
+    let at = vec2<i32>(vec2<f32>(up.x, frame.size.y - up.y));
+    let c = textureLoad(shader_colors, at, 0);
+    if (abs(c.a - f32(tag)) >= 0.5) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(c.rgb, 1.0);
+}
+
 // A layer's paint at the pixel centred at `up` (view pixels, y up; for gradients): object o's background stroke,
 // fill or stroke (`layer`, as its atlas origins are numbered), as its colors give it.
 fn painted(o: u32, layer: u32, up: vec2<f32>) -> vec4<f32> {
@@ -1308,6 +1326,10 @@ fn painted(o: u32, layer: u32, up: vec2<f32>) -> vec4<f32> {
         return paint(o, background_of(o), 0u, 0u, 0u, up);
     }
     if (layer == 0u) {
+        let shaded = shaded_fill(o, up);
+        if (shaded.a > 0.5) {
+            return vec4<f32>(shaded.rgb, fill_of(o).a);
+        }
         return paint(o, fill_of(o), brush_of(o).x, brush2_of(o).x, brush_of(o).y, up);
     }
     return paint(o, stroke_of(o), brush_of(o).z, brush2_of(o).y, brush_of(o).w, up);

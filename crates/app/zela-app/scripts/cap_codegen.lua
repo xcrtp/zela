@@ -33,3 +33,17 @@ expr.shader {
         z = expr.pure(0.95),
     },
 }
+
+-- 逐片元组：颜色随像素变（`expr.uv()` 是包围盒内的归一化坐标，由后端逐像素注入）。
+local gradient = scene.spawn({
+    Circle { x = 0.0, y = -2.6, r = 1.6 },
+    Fill { color = Color { r = 10, g = 20, b = 30, a = 255 } },
+})
+expr.shader {
+    object = gradient,
+    root = Vec3Of {
+        x = expr.x { v = expr.uv() },
+        y = expr.y { v = expr.uv() },
+        z = expr.pure(0.9),
+    },
+}

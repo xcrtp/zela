@@ -321,6 +321,7 @@ impl PodAssembly {
                             })
                             .collect(),
                         size: pending.size,
+                        fragment: pending.fragment,
                     },
                 )
                 .map_err(|error| BrokerError::Injection {

@@ -516,6 +516,7 @@ pub fn scene_records(
                 path.shader = options.shader.as_ref().map(|shader| crate::render::ShaderFill {
                     source: shader.source.clone(),
                     params: vec![0u8; shader.size as usize],
+                    fragment: shader.fragment,
                 });
                 out.push(PathRecord::Fill(path));
             }

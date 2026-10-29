@@ -55,7 +55,9 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `16`：**5b B4** 新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
 /// `17`：**5b B4** 新增 `exists`（集合判空；装配期常量折叠）。
 /// `18`：**阶段 2** 新增 `shader`（表达式 → WGSL，装饰性着色 codegen）。
-pub const LIBRARY_VERSION: &str = "19";
+/// `19`：**阶段 2** 新增 `center` / `size`（对象级内建通道）。
+/// `20`：**阶段 3** 新增 `pos2` / `local` / `uv`（逐片元内建通道）。
+pub const LIBRARY_VERSION: &str = "20";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -120,6 +122,8 @@ pub struct PendingShader {
     pub params: Vec<PendingShaderParam>,
     /// `Params` 的 uniform 字节数（16 的倍数）。
     pub size: u32,
+    /// **逐片元**：表达式读了 `zela.shader.fragment.*` ⇒ 颜色随像素变。
+    pub fragment: bool,
 }
 
 /// 表达式 Pod。
@@ -348,6 +352,10 @@ impl ExprPod {
         // **阶段 2**：着色内建通道（对象 / 片元属性；不进 uniform）。
         registry.register_fn0_named("zela.math::center", HANDLE, center_ctor);
         registry.register_fn0_named("zela.math::size", HANDLE, size_ctor);
+        // **阶段 3**：逐片元内建（像素位置 / 框内坐标 / 归一化坐标）。
+        registry.register_fn0_named("zela.math::pos2", HANDLE, pos2_ctor);
+        registry.register_fn0_named("zela.math::local", HANDLE, local_ctor);
+        registry.register_fn0_named("zela.math::uv", HANDLE, uv_ctor);
         // B4 Query：装配期展开的批量绑定 + `it` 占位读。
         registry.register_fn1_named::<ChannelSpec, Handle>(
             "zela.math::query_self",
@@ -963,8 +971,11 @@ fn validate_binding(expr: &Expr) -> Result<(), String> {
             _parent: Option<&'a ze_comb::Node>,
         ) -> Result<bool, String> {
             if let Some(channel) = expr.node.channel() {
-                let injected =
-                    channel.is_builtin() && matches!(channel.name.as_str(), "time" | "frame");
+                // `zela.shader` 是**后端**内建（对象 / 片元属性），与 `time` / `frame`
+                // 一样不需要宿主登记供给者。
+                let injected = (channel.is_builtin()
+                    && matches!(channel.name.as_str(), "time" | "frame"))
+                    || channel.namespace == "zela.shader";
                 if !injected {
                     return Err(format!("通道 `{channel}` 尚未由宿主注入"));
                 }
@@ -983,8 +994,8 @@ fn validate_binding(expr: &Expr) -> Result<(), String> {
 
 /// **阶段 2**：`shader { object, root }` —— 把表达式编译成 WGSL（装饰性着色）。
 ///
-/// 边界（诚实）：本版只接受**不含通道**的表达式（常量着色）；同时校验 `eval` 返回
-/// `vec3<f32>`（标量请用 `splat`）。逐帧参数（时间等）随阶段 3 一起接（GAPS AX-02）。
+/// 通道分三类：`time` / `frame`（每帧注入）、`zela.shader::*`（后端内建：对象 / 片元属性）、
+/// 其余（宿主登记的外部注入）。同时校验 `eval` 返回 `vec3<f32>`（标量请用 `splat`）。
 fn shader(pod: &dyn Pod, spec: ShaderSpec) {
     let this = expr_pod(pod);
     let expr = match this.tree(spec.root) {
@@ -1056,6 +1067,10 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
         offset += size;
     }
     let size = offset.div_ceil(16) * 16;
+    // **阶段 3**：读了逐片元内建 ⇒ 颜色随像素变，后端改走逐像素通道。
+    let fragment = channels
+        .iter()
+        .any(|(qualified, _)| qualified.starts_with("zela.shader::fragment."));
     this.shaders
         .lock()
         .expect("着色 codegen 表未被毒化")
@@ -1064,6 +1079,7 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
             source: emitted.source,
             params,
             size,
+            fragment,
         });
 }
 
@@ -1095,6 +1111,21 @@ fn center_ctor(pod: &dyn Pod) -> Handle {
 /// **阶段 2**：`size()` —— 对象包围盒的尺寸（像素）。
 fn size_ctor(pod: &dyn Pod) -> Handle {
     shader_builtin(pod, "size")
+}
+
+/// **阶段 3**：`pos2()` —— 片元在视图里的位置（像素，y 向下）。
+fn pos2_ctor(pod: &dyn Pod) -> Handle {
+    shader_builtin(pod, "fragment.pos2")
+}
+
+/// **阶段 3**：`local()` —— 片元在对象包围盒里的位置（像素）。
+fn local_ctor(pod: &dyn Pod) -> Handle {
+    shader_builtin(pod, "fragment.local")
+}
+
+/// **阶段 3**：`uv()` —— `local / size`（0..1）。
+fn uv_ctor(pod: &dyn Pod) -> Handle {
+    shader_builtin(pod, "fragment.uv")
 }
 
 fn shader_builtin(pod: &dyn Pod, name: &str) -> Handle {

@@ -481,7 +481,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "19",
+    version = "20",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -670,6 +670,13 @@ pub struct MathApi<'a> {
     pub center: fn(&'a dyn Pod) -> Handle,
     /// **阶段 2**：`size()` —— 对象包围盒的尺寸（像素）。
     pub size: fn(&'a dyn Pod) -> Handle,
+
+    /// **阶段 3**：`pos2()` —— 片元在视图里的位置（像素，y 向下，与 `center` 同框架）。
+    pub pos2: fn(&'a dyn Pod) -> Handle,
+    /// **阶段 3**：`local()` —— 片元在对象包围盒里的位置（像素，从左上角起）。
+    pub local: fn(&'a dyn Pod) -> Handle,
+    /// **阶段 3**：`uv()` —— `local / size`（0..1）。
+    pub uv: fn(&'a dyn Pod) -> Handle,
 }
 
 // ─── G 批（D14）：能力指纹与版本的配对基线 ─────────────────────────────────
@@ -691,13 +698,15 @@ pub struct MathApi<'a> {
 /// `@16`（5b B4）：新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
 /// `@17`（5b B4）：新增 `exists`（集合判空；装配期常量折叠）。
 /// `@18`（阶段 2）：新增 `shader`（表达式 → WGSL；装饰性着色 codegen）。
+/// `@19`（阶段 2）：新增 `center` / `size`（对象级内建通道）。
+/// `@20`（阶段 3）：新增 `pos2` / `local` / `uv`（逐片元内建通道）。
 ///
 /// **阶段 4 的实测结论（未落地）**：新增一个算子必然改 `signatures()` ⇒ 必须
 /// 递增 version ⇒ `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**。
 /// 即"加算子"与"不重录基线"在本批互斥，故本批只交付注册表机制，不新增算子。
-pub const MATH_API_VERSION: &str = "19";
+pub const MATH_API_VERSION: &str = "20";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 13_665_565_731_265_772_151;
+pub const MATH_API_FINGERPRINT: u64 = 2_609_264_944_886_094_439;
 
 /// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
 ///

@@ -110,6 +110,10 @@ pub struct ShaderPaint {
     /// `Params` 的 uniform 字节数（16 的倍数；无参数时为 0）。
     #[serde(default)]
     pub size: u32,
+    /// **逐片元**：表达式读了 `zela.shader.fragment.*`（像素位置 / 框内坐标），
+    /// 颜色随像素变 ⇒ 后端不能把它折成每对象一个颜色（走逐像素通道）。
+    #[serde(default)]
+    pub fragment: bool,
 }
 
 /// 一个外部注入参数：通道名 + 槽类型 + 在 `Params` 里的字节偏移。
@@ -255,6 +259,7 @@ mod tests {
                 source: "fn eval() {}".to_string(),
                 params: Vec::new(),
                 size: 0,
+                fragment: false,
             }),
             ..Default::default()
         };
