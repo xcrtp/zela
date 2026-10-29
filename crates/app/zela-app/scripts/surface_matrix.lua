@@ -89,5 +89,5 @@ end
 -- 记录确实经 Camera2D 落到图层像素上（PC 路线 A 的叠加只跳过"叠到屏幕"这一步，
 -- 不跳过图层自身的 2D 变换）。
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 30.0 },
+    Camera2D { scale = 30.0 },
 })

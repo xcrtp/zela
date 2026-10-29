@@ -50,11 +50,8 @@ local plane = scene.spawn({
     Cube { half_extent = 1.0, solid = true },
     Material3D {
         color = Color { r = 205, g = 215, b = 230, a = 255 },
-        variant = ShaderVariant.Lambert,
-        metallic = 0.0,
         roughness = 0.6,
         double_sided = true,
-        transparent = false,
         texture = Texture.Surface { surface = surf },
     },
     Transform3D {
@@ -96,8 +93,6 @@ scene.spawn({
 scene.spawn({
     Camera3D {
         eye = Vec3 { x = 0.0, y = 0.0, z = 9.0 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 1.0,
     },
 })

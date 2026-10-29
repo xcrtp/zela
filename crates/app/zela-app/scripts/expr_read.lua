@@ -72,8 +72,8 @@ expr.bind {
 }
 
 -- ── 写者 B / C：两个方块的 `Transform.position`（Vec3 源）──────────────
-local a = scene.spawn({ Transform { x = -2.4, y = -0.8, z = 0.0 } })
-local b = scene.spawn({ Transform { x = 2.4, y = -0.8, z = 0.0 } })
+local a = scene.spawn({ Transform { x = -2.4, y = -0.8 } })
+local b = scene.spawn({ Transform { x = 2.4, y = -0.8 } })
 expr.bind {
     object = a,
     target = Transform.channel.position,

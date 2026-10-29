@@ -114,7 +114,7 @@ end
 local function place_text_group(source, size, x, y)
     local group = scene.spawn({
         Name { value = "text-group" },
-        Transform { x = x, y = y, z = 0.0 },
+        Transform { x = x, y = y },
     })
     local glyphs = content.text(Text {
         source = source,
@@ -165,14 +165,14 @@ local pulse = scene.spawn({
 -- ── 2. 旋转向量链（Parent 累乘）──────────────────────────────────────
 local root = scene.spawn({
     Name { value = "fourier-root" },
-    Transform { x = BASE_X, y = 0.0, z = 0.0 },
+    Transform { x = BASE_X, y = 0.0 },
 })
 
 -- 黄色相位点：绕根公转（S4 Orbit + S3 Position）。
 local phase_dot = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.06 },
     Fill { color = rgba(255, 230, 120, 255) },
-    Transform { x = 0.0, y = 0.0, z = 0.0 },
+    Transform { x = 0.0, y = 0.0 },
     Parent { parent = root },
 })
 
@@ -203,14 +203,14 @@ for i = 1, #HARMONICS do
 
     joints[i] = scene.spawn({
         Name { value = "joint-" .. tostring(k) },
-        Transform { x = local_x, y = 0.0, z = 0.0 },
+        Transform { x = local_x, y = 0.0 },
         Parent { parent = parent },
     })
 
     scene.spawn({
         Circle { x = 0.0, y = 0.0, r = r },
         Stroke { width = 1.2, color = guide },
-        Transform { x = 0.0, y = 0.0, z = 0.0 },
+        Transform { x = 0.0, y = 0.0 },
         Parent { parent = joints[i] },
     })
 
@@ -222,7 +222,7 @@ for i = 1, #HARMONICS do
             head_width = 0.08,
         },
         Fill { color = arrow_colors[i] },
-        Transform { x = 0.0, y = 0.0, z = 0.0 },
+        Transform { x = 0.0, y = 0.0 },
         Parent { parent = joints[i] },
     })
 end
@@ -231,7 +231,7 @@ end
 scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.06 },
     Fill { color = rgba(255, 255, 255, 255) },
-    Transform { x = radii[#radii], y = 0.0, z = 0.0 },
+    Transform { x = radii[#radii], y = 0.0 },
     Parent { parent = arrows[#arrows] },
 })
 

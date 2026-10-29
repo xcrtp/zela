@@ -16,7 +16,7 @@
 --       演示 predicate 与 root 是**两次独立求值**（Bool 不经过 anim_value）。
 
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 150.0 },
+    Camera2D { scale = 150.0 },
 })
 
 -- 主体：半径 = 0.55 + 0.30 * sin(1.6 t)

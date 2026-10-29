@@ -50,8 +50,6 @@ end
 scene.spawn({
     Camera3D {
         eye = Vec3 { x = 0.0, y = 1.6, z = 6.4 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 1.0,
     },
 })
@@ -75,9 +73,6 @@ local function cube(x, metallic, roughness, color)
             variant = ShaderVariant.Pbr,
             metallic = metallic,
             roughness = roughness,
-            double_sided = false,
-            transparent = false,
-            texture = Texture.None,
         },
         Transform3D {
             position = Vec3 { x = x, y = 0.0, z = 0.0 },

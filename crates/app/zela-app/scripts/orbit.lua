@@ -76,7 +76,7 @@ local COMET_START = MAIN_START + MAIN
 
 -- 2D 相机（渲染器要求 Framing2D；世界中心对准轨道原点）。
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
+    Camera2D { scale = 55.0 },
 })
 
 local function ring_points(radius)
@@ -101,19 +101,19 @@ local sun = scene.spawn({
 local planet1 = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.16 },
     Fill { color = rgba(255, 150, 90, 255) },
-    Transform { x = q(R1), y = 0.0, z = 0.0 },
+    Transform { x = q(R1), y = 0.0 },
     Opacity { value = 0.0 },
 })
 local planet2 = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.24 },
     Fill { color = rgba(120, 190, 255, 255) },
-    Transform { x = q(R2), y = 0.0, z = 0.0 },
+    Transform { x = q(R2), y = 0.0 },
     Opacity { value = 0.0 },
 })
 local moon = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.07 },
     Fill { color = rgba(235, 235, 245, 255) },
-    Transform { x = 0.32, y = 0.0, z = 0.0 },
+    Transform { x = 0.32, y = 0.0 },
     Opacity { value = 0.0 },
     Parent { parent = planet2 },
 })

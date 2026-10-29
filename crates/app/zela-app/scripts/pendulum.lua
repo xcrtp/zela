@@ -80,7 +80,7 @@ local trace = scene.spawn({
 
 -- 摆动组：原点即挂点；摆杆 / 摆锤 / 内环都是它的子对象。
 local swing = scene.spawn({
-    Transform { x = 0.0, y = PIVOT_Y, z = 0.0 },
+    Transform { x = 0.0, y = PIVOT_Y },
 })
 scene.spawn({
     Polyline {
@@ -96,13 +96,13 @@ scene.spawn({
 local bob = scene.spawn({
     Circle { x = 0.0, y = q(-ROD_LEN), r = 0.24 },
     Fill { color = rgba(255, 140, 80, 255) },
-    Transform { x = 0.0, y = 0.0, z = 0.0 },
+    Transform { x = 0.0, y = 0.0 },
     Parent { parent = swing },
 })
 local ring = scene.spawn({
     Circle { x = 0.0, y = q(-ROD_LEN), r = 0.34 },
     Stroke { width = 2.0, color = rgba(255, 210, 120, 255) },
-    Transform { x = 0.0, y = 0.0, z = 0.0 },
+    Transform { x = 0.0, y = 0.0 },
     Parent { parent = swing },
 })
 

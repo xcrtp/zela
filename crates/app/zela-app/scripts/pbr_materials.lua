@@ -104,8 +104,6 @@ end
 scene.spawn({
     Camera3D {
         eye = Vec3 { x = 0.0, y = 3.0, z = 6.6 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 1.05,
     },
 })
@@ -160,9 +158,6 @@ for row = 0, 2 do
                 variant = ShaderVariant.Pbr,
                 metallic = METALLIC[col + 1],
                 roughness = ROUGH[row + 1],
-                double_sided = false,
-                transparent = false,
-                texture = Texture.None,
             },
             Transform3D {
                 position = Vec3 { x = x, y = y, z = 0.0 },
@@ -179,11 +174,6 @@ local flat = scene.spawn({
     Material3D {
         color = rgba(45, 205, 220, 255),
         variant = ShaderVariant.Flat,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 3.5, y = -1.35, z = 0.0 },
@@ -195,12 +185,6 @@ local lambert = scene.spawn({
     Cube { half_extent = 0.45, solid = true },
     Material3D {
         color = rgba(185, 100, 230, 255),
-        variant = ShaderVariant.Lambert,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 3.5, y = 1.35, z = 0.0 },

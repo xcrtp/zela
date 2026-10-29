@@ -73,8 +73,6 @@ end
 scene.spawn({
     Camera3D {
         eye = Vec3 { x = 0.0, y = 2.6, z = 7.2 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 1.0,
     },
 })
@@ -128,9 +126,6 @@ for i = 1, 5 do
             variant = ShaderVariant.Pbr,
             metallic = SPECTRUM[i][3],
             roughness = SPECTRUM[i][4],
-            double_sided = false,
-            transparent = false,
-            texture = Texture.None,
         },
         Transform3D {
             position = Vec3 { x = SPECTRUM[i][1], y = 0.0, z = 0.0 },

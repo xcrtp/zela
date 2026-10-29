@@ -57,7 +57,7 @@ scene.spawn({
 
 -- ── 分镜 2：2D 相机 ────────────────────────────────────────────────────
 local camera = scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 },
+    Camera2D { scale = 40.0 },
 })
 
 -- ── 分镜 3：曲线 y = sin x 的书写动画 ─────────────────────────────────
@@ -93,7 +93,7 @@ local text = content.text(Text {
 for i = 1, #text do
     scene.spawn({
         PathShape { path = text[i] },
-        Transform { x = -1.5, y = 3.0, z = 0.0 },
+        Transform { x = -1.5, y = 3.0 },
     })
 end
 

@@ -14,7 +14,7 @@ local T = 0.5
 local N = 32
 
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 },
+    Camera2D { scale = 40.0 },
 })
 
 local dot = scene.spawn({

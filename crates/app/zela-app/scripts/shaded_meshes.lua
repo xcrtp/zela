@@ -18,7 +18,6 @@ scene.spawn({
     Camera3D {
         eye = Vec3 { x = 2.6, y = 2.2, z = 6.0 },
         target = Vec3 { x = 0.0, y = 0.8, z = -0.4 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 0.75,
     },
 })
@@ -52,11 +51,7 @@ scene.spawn({
     Material3D {
         color = Color { r = 150, g = 158, b = 172, a = 255 },
         variant = ShaderVariant.Pbr,
-        metallic = 0.0,
         roughness = 0.85,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.0, y = 1.6, z = -1.2 },
@@ -71,11 +66,7 @@ scene.spawn({
     Material3D {
         color = Color { r = 120, g = 124, b = 132, a = 255 },
         variant = ShaderVariant.Pbr,
-        metallic = 0.0,
         roughness = 0.95,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.0, y = 0.0, z = 0.4 },
@@ -90,11 +81,7 @@ scene.spawn({
     Material3D {
         color = Color { r = 255, g = 250, b = 235, a = 255 },
         variant = ShaderVariant.Pbr,
-        metallic = 0.0,
         roughness = 0.18,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.0, y = 0.85, z = 0.2 },

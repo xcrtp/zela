@@ -12,15 +12,13 @@
 
 -- 2D 相机：只决定 2D 图元落在屏幕哪一处（overlay 不吃 3D 相机）。
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
+    Camera2D { scale = 55.0 },
 })
 
 -- 3D 相机 + 立方体（Lambert ⇒ 可见明暗，证明它走的是透视而不是屏幕平面）。
 scene.spawn({
     Camera3D {
         eye = Vec3 { x = 3.2, y = 2.4, z = 4.2 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 0.9,
     },
 })
@@ -28,12 +26,6 @@ scene.spawn({
     Cube { half_extent = 1.4, solid = true },
     Material3D {
         color = Color { r = 235, g = 120, b = 120, a = 255 },
-        variant = ShaderVariant.Lambert,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
 })
 scene.spawn({

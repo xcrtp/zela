@@ -10,7 +10,7 @@
 
 -- 2D 相机：世界 ±5.3 × ±4 落在 640×480 里（scale = 60）。
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 60.0 },
+    Camera2D { scale = 60.0 },
 })
 
 local fill = Color { r = 70, g = 190, b = 210, a = 255 }

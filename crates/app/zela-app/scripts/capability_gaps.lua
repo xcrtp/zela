@@ -54,7 +54,7 @@ end
 
 -- 2D 相机（morph / 圆都在世界坐标里；scale 30 ⇒ 视口约 21.3 × 16 世界单位）。
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 30.0 },
+    Camera2D { scale = 30.0 },
 })
 
 -- ① 组标签：把它挂到本作品的全部可见对象上（纯标签，无变换）。
@@ -127,7 +127,6 @@ expr.bind {
 local cam3 = scene.spawn({
     Camera3D {
         eye = Vec3 { x = 9.0, y = 0.0, z = 0.0 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
         up = Vec3 { x = 0.0, y = 0.0, z = 1.0 },
         fov_y = 0.7,
     },
@@ -147,11 +146,6 @@ scene.spawn({
     Material3D {
         color = rgba(235, 120, 120, 255),
         variant = ShaderVariant.Flat,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     layer,
 })

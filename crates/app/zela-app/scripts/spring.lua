@@ -77,7 +77,7 @@ local function hop(x, color)
     local b = scene.spawn({
         Circle { x = 0.0, y = 0.0, r = 0.28 },
         Fill { color = color },
-        Transform { x = x, y = q(HOP_HI), z = 0.0 },
+        Transform { x = x, y = q(HOP_HI) },
         Opacity { value = 0.0 },
     })
 

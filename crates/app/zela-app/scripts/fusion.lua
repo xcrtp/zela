@@ -30,11 +30,8 @@ local red = scene.spawn({
     Material3D {
         color = Color { r = 255, g = 90, b = 90, a = 140 },
         variant = ShaderVariant.Flat,
-        metallic = 0.0,
-        roughness = 0.5,
         double_sided = true,
         transparent = true,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = -0.6, y = 0.0, z = 0.0 },
@@ -49,11 +46,8 @@ local blue = scene.spawn({
     Material3D {
         color = Color { r = 90, g = 140, b = 255, a = 140 },
         variant = ShaderVariant.Flat,
-        metallic = 0.0,
-        roughness = 0.5,
         double_sided = true,
         transparent = true,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.6, y = 0.0, z = 0.0 },
@@ -67,12 +61,6 @@ scene.spawn({
     Cube { half_extent = 0.8, solid = true },
     Material3D {
         color = Color { r = 230, g = 230, b = 230, a = 255 },
-        variant = ShaderVariant.Lambert,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.0, y = -1.8, z = 0.0 },
@@ -120,7 +108,6 @@ scene.spawn({
     Camera3D {
         eye = Vec3 { x = 4.5, y = 3.0, z = 6.0 },
         target = Vec3 { x = 0.0, y = -0.2, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 1.05,
     },
 })

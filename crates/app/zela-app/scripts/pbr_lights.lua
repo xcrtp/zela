@@ -74,8 +74,6 @@ end
 scene.spawn({
     Camera3D {
         eye = Vec3 { x = 0.0, y = 3.4, z = 6.8 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 1.05,
     },
 })
@@ -126,9 +124,6 @@ local hero = scene.spawn({
         variant = ShaderVariant.Pbr,
         metallic = 1.0,
         roughness = 0.14,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
@@ -143,11 +138,7 @@ local matte = scene.spawn({
     Material3D {
         color = rgba(210, 140, 170, 255),
         variant = ShaderVariant.Pbr,
-        metallic = 0.0,
         roughness = 0.95,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.0, y = 2.7, z = 0.5 },
@@ -174,9 +165,6 @@ for i = 1, 4 do
             variant = ShaderVariant.Pbr,
             metallic = m,
             roughness = rough,
-            double_sided = false,
-            transparent = false,
-            texture = Texture.None,
         },
         Transform3D {
             position = Vec3 {

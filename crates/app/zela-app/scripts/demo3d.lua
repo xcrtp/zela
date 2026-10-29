@@ -45,9 +45,6 @@ local cube = scene.spawn({
         variant = ShaderVariant.Pbr,
         metallic = 0.3,
         roughness = 0.6,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
@@ -82,12 +79,6 @@ local wire = scene.spawn({
     Cube { half_extent = 0.8, solid = false },
     Material3D {
         color = Color { r = 80, g = 200, b = 255, a = 255 },
-        variant = ShaderVariant.Lambert,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
         position = Vec3 { x = -2.8, y = 1.0, z = 0.0 },
@@ -130,8 +121,6 @@ local rim = scene.spawn({
 scene.spawn({
     Camera3D {
         eye = Vec3 { x = 4.0, y = 3.0, z = 5.0 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
         fov_y = 1.1,
     },
 })
