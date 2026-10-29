@@ -320,10 +320,99 @@ pub struct NormalizeSpec {
 }
 
 /// `round_f32(x)`：把数值落成 f32 再升回 f64（逐位复刻旧曲线的精度口径）。
+///
+/// **已更名**为 [`NarrowF32Spec`]（BB 批）：`round` 算子进来后，旧名读起来像
+/// "四舍五入到整数"。旧名保留，老 payload 仍能加载。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.RoundF32")]
 pub struct RoundF32Spec {
     pub of: Handle,
+}
+
+/// `narrow_f32(x)`：**收窄**到 f32 再升回 f64（`RoundF32` 的新名字，语义相同）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.NarrowF32")]
+pub struct NarrowF32Spec {
+    pub of: Handle,
+}
+
+/// 第 BB 批（算子扩充）：一元 / 二元 / 三段算子的参数结构体。
+///
+/// 每行只写一次：PodType 全名、结构体名、字段（= 实参顺序）。
+/// 字段说明见各算子函数；这里只声明形状，语义在 `ze-func::ops`。
+macro_rules! numeric_specs {
+    ($(
+        $(#[$doc:meta])*
+        $spec:ident, $pod:literal, [$($field:ident),+] ;
+    )*) => {
+        $(
+            $(#[$doc])*
+            #[derive(Clone, Debug, PartialEq, PodType)]
+            #[pod_type(name = $pod)]
+            pub struct $spec {
+                $( pub $field: Handle, )+
+            }
+        )*
+    };
+}
+
+numeric_specs! {
+    /// `sqrt(x)`：平方根。
+    SqrtSpec, "zela.math.Sqrt", [of];
+    /// `inversesqrt(x)`：`1 / sqrt(x)`。
+    InverseSqrtSpec, "zela.math.InverseSqrt", [of];
+    /// `abs(x)`：绝对值。
+    AbsSpec, "zela.math.Abs", [of];
+    /// `sign(x)`：正 1 / 负 −1 / 其余 0。
+    SignSpec, "zela.math.Sign", [of];
+    /// `min(a, b)`。
+    MinSpec, "zela.math.Min", [a, b];
+    /// `max(a, b)`。
+    MaxSpec, "zela.math.Max", [a, b];
+    /// `floor(x)`：向下取整。
+    FloorSpec, "zela.math.Floor", [of];
+    /// `ceil(x)`：向上取整。
+    CeilSpec, "zela.math.Ceil", [of];
+    /// `trunc(x)`：向零取整。
+    TruncSpec, "zela.math.Trunc", [of];
+    /// `round(x)`：就近取整，半数远离零。
+    RoundSpec, "zela.math.Round", [of];
+    /// `modulo(a, b)`：截断余数（作者侧叫 `modulo`：`mod` 在 Rust / Lua 里是关键字）。
+    ModuloSpec, "zela.math.Modulo", [a, b];
+    /// `exp(x)`。
+    ExpSpec, "zela.math.Exp", [of];
+    /// `exp2(x)`。
+    Exp2Spec, "zela.math.Exp2", [of];
+    /// `log(x)`：自然对数。
+    LogSpec, "zela.math.Log", [of];
+    /// `log2(x)`。
+    Log2Spec, "zela.math.Log2", [of];
+    /// `pow(a, b)`：`a^b`。
+    PowSpec, "zela.math.Pow", [a, b];
+    /// `tan(x)`。
+    TanSpec, "zela.math.Tan", [of];
+    /// `asin(x)`。
+    AsinSpec, "zela.math.Asin", [of];
+    /// `acos(x)`。
+    AcosSpec, "zela.math.Acos", [of];
+    /// `atan(x)`。
+    AtanSpec, "zela.math.Atan", [of];
+    /// `atan2(y, x)`：实参顺序与 WGSL `atan2(y, x)` 一致。
+    Atan2Spec, "zela.math.Atan2", [y, x];
+    /// `degrees(x)`：弧度 → 角度。
+    DegreesSpec, "zela.math.Degrees", [of];
+    /// `radians(x)`：角度 → 弧度。
+    RadiansSpec, "zela.math.Radians", [of];
+    /// `step(edge, x)`：`x < edge` 取 0，否则 1。
+    StepSpec, "zela.math.Step", [edge, x];
+    /// `dot(a, b)`：点积（两个同维向量）。
+    DotSpec, "zela.math.Dot", [a, b];
+    /// `cross(a, b)`：叉积（两个 `Vec3`）。
+    CrossSpec, "zela.math.Cross", [a, b];
+    /// `reflect(e1, e2)`：入射向量关于法线反射。
+    ReflectSpec, "zela.math.Reflect", [e1, e2];
+    /// `faceforward(e1, e2, e3)`：三个同维向量。
+    FaceforwardSpec, "zela.math.Faceforward", [e1, e2, e3];
 }
 
 // ─── 内建 mono（阶段 3）：shader 里常用、但此前只能在表达式里拼出来的几个 ──
@@ -507,7 +596,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "21",
+    version = "22",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -594,7 +683,69 @@ pub struct MathApi<'a> {
     pub normalize: fn(&'a dyn Pod, spec: NormalizeSpec) -> Handle,
 
     /// `round_f32(x)`：落成 f32 再升回 f64（第 5a 批：旧曲线的逐位等价工具）。
+    ///
+    /// **已更名**：新脚本请用 `narrow_f32`（语义相同，旧名保留给老 payload）。
     pub round_f32: fn(&'a dyn Pod, spec: RoundF32Spec) -> Handle,
+
+    // ─── 第 BB 批（算子扩充）：对齐 WGSL 标准库 ─────────────────────────────
+    /// `narrow_f32(x)`：收窄到 f32 再升回 f64（`round_f32` 的新名字）。
+    pub narrow_f32: fn(&'a dyn Pod, spec: NarrowF32Spec) -> Handle,
+    /// `sqrt(x)`。
+    pub sqrt: fn(&'a dyn Pod, spec: SqrtSpec) -> Handle,
+    /// `inversesqrt(x)`：`1 / sqrt(x)`。
+    pub inversesqrt: fn(&'a dyn Pod, spec: InverseSqrtSpec) -> Handle,
+    /// `abs(x)`。
+    pub abs: fn(&'a dyn Pod, spec: AbsSpec) -> Handle,
+    /// `sign(x)`：正 1 / 负 −1 / 其余 0（与 WGSL 同口径）。
+    pub sign: fn(&'a dyn Pod, spec: SignSpec) -> Handle,
+    /// `min(a, b)`。
+    pub min: fn(&'a dyn Pod, spec: MinSpec) -> Handle,
+    /// `max(a, b)`。
+    pub max: fn(&'a dyn Pod, spec: MaxSpec) -> Handle,
+    /// `floor(x)`。
+    pub floor: fn(&'a dyn Pod, spec: FloorSpec) -> Handle,
+    /// `ceil(x)`。
+    pub ceil: fn(&'a dyn Pod, spec: CeilSpec) -> Handle,
+    /// `trunc(x)`：向零取整。
+    pub trunc: fn(&'a dyn Pod, spec: TruncSpec) -> Handle,
+    /// `round(x)`：就近取整，半数远离零。
+    pub round: fn(&'a dyn Pod, spec: RoundSpec) -> Handle,
+    /// `modulo(a, b)`：截断余数（WGSL 生成 `%`）。
+    pub modulo: fn(&'a dyn Pod, spec: ModuloSpec) -> Handle,
+    /// `exp(x)`。
+    pub exp: fn(&'a dyn Pod, spec: ExpSpec) -> Handle,
+    /// `exp2(x)`。
+    pub exp2: fn(&'a dyn Pod, spec: Exp2Spec) -> Handle,
+    /// `log(x)`：自然对数。
+    pub log: fn(&'a dyn Pod, spec: LogSpec) -> Handle,
+    /// `log2(x)`。
+    pub log2: fn(&'a dyn Pod, spec: Log2Spec) -> Handle,
+    /// `pow(a, b)`。
+    pub pow: fn(&'a dyn Pod, spec: PowSpec) -> Handle,
+    /// `tan(x)`。
+    pub tan: fn(&'a dyn Pod, spec: TanSpec) -> Handle,
+    /// `asin(x)`。
+    pub asin: fn(&'a dyn Pod, spec: AsinSpec) -> Handle,
+    /// `acos(x)`。
+    pub acos: fn(&'a dyn Pod, spec: AcosSpec) -> Handle,
+    /// `atan(x)`。
+    pub atan: fn(&'a dyn Pod, spec: AtanSpec) -> Handle,
+    /// `atan2(y, x)`。
+    pub atan2: fn(&'a dyn Pod, spec: Atan2Spec) -> Handle,
+    /// `degrees(x)`：弧度 → 角度。
+    pub degrees: fn(&'a dyn Pod, spec: DegreesSpec) -> Handle,
+    /// `radians(x)`：角度 → 弧度。
+    pub radians: fn(&'a dyn Pod, spec: RadiansSpec) -> Handle,
+    /// `step(edge, x)`：`x < edge` 取 0，否则 1。
+    pub step: fn(&'a dyn Pod, spec: StepSpec) -> Handle,
+    /// `dot(a, b)`：点积（两个同维向量）。
+    pub dot: fn(&'a dyn Pod, spec: DotSpec) -> Handle,
+    /// `cross(a, b)`：叉积（两个 `Vec3`）。
+    pub cross: fn(&'a dyn Pod, spec: CrossSpec) -> Handle,
+    /// `reflect(e1, e2)`：入射向量关于法线反射。
+    pub reflect: fn(&'a dyn Pod, spec: ReflectSpec) -> Handle,
+    /// `faceforward(e1, e2, e3)`：`dot(e2, e3) < 0` 时保持 `e1`。
+    pub faceforward: fn(&'a dyn Pod, spec: FaceforwardSpec) -> Handle,
 
     /// `distance(a, b)`：两点距离（`Vec2` 或 `Vec3` → 数；两实参同维）。
     pub distance: fn(&'a dyn Pod, spec: DistanceSpec) -> Handle,
@@ -736,13 +887,15 @@ pub struct MathApi<'a> {
 /// `@19`（阶段 2）：新增 `center` / `size`（对象级内建通道）。
 /// `@20`（阶段 3）：新增 `pos2` / `local` / `uv`（逐片元内建通道）。
 /// `@21`（阶段 3）：新增 `distance` / `smoothstep` / `fract`（内建 mono）。
+/// `@22`（第 BB 批）：新增 28 个 WGSL 标准库算子（代数 / 指数 / 三角 / 向量），
+/// 并新增 `narrow_f32`（`round_f32` 的新名字，旧名保留）。
 ///
-/// **阶段 4 的实测结论（未落地）**：新增一个算子必然改 `signatures()` ⇒ 必须
-/// 递增 version ⇒ `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**。
-/// 即"加算子"与"不重录基线"在本批互斥，故本批只交付注册表机制，不新增算子。
-pub const MATH_API_VERSION: &str = "21";
+/// **加算子的代价（实测）**：新增算子必然改 `signatures()` ⇒ 必须递增 version ⇒
+/// `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**（像素不变）。第 BB 批
+/// 因此把 28 个算子**一次**加完、只 bump 一次（`@21 → @22`），而不是分五批 bump 五次。
+pub const MATH_API_VERSION: &str = "22";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 1_902_109_117_346_267_160;
+pub const MATH_API_FINGERPRINT: u64 = 5_482_242_184_379_522_694;
 
 /// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
 ///

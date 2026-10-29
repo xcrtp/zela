@@ -11,18 +11,18 @@
 - 路径：`crates/ze/pod/ze-pod-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-func`、`ze-pod-core`、`ze-pod-macro`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-playback`、`zela-scene-ecs`
-- 源文件：6 个 · 3698 行
+- 源文件：6 个 · 3955 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/api.rs` | 782 | `zela.math`：表达式层的**叶子算子**能力（函子库）。 |
-| `src/expr_pod.rs` | 1806 | 表达式 Pod：**表达式数据留在 Pod 内，跨边界只传 [`Handle`]**。 |
+| `src/api.rs` | 935 | `zela.math`：表达式层的**叶子算子**能力（函子库）。 |
+| `src/expr_pod.rs` | 1909 | 表达式 Pod：**表达式数据留在 Pod 内，跨边界只传 [`Handle`]**。 |
 | `src/infer.rs` | 815 | **装配期类型推导**（L2）：rank-1 合一 + kind 约束 + 重载列表。 |
 | `src/lib.rs` | 63 | ze-pod-func: **函子库 Pod**（namespace `zela.math`）。 |
 | `src/ops.rs` | 19 | `zela.math` 算子的**接线入口**（语义实现已迁到基础函子库 `ze-func`）。 |
-| `src/signature.rs` | 213 | **算子签名表的接线层**：数据面在 `ze-func`（[`OpDef`] 的唯一来源）。 |
+| `src/signature.rs` | 214 | **算子签名表的接线层**：数据面在 `ze-func`（[`OpDef`] 的唯一来源）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -66,6 +66,7 @@ graph LR
 | `src/api.rs` | `pub struct LengthSpec` |
 | `src/api.rs` | `pub struct NormalizeSpec` |
 | `src/api.rs` | `pub struct RoundF32Spec` |
+| `src/api.rs` | `pub struct NarrowF32Spec` |
 | `src/api.rs` | `pub struct DistanceSpec` |
 | `src/api.rs` | `pub struct SmoothstepSpec` |
 | `src/api.rs` | `pub struct FractSpec` |

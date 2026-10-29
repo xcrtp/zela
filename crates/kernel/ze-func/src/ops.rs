@@ -86,12 +86,12 @@ fn vec3_arg(op: &OpRef, args: &[Value], index: usize) -> Result<[f32; 3], EvalEr
 
 /// `sin(x)`。
 pub fn sin(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::f64(number(op, args, 0)?.sin()))
+    Ok(Value::f64(crate::det::sin(number(op, args, 0)?)))
 }
 
 /// `cos(x)`。
 pub fn cos(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::f64(number(op, args, 0)?.cos()))
+    Ok(Value::f64(crate::det::cos(number(op, args, 0)?)))
 }
 
 /// `add(a, b)`：同型加法（数值 / `Vec2` / `Vec3`）。
@@ -344,8 +344,247 @@ pub fn normalize(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 }
 
 /// `round_f32(x)`：把数值落成 f32 再升回 f64（旧曲线的逐位等价工具）。
+///
+/// **已更名**：[`narrow_f32`] 是同一个实现的新名字（`round` 算子在 BB 批进来后，
+/// 旧名读起来像"四舍五入"）。旧名保留为**废弃别名**：老 payload 仍能加载，
+/// 新脚本请写 `narrow_f32`。
 pub fn round_f32(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    narrow_f32(op, args)
+}
+
+/// `narrow_f32(x)`：把数值落成 f32 再升回 f64（**收窄** f64 到 shader 的 f32 表示）。
+pub fn narrow_f32(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     Ok(Value::f64(f64::from(number(op, args, 0)? as f32)))
+}
+
+// ─── 第 BB 批（算子扩充）：WGSL 标准库的代数 / 指数 / 三角 / 向量算子 ─────
+//
+// 超越函数一律走 `crate::det`（锁定的 libm 实现，GAPS BB-05）；加减乘除、
+// `sqrt` / `floor` / `ceil` / `trunc` / `round` 由 IEEE 754 定义，直接用 std。
+
+/// `sqrt(x)`。
+pub fn sqrt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.sqrt()))
+}
+
+/// `inversesqrt(x)`：`1 / sqrt(x)`（与 WGSL `inverseSqrt` 同式）。
+pub fn inversesqrt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(1.0 / number(op, args, 0)?.sqrt()))
+}
+
+/// `abs(x)`。
+pub fn abs(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.abs()))
+}
+
+/// `sign(x)`：正数 1、负数 −1、其余（含 ±0 / NaN）0 —— 与 WGSL `sign` 同口径。
+///
+/// 不用 `f64::signum`：它对 `-0.0` 返回 −1，与 WGSL 不一致。
+pub fn sign(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    let x = number(op, args, 0)?;
+    Ok(Value::f64(if x > 0.0 {
+        1.0
+    } else if x < 0.0 {
+        -1.0
+    } else {
+        0.0
+    }))
+}
+
+/// `min(a, b)`：任一为 NaN 时返回另一个（与 WGSL / `f64::min` 同口径）。
+pub fn min(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.min(number(op, args, 1)?)))
+}
+
+/// `max(a, b)`。
+pub fn max(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.max(number(op, args, 1)?)))
+}
+
+/// `floor(x)`。
+pub fn floor(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.floor()))
+}
+
+/// `ceil(x)`。
+pub fn ceil(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.ceil()))
+}
+
+/// `trunc(x)`：向零取整。
+pub fn trunc(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.trunc()))
+}
+
+/// `round(x)`：就近取整，**半数远离零**（Rust / WGSL 同一规则）。
+pub fn round(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.round()))
+}
+
+/// `mod(a, b)`：截断余数 `a - b * trunc(a / b)`（Rust `%` 与 WGSL `%` 同一规则）。
+///
+/// Rust 里 `mod` 是关键字 ⇒ 实现函数叫 `modulo`，算子名仍是 `mod`（见 `op.rs`）。
+pub fn modulo(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    let a = number(op, args, 0)?;
+    let b = number(op, args, 1)?;
+    Ok(Value::f64(a % b))
+}
+
+/// `exp(x)`。
+pub fn exp(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::exp(number(op, args, 0)?)))
+}
+
+/// `exp2(x)`。
+pub fn exp2(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::exp2(number(op, args, 0)?)))
+}
+
+/// `log(x)`：自然对数（与 WGSL `log` 同义）。
+pub fn log(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::ln(number(op, args, 0)?)))
+}
+
+/// `log2(x)`。
+pub fn log2(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::log2(number(op, args, 0)?)))
+}
+
+/// `pow(a, b)`：`a^b`。
+pub fn pow(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::pow(
+        number(op, args, 0)?,
+        number(op, args, 1)?,
+    )))
+}
+
+/// `tan(x)`。
+pub fn tan(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::tan(number(op, args, 0)?)))
+}
+
+/// `asin(x)`。
+pub fn asin(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::asin(number(op, args, 0)?)))
+}
+
+/// `acos(x)`。
+pub fn acos(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::acos(number(op, args, 0)?)))
+}
+
+/// `atan(x)`。
+pub fn atan(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::atan(number(op, args, 0)?)))
+}
+
+/// `atan2(y, x)`：两实参顺序与 WGSL `atan2(y, x)` 一致。
+pub fn atan2(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(crate::det::atan2(
+        number(op, args, 0)?,
+        number(op, args, 1)?,
+    )))
+}
+
+/// `degrees(x)`：弧度 → 角度。
+pub fn degrees(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.to_degrees()))
+}
+
+/// `radians(x)`：角度 → 弧度。
+pub fn radians(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::f64(number(op, args, 0)?.to_radians()))
+}
+
+/// `step(edge, x)`：`x < edge` 取 0，否则 1（与 WGSL `step` 同序）。
+///
+/// 边界是**严格小于**：`x == edge` 取 1（与 `smoothstep` 的端点口径一致）。
+pub fn step(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    let edge = number(op, args, 0)?;
+    let x = number(op, args, 1)?;
+    Ok(Value::f64(if x < edge { 0.0 } else { 1.0 }))
+}
+
+/// `dot(a, b)`：两个同维向量的点积（f32 域累加，与 `distance` 同一精度口径）。
+pub fn dot(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    if let (Some(a), Some(b)) = (
+        args.first().and_then(Value::as_vec2),
+        args.get(1).and_then(Value::as_vec2),
+    ) {
+        return Ok(Value::f64(f64::from(a[0] * b[0] + a[1] * b[1])));
+    }
+    if let (Some(a), Some(b)) = (
+        args.first().and_then(Value::as_vec3),
+        args.get(1).and_then(Value::as_vec3),
+    ) {
+        return Ok(Value::f64(f64::from(
+            a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+        )));
+    }
+    Err(EvalError::op(op, "需要两个同维向量（Vec2 或 Vec3）"))
+}
+
+/// `cross(a, b)`：右手叉积（两个 `Vec3`）。
+pub fn cross(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    let a = vec3_arg(op, args, 0)?;
+    let b = vec3_arg(op, args, 1)?;
+    Ok(Value::vec3([
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]))
+}
+
+/// `reflect(e1, e2)`：`e1 - 2 dot(e2, e1) e2`（WGSL 同一公式；`e2` 应是单位法线）。
+pub fn reflect(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    if let (Some(e1), Some(e2)) = (
+        args.first().and_then(Value::as_vec2),
+        args.get(1).and_then(Value::as_vec2),
+    ) {
+        let k = 2.0 * (e2[0] * e1[0] + e2[1] * e1[1]);
+        return Ok(Value::vec2([e1[0] - k * e2[0], e1[1] - k * e2[1]]));
+    }
+    if let (Some(e1), Some(e2)) = (
+        args.first().and_then(Value::as_vec3),
+        args.get(1).and_then(Value::as_vec3),
+    ) {
+        let k = 2.0 * (e2[0] * e1[0] + e2[1] * e1[1] + e2[2] * e1[2]);
+        return Ok(Value::vec3([
+            e1[0] - k * e2[0],
+            e1[1] - k * e2[1],
+            e1[2] - k * e2[2],
+        ]));
+    }
+    Err(EvalError::op(op, "需要两个同维向量（Vec2 或 Vec3）"))
+}
+
+/// `faceforward(e1, e2, e3)`：`dot(e2, e3) < 0` 时返回 `e1`，否则返回 `-e1`。
+pub fn faceforward(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    if let (Some(e1), Some(e2), Some(e3)) = (
+        args.first().and_then(Value::as_vec2),
+        args.get(1).and_then(Value::as_vec2),
+        args.get(2).and_then(Value::as_vec2),
+    ) {
+        let d = e2[0] * e3[0] + e2[1] * e3[1];
+        return Ok(Value::vec2(if d < 0.0 {
+            e1
+        } else {
+            [-e1[0], -e1[1]]
+        }));
+    }
+    if let (Some(e1), Some(e2), Some(e3)) = (
+        args.first().and_then(Value::as_vec3),
+        args.get(1).and_then(Value::as_vec3),
+        args.get(2).and_then(Value::as_vec3),
+    ) {
+        let d = e2[0] * e3[0] + e2[1] * e3[1] + e2[2] * e3[2];
+        return Ok(Value::vec3(if d < 0.0 {
+            e1
+        } else {
+            [-e1[0], -e1[1], -e1[2]]
+        }));
+    }
+    Err(EvalError::op(op, "需要三个同维向量（Vec2 或 Vec3）"))
 }
 
 /// `distance(a, b)`：两点距离（`Vector, Vector → F64`；两实参必须同维）。
@@ -498,7 +737,7 @@ pub(crate) fn rotate_rodrigues(v: [f64; 3], axis: [f64; 3], angle: f64) -> [f32;
     } else {
         [0.0, 1.0, 0.0]
     };
-    let (sin, cos) = angle.sin_cos();
+    let (sin, cos) = (crate::det::sin(angle), crate::det::cos(angle));
     let dot = axis[0] * v[0] + axis[1] * v[1] + axis[2] * v[2];
     let cross = [
         axis[1] * v[2] - axis[2] * v[1],
@@ -523,9 +762,10 @@ mod tests {
     #[test]
     fn scalar_operators_match_std_math() {
         let x = Value::f64(0.5);
+        // 超越函数比对**锁定实现**（`det`），不是平台 std —— 见 GAPS BB-05。
         assert_eq!(
             eval(&math("sin"), std::slice::from_ref(&x)).unwrap(),
-            Value::f64(0.5_f64.sin())
+            Value::f64(crate::det::sin(0.5))
         );
         assert_eq!(
             eval(&math("mul"), &[x.clone(), Value::f64(3.0)]).unwrap(),
@@ -818,8 +1058,9 @@ mod tests {
 
     #[test]
     fn unknown_operator_is_explicit() {
-        let err = eval(&math("tan"), &[Value::f64(1.0)]).unwrap_err();
-        assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::tan"));
+        // `tan` 已在第 BB 批登记 ⇒ 用一个确实不存在的名字当反例。
+        let err = eval(&math("warp"), &[Value::f64(1.0)]).unwrap_err();
+        assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::warp"));
     }
 
     /// 比较算子产出 `Bool`（predicate 的原料）；顺序与边界都按 IEEE 比较。

@@ -35,6 +35,11 @@ use crate::api::{
     PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
     ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
+    // 第 BB 批（算子扩充）：WGSL 标准库算子
+    AbsSpec, AcosSpec, AsinSpec, Atan2Spec, AtanSpec, CeilSpec, CrossSpec, DegreesSpec, DotSpec,
+    Exp2Spec, ExpSpec, FaceforwardSpec, FloorSpec, InverseSqrtSpec, Log2Spec, LogSpec, MaxSpec,
+    MinSpec, ModuloSpec, NarrowF32Spec, PowSpec, RadiansSpec, ReflectSpec, RoundSpec, SignSpec,
+    SqrtSpec, StepSpec, TanSpec, TruncSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
 
@@ -59,7 +64,12 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `19`：**阶段 2** 新增 `center` / `size`（对象级内建通道）。
 /// `20`：**阶段 3** 新增 `pos2` / `local` / `uv`（逐片元内建通道）。
 /// `21`：**阶段 3** 新增 `distance` / `smoothstep` / `fract`（内建 mono）。
-pub const LIBRARY_VERSION: &str = "21";
+/// `22`：**第 BB 批** 对齐 WGSL 标准库：新增 `sqrt` / `inversesqrt` / `abs` / `sign` /
+/// `min` / `max` / `floor` / `ceil` / `trunc` / `round` / `modulo` / `exp` / `exp2` /
+/// `log` / `log2` / `pow` / `tan` / `asin` / `acos` / `atan` / `atan2` / `degrees` /
+/// `radians` / `step` / `dot` / `cross` / `reflect` / `faceforward`，并把 `round_f32`
+/// 的新名字 `narrow_f32` 一并登记（旧名保留）。
+pub const LIBRARY_VERSION: &str = "22";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -396,6 +406,8 @@ impl ExprPod {
             HANDLE,
             exists_ctor,
         );
+        // 第 BB 批（算子扩充）：29 个 WGSL 标准库算子由宏一次登记。
+        register_numeric_ops(&mut registry);
 
         Self {
             id,
@@ -585,10 +597,14 @@ impl Pod for ExprPod {
             "bind_each" => Box::new(bind_each(self, arg::<BindEachSpec>(args, 0)?.clone())),
             "exists" => Box::new(exists_ctor(self, arg::<ExistsSpec>(args, 0)?.clone())),
             other => {
+                // 第 BB 批算子（一次展开的分派表）先试；不命中才是未知函数。
+                if let Some(result) = dispatch_numeric_op(self, other, args) {
+                    return result;
+                }
                 return Err(PodError::UnknownFunction(format!(
                     "{}::{other}",
                     name.namespace()
-                )))
+                )));
             }
         })
     }
@@ -638,6 +654,93 @@ fn call3(pod: &dyn Pod, name: &str, a: Handle, b: Handle, c: Handle) -> Handle {
     let second = child(this, b);
     let third = child(this, c);
     this.intern(Expr::call(op(name), [first, second, third]))
+}
+
+/// 任意实参个数的调用（第 BB 批：一元 / 二元 / 三元共用一条构造路径）。
+fn call_args(pod: &dyn Pod, name: &str, handles: &[Handle]) -> Handle {
+    let this = expr_pod(pod);
+    let args: Vec<Expr> = handles.iter().map(|handle| child(this, *handle)).collect();
+    this.intern(Expr::call(op(name), args))
+}
+
+/// 第 BB 批（算子扩充）：**一次展开**产出作者面的三处接线。
+///
+/// 每行只写一次 `(ctor 名, 算子名, 参数结构体, PodType 全名, 字段列表)`：
+/// - ctor：按字段顺序组 `Call` 节点；
+/// - `register_numeric_ops`：把 `zela.math::<算子名>` 挂到 pod 注册表；
+/// - `dispatch_numeric_op`：慢路径 `call` 的分派。
+///
+/// 三处漏任何一处都是**编译错误**（而不是"库里登记了、脚本够不着"）。
+macro_rules! numeric_ops {
+    ($(
+        $ctor:ident : $name:literal, $spec:ident, $pod:literal, [$($field:ident),+] ;
+    )*) => {
+        $(
+            fn $ctor(pod: &dyn Pod, spec: $spec) -> Handle {
+                call_args(pod, $name, &[$(spec.$field),+])
+            }
+        )*
+
+        /// 注册第 BB 批算子（由 [`numeric_ops`] 展开）。
+        fn register_numeric_ops(registry: &mut RegistryPod) {
+            $(
+                registry.register_fn1_named::<$spec, Handle>(
+                    concat!("zela.math::", $name),
+                    $pod,
+                    HANDLE,
+                    $ctor,
+                );
+            )*
+        }
+
+        /// 慢路径分派（由 [`numeric_ops`] 展开）；`None` = 不归本批算子管。
+        fn dispatch_numeric_op(
+            pod: &dyn Pod,
+            name: &str,
+            args: &[&dyn Any],
+        ) -> Option<Result<Box<dyn Any>, PodError>> {
+            match name {
+                $(
+                    $name => Some((|| -> Result<Box<dyn Any>, PodError> {
+                        Ok(Box::new($ctor(pod, arg::<$spec>(args, 0)?.clone())))
+                    })()),
+                )*
+                _ => None,
+            }
+        }
+    };
+}
+
+numeric_ops! {
+    narrow_f32_ctor: "narrow_f32", NarrowF32Spec, "zela.math.NarrowF32", [of];
+    sqrt_ctor: "sqrt", SqrtSpec, "zela.math.Sqrt", [of];
+    inversesqrt_ctor: "inversesqrt", InverseSqrtSpec, "zela.math.InverseSqrt", [of];
+    abs_ctor: "abs", AbsSpec, "zela.math.Abs", [of];
+    sign_ctor: "sign", SignSpec, "zela.math.Sign", [of];
+    min_ctor: "min", MinSpec, "zela.math.Min", [a, b];
+    max_ctor: "max", MaxSpec, "zela.math.Max", [a, b];
+    floor_ctor: "floor", FloorSpec, "zela.math.Floor", [of];
+    ceil_ctor: "ceil", CeilSpec, "zela.math.Ceil", [of];
+    trunc_ctor: "trunc", TruncSpec, "zela.math.Trunc", [of];
+    round_ctor: "round", RoundSpec, "zela.math.Round", [of];
+    modulo_ctor: "modulo", ModuloSpec, "zela.math.Modulo", [a, b];
+    exp_ctor: "exp", ExpSpec, "zela.math.Exp", [of];
+    exp2_ctor: "exp2", Exp2Spec, "zela.math.Exp2", [of];
+    log_ctor: "log", LogSpec, "zela.math.Log", [of];
+    log2_ctor: "log2", Log2Spec, "zela.math.Log2", [of];
+    pow_ctor: "pow", PowSpec, "zela.math.Pow", [a, b];
+    tan_ctor: "tan", TanSpec, "zela.math.Tan", [of];
+    asin_ctor: "asin", AsinSpec, "zela.math.Asin", [of];
+    acos_ctor: "acos", AcosSpec, "zela.math.Acos", [of];
+    atan_ctor: "atan", AtanSpec, "zela.math.Atan", [of];
+    atan2_ctor: "atan2", Atan2Spec, "zela.math.Atan2", [y, x];
+    degrees_ctor: "degrees", DegreesSpec, "zela.math.Degrees", [of];
+    radians_ctor: "radians", RadiansSpec, "zela.math.Radians", [of];
+    step_ctor: "step", StepSpec, "zela.math.Step", [edge, x];
+    dot_ctor: "dot", DotSpec, "zela.math.Dot", [a, b];
+    cross_ctor: "cross", CrossSpec, "zela.math.Cross", [a, b];
+    reflect_ctor: "reflect", ReflectSpec, "zela.math.Reflect", [e1, e2];
+    faceforward_ctor: "faceforward", FaceforwardSpec, "zela.math.Faceforward", [e1, e2, e3];
 }
 
 fn pure(pod: &dyn Pod, value: f64) -> Handle {

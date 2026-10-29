@@ -9,12 +9,14 @@ description = "基础函子库：zela.math 算子语义 + OpDef 元数据（poin
 # 依赖铁律：ze-func 是**基础函子库**，在 kernel 层。
 #   ✅ ze-comb — 表达式内核（Expr / Value / Mono / Pass）；本 crate 只解释算子
 #   ✅ serde / thiserror — Layout / 注册表需要可序列化描述与显式错误
+#   ✅ libm — 超越函数的**锁定实现**（GAPS BB-05：std 落到平台 libm，不逐位确定）
 #   ❌ ze-pod-core / 任何 zela-* / 任何宿主 crate — 算子身份是数据，接线留在 pod 层
 [dependencies]
 ze-comb = { path = "../ze-comb" }
 # 类型代数与 Layout 只有一处定义（计划 §5 硬约束 4）。
 ze-type = { path = "../ze-type" }
 ze-reflect = { path = "../ze-reflect" }
+libm = "0.2"
 serde.workspace = true
 thiserror.workspace = true
 

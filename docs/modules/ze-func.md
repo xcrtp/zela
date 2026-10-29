@@ -11,19 +11,20 @@
 - 路径：`crates/kernel/ze-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`ze-pod-func`、`ze-scene-core`、`zela-scene-ecs`
-- 源文件：7 个 · 2517 行
+- 源文件：8 个 · 3227 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
+| `src/det.rs` | 133 | **确定性超越函数**：算子语义里唯一的 sin / cos / … 实现。 |
 | `src/layout.rs` | 102 | **Layout / Codec 的门面**：实现已迁至 `ze-type`（纯代数）与 `ze-reflect`（运行时注册表）。 |
-| `src/lib.rs` | 41 | ze-func：**基础函子库**（namespace `zela.math`）。 |
-| `src/mono.rs` | 380 | **单态解析器**：把 `(算子, 实参槽类型)` 解析成具体类型的函数指针。 |
-| `src/op.rs` | 512 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
-| `src/ops.rs` | 865 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
+| `src/lib.rs` | 42 | ze-func：**基础函子库**（namespace `zela.math`）。 |
+| `src/mono.rs` | 580 | **单态解析器**：把 `(算子, 实参槽类型)` 解析成具体类型的函数指针。 |
+| `src/op.rs` | 617 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
+| `src/ops.rs` | 1106 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
 | `src/simplify.rs` | 328 | **符号化简**（阶段 4）：常量折叠 + **层间迁移**（离散层 → 连续层）。 |
-| `src/wgsl.rs` | 289 | **WGSL codegen 后端**（阶段 4-A）：把 `zela.math` 的算子渲染成 WGSL 表达式。 |
+| `src/wgsl.rs` | 319 | **WGSL codegen 后端**（阶段 4-A）：把 `zela.math` 的算子渲染成 WGSL 表达式。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -38,6 +39,18 @@ graph LR
 
 | 文件 | 项 |
 |---|---|
+| `src/det.rs` | `pub fn sin(x: f64) -> f64` |
+| `src/det.rs` | `pub fn cos(x: f64) -> f64` |
+| `src/det.rs` | `pub fn tan(x: f64) -> f64` |
+| `src/det.rs` | `pub fn asin(x: f64) -> f64` |
+| `src/det.rs` | `pub fn acos(x: f64) -> f64` |
+| `src/det.rs` | `pub fn atan(x: f64) -> f64` |
+| `src/det.rs` | `pub fn atan2(y: f64, x: f64) -> f64` |
+| `src/det.rs` | `pub fn exp(x: f64) -> f64` |
+| `src/det.rs` | `pub fn exp2(x: f64) -> f64` |
+| `src/det.rs` | `pub fn ln(x: f64) -> f64` |
+| `src/det.rs` | `pub fn log2(x: f64) -> f64` |
+| `src/det.rs` | `pub fn pow(x: f64, y: f64) -> f64` |
 | `src/layout.rs` | `pub fn encode_path(points: &[[f32; 2]], closed: bool) -> ValueBytes` |
 | `src/layout.rs` | `pub fn negotiate_bytes(` |
 | `src/mono.rs` | `pub struct MathMonomorphizer` |
@@ -70,6 +83,35 @@ graph LR
 | `src/ops.rs` | `pub fn length(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn normalize(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn round_f32(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn narrow_f32(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn sqrt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn inversesqrt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn abs(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn sign(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn min(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn max(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn floor(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn ceil(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn trunc(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn round(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn modulo(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn exp(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn exp2(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn log(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn log2(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn pow(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn tan(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn asin(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn acos(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn atan(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn atan2(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn degrees(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn radians(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn step(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn dot(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn cross(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn reflect(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn faceforward(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn distance(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn smoothstep(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn fract(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |

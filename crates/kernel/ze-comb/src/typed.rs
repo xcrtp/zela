@@ -169,6 +169,9 @@ pub enum TypedOp {
     MixF64(fn(f64, f64, f64) -> f64),
     MixVec2(fn([f32; 2], [f32; 2], f64) -> [f32; 2]),
     MixVec3(fn([f32; 3], [f32; 3], f64) -> [f32; 3]),
+    /// `faceforward`：三个同维向量。
+    Vec2x3ToVec2(fn([f32; 2], [f32; 2], [f32; 2]) -> [f32; 2]),
+    Vec3x3ToVec3(fn([f32; 3], [f32; 3], [f32; 3]) -> [f32; 3]),
 }
 
 impl TypedOp {
@@ -332,6 +335,20 @@ impl TypedOp {
                     slots.vec3[args[0].index as usize],
                     slots.vec3[args[1].index as usize],
                     slots.f64[args[2].index as usize],
+                );
+            }
+            Self::Vec2x3ToVec2(f) => {
+                slots.vec2[out.index as usize] = f(
+                    slots.vec2[args[0].index as usize],
+                    slots.vec2[args[1].index as usize],
+                    slots.vec2[args[2].index as usize],
+                );
+            }
+            Self::Vec3x3ToVec3(f) => {
+                slots.vec3[out.index as usize] = f(
+                    slots.vec3[args[0].index as usize],
+                    slots.vec3[args[1].index as usize],
+                    slots.vec3[args[2].index as usize],
                 );
             }
         }

@@ -20,6 +20,7 @@
 //!   `ze-comb::Value::Bytes` + 命名类型（阶段 1）。
 //! - 全部现有算子声明为 `pointwise`（连续层）；离散层（`NatRec`）在阶段 3 引入。
 
+pub mod det;
 pub mod layout;
 pub mod mono;
 pub mod op;

@@ -98,6 +98,49 @@ impl ze_comb::OpResolver for MathMonomorphizer {
             ("normalize", [Vec2]) => (TypedOp::Vec2ToVec2(instances::normalize_vec2), Vec2),
             ("normalize", [Vec3]) => (TypedOp::Vec3ToVec3(instances::normalize_vec3), Vec3),
             ("round_f32", [F64]) => (TypedOp::F64ToF64(instances::round_f32), F64),
+            ("narrow_f32", [F64]) => (TypedOp::F64ToF64(instances::round_f32), F64),
+            // ─── 第 BB 批：WGSL 标准库算子 ──────────────────────────────────
+            ("sqrt", [F64]) => (TypedOp::F64ToF64(instances::sqrt), F64),
+            ("inversesqrt", [F64]) => (TypedOp::F64ToF64(instances::inversesqrt), F64),
+            ("abs", [F64]) => (TypedOp::F64ToF64(instances::abs), F64),
+            ("sign", [F64]) => (TypedOp::F64ToF64(instances::sign), F64),
+            ("min", [F64, F64]) => (TypedOp::F64xF64ToF64(instances::min_f64), F64),
+            ("max", [F64, F64]) => (TypedOp::F64xF64ToF64(instances::max_f64), F64),
+            ("floor", [F64]) => (TypedOp::F64ToF64(instances::floor), F64),
+            ("ceil", [F64]) => (TypedOp::F64ToF64(instances::ceil), F64),
+            ("trunc", [F64]) => (TypedOp::F64ToF64(instances::trunc), F64),
+            ("round", [F64]) => (TypedOp::F64ToF64(instances::round), F64),
+            ("modulo", [F64, F64]) => (TypedOp::F64xF64ToF64(instances::modulo), F64),
+            ("exp", [F64]) => (TypedOp::F64ToF64(instances::exp), F64),
+            ("exp2", [F64]) => (TypedOp::F64ToF64(instances::exp2), F64),
+            ("log", [F64]) => (TypedOp::F64ToF64(instances::ln), F64),
+            ("log2", [F64]) => (TypedOp::F64ToF64(instances::log2), F64),
+            ("pow", [F64, F64]) => (TypedOp::F64xF64ToF64(instances::pow), F64),
+            ("tan", [F64]) => (TypedOp::F64ToF64(instances::tan), F64),
+            ("asin", [F64]) => (TypedOp::F64ToF64(instances::asin), F64),
+            ("acos", [F64]) => (TypedOp::F64ToF64(instances::acos), F64),
+            ("atan", [F64]) => (TypedOp::F64ToF64(instances::atan), F64),
+            ("atan2", [F64, F64]) => (TypedOp::F64xF64ToF64(instances::atan2), F64),
+            ("degrees", [F64]) => (TypedOp::F64ToF64(instances::degrees), F64),
+            ("radians", [F64]) => (TypedOp::F64ToF64(instances::radians), F64),
+            ("step", [F64, F64]) => (TypedOp::F64xF64ToF64(instances::step), F64),
+            ("dot", [Vec2, Vec2]) => (TypedOp::Vec2xVec2ToF64(instances::dot_vec2), F64),
+            ("dot", [Vec3, Vec3]) => (TypedOp::Vec3xVec3ToF64(instances::dot_vec3), F64),
+            ("cross", [Vec3, Vec3]) => (TypedOp::Vec3xVec3ToVec3(instances::cross_vec3), Vec3),
+            ("reflect", [Vec2, Vec2]) => {
+                (TypedOp::Vec2xVec2ToVec2(instances::reflect_vec2), Vec2)
+            }
+            ("reflect", [Vec3, Vec3]) => {
+                (TypedOp::Vec3xVec3ToVec3(instances::reflect_vec3), Vec3)
+            }
+            ("faceforward", [Vec2, Vec2, Vec2]) => (
+                TypedOp::Vec2x3ToVec2(instances::faceforward_vec2),
+                Vec2,
+            ),
+            ("faceforward", [Vec3, Vec3, Vec3]) => (
+                TypedOp::Vec3x3ToVec3(instances::faceforward_vec3),
+                Vec3,
+            ),
             ("distance", [Vec2, Vec2]) => {
                 (TypedOp::Vec2xVec2ToF64(instances::distance_vec2), F64)
             }
@@ -132,11 +175,11 @@ mod instances {
     use crate::ops::{lerp_f32, rotate_rodrigues, unit2, unit3};
 
     pub fn sin(x: f64) -> f64 {
-        x.sin()
+        crate::det::sin(x)
     }
 
     pub fn cos(x: f64) -> f64 {
-        x.cos()
+        crate::det::cos(x)
     }
 
     pub fn add_f64(a: f64, b: f64) -> f64 {
@@ -309,6 +352,163 @@ mod instances {
 
     pub fn round_f32(x: f64) -> f64 {
         f64::from(x as f32)
+    }
+
+    // ─── 第 BB 批：WGSL 标准库算子（与 `crate::ops` 逐位一致）──────────────
+
+    pub fn sqrt(x: f64) -> f64 {
+        x.sqrt()
+    }
+
+    pub fn inversesqrt(x: f64) -> f64 {
+        1.0 / x.sqrt()
+    }
+
+    pub fn abs(x: f64) -> f64 {
+        x.abs()
+    }
+
+    /// 与动态 `sign` 同口径：`±0` / NaN ⇒ 0（不是 `f64::signum`）。
+    pub fn sign(x: f64) -> f64 {
+        if x > 0.0 {
+            1.0
+        } else if x < 0.0 {
+            -1.0
+        } else {
+            0.0
+        }
+    }
+
+    pub fn min_f64(a: f64, b: f64) -> f64 {
+        a.min(b)
+    }
+
+    pub fn max_f64(a: f64, b: f64) -> f64 {
+        a.max(b)
+    }
+
+    pub fn floor(x: f64) -> f64 {
+        x.floor()
+    }
+
+    pub fn ceil(x: f64) -> f64 {
+        x.ceil()
+    }
+
+    pub fn trunc(x: f64) -> f64 {
+        x.trunc()
+    }
+
+    pub fn round(x: f64) -> f64 {
+        x.round()
+    }
+
+    pub fn modulo(a: f64, b: f64) -> f64 {
+        a % b
+    }
+
+    pub fn exp(x: f64) -> f64 {
+        crate::det::exp(x)
+    }
+
+    pub fn exp2(x: f64) -> f64 {
+        crate::det::exp2(x)
+    }
+
+    pub fn ln(x: f64) -> f64 {
+        crate::det::ln(x)
+    }
+
+    pub fn log2(x: f64) -> f64 {
+        crate::det::log2(x)
+    }
+
+    pub fn pow(a: f64, b: f64) -> f64 {
+        crate::det::pow(a, b)
+    }
+
+    pub fn tan(x: f64) -> f64 {
+        crate::det::tan(x)
+    }
+
+    pub fn asin(x: f64) -> f64 {
+        crate::det::asin(x)
+    }
+
+    pub fn acos(x: f64) -> f64 {
+        crate::det::acos(x)
+    }
+
+    pub fn atan(x: f64) -> f64 {
+        crate::det::atan(x)
+    }
+
+    pub fn atan2(y: f64, x: f64) -> f64 {
+        crate::det::atan2(y, x)
+    }
+
+    pub fn degrees(x: f64) -> f64 {
+        x.to_degrees()
+    }
+
+    pub fn radians(x: f64) -> f64 {
+        x.to_radians()
+    }
+
+    pub fn step(edge: f64, x: f64) -> f64 {
+        if x < edge {
+            0.0
+        } else {
+            1.0
+        }
+    }
+
+    pub fn dot_vec2(a: [f32; 2], b: [f32; 2]) -> f64 {
+        f64::from(a[0] * b[0] + a[1] * b[1])
+    }
+
+    pub fn dot_vec3(a: [f32; 3], b: [f32; 3]) -> f64 {
+        f64::from(a[0] * b[0] + a[1] * b[1] + a[2] * b[2])
+    }
+
+    pub fn cross_vec3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    }
+
+    pub fn reflect_vec2(e1: [f32; 2], e2: [f32; 2]) -> [f32; 2] {
+        let k = 2.0 * (e2[0] * e1[0] + e2[1] * e1[1]);
+        [e1[0] - k * e2[0], e1[1] - k * e2[1]]
+    }
+
+    pub fn reflect_vec3(e1: [f32; 3], e2: [f32; 3]) -> [f32; 3] {
+        let k = 2.0 * (e2[0] * e1[0] + e2[1] * e1[1] + e2[2] * e1[2]);
+        [
+            e1[0] - k * e2[0],
+            e1[1] - k * e2[1],
+            e1[2] - k * e2[2],
+        ]
+    }
+
+    pub fn faceforward_vec2(e1: [f32; 2], e2: [f32; 2], e3: [f32; 2]) -> [f32; 2] {
+        let d = e2[0] * e3[0] + e2[1] * e3[1];
+        if d < 0.0 {
+            e1
+        } else {
+            [-e1[0], -e1[1]]
+        }
+    }
+
+    pub fn faceforward_vec3(e1: [f32; 3], e2: [f32; 3], e3: [f32; 3]) -> [f32; 3] {
+        let d = e2[0] * e3[0] + e2[1] * e3[1] + e2[2] * e3[2];
+        if d < 0.0 {
+            e1
+        } else {
+            [-e1[0], -e1[1], -e1[2]]
+        }
     }
 
     /// 与动态 `distance` 同一公式（f32 域相减、平方、开方）。

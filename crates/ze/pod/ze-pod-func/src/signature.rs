@@ -203,10 +203,11 @@ mod tests {
         assert!(error.contains("`sin`"), "{error}");
         assert!(error.contains("1/2"), "{error}");
 
+        // 用一个**不存在**的算子名（`tan` 已在第 BB 批登记，不能再当反例）。
         let mut gone = BTreeMap::new();
-        gone.insert("tan".to_string(), (1, 1));
+        gone.insert("warp".to_string(), (1, 1));
         let error = super::check_op_revisions(&gone).expect_err("已删除的算子必须拒绝");
-        assert!(error.contains("`tan`"), "{error}");
+        assert!(error.contains("`warp`"), "{error}");
 
         assert!(super::check_op_revisions(&BTreeMap::new()).is_ok());
     }

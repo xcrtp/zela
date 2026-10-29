@@ -6584,6 +6584,7 @@ name = "ze-func"
 version = "0.1.1"
 dependencies = [
  "criterion",
+ "libm",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

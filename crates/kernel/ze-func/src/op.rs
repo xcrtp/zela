@@ -35,6 +35,14 @@ const NUM_A: &[(&str, Kind)] = &[("a", Kind::Num)];
 const VEC_A: &[(&str, Kind)] = &[("a", Kind::Vector)];
 const NO_VARS: &[(&str, Kind)] = &[];
 
+/// 二元数值：`min` / `max` / `pow` / `atan2` / `step` …
+const BIN_F64: OpSig = OpSig {
+    params: &[F64, F64],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
 /// 一元数值：`sin` / `cos`。
 const UNARY_NUM: OpSig = OpSig {
     params: &[F64],
@@ -228,6 +236,56 @@ const SMOOTHSTEP: OpSig = OpSig {
     variadic: false,
 };
 
+/// `dot(a, b)`：两个同维向量 → `F64`（与 `distance` 同形）。
+const DOT2: OpSig = OpSig {
+    params: &[VEC2, VEC2],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+const DOT3: OpSig = OpSig {
+    params: &[VEC3, VEC3],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `cross(a, b)`：两个 `Vec3` → `Vec3`。
+const CROSS3: OpSig = OpSig {
+    params: &[VEC3, VEC3],
+    ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `reflect(e1, e2)`：入射向量关于法线反射（两实参同维）。
+const REFLECT2: OpSig = OpSig {
+    params: &[VEC2, VEC2],
+    ret: VEC2,
+    vars: NO_VARS,
+    variadic: false,
+};
+const REFLECT3: OpSig = OpSig {
+    params: &[VEC3, VEC3],
+    ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `faceforward(e1, e2, e3)`：三个同维向量（`dot(e2, e3) < 0` 时保持 `e1`）。
+const FACE2: OpSig = OpSig {
+    params: &[VEC2, VEC2, VEC2],
+    ret: VEC2,
+    vars: NO_VARS,
+    variadic: false,
+};
+const FACE3: OpSig = OpSig {
+    params: &[VEC3, VEC3, VEC3],
+    ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+
 /// `fract(x)`：`F64 → F64`（小数部分，靠 `floor` 定义）。
 const FRACT: OpSig = OpSig {
     params: &[F64],
@@ -296,6 +354,17 @@ const fn def(
 pub type EvalFn =
     fn(&ze_comb::OpRef, &[ze_comb::Value]) -> Result<ze_comb::Value, ze_comb::EvalError>;
 
+/// 目录行里的**算子名**：默认取实现函数名的字符串。
+///
+/// `mod` 是 Rust 关键字 ⇒ 算子叫 `modulo`（作者侧同理：`expr.modulo(a, b)` /
+/// `Modulo { a, b }`）。WGSL 侧没有 `mod` 函数，只有 `%` 运算符，
+/// 所以名字差异不进 codegen 口径（GAPS `BB-06`）。
+macro_rules! op_name {
+    ($name:ident) => {
+        stringify!($name)
+    };
+}
+
 /// **唯一登记点**：加一个算子只改这里的一行（元数据 + 语义在同一行）。
 ///
 /// 一次展开同时产出三样东西，且**名字只写一遍**：
@@ -318,15 +387,15 @@ macro_rules! math_ops {
         /// `since` / `changed` 是**函数级版本**：改某个算子的**语义**（签名不变也算）
         /// 时只 bump 它的 `changed` —— 用到它的 payload 会在加载时被**点名**拒绝。
         pub static DEFS: &[OpDef] = &[
-            $( def(stringify!($name), $spec, &[$($sig),*], $since, $changed) ),*
+            $( def(op_name!($name), $spec, &[$($sig),*], $since, $changed) ),*
         ];
 
         /// 算子名清单（与 [`DEFS`] 同一次展开产生）。
-        pub static OPS: &[&str] = &[ $( stringify!($name) ),* ];
+        pub static OPS: &[&str] = &[ $( op_name!($name) ),* ];
 
         /// 语义注册表（名称 → 实现），与 [`DEFS`] 同一次展开产生。
         pub(crate) static EVALS: &[(&str, EvalFn)] =
-            &[ $( (stringify!($name), crate::ops::$name) ),* ];
+            &[ $( (op_name!($name), crate::ops::$name) ),* ];
     };
 }
 
@@ -354,6 +423,42 @@ math_ops! {
     distance: "zela.math.Distance", [DISTANCE2, DISTANCE3], 21, 21;
     smoothstep: "zela.math.Smoothstep", [SMOOTHSTEP], 21, 21;
     fract: "zela.math.Fract", [FRACT], 21, 21;
+    // ─── 第 BB 批（算子扩充，`22`）：对齐 WGSL 标准库 ────────────────────
+    // A · 代数与舍入
+    sqrt: "zela.math.Sqrt", [UNARY_NUM], 22, 22;
+    inversesqrt: "zela.math.InverseSqrt", [UNARY_NUM], 22, 22;
+    abs: "zela.math.Abs", [UNARY_NUM], 22, 22;
+    sign: "zela.math.Sign", [UNARY_NUM], 22, 22;
+    min: "zela.math.Min", [BIN_F64], 22, 22;
+    max: "zela.math.Max", [BIN_F64], 22, 22;
+    floor: "zela.math.Floor", [UNARY_NUM], 22, 22;
+    ceil: "zela.math.Ceil", [UNARY_NUM], 22, 22;
+    trunc: "zela.math.Trunc", [UNARY_NUM], 22, 22;
+    round: "zela.math.Round", [UNARY_NUM], 22, 22;
+    // `modulo(a, b)`：截断余数（`a - b * trunc(a / b)`），WGSL 生成 `%`。
+    modulo: "zela.math.Modulo", [BIN_F64], 22, 22;
+    // B · 指数与三角
+    exp: "zela.math.Exp", [UNARY_NUM], 22, 22;
+    exp2: "zela.math.Exp2", [UNARY_NUM], 22, 22;
+    log: "zela.math.Log", [UNARY_NUM], 22, 22;
+    log2: "zela.math.Log2", [UNARY_NUM], 22, 22;
+    pow: "zela.math.Pow", [BIN_F64], 22, 22;
+    tan: "zela.math.Tan", [UNARY_NUM], 22, 22;
+    asin: "zela.math.Asin", [UNARY_NUM], 22, 22;
+    acos: "zela.math.Acos", [UNARY_NUM], 22, 22;
+    atan: "zela.math.Atan", [UNARY_NUM], 22, 22;
+    atan2: "zela.math.Atan2", [BIN_F64], 22, 22;
+    degrees: "zela.math.Degrees", [UNARY_NUM], 22, 22;
+    radians: "zela.math.Radians", [UNARY_NUM], 22, 22;
+    // C · 向量与阶跃
+    step: "zela.math.Step", [BIN_F64], 22, 22;
+    dot: "zela.math.Dot", [DOT2, DOT3], 22, 22;
+    cross: "zela.math.Cross", [CROSS3], 22, 22;
+    reflect: "zela.math.Reflect", [REFLECT2, REFLECT3], 22, 22;
+    faceforward: "zela.math.Faceforward", [FACE2, FACE3], 22, 22;
+    // 更名（不删旧名）：`round_f32` 读起来像"四舍五入"，而它做的是"收窄到 f32"。
+    // 新名 `narrow_f32` 与真正的 `round` 同时存在时不再撞车；旧名保留为**废弃别名**。
+    narrow_f32: "zela.math.NarrowF32", [ROUND_F32], 22, 22;
     lt: "zela.math.Lt", [CMP_NUM], 1, 1;
     gt: "zela.math.Gt", [CMP_NUM], 1, 1;
     le: "zela.math.Le", [CMP_NUM], 1, 1;
