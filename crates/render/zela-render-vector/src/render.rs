@@ -401,6 +401,43 @@ struct Paint {
     brush2: [u32; 4],
 }
 
+/// **阶段 2（装饰性着色 codegen）**：一段由 `ze_comb::emit_wgsl` 生成的 WGSL 纯函数。
+///
+/// 约定：`source` 里已有 `struct Params { … }` 与 `fn eval(p: Params, index: u32) -> T`；
+/// `params` 与 `Params` 的字段**同序**（`emit_wgsl` 按名字排序，`pack_params` 用同一份
+/// 参数表打包）。GPU 侧在光栅之前跑一次 compute pass，把 `eval` 的颜色写进记录的填充槽
+/// ——像素与状态都不经过 CPU（装饰性：不进结构指纹）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShaderFill {
+    /// 生成的 WGSL（含 prelude / `Params` / `eval`）。
+    pub source: String,
+    /// `Params` 的 **uniform 字节**（调用方按 WGSL 布局打包；长度需为 16 的倍数或 0）。
+    pub params: Vec<u8>,
+}
+
+/// `Object` / `Instance` 里 `paint.fill` 的字节偏移（写填充槽的唯一口径）。
+pub(crate) const PAINT_FILL_OFFSET: usize = std::mem::offset_of!(Paint, fill);
+/// 一条 `Instance` 的填充槽偏移。
+pub(crate) const INSTANCE_FILL_OFFSET: usize = std::mem::offset_of!(Instance, paint) + PAINT_FILL_OFFSET;
+
+/// 着色 codegen 的入口尾部：生成的 `eval` **必须返回 `vec3<f32>`**（标量请用 `splat`）。
+///
+/// 只写 r / g / b 三个字，alpha 保持记录原值 ⇒ 混合口径与"普通填充"完全一致。
+const FILL_TAIL: &str = r#"
+struct ZelaTarget { index: u32, pad0: u32, pad1: u32, pad2: u32 };
+@group(0) @binding(0) var<storage, read_write> zela_words: array<u32>;
+@group(0) @binding(1) var<uniform> zela_params: Params;
+@group(0) @binding(2) var<uniform> zela_target: ZelaTarget;
+@compute @workgroup_size(1)
+fn zela_fill() {
+    let c: vec3<f32> = eval(zela_params, 0u);
+    let base = zela_target.index;
+    zela_words[base] = bitcast<u32>(c.x);
+    zela_words[base + 1u] = bitcast<u32>(c.y);
+    zela_words[base + 2u] = bitcast<u32>(c.z);
+}
+"#;
+
 /// One object as Python sends it: content keys instead of GPU offsets (336 bytes: a take carries records whole, so
 /// `take::RECORD` must be its size). Like its
 /// geometry (term 2 while morphing), its paint may be two: paint 2's colors and brushes, mixed in
@@ -1422,6 +1459,9 @@ pub(crate) struct Gpu {
     bloom: Option<bloom::Bloom>,             // a 3D view's bloom's passes, made when a view first has it
     blend: [Option<wgpu::ShaderModule>; 2], // single/multisample texture forms (the shadow passes share either)
     shadow_passes: HashMap<usize, wgpu::RenderPipeline>, // by the light's slot in its view, made when first cast
+    /// **阶段 2**：着色 codegen 的 compute 管线（按生成的 WGSL 摘要缓存）与它们的绑定布局。
+    fill_layout: wgpu::BindGroupLayout,
+    fill_pipelines: HashMap<u64, wgpu::ComputePipeline>,
     /// B17：按 (width, height, samples) 常驻的 player；逐帧只重传路径，不重建整套 GPU 资源。
     ///
     /// **PI-04（PC-05）**：键里带阴影代数（`SHADOW_GENERATION`）—— `shadow_maps` 只扩不缩，
@@ -1695,13 +1735,157 @@ impl Gpu {
         let no_occlusion = counted_texture(&device,
             &wgpu::TextureDescriptor { label: Some("no occlusion"), size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::R32Float, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] })
             .create_view(&Default::default());
+        // **阶段 2**：着色 codegen 的 compute 绑定布局（words 可写 + Params + 目标字偏移）。
+        let fill_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fill codegen"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
         Ok(Self {
             // 注入路径不建 `Instance`（wasm 上不合法）；player 构建由 `new()` 覆盖成真值。
             #[cfg(feature = "player")]
             instance: wgpu::Instance::default(),
             #[cfg(feature = "player")]
             adapter: adapter.clone(),
-            device, queue, raster, image_layout, sampler, pipelines: HashMap::new(), max_samples, vector, shadow_compare, dfg, linear, no_environment, prefilter: None, occlusion: None, no_occlusion, bloom: None, blend: [None, None], shadow_passes: HashMap::new(), players: HashMap::new() })
+            device, queue, raster, image_layout, sampler, pipelines: HashMap::new(), max_samples, vector, shadow_compare, dfg, linear, no_environment, prefilter: None, occlusion: None, no_occlusion, bloom: None, blend: [None, None], shadow_passes: HashMap::new(), fill_layout, fill_pipelines: HashMap::new(), players: HashMap::new() })
+    }
+
+    /// **阶段 2**：把一段生成 WGSL 的颜色写进 `words`（对象 / 实例缓冲的 `u32` 视图）
+    /// 的 `word_base` 起的三个字（r / g / b；alpha 保持记录原值 → 混合口径不变）。
+    pub(crate) fn encode_fill(&mut self, encoder: &mut wgpu::CommandEncoder, words: &wgpu::Buffer, word_base: u32, program: &ShaderFill) -> Result<(), String> {
+        Self::encode_fill_impl(&self.device, &self.queue, &self.fill_layout, &mut self.fill_pipelines, encoder, words, word_base, program)
+    }
+    /// 同 [`Self::encode_fill`]，但借用调用方自己的管线缓存（矢量画布与实例缓冲各一份，
+    /// 布局同源 ⇒ `source` 相同的程序在两边各自编译一次，语义一致）。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_fill_with(
+        &self,
+        layout: &wgpu::BindGroupLayout,
+        pipelines: &mut HashMap<u64, wgpu::ComputePipeline>,
+        encoder: &mut wgpu::CommandEncoder,
+        words: &wgpu::Buffer,
+        word_base: u32,
+        program: &ShaderFill,
+    ) -> Result<(), String> {
+        Self::encode_fill_impl(&self.device, &self.queue, layout, pipelines, encoder, words, word_base, program)
+    }
+
+    /// **阶段 2**：装配一段生成 WGSL 的 compute 管线（同 `source` ⇒ 同管线）。
+    fn fill_pipeline_impl<'a>(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
+        source: &str,
+    ) -> Result<&'a wgpu::ComputePipeline, String> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        source.hash(&mut hasher);
+        let key = hasher.finish();
+        if !pipelines.contains_key(&key) {
+            let text = format!("{source}{FILL_TAIL}");
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("fill codegen"),
+                source: wgpu::ShaderSource::Wgsl(text.into()),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("fill codegen"),
+                bind_group_layouts: &[Some(layout)],
+                immediate_size: 0,
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("fill codegen"),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some("zela_fill"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            pipelines.insert(key, pipeline);
+        }
+        pipelines.get(&key).ok_or_else(|| "着色 codegen 管线缺失".to_string())
+    }
+
+    /// **阶段 2**：跑一次"写填充槽"的 compute pass。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_fill_impl(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        pipelines: &mut HashMap<u64, wgpu::ComputePipeline>,
+        encoder: &mut wgpu::CommandEncoder,
+        words: &wgpu::Buffer,
+        word_base: u32,
+        program: &ShaderFill,
+    ) -> Result<(), String> {
+        if program.params.len() % 16 != 0 {
+            return Err(format!(
+                "着色 codegen 的 Params 字节数必须是 16 的倍数（收到 {}）",
+                program.params.len()
+            ));
+        }
+        let pipeline = Self::fill_pipeline_impl(device, layout, pipelines, &program.source)?;
+        let params = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fill params"),
+            size: program.params.len().max(16) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut packed = program.params.clone();
+        packed.resize(program.params.len().max(16), 0);
+        queue.write_buffer(&params, 0, &packed);
+        let target = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("fill target"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut index = [0u8; 16];
+        index[..4].copy_from_slice(&word_base.to_le_bytes());
+        queue.write_buffer(&target, 0, &index);
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("fill codegen"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: words.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: target.as_entire_binding() },
+            ],
+        });
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("fill codegen"), timestamp_writes: None });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+        Ok(())
     }
 
     /// **B17**：取一个常驻 player（按 `(width, height, samples)` 缓存）。
@@ -2324,6 +2508,10 @@ pub(crate) struct Player {
     /// 与 `target_generation` 同一模式：宿主上传新环境 ⇒ 全局代数 +1 ⇒ 下一帧重装；
     /// 代数相同 ⇒ 完全不碰（避免每帧重算 harmonics + 重建预过滤立方体）。
     environment_generation: u64,
+    /// **阶段 2（着色 codegen）**：本帧要由 compute 写入颜色的记录（记录索引 → 程序索引）
+    /// 与程序表。`views` 装、`encode_frame` 取走（不跨帧残留）。
+    fills: Vec<(u32, u32)>,
+    programs: Vec<ShaderFill>,
 }
 
 // pixels, light, toward, eye, lighting; the lights (`light.wgsl`), each its 16 floats from the view and its shadow map's
@@ -2860,6 +3048,10 @@ impl Player {
         let mut instances: Vec<Instance> = Vec::new();
         let mut sprites: Vec<[u32; 2]> = Vec::new();
         let mut drawings: Vec<Drawing> = Vec::with_capacity(frames.len());
+        // **阶段 2**：本帧的着色 codegen（`views` 装进来的），本函数独占消费。
+        let (fills, programs) = (std::mem::take(&mut self.fills), std::mem::take(&mut self.programs));
+        let mut instance_of: HashMap<u32, u32> = HashMap::new();
+        let mut fill_error: Option<String> = None;
         for (i, f) in frames.iter().enumerate() {
             if f.view.len() < VIEW_LENGTH {
                 return Err(format!("view needs {} floats, got {}", VIEW_LENGTH, f.view.len()));
@@ -2882,7 +3074,7 @@ impl Player {
                 let offset = instances.len() as u32;
                 let mut draws = Vec::with_capacity(f.records.len());
                 let background = [0, 1, 2, 3].map(|k| f.view[VIEW_FLOATS + k]);
-                let mut plan = if paths.is_empty() { None } else { Some(gpu.vector.plan(&self.store, &camera, &f.records, &paths, background)?) };
+                let mut plan = if paths.is_empty() { None } else { Some(gpu.vector.plan(&self.store, &camera, &f.records, &paths, background, if f.key == 0 { fills.as_slice() } else { &[] }, if f.key == 0 { programs.as_slice() } else { &[] })?) };
                 // where its listed see-through layers can paint: their footprints together (the whole view where one
                 // cannot be bounded)
                 let mut listed: Option<[f32; 4]> = None;
@@ -2907,6 +3099,9 @@ impl Player {
                         cast_by(&f.records[k])?;
                     }
                     instances.push(instance);
+                    if f.key == 0 {
+                        instance_of.insert(k as u32, instances.len() as u32 - 1);
+                    }
                     draws.push(draw);
                 }
                 let casting: Vec<usize> = paths.iter().copied().filter(|&k| f.records[k].flags & OVERLAY == 0).collect();
@@ -2924,7 +3119,7 @@ impl Player {
                 if requested > shadow::MOST {
                     record_shadow_drop(requested as u64, shadows.len() as u64);
                 }
-                let cast = if casting.is_empty() { Vec::new() } else { shadows.iter().map(|s| gpu.vector.plan(&self.store, &Camera::seen_from(s), &f.records, &casting, [0.0; 4])).collect::<Result<_, _>>()? };
+                let cast = if casting.is_empty() { Vec::new() } else { shadows.iter().map(|s| gpu.vector.plan(&self.store, &Camera::seen_from(s), &f.records, &casting, [0.0; 4], &[], &[])).collect::<Result<_, _>>()? };
                 // in whole pixels, on the view: (x, y, width, height)
                 let pixels = |area: Option<[f32; 4]>| {
                     let [x0, y0, x1, y1] = area.map_or([0.0; 4], |[x0, y0, x1, y1]| [x0.max(0.0), y0.max(0.0), x1.min(camera.size[0]), y1.min(camera.size[1])]);
@@ -2942,7 +3137,7 @@ impl Player {
                 // camera's integration of what is lit)
                 let light = draws.iter().any(|d| d.lit && !d.overlay);
                 if (lists || light) && plan.is_none() {
-                    plan = Some(gpu.vector.plan(&self.store, &camera, &f.records, &[], background)?);
+                    plan = Some(gpu.vector.plan(&self.store, &camera, &f.records, &[], background, if f.key == 0 { fills.as_slice() } else { &[] }, if f.key == 0 { programs.as_slice() } else { &[] })?);
                 }
                 if let Some(plan) = plan.as_mut() {
                     plan.light = lighting(&f.view, &shadows, self.environment_light(&f.view));
@@ -2952,7 +3147,7 @@ impl Player {
                 Drawing::Raster { offset, draws, listed, sprites: sprites_here, lists, slabs, light, glow, plan, shadows, cast }
             } else {
                 let background = [0, 1, 2, 3].map(|k| f.view[VIEW_FLOATS + k]);
-                let plan = gpu.vector.plan(&self.store, &camera, &f.records, &self.order(&camera, &f.records)?, background)?;
+                let plan = gpu.vector.plan(&self.store, &camera, &f.records, &self.order(&camera, &f.records)?, background, if f.key == 0 { fills.as_slice() } else { &[] }, if f.key == 0 { programs.as_slice() } else { &[] })?;
                 let mut groups = Vec::with_capacity(plan.groups.len());
                 for group in &plan.groups {
                     let offset = instances.len() as u32;
@@ -2960,6 +3155,9 @@ impl Player {
                     for raster in &group.rasters {
                         let (instance, draw) = self.instance(&camera, &f.records[raster.record], Some(plan.place(raster)), raster.record as u32)?;
                         instances.push(instance);
+                        if f.key == 0 {
+                            instance_of.insert(raster.record as u32, instances.len() as u32 - 1);
+                        }
                         draws.push(draw);
                     }
                     groups.push((offset, draws));
@@ -3095,6 +3293,14 @@ impl Player {
         }
         gpu.queue.write_buffer(&buffers.views, 0, &views);
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        // **阶段 2**：点云 / 网格的填充槽在实例缓冲里（实例序号 = 上面记录下来的映射）。
+        for (record, program) in &fills {
+            let Some(instance) = instance_of.get(record) else { continue };
+            let word = ((*instance as usize * std::mem::size_of::<Instance>() + INSTANCE_FILL_OFFSET) / 4) as u32;
+            if let Err(error) = gpu.encode_fill(&mut encoder, &buffers.instances, word, &programs[*program as usize]) {
+                fill_error.get_or_insert(error);
+            }
+        }
         gpu.vector.begin();
         let mut grouped = false;
         let lists = self.lists.as_ref().filter(|_| composited);
@@ -3132,7 +3338,7 @@ impl Player {
                         if let Some(plan) = cast.get(layer) {
                             let statics = buffers.vector_statics();
                             for g in 0..plan.groups.len() {
-                                gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, vector::Out::Depth(&buffers.shadow_maps.layers[layer]));
+                                gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, vector::Out::Depth(&buffers.shadow_maps.layers[layer]), &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                             }
                         }
                     }
@@ -3162,7 +3368,7 @@ impl Player {
                         if let Some(plan) = plan {
                             let statics = buffers.vector_statics();
                             for g in 0..plan.groups.len() {
-                                gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, vector::Out::Opaque(&o.depth));
+                                gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, vector::Out::Opaque(&o.depth), &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                             }
                         }
                         occlusion.encode(&gpu.queue, &mut encoder, o, &Camera::new(&f.view).projection, amount, radius);
@@ -3189,7 +3395,7 @@ impl Player {
                     // listed fragments; then, where it glows, its glow spread from the light it leaves, and its pixels
                     // shown with it
                     let bloomed = if skipping() & SKIP_BLOOM != 0 { None } else { canvas.bloomed.as_ref().zip(*glow) };
-                    let layered = |encoder: &mut wgpu::CommandEncoder, vector: &mut vector::Vector, listed: Option<&vector::Listed>, slabs: Option<&Slabs>| {
+                    let layered = |encoder: &mut wgpu::CommandEncoder, vector: &mut vector::Vector, listed: Option<&vector::Listed>, slabs: Option<&Slabs>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>| {
                         let Some(plan) = plan else { return };
                         let statics = buffers.vector_statics();
                         let (target, light_out) = bloomed.map_or((&canvas.color, None), |(b, _)| (&b.paint, Some(&b.light)));
@@ -3197,7 +3403,7 @@ impl Player {
                             let lighting = vector::Lighting { maps: &buffers.shadow_maps.array, compare: &gpu.shadow_compare, dfg: &gpu.dfg, linear: &gpu.linear, environment: &cube, occlusion };
                             let slabs = slabs.map(|s| [&s.bounds, &s.slabs]);
                             let out = vector::Out::Color { rasters: None, target, base: base.as_ref(), light: base_light.as_ref(), listed, slabs, lighting, light_out };
-                            vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out);
+                            vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out, fill_layout, fill_pipelines, fill_error);
                         }
                         if let Some((b, glow)) = bloomed {
                             let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
@@ -3222,7 +3428,7 @@ impl Player {
                             let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
                             gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
                         }
-                        layered(&mut encoder, &mut gpu.vector, None, None);
+                        layered(&mut encoder, &mut gpu.vector, None, None, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                         continue;
                     }
                     let appends = &pipelines.appends;
@@ -3256,7 +3462,7 @@ impl Player {
                     if let Some(s) = slabs {
                         let plan = plan.as_ref().expect("a plan: its paths', or its lists'");
                         let statics = buffers.vector_statics();
-                        gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, 0, &statics, vector::Out::Bounds { out: &s.bounds, listed: listed.as_ref() });
+                        gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, 0, &statics, vector::Out::Bounds { out: &s.bounds, listed: listed.as_ref() }, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                         let targets: Vec<_> = s.layers.iter().map(|view| Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })).collect();
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("slabs"), color_attachments: &targets, depth_stencil_attachment: None, occlusion_query_set: None, timestamp_writes: None, multiview_mask: None });
                         pass.set_bind_group(0, buffers.group.as_ref(), &slot);
@@ -3280,7 +3486,7 @@ impl Player {
                     self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Overlay);
                     drop(pass);
                     gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
-                    layered(&mut encoder, &mut gpu.vector, listed.as_ref(), slabs);
+                    layered(&mut encoder, &mut gpu.vector, listed.as_ref(), slabs, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                 }
                 Drawing::Vector(plan, groups) => {
                     grouped |= f.key == 0 && plan.groups.len() > 1;
@@ -3300,10 +3506,13 @@ impl Player {
                         let statics = buffers.vector_statics();
                         let lighting = vector::Lighting { maps: &buffers.shadow_maps.array, compare: &gpu.shadow_compare, dfg: &gpu.dfg, linear: &gpu.linear, environment: &cube, occlusion: &gpu.no_occlusion };
                         let out = vector::Out::Color { rasters: atlas.map(|a| &a.color), target: &canvas.color, base: None, light: None, listed: None, slabs: None, lighting, light_out: None };
-                        gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, out);
+                        gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, out, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                     }
                 }
             }
+        }
+        if let Some(error) = fill_error {
+            return Err(error);
         }
         Ok((encoder, grouped, composited))
     }
@@ -3520,6 +3729,8 @@ impl Player {
             list_capacity: 0,
             target_generation: TARGET_GENERATION.load(Ordering::Relaxed),
             environment_generation: 0,
+            fills: Vec::new(),
+            programs: Vec::new(),
         }
     }
 
@@ -3533,6 +3744,9 @@ impl Player {
         self.store.clear();
         self.images.clear();
         self.opaque_images.clear();
+        // 着色 codegen 是"这一帧的"，不跨帧残留（否则上一帧的程序会套到下一帧的记录上）。
+        self.fills.clear();
+        self.programs.clear();
     }
 
     /// A path: its control points (float64 x, y, z; four per curve), its subpaths (u32 first
@@ -3645,13 +3859,16 @@ impl Player {
 
     /// Views to draw: the cameras' (each into a texture that later views sample by its key), then
     /// the frame; each with the lights the engine lights by (`with_sun`).
-    pub(crate) fn views(&mut self, view: &[u8], records: &[u8], cameras: Vec<CameraFrame>) -> Result<Vec<Frame>, String> {
+    pub(crate) fn views(&mut self, view: &[u8], records: &[u8], cameras: Vec<CameraFrame>, fills: Vec<(u32, u32)>, programs: Vec<ShaderFill>) -> Result<Vec<Frame>, String> {
         let mut frames = Vec::with_capacity(cameras.len() + 1);
         for (key, width, height, v, r) in cameras {
             check_key(key)?;
             frames.push(Frame { key, width, height, view: self.with_sun(read(&v, "view")?), records: read(&r, "records")? });
         }
         frames.push(Frame { key: 0, width: self.width, height: self.height, view: self.with_sun(read(view, "view")?), records: read(records, "records")? });
+        // **阶段 2**：着色 codegen 只作用于主帧的记录（相机视图不接，避免静默忽略）。
+        self.fills = fills;
+        self.programs = programs;
         Ok(frames)
     }
 

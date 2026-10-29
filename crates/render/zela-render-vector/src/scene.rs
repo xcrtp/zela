@@ -244,6 +244,7 @@ fn open_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         material: None,
         options: Default::default(),
         param: None,
+        shader: None,
     }
 }
 
@@ -264,6 +265,7 @@ fn polygon_path(points: &[Vec2], m: &Transform2D, center: Vec2) -> FilledPath {
         material: None,
         options: Default::default(),
         param: None,
+        shader: None,
     }
 }
 
@@ -322,6 +324,7 @@ fn ellipse_path(at: Vec2, rx: f32, ry: f32, m: &Transform2D, center: Vec2) -> Fi
         material: None,
         options: Default::default(),
         param: None,
+        shader: None,
     }
 }
 
@@ -381,6 +384,7 @@ fn push_shape(
                     material: None,
                     options: Default::default(),
                     param: None,
+                    shader: None,
                 });
             }
         }
@@ -571,6 +575,7 @@ pub fn param_records(
             material: None,
             options: options.clone(),
             param: param.clone(),
+            shader: None,
         }));
     }
     if let Some(stroke) = style.stroke {

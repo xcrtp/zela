@@ -147,6 +147,26 @@ pub(crate) struct Group {
 }
 
 /// A 2D view, planned: its groups, in draw order.
+/// **阶段 2**：一条"GPU 写填充色"的目标。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FillSlot {
+    /// 解析路径：写所在 group 的 `objects` 缓冲（第 n 个 `Object`）。
+    Object(u32),
+    /// 点云 / 网格：写主帧的实例缓冲（记录索引；实例序号由 `encode_frame` 解析）。
+    Record(u32),
+}
+
+/// **阶段 2**：一条着色 codegen —— 目标槽 + 程序索引（程序表在 `Plan::programs`）。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlannedFill {
+    pub(crate) group: u32,
+    pub(crate) slot: FillSlot,
+    pub(crate) program: u32,
+}
+
+/// `Object.paint.fill` 在对象缓冲里的字节偏移（与 `render.rs` 同一口径）。
+pub(crate) const OBJECT_FILL_OFFSET: usize = std::mem::offset_of!(Object, paint) + super::PAINT_FILL_OFFSET;
+
 pub(crate) struct Plan {
     pub(crate) groups: Vec<Group>,
     pub(crate) raster_size: [u32; 2], // the part of the raster atlas its groups draw into
@@ -157,6 +177,9 @@ pub(crate) struct Plan {
     pub(crate) lit: bool,   // whether a path of it is lit (its composite's pipeline: with the light)
     crossings: bool,        // whether its depths can cross (a 3D view's: its composite's second pass)
     pub(crate) light: [f32; LIGHT], // what lights its paths with a material (all 0: none; see `FrameUniform`)
+    /// **阶段 2**：本视图的着色 codegen（空 ⇒ 与之前逐位相同）。
+    pub(crate) fills: Vec<PlannedFill>,
+    pub(crate) programs: Vec<super::ShaderFill>,
 }
 
 impl Plan {
@@ -805,7 +828,10 @@ impl Vector {
 
     /// Plan a 2D view: its records in `order`, a path each an object of the group whose coverage
     /// atlas its layers fit, a point cloud or mesh each a raster.
-    pub(crate) fn plan(&self, store: &Store, camera: &Camera, records: &[Record], order: &[usize], background: [f32; 4]) -> Result<Plan, String> {
+    pub(crate) fn plan(&self, store: &Store, camera: &Camera, records: &[Record], order: &[usize], background: [f32; 4], fills: &[(u32, u32)], programs: &[super::ShaderFill]) -> Result<Plan, String> {
+        // **阶段 2**：本视图的着色 codegen 目标（程序表整份带着走，索引与 `fills` 对齐）。
+        let mut planned: Vec<PlannedFill> = Vec::new();
+        let program_of = |k: usize| fills.iter().find(|(record, _)| *record as usize == k).map(|(_, program)| *program);
         let (w, h) = (camera.size[0], camera.size[1]);
         let size = [w as u32, h as u32];
         let tiles = [size[0].div_ceil(TILE), size[1].div_ceil(TILE)];
@@ -830,9 +856,14 @@ impl Vector {
                 }
                 let (rw, rh) = ((x1 - x0) as u32, (y1 - y0) as u32);
                 let at = fit(&mut groups, fresh, |g| g.raster.place(rw, rh, limit))?;
+                let group_index = (groups.len() - 1) as u32;
                 let group = groups.last_mut().expect("a group");
                 group.rasters.push(Raster { record: k, rect: [at & 0xffff, at >> 16, rw, rh], corner: [x0, y0] });
                 group.objects.push(Object { rect: [x0, y0, x1 - x0, y1 - y0], atlas: [NONE, NONE, NONE, at], ids: [NONE; 4], slots: [group.fills, group.strokes, 0, 0], ..Object::zeroed() });
+                // 点云 / 网格的填充槽在实例缓冲里（实例序号由 `encode_frame` 解析）。
+                if let Some(program) = program_of(k) {
+                    planned.push(PlannedFill { group: group_index, slot: FillSlot::Record(k as u32), program });
+                }
                 group.spans.push(span([x0, y0, x1, y1], tiles));
                 group.masks.push(None);
                 continue;
@@ -1019,6 +1050,7 @@ impl Vector {
             };
             let per_layer = c.count.saturating_mul(n).saturating_mul(windows_per_segment).saturating_add(c.count.saturating_mul(joints)).saturating_add((2 * c.subpaths).saturating_mul(windows).saturating_mul(caps));
             let strokes = (layers[1] as u32 + layers[2] as u32).saturating_mul(per_layer);
+            let group_index = (groups.len() - 1) as u32;
             let group = groups.last_mut().expect("a group");
             group.objects.push(Object {
                 t1x: local(t1x, x0, &t1w),
@@ -1045,6 +1077,10 @@ impl Vector {
                 t2z: z2,
                 near,
             });
+            // 解析路径：填充槽就在这条 `Object` 里（索引 = 组内序号）。
+            if let Some(program) = program_of(k) {
+                planned.push(PlannedFill { group: group_index, slot: FillSlot::Object((group.objects.len() - 1) as u32), program });
+            }
             let spanned = span([x0, y0, x1, y1], tiles);
             let reach = [2.0, 0.5 * sw * (2.0 * reach).min(10.0) + 2.0, 0.5 * bw * (2.0 * reach).min(10.0) + 2.0];
             let whole = r.params[0] <= 0.0 && r.params[1] >= c.count as f32;
@@ -1056,7 +1092,7 @@ impl Vector {
         }
         let raster_size = [size[0], groups.iter().map(|g| g.raster.rows()).max().unwrap_or(0)];
         let lit = groups.iter().any(|g| g.objects.iter().any(|o| o.material[3] > 0.0));
-        Ok(Plan { groups, raster_size, size, background, bias: camera.bias, inverse: inverse(&camera.projection), lit, crossings: camera.three_d, light: [0.0; LIGHT] })
+        Ok(Plan { groups, raster_size, size, background, bias: camera.bias, inverse: inverse(&camera.projection), lit, crossings: camera.three_d, light: [0.0; LIGHT], fills: planned, programs: programs.to_vec() })
     }
 
     /// A 3D view's base depth for its composite: `depth` (the raster pass's, `samples` per pixel) as its samples'
@@ -1187,8 +1223,11 @@ impl Vector {
     }
 
     /// Encode group `g` of a planned view into `out`: `statics` are the store's control points, subpaths and rows.
+    ///
+    /// **阶段 2**：`fill_layout` / `fill_pipelines` / `fill_error` 是宿主（`Gpu`）的着色
+    /// codegen 缓存与错误槽 —— 本组里有 `FillSlot::Object` 时，在光栅之前跑 compute 写填充槽。
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn encode(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, plan: &Plan, g: usize, statics: &[wgpu::BindingResource<'_>; 3], out: Out<'_>) {
+    pub(crate) fn encode(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, plan: &Plan, g: usize, statics: &[wgpu::BindingResource<'_>; 3], out: Out<'_>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut std::collections::HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>) {
         let group = &plan.groups[g];
         self.prepare_flatten(device, [group.fills, group.strokes]);
         let [w, h] = plan.size;
@@ -1244,6 +1283,15 @@ impl Vector {
         self.used += 1;
         let tiles = tile_lists(&group.spans, &group.masks, &group.objects, tiles_x, (tiles_x * tiles_y) as usize);
         b.objects.hold(device, queue, "objects", bytemuck::cast_slice::<Object, u8>(&group.objects));
+        // **阶段 2**：光栅之前把本组的着色 codegen 颜色写进对象缓冲（只写 r/g/b，alpha 不变）。
+        for fill in plan.fills.iter().filter(|fill| fill.group as usize == g) {
+            let FillSlot::Object(object) = fill.slot else { continue };
+            let word = ((object as usize * std::mem::size_of::<Object>() + OBJECT_FILL_OFFSET) / 4) as u32;
+            let program = &plan.programs[fill.program as usize];
+            if let Err(error) = super::Gpu::encode_fill_impl(device, queue, fill_layout, fill_pipelines, encoder, &b.objects.0, word, program) {
+                fill_error.get_or_insert(error);
+            }
+        }
         b.tiles.hold(device, queue, "tiles", bytemuck::cast_slice(&tiles));
         let (atlas, [aw, ah]) = self.atlas.as_ref().expect("atlas");
         let [red, green, blue, alpha] = plan.background;

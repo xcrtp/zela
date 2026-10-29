@@ -129,6 +129,9 @@ pub struct FilledPath {
     /// 阶段 1 起三种几何动画共用同一 idiom（[`ParamGeometry`]）：
     /// `Lerp`（形变）/ `Window`（部分显示）/ `Grow`（按曲线数生长）。
     pub param: Option<ParamGeometry>,
+    /// **阶段 2（着色 codegen）**：填充色由一段生成的 WGSL 在 GPU 上算
+    /// （`None` = 普通填充）。装饰性：不影响几何 / 状态，也不进结构指纹。
+    pub shader: Option<crate::render::ShaderFill>,
 }
 
 /// 参数化几何的种类（阶段 1）。
@@ -261,6 +264,7 @@ impl FilledPath {
             material: None,
             options: PathOptions::default(),
             param: None,
+            shader: None,
         }
     }
 }
@@ -755,6 +759,9 @@ fn view_3d(v: &View3) -> Vec<f32> {
 struct Prepared {
     view: Vec<u8>,
     records: Vec<u8>,
+    /// **阶段 2（着色 codegen）**：`(记录索引, 程序索引)` —— 由 compute 在光栅前写填充槽。
+    fills: Vec<(u32, u32)>,
+    programs: Vec<crate::render::ShaderFill>,
 }
 
 /// brush rows 的键空间（与路径 / 网格的键 `1..=n` 分开；`Store` 的 `brushes` 是独立映射）。
@@ -843,6 +850,9 @@ fn prepare_view(
     let view_bytes: Vec<u8> = bytemuck::cast_slice(&view).to_vec();
 
     let mut built: Vec<Record> = Vec::with_capacity(records.len());
+    // **阶段 2**：着色 codegen 的程序表（同一 (source, params) 只收一次）与记录→程序映射。
+    let mut fills: Vec<(u32, u32)> = Vec::new();
+    let mut programs: Vec<crate::render::ShaderFill> = Vec::new();
     for (i, record) in records.iter().enumerate() {
         let key = key_base + i as u64 + 1;
         match record {
@@ -856,6 +866,16 @@ fn prepare_view(
                     path.shade_in_3d,
                     path.material,
                 );
+                if let Some(shader) = &path.shader {
+                    let index = match programs.iter().position(|p| p == shader) {
+                        Some(index) => index as u32,
+                        None => {
+                            programs.push(shader.clone());
+                            (programs.len() - 1) as u32
+                        }
+                    };
+                    fills.push((i as u32, index));
+                }
                 apply_options(&mut record, &path.options, player, key, true)?;
                 record = attach_param(
                     player,
@@ -999,6 +1019,8 @@ fn prepare_view(
     Ok(Prepared {
         view: view_bytes,
         records: record_bytes,
+        fills,
+        programs,
     })
 }
 
@@ -1029,6 +1051,13 @@ fn prepare_cameras(
             key_base,
         )
         .map_err(|error| format!("相机视图 #{index}（key {}）：{error}", camera.key))?;
+        // 着色 codegen 只接主帧：相机视图里的程序会被静默忽略 ⇒ 显式拒绝。
+        if !prepared.fills.is_empty() {
+            return Err(format!(
+                "相机视图 #{index}（key {}）含着色 codegen 填充：零回读路径只支持主帧",
+                camera.key
+            ));
+        }
         out.push((
             camera.key,
             camera.width,
@@ -1054,10 +1083,9 @@ fn render_with_view(
     crate::render::with_gpu(|gpu| {
         let mut player = gpu.take_player(width, height, samples);
         let result = (|| {
-            let Prepared { view, records } =
-                prepare_view(&mut player, view, width, height, records, 0)?;
+            let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
             let cameras = prepare_cameras(&mut player, cameras)?;
-            let frames = player.views(&view, &records, cameras)?;
+            let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
             let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
             player.pixels(gpu, &frames, &mut out)?;
             Ok(out)
@@ -1096,9 +1124,9 @@ async fn frame_pixels_async(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    let Prepared { view, records } = prepare_view(player, view, width, height, records, 0)?;
+    let prepared = prepare_view(player, view, width, height, records, 0)?;
     let cameras = prepare_cameras(player, cameras)?;
-    let frames = player.views(&view, &records, cameras)?;
+    let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
     let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
     player.pixels_async(gpu, &frames, &mut out).await?;
     Ok(out)
@@ -1150,10 +1178,9 @@ fn render_to_texture(
     crate::render::with_gpu(|gpu| {
         let mut player = gpu.take_player(width, height, samples);
         let result = (|| {
-            let Prepared { view, records } =
-                prepare_view(&mut player, view, width, height, records, 0)?;
+            let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
             let cameras = prepare_cameras(&mut player, cameras)?;
-            let frames = player.views(&view, &records, cameras)?;
+            let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
             player.render_to(gpu, &frames, &target_view)
         })();
         gpu.put_player(width, height, samples, player);
@@ -1204,9 +1231,9 @@ async fn frame_to_texture_async(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    let Prepared { view, records } = prepare_view(player, view, width, height, records, 0)?;
+    let prepared = prepare_view(player, view, width, height, records, 0)?;
     let cameras = prepare_cameras(player, cameras)?;
-    let frames = player.views(&view, &records, cameras)?;
+    let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
     player.render_to_async(gpu, &frames, target).await
 }
 
@@ -1668,6 +1695,7 @@ mod tests {
             ],
             options: Default::default(),
             param: None,
+            shader: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[line.clone().into()]) {
             Ok(frame) => frame,
@@ -2401,6 +2429,7 @@ mod tests {
                 material: None,
                 options: Default::default(),
                 param: None,
+                shader: None,
             }
         };
         // 外圈 CCW、内圈 CW（世界 y 向上）。

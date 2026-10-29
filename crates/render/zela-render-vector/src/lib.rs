@@ -53,6 +53,8 @@ pub use api::{
 };
 // B11 Step 3：device 注入入口（native / wasm 同签名，内部绕开 `Gpu::new()`）。
 pub use render::init_gpu;
+// 阶段 2：着色 codegen 的程序（生成 WGSL + uniform 字节）。
+pub use render::ShaderFill;
 // B17 Step 0：矢量后端的资源创建计数（纹理 / 缓冲；取走即清零）。
 pub use render::{ResourceTotals, resource_totals, take_resource_totals};
 // B18：MSAA 能力查询（adapter 自述）、判别实验的采样覆盖、链表溢出的显式记录。
