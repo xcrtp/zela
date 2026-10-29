@@ -31,7 +31,7 @@
 fourier         傅里叶级数展开      fourier.lua     5bb6eda6365137b795b99a9985c1c469256135ffcabd7c0cc0802d9d8b5c1d47
 storyboard      分镜演示            storyboard.lua  450a9288caebc746c5c3f11f34c0bab6fc8256fbc120e575f5671b8c0afad65f
 demo3d          3D 场景             demo3d.lua      97abe197e27a4aa2f0db7d7a0bf2b8c365529b61bf674f7b74c19bc73cd99f24
-fusion          融合演示(双面+透明) fusion.lua      b2fc4710bdf0cf3ecca33a34e3ca3cbd77ef232d0373ba0ff71646c411a09db0
+fusion          融合演示(双面+透明) fusion.lua      20f7eb9909497901057b83f4effed8d937b279c8479c2d14d58aa6366425b3ed
 pbr_materials   PBR材质画廊        pbr_materials.lua 183501ee94e9959417ad1836e8e1dfa39ed2603cb75164e52ad46de463bcddea
 pbr_lights      PBR光照实验室      pbr_lights.lua   ef370699810032cc94050fdddb18e086c19d7072f3500a901bab2c8f8878130f
 pbr_scene       PBR材质秀          pbr_scene.lua    087be064edfe63dd3f9e453323e798e00c0405f6bea26a3d7fdf8de3d8ab51fb
@@ -40,7 +40,7 @@ orbit           公转行星            orbit.lua       84427b0482899e7af6a19c6c
 spring          弹跳小球            spring.lua      540f7ff5530a1e8c04e2276178fd8d3285875257fa67e99391a5763b3fd6f7e8
 surface_matrix  Surface能力矩阵      surface_matrix.lua  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
 surface_matrix_js  Surface能力矩阵(JS) surface_matrix.js  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
-atlas           2D纹理进3D           atlas.lua       a3cc4bccc15a5028b9b690034172761e8c4d30cc4ccf9d623f55d6f41a3dc3d1
+atlas           2D纹理进3D           atlas.lua       826a61d598b18a7395d86b7842a77754d5c2240b7e57e7d7798a46d04e80a30a
 vector_paths    矢量后端作品         vector_paths.lua b2f6f4f8eeded354294e64bb8111f49817031c523efa0946579dcc7458605b9c
 capability_gaps 能力缺口补齐        capability_gaps.lua ab35c0c5598547a5b125f04fd29ffcf408ead4f49edd4ab645d691c373bfeba6
 shaded_meshes   3D网格着色栈        shaded_meshes.lua 7d7081ba5e06f7ff9ec51eba706fd7d7cd7c592a05daed2dd31029f4f65bd40b
@@ -54,7 +54,7 @@ cap_window      曲线窗口            cap_window.lua  90ba47a4a19fa0571ba42aa0
 # PF Step 2：2D/3D 混排（2D 记录以屏幕平面 overlay 叠进 3D 帧）。
 cap_mix         2D/3D混排           cap_mix.lua     1443758a2fe47a469411ae35eb39bfa758d310f16cc82b997a757f1dab26959d
 # S3 验收作品：脚本只提交表达式结构（半径 / 透明度由宿主 M 注入 Time）。
-expr_demo       表达式驱动          expr_demo.lua   f751f8a952735af04b2d3682854bae3d1b35ee9ed9724ff1cfb3002fb91a9422
+expr_demo       表达式驱动          expr_demo.lua   9a3be67eefbc5e768496aa2fb6e887d1189d75e464cf3d02560cc72fd60e8eae
 # F / G / H 批验收作品：新字段通道（一个通道一条绑定）+ 通道读端 + 值分支。
 cap_channels2d  2D字段通道          cap_channels2d.lua  5153e7de1f9254108d00858fe21aef5ae064878f6a6ebaafc0cd30d873666e5e
 cap_channels3d  3D字段通道          cap_channels3d.lua  dd33f6741996709b40b1f8f5e0f89599b780a1933dba85d29b94f5ac05e9a30d
@@ -63,4 +63,6 @@ expr_read       通道读端与值分支     expr_read.lua       3e27f3bd5ed2fea
 sine_trace      小球画正弦          sine_trace.lua      03a4a6dbd68a51f517b5394eef1b17a1716b5510ca45632f09a3d7a994890c77
 # 阶段 2 验收作品：填充色由 `expr.shader` 生成的 WGSL 在 GPU 上算（装饰性，静态 1 帧）。
 cap_codegen     着色codegen         cap_codegen.lua     6a54e4d672a8e8c5f576464c1382f0c2b7cdc53c1103f3c86dc80ea0e7d262b0
+# 阶段 7（第 BB 批）验收作品：`Stroke.width` 通道可动画（新算子 abs / pow + 糖）。
+cap_stroke_width 线宽通道           cap_stroke_width.lua 57a6d2541657778f2ae4457e911e00d2e717614fa143638d2ba1d0926e9fc1c2
 

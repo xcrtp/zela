@@ -238,6 +238,16 @@ macro_rules! scalar_spec {
 scalar_spec!(DASH_PERIOD, "Dash.period", "Dash.period", "Dash", ze_render_ir::Dash, period);
 scalar_spec!(DASH_DUTY, "Dash.duty", "Dash.duty", "Dash", ze_render_ir::Dash, duty);
 scalar_spec!(DASH_PHASE, "Dash.phase", "Dash.phase", "Dash", ze_render_ir::Dash, phase);
+// 第 BB 批（阶段 7）：线宽可动画（`Stroke { width = … }` 的后续可写通道）。
+// `MeasureSpace` 不动：只改粗细，不改"按屏幕还是按世界计量"。
+scalar_spec!(
+    STROKE_WIDTH,
+    "Stroke.width",
+    "Stroke.width",
+    "StrokeSolid",
+    ze_render_ir::StrokeSolid,
+    width
+);
 scalar_spec!(
     CURVE_WINDOW_LO,
     "CurveWindow.lo",
@@ -628,6 +638,7 @@ make_target!(make_opacity_value, OPACITY_VALUE);
 make_target!(make_dash_period, DASH_PERIOD);
 make_target!(make_dash_duty, DASH_DUTY);
 make_target!(make_dash_phase, DASH_PHASE);
+make_target!(make_stroke_width, STROKE_WIDTH);
 make_target!(make_curve_window_lo, CURVE_WINDOW_LO);
 make_target!(make_curve_window_hi, CURVE_WINDOW_HI);
 make_target!(make_gradient_from, GRADIENT_FROM);
@@ -690,6 +701,10 @@ pub const TARGETS: &[TargetEntry] = &[
     TargetEntry {
         spec: &CURVE_WINDOW_HI,
         make: make_curve_window_hi,
+    },
+    TargetEntry {
+        spec: &STROKE_WIDTH,
+        make: make_stroke_width,
     },
     TargetEntry {
         spec: &GRADIENT_FROM,
@@ -805,6 +820,10 @@ pub const CHANNEL_HOMES: &[(&str, &str)] = &[
     ("Framing2D", "Camera2D"),
     // `Morph` 的存储组件。
     ("MorphShape", "Morph"),
+    // 第 BB 批（阶段 7）：`Stroke.width` 存在 `StrokeSolid` 里，
+    // 脚本世界里的名字是 `Stroke`（常量必须挂在能 spawn 的组件上）。
+    ("StrokeSolid", "Stroke"),
+    ("FillSolid", "Fill"),
 ];
 
 /// 通道常量的**作者侧组件名**：常量挂在"脚本能 spawn 的那个组件"上。

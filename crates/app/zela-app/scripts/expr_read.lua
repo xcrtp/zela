@@ -36,14 +36,14 @@ expr.bind {
     target = Circle.channel.radius,
     root = sugar.wave(0.55, 0.25, 2.4),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 expr.bind {
     object = dot,
     target = Circle.channel.center,
     root = sugar.ramp2(-3.6, 2.0, -1.2, 1.2, T),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 
 -- ── 写者 B / C：两个方块的 `Transform.position`（Vec3 源）──────────────
@@ -54,14 +54,14 @@ expr.bind {
     target = Transform.channel.position,
     root = Vec3FromVec2 { v = sugar.ramp2(-2.4, -0.8, -3.0, 0.2, T), z = expr.pure(0.0) },
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 expr.bind {
     object = b,
     target = Transform.channel.position,
     root = Vec3FromVec2 { v = sugar.ramp2(2.4, -0.8, 3.0, 0.2, T), z = expr.pure(0.0) },
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 
 -- ── 读者 1（Vec2）：箭头终点 = 圆点中心 ───────────────────────────────

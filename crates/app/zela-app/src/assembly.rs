@@ -261,6 +261,16 @@ impl PodAssembly {
                 ze_pod_func::ResetSpec::Reset => zela_scene_ecs::animation::ResetBehavior::Reset,
                 ze_pod_func::ResetSpec::Skip => zela_scene_ecs::animation::ResetBehavior::Skip,
             };
+            // 第 BB 批（阶段 6）：`duration` 在这里**先**展开成 `clock.range(0, d)`，
+            // 让 predicate 的算子 revision 与手写 predicate 走同一条收集路径
+            // （否则产物里会少 `and` / `ge` / `lt` 三条）。冲突检查仍留给场景层。
+            let (predicate, duration) = match (&predicate, pending.duration) {
+                (None, duration) if duration > 0.0 => (
+                    Some(zela_scene_ecs::scene_script::duration_predicate(duration)),
+                    0.0,
+                ),
+                _ => (predicate, pending.duration),
+            };
             // **第 4 批**：把这条绑定**实际用到的算子** revision 写进产物
             // （predicate 是独立表达式，同样记录；算子身份与 revision 同源于函子库）。
             let mut op_revisions = ze_pod_func::collect_op_revisions(&expr);
@@ -281,7 +291,7 @@ impl PodAssembly {
                     clock,
                     predicate,
                     reset,
-                    pending.duration,
+                    duration,
                 )
                 .map_err(|error| BrokerError::Injection {
                     node: EXPR_SERVICE.to_string(),

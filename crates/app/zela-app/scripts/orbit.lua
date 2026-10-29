@@ -105,14 +105,14 @@ expr.bind {
     target = Reveal.channel["end"],
     root = sugar.ramp(0.0, 1.0, PRE_RUN),
     clock = clock.shift(0.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, PRE_RUN) },
+    duration = PRE_RUN,
 }
 expr.bind {
     object = ring2,
     target = Reveal.channel["end"],
     root = sugar.ramp(0.0, 1.0, PRE_RUN),
     clock = clock.shift(PRE_RUN),
-    predicate = Predicate.Of { expr = clock.range(0.0, PRE_RUN) },
+    duration = PRE_RUN,
 }
 
 -- ── 主段（2.4–10.4s）：太阳呼吸 + 行星 / 卫星公转 + 淡入（并行轨道）──
@@ -121,28 +121,28 @@ expr.bind {
     target = Transform.channel.scale,
     root = sugar.wave(1.0, 0.12, 1.5),
     clock = clock.shift(MAIN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+    duration = MAIN,
 }
 expr.bind {
     object = planet1,
     target = Transform.channel.position,
     root = sugar.orbit2d(q(R1), q(TAU / 3.0), 0.0),
     clock = clock.shift(MAIN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+    duration = MAIN,
 }
 expr.bind {
     object = planet2,
     target = Transform.channel.position,
     root = sugar.orbit2d(q(R2), q(TAU / 6.0), 0.0),
     clock = clock.shift(MAIN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+    duration = MAIN,
 }
 expr.bind {
     object = moon,
     target = Transform.channel.position,
     root = sugar.orbit2d(0.32, q(TAU / 0.9), 0.0),
     clock = clock.shift(MAIN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+    duration = MAIN,
 }
 for _, object in ipairs({ ring1, ring2, planet1, planet2, moon }) do
     expr.bind {
@@ -150,7 +150,7 @@ for _, object in ipairs({ ring1, ring2, planet1, planet2, moon }) do
         target = Opacity.channel.value,
         root = sugar.ramp(0.0, 1.0, 1.0),
         clock = clock.shift(MAIN_START),
-        predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+        duration = MAIN,
     }
 end
 
@@ -171,12 +171,12 @@ expr.bind {
         z = expr.pure(0.0),
     },
     clock = clock.shift(COMET_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, COMET_DUR) },
+    duration = COMET_DUR,
 }
 expr.bind {
     object = comet,
     target = Opacity.channel.value,
     root = sugar.ramp(1.0, 0.0, COMET_DUR),
     clock = clock.shift(COMET_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, COMET_DUR) },
+    duration = COMET_DUR,
 }

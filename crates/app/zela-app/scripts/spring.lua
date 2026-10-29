@@ -76,21 +76,21 @@ local function hop(x, color)
         target = Transform.channel.position,
         root = move2(x, q(HOP_HI), x, q(FLOOR_Y), DOWN),
         clock = clock.shift(down),
-        predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
+        duration = DOWN,
     }
     expr.bind {
         object = b,
         target = Transform.channel.scale,
         root = sugar.ramp(1.0, 0.7, DOWN),
         clock = clock.shift(down),
-        predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
+        duration = DOWN,
     }
     expr.bind {
         object = b,
         target = Opacity.channel.value,
         root = sugar.ramp(0.0, 1.0, 0.3),
         clock = clock.shift(down),
-        predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
+        duration = DOWN,
     }
 
     -- 弹起 + 离地拉伸（同一段 [up, up+UP)）。
@@ -99,14 +99,14 @@ local function hop(x, color)
         target = Transform.channel.position,
         root = move2(x, q(FLOOR_Y), x, q(HOP_HI), UP),
         clock = clock.shift(up),
-        predicate = Predicate.Of { expr = clock.range(0.0, UP) },
+        duration = UP,
     }
     expr.bind {
         object = b,
         target = Transform.channel.scale,
         root = sugar.ramp(0.7, 1.15, UP),
         clock = clock.shift(up),
-        predicate = Predicate.Of { expr = clock.range(0.0, UP) },
+        duration = UP,
     }
 
     -- 回落归一（只动 Scale，Position 不再写）。
@@ -115,7 +115,7 @@ local function hop(x, color)
         target = Transform.channel.scale,
         root = sugar.ramp(1.15, 1.0, SETTLE),
         clock = clock.shift(settle),
-        predicate = Predicate.Of { expr = clock.range(0.0, SETTLE) },
+        duration = SETTLE,
     }
 
     cursor = settle + SETTLE
@@ -134,5 +134,5 @@ expr.bind {
     target = Camera2D.channel.scale,
     root = sugar.ramp(55.0, 74.0, 1.3),
     clock = clock.shift(cursor),
-    predicate = Predicate.Of { expr = clock.range(0.0, 1.3) },
+    duration = 1.3,
 }

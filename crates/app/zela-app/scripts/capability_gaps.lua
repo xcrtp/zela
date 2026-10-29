@@ -69,7 +69,7 @@ expr.bind {
     target = Morph.channel.t,
     root = phase(0.3),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 
 -- ④ 相位目标：挂在右侧圆上；`phase` 每帧被写（无消费者 ⇒ 画面不变，见文件头）。
@@ -84,7 +84,7 @@ expr.bind {
     target = PhaseAnim.channel.phase,
     root = phase(1.0),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 
 -- ③ 常量曲线：整段保持 0.6（对照上面两条"随时间变化"的曲线）。
@@ -98,7 +98,7 @@ expr.bind {
     target = Opacity.channel.value,
     root = expr.pure(0.6),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 
 -- ⑥ 相机运镜：3D 相机在 XY 平面绕原点公转。
@@ -117,7 +117,7 @@ expr.bind {
     target = Camera3D.channel.eye,
     root = sugar.orbit2d(9.0, 0.5, 0.0),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 
 -- 立方体：Flat 着色不依赖光源 ⇒ 不需要 Light 组件。

@@ -121,7 +121,7 @@ local function act(a, start)
             target = Transform.channel.rotation,
             root = sugar.ramp(from, turns[i][a], ACT),
             clock = clock.shift(start),
-            predicate = Predicate.Of { expr = clock.range(0.0, ACT) },
+            duration = ACT,
         }
     end
 end
@@ -150,7 +150,7 @@ local function light_sweep(a, start)
             z = expr.pure(LIGHTS[a][5]),
         },
         clock = clock.shift(start),
-        predicate = Predicate.Of { expr = clock.range(0.0, ACT) },
+        duration = ACT,
     }
 end
 
@@ -180,7 +180,7 @@ for i = 1, 5 do
         target = Transform.channel.rotation,
         root = sugar.ramp(turns[i][4], turns[i][5], FINALE),
         clock = clock.shift(FINALE_START),
-        predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
+        duration = FINALE,
     }
 end
 expr.bind {
@@ -188,7 +188,7 @@ expr.bind {
     target = Transform.channel.position,
     root = sugar.orbit2d(1.5, 1.2, 3.7851),
     clock = clock.shift(FINALE_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
+    duration = FINALE,
 }
 -- 银立方体（正中央）缩放呼吸。
 expr.bind {
@@ -196,5 +196,5 @@ expr.bind {
     target = Transform.channel.scale,
     root = sugar.wave(1.0, 0.16, 1.4),
     clock = clock.shift(FINALE_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
+    duration = FINALE,
 }

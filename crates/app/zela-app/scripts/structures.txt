@@ -10,25 +10,25 @@
 #
 # 重录：ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes（结构指纹与设备无关，无需 --record）。
 
-atlas = 66585d5ae5571d16
+atlas = 10760f65a80589f2
 cap_background = 42b9a61345666af9
-cap_dash = b7b6b446dfacfdb5
+cap_dash = 39f367d61fcb56b9
 cap_gradient = d63f043fe8fbd329
-cap_mix = 82d9fb6d1225d68f
+cap_mix = 02f22020f5e4b24e
 cap_second = b22e4e48cdf5e705
 cap_window = bb41730ca749961b
-capability_gaps = cb0c990d1a0f22a8
+capability_gaps = 7a625f5e9f26501e
 demo3d = 8d4e2feb1f0c1505
-fourier = 69f50e4331e50928
+fourier = c237f1d876843e77
 fusion = e230e67c3aa38323
-orbit = f4b076ded3f29991
+orbit = 34a95326e1884203
 pbr_lights = c5083bbb0f9be1e3
 pbr_materials = 72bf9ecc72395787
 pbr_scene = 799ccf1bee89289b
-pendulum = 594637080bc13b70
+pendulum = 34bf99f8a0a22122
 shaded_meshes = 621dbe9086a20fed
-spring = 4b7ad4d61c5d4889
-storyboard = bd4cc50d1dc07704
-surface_matrix = 15d315122c605a6d
-surface_matrix.js = 15d315122c605a6d
-vector_paths = 8d4ce1433c597884
+spring = 6fc3ab36b031a858
+storyboard = cee5ea10e798d307
+surface_matrix = cc4985454fba587c
+surface_matrix.js = cc4985454fba587c
+vector_paths = 8721ae3b216c98a1

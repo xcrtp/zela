@@ -88,21 +88,21 @@ expr.bind {
     target = Transform.channel.rotation,
     root = sugar.wave(0.0, AMP1, q(TAU / 2.0)),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T1) },
+    duration = T1,
 }
 expr.bind {
     object = trace,
     target = Reveal.channel["end"],
     root = sugar.ramp(0.0, 1.0, T1),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T1) },
+    duration = T1,
 }
 expr.bind {
     object = ring,
     target = Circle.channel.radius,
     root = sugar.wave(0.34, 0.06, 3.0),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, T1) },
+    duration = T1,
 }
 for _, object in ipairs({ trace, bob, ring }) do
     expr.bind {
@@ -110,7 +110,7 @@ for _, object in ipairs({ trace, bob, ring }) do
         target = Opacity.channel.value,
         root = sugar.ramp(0.0, 1.0, 0.6),
         clock = clock.scale(1.0),
-        predicate = Predicate.Of { expr = clock.range(0.0, T1) },
+        duration = T1,
     }
 end
 
@@ -120,12 +120,12 @@ expr.bind {
     target = Transform.channel.rotation,
     root = sugar.wave(0.0, AMP2, q(TAU / 2.5)),
     clock = clock.shift(T1),
-    predicate = Predicate.Of { expr = clock.range(0.0, T2) },
+    duration = T2,
 }
 expr.bind {
     object = ring,
     target = Circle.channel.radius,
     root = sugar.wave(0.34, 0.05, 4.0),
     clock = clock.shift(T1),
-    predicate = Predicate.Of { expr = clock.range(0.0, T2) },
+    duration = T2,
 }

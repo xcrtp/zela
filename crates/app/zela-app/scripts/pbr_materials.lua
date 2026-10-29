@@ -164,7 +164,7 @@ for i = 1, 9 do
         target = Transform.channel.rotation,
         root = keyed3(7.0, q(TAU * RATES[i] * 0.5), 16.0, q(TAU * RATES[i])),
         clock = clock.scale(1.0),
-        predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+        duration = MAIN,
     }
 end
 -- 变体对照也缓慢自转：转面时 Lambert 无高光、Flat 恒定纯色，与 Pbr 对照。
@@ -174,7 +174,7 @@ for _, object in ipairs({ flat, lambert }) do
         target = Transform.channel.rotation,
         root = sugar.ramp(0.0, q(TAU * 0.8), MAIN),
         clock = clock.scale(1.0),
-        predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+        duration = MAIN,
     }
 end
 -- 冷光公转（Orbit）、暖光横扫（Ramp2）：高光在网格上移动。
@@ -183,7 +183,7 @@ expr.bind {
     target = Transform.channel.position,
     root = sugar.orbit2d(3.7, 1.1, 0.0),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+    duration = MAIN,
 }
 expr.bind {
     object = light_b,
@@ -202,7 +202,7 @@ expr.bind {
         z = expr.pure(-1.6),
     },
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+    duration = MAIN,
 }
 -- 中心立方体（半金属青绿）：缩放呼吸，突显粗糙度对镜面高光宽度的影响。
 expr.bind {
@@ -210,5 +210,5 @@ expr.bind {
     target = Transform.channel.scale,
     root = sugar.wave(1.0, 0.18, 1.3),
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
+    duration = MAIN,
 }

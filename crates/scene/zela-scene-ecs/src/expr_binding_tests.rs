@@ -100,6 +100,30 @@ fn time_window(start: f64, end: f64) -> Expr {
     )
 }
 
+/// `predicate = clock.range(start, end)` 的手写形态（`And(Ge, Lt)` —— 与库内
+/// `clock.range` 逐字段相同，闭区间左端）。
+fn clock_range(start: f64, end: f64) -> Expr {
+    Expr::call(
+        OpRef::new("zela.math", "and"),
+        [
+            Expr::call(
+                OpRef::new("zela.math", "ge"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(start),
+                ],
+            ),
+            Expr::call(
+                OpRef::new("zela.math", "lt"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(end),
+                ],
+            ),
+        ],
+    )
+}
+
 fn circle() -> ze_scene_contract::Components {
     vec![Box::new(Circle::new((0.0, 0.0), 0.25))]
 }
@@ -339,7 +363,7 @@ fn hold_rejects_unanalyzable_predicate_at_assembly() {
     assert_eq!(error, ExprBindError::UnanalyzableHold);
 }
 
-/// 糖层展开后的 payload 与手写 predicate + hold **逐字节相同**。
+/// 糖层展开后的 payload 与手写 `clock.range(0, d)` + hold **逐字节相同**。
 #[test]
 fn duration_sugar_equals_predicate_and_hold() {
     let mut sugar = SceneEncoder::new();
@@ -357,7 +381,7 @@ fn duration_sugar_equals_predicate_and_hold() {
             sin_time(),
             library(),
             global_clock(),
-            Some(time_lt(2.0)),
+            Some(clock_range(0.0, 2.0)),
             ResetBehavior::Hold,
             0.0,
         )
@@ -366,7 +390,7 @@ fn duration_sugar_equals_predicate_and_hold() {
     assert_eq!(
         sugar.finish().to_json().expect("serialize sugar"),
         explicit.finish().to_json().expect("serialize explicit"),
-        "duration ≡ predicate t<d + reset hold"
+        "duration ≡ clock.range(0, d) + reset hold"
     );
 }
 

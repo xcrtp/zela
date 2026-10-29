@@ -92,7 +92,7 @@ expr.bind {
     target = Reveal.channel["end"],
     root = Scale { k = 0.5, of = clock.time() },
     clock = clock.scale(1.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, 2.0) },
+    duration = 2.0,
 }
 -- 2–2.5s：停（没有绑定生效 ⇒ 上一步的值保持）
 -- 2.5–3.5s：镜头推进（scale 与 center 同区间 —— 旧 `parallel` 的两条 action）
@@ -101,14 +101,14 @@ expr.bind {
     target = Camera2D.channel.scale,
     root = sugar.ramp(40.0, 110.0, 1.0),
     clock = clock.shift(2.5),
-    predicate = Predicate.Of { expr = clock.range(0.0, 1.0) },
+    duration = 1.0,
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.center,
     root = sugar.ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
     clock = clock.shift(2.5),
-    predicate = Predicate.Of { expr = clock.range(0.0, 1.0) },
+    duration = 1.0,
 }
 -- 3.5–4.5s：公式逐轮廓依次书写（1s 平摊；轮廓数可能为 0）
 if #formula_handles > 0 then
@@ -120,7 +120,7 @@ if #formula_handles > 0 then
             target = Reveal.channel["end"],
             root = sugar.ramp(0.0, 1.0, each),
             clock = clock.shift(start),
-            predicate = Predicate.Of { expr = clock.range(0.0, each) },
+            duration = each,
         }
     end
 end

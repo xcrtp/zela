@@ -197,14 +197,14 @@ expr.bind {
     target = Opacity.channel.value,
     root = sugar.ramp(0.0, 1.0, FADE),
     clock = clock.shift(0.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, FADE) },
+    duration = FADE,
 }
 expr.bind {
     object = pulse,
     target = Opacity.channel.value,
     root = sugar.ramp(0.0, 1.0, FADE),
     clock = clock.shift(0.0),
-    predicate = Predicate.Of { expr = clock.range(0.0, FADE) },
+    duration = FADE,
 }
 
 -- ── 4. 主段：所有向量自转（S3 Rotation），相位点公转（S4 Orbit），脉冲书写
@@ -217,7 +217,7 @@ expr.bind {
     target = Transform.channel.rotation,
     root = rotation_expr(1),
     clock = clock.shift(MAIN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 for i = 2, #HARMONICS do
     expr.bind {
@@ -225,7 +225,7 @@ for i = 2, #HARMONICS do
         target = Transform.channel.rotation,
         root = rotation_expr(HARMONICS[i] - HARMONICS[i - 1]),
         clock = clock.shift(MAIN_START),
-        predicate = Predicate.Of { expr = clock.range(0.0, T) },
+        duration = T,
     }
 end
 expr.bind {
@@ -233,14 +233,14 @@ expr.bind {
     target = Transform.channel.position,
     root = sugar.orbit2d(0.18, TAU / T, 0.0),
     clock = clock.shift(MAIN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 expr.bind {
     object = pulse,
     target = Reveal.channel["end"],
     root = sugar.ramp(0.0, 1.0, T),
     clock = clock.shift(MAIN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, T) },
+    duration = T,
 }
 
 -- ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
@@ -249,26 +249,26 @@ expr.bind {
     target = Camera2D.channel.scale,
     root = sugar.ramp(55.0, 90.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
+    duration = ZOOM,
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.center,
     root = sugar.ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
+    duration = ZOOM,
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.scale,
     root = sugar.ramp(90.0, 55.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
+    duration = ZOOM,
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.center,
     root = sugar.ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
-    predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
+    duration = ZOOM,
 }

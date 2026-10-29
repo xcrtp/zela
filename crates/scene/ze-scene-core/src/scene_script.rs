@@ -69,8 +69,10 @@ pub enum ExprBindError {
     /// 该通道尚未由宿主注入（Event / 组件字段 / Env 属后续批次）。
     #[error("通道 `{0}` 尚未由宿主注入")]
     UnsupportedChannel(ChannelRef),
-    /// `predicate` 与 `duration` 同时给出（后者是 `t < d` 的糖）。
-    #[error("predicate 与 duration 不能同时指定（duration ≡ predicate `t < d` + reset hold）")]
+    /// `predicate` 与 `duration` 同时给出（后者是 `clock.range(0, d)` 的糖）。
+    #[error(
+        "predicate 与 duration 不能同时指定（duration ≡ predicate `clock.range(0, d)` + reset hold）"
+    )]
     ConflictingGate,
     /// `reset = Hold` 的 predicate 无法分析成局部时间区间集。
     ///
@@ -213,7 +215,7 @@ fn check_read_objects(expr: &Expr, object_count: usize) -> Result<(), ExprBindEr
 /// 对象用**脚本句柄**（提案 #6：`spawn` 已经返回句柄，按名字找对象的
 /// `find_named` / `Name{}` 依赖已删除）。
 ///
-/// `duration > 0` 是**糖**：展开成 `predicate = t < duration` + `reset = hold`
+/// `duration > 0` 是**糖**：展开成 `predicate = clock.range(0, duration)` + `reset = hold`
 /// （产物里只留 predicate / reset；`duration` 不进新 payload）。
 fn record_expression(
     timeline: &mut Timeline,
@@ -269,15 +271,27 @@ fn record_expression(
     Ok(())
 }
 
-/// `duration` 的糖：`predicate = Lt { time, duration }`（`time` 是绑定时钟的局部时间）。
-fn duration_predicate(duration: f64) -> Expr {
-    Expr::call(
+/// `duration` 的糖：`predicate = clock.range(0, duration)`（`time` 是绑定时钟的局部时间）。
+///
+/// 展开形状与脚本手写 `Predicate.Of { expr = clock.range(0.0, d) }` **逐字节相同**
+/// （`And [Ge [t, 0], Lt [t, d]]`）—— 因此把样板 predicate 换成 `duration = d`
+/// 不改变产物（全批验收 #9）。加 `Ge(t, 0)` 对全局时钟是恒真，但让"段"成为
+/// **闭合区间**：`clock.shift` 之后局部时间为负的前段不会被误算进窗口。
+///
+/// **装配层的用法**（`zela-app`）：在收集算子 revision **之前**先调用它把
+/// `duration` 展开成 predicate ⇒ 产物里的 `and` / `ge` / `lt` revision 与
+/// 手写 predicate 完全一致（否则两边的 `op_revisions` 会差三条）。
+pub fn duration_predicate(duration: f64) -> Expr {
+    let leaf = || Expr::channel(ChannelRef::builtin("time"));
+    let ge = Expr::call(
+        OpRef::new("zela.math", "ge"),
+        [leaf(), Expr::pure(0.0)],
+    );
+    let lt = Expr::call(
         OpRef::new("zela.math", "lt"),
-        [
-            Expr::channel(ChannelRef::builtin("time")),
-            Expr::pure(duration),
-        ],
-    )
+        [leaf(), Expr::pure(duration)],
+    );
+    Expr::call(OpRef::new("zela.math", "and"), [ge, lt])
 }
 
 /// **Encoder 内的局部句柄**：声明期索引，`commit` 时才映射到 [`ObjectId`]。
