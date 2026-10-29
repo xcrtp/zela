@@ -19,7 +19,8 @@ scene.spawn({
     Fill { color = Color { r = 40, g = 120, b = 220, a = 255 } },
 })
 
--- 实验组：同一几何，颜色由 GPU 求值。
+-- 实验组：同一几何，颜色由 GPU 求值 —— `clock.time()` 是**外部注入**（uniform，
+-- 布局由生成器的参数表推导，不是按通道名特判）。
 local shaded = scene.spawn({
     Circle { x = 2.6, y = 0.0, r = 1.6 },
     Fill { color = Color { r = 10, g = 20, b = 30, a = 255 } },
@@ -28,7 +29,7 @@ expr.shader {
     object = shaded,
     root = Vec3Of {
         x = expr.pure(0.20),
-        y = expr.pure(0.65),
+        y = Cos { of = clock.time() },
         z = expr.pure(0.95),
     },
 }

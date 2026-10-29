@@ -103,6 +103,54 @@ pub struct PathOptions {
 pub struct ShaderPaint {
     /// 生成的 WGSL 纯函数（含 `struct Params` 与 `fn eval`）。
     pub source: String,
+    /// **外部注入的参数表**：由生成器的参数表按 **WGSL uniform 布局**推导，
+    /// 与具体通道无关（标量 / 向量 / 矩阵同一套规则）。
+    #[serde(default)]
+    pub params: Vec<ShaderParam>,
+    /// `Params` 的 uniform 字节数（16 的倍数；无参数时为 0）。
+    #[serde(default)]
+    pub size: u32,
+}
+
+/// 一个外部注入参数：通道名 + 槽类型 + 在 `Params` 里的字节偏移。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShaderParam {
+    /// 通道的限定名（`time`、`zela.scene.Circle.radius` …），宿主按它找供给者。
+    pub channel: String,
+    pub kind: ShaderParamKind,
+    /// 相对 `Params` 起点的字节偏移（由 std140 对齐规则算出）。
+    pub offset: u32,
+}
+
+/// 参数槽类型（只影响 uniform 的对齐与写入宽度）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShaderParamKind {
+    F32,
+    I32,
+    Vec2,
+    Vec3,
+    Mat4,
+}
+
+impl ShaderParamKind {
+    /// WGSL uniform 的对齐（std140）。
+    pub fn align(self) -> u32 {
+        match self {
+            Self::F32 | Self::I32 => 4,
+            Self::Vec2 => 8,
+            Self::Vec3 | Self::Mat4 => 16,
+        }
+    }
+
+    /// WGSL uniform 的大小。
+    pub fn size(self) -> u32 {
+        match self {
+            Self::F32 | Self::I32 => 4,
+            Self::Vec2 => 8,
+            Self::Vec3 => 12,
+            Self::Mat4 => 64,
+        }
+    }
 }
 
 impl PathOptions {
@@ -205,6 +253,8 @@ mod tests {
         let shader_only = PathOptions {
             shader: Some(ShaderPaint {
                 source: "fn eval() {}".to_string(),
+                params: Vec::new(),
+                size: 0,
             }),
             ..Default::default()
         };

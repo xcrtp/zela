@@ -394,12 +394,12 @@ impl SceneEncoder {
     /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
     ///
     /// 装饰性：不影响几何 / 状态；组件挂在创建载荷里 ⇒ 提交后与普通组件同样可见。
-    pub fn shader_fill(&mut self, object: Handle, source: String) -> Result<(), String> {
+    pub fn shader_fill(&mut self, object: Handle, paint: ze_render_ir::ShaderPaint) -> Result<(), String> {
         let components = self
             .creates
             .get_mut(object.0 as usize)
             .ok_or_else(|| format!("着色 codegen 的对象句柄无效：{}", object.0))?;
-        components.push(Box::new(ze_render_ir::ShaderPaint { source }));
+        components.push(Box::new(paint));
         Ok(())
     }
 
@@ -539,12 +539,12 @@ impl SceneScript {
     /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
     ///
     /// 与 [`SceneEncoder::shader_fill`] 同一口径：装饰性，不影响几何 / 状态。
-    pub fn shader_fill(&mut self, object: Handle, source: String) -> Result<(), String> {
+    pub fn shader_fill(&mut self, object: Handle, paint: ze_render_ir::ShaderPaint) -> Result<(), String> {
         let components = self
             .creates
             .get_mut(object.0 as usize)
             .ok_or_else(|| format!("着色 codegen 的对象句柄无效：{}", object.0))?;
-        components.push(Box::new(ze_render_ir::ShaderPaint { source }));
+        components.push(Box::new(paint));
         Ok(())
     }
 }

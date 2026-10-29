@@ -511,6 +511,12 @@ pub fn scene_records(
             for mut path in geometry.iter().cloned() {
                 path.fill = rgba(fill);
                 path.options = options.clone();
+                // **阶段 2**：装饰性着色 codegen —— 填充槽交给 GPU 求值（参数先清零，
+                // 宿主每帧按参数表填入外部注入）。
+                path.shader = options.shader.as_ref().map(|shader| crate::render::ShaderFill {
+                    source: shader.source.clone(),
+                    params: vec![0u8; shader.size as usize],
+                });
                 out.push(PathRecord::Fill(path));
             }
         }

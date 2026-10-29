@@ -66,9 +66,59 @@ pub struct VectorFrame {
     /// 矢量画布只有视口那么大 ⇒ 取帧时必须把原点去掉，否则整幅内容按视口偏移平移、
     /// 底部被裁掉。headless 的 `ViewRect.min = 0` ⇒ 本字段为 0，基线逐位不变。
     origin: [f32; 2],
+    /// **阶段 2（着色 codegen）**：本帧时钟（秒），按参数表注入。
+    time: f32,
+    /// 有外部注入参数 ⇒ 静止帧复用必须失效（参数可能每帧变）。
+    shader_params: bool,
+}
+
+/// **阶段 2**：一个外部注入值（按槽类型写进 uniform 字节）。
+enum ShaderValue {
+    F32(f32),
+    I32(i32),
+    Vec2([f32; 2]),
+    Vec3([f32; 3]),
+    Mat4([[f32; 4]; 4]),
+}
+
+impl ShaderValue {
+    fn write(self, bytes: &mut [u8], at: usize, kind: ze_render_ir::ShaderParamKind) {
+        let put = |bytes: &mut [u8], at: usize, values: &[f32]| {
+            for (i, value) in values.iter().enumerate() {
+                let offset = at + i * 4;
+                if offset + 4 <= bytes.len() {
+                    bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+                }
+            }
+        };
+        match (self, kind) {
+            (Self::F32(value), _) => put(bytes, at, &[value]),
+            (Self::I32(value), _) => {
+                if at + 4 <= bytes.len() {
+                    bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+                }
+            }
+            (Self::Vec2(value), _) => put(bytes, at, &value),
+            (Self::Vec3(value), _) => put(bytes, at, &value),
+            (Self::Mat4(matrix), _) => {
+                for (row, values) in matrix.iter().enumerate() {
+                    put(bytes, at + row * 16, values);
+                }
+            }
+        }
+    }
 }
 
 impl VectorFrame {
+    /// **阶段 2**：外部注入的供给者表（通道名 → 值）。今天只有 	ime；
+    /// 其余通道显式报"缺少供给者"（不填 0）。
+    fn shader_value(&self, channel: &str) -> Option<ShaderValue> {
+        match channel {
+            "time" => Some(ShaderValue::F32(self.time)),
+            _ => None,
+        }
+    }
+
     /// 在调度器借用期内取完（`DrawQueue` 不是 `Clone`）。
     pub fn take(runtime: &Runtime) -> Result<Self, String> {
         runtime
@@ -169,6 +219,15 @@ impl VectorFrame {
                             .collect()
                     })
                     .unwrap_or_default();
+                // **阶段 2**：本帧时钟 + 是否有外部注入参数。
+                let time = scheduler
+                    .resources()
+                    .get::<ze_scene_core::TimeState>()
+                    .map(|state| state.elapsed)
+                    .unwrap_or(0.0);
+                let shader_params = draws.iter().any(|draw| {
+                    draw.style.paint.shader.as_ref().is_some_and(|shader| !shader.params.is_empty())
+                });
                 Ok(Self {
                     layers,
                     draws,
@@ -179,6 +238,8 @@ impl VectorFrame {
                     has_line_meshes,
                     mesh_textures,
                     origin,
+                    time,
+                    shader_params,
                 })
             })
     }
@@ -188,6 +249,10 @@ impl VectorFrame {
     /// 只对不含 3D 相机的帧成立：3D 的网格 / 灯在**渲染时**才从队列读（不在快照里），
     /// 快照相同并不代表画面相同 —— 那种情况一律重渲，不冒险。
     pub fn same_2d_frame(&self, other: &Self) -> bool {
+        // **阶段 2**：参数可能每帧变（时间 / 输入）⇒ 几何相同也必须重渲。
+        if self.shader_params || other.shader_params {
+            return false;
+        }
         if self.content().has_3d_camera || other.content().has_3d_camera {
             return false;
         }
@@ -438,6 +503,20 @@ impl VectorFrame {
                 )
                 .map_err(|error| format!("形变项 #{index}：{error}"))?,
             );
+        }
+        // **阶段 2**：外部注入 —— 按参数表逐项向供给者取值（缺供给者 ⇒ 显式报错）。
+        for record in &mut records {
+            let zela_render_vector::PathRecord::Fill(fill) = record else { continue };
+            let Some(paint) = fill.options.shader.as_ref() else { continue };
+            let Some(shader) = fill.shader.as_mut() else { continue };
+            let mut bytes = vec![0u8; paint.size as usize];
+            for param in &paint.params {
+                let Some(value) = self.shader_value(&param.channel) else {
+                    return Err(format!("着色 codegen 缺少注入通道 {}（宿主未注册供给者）", param.channel));
+                };
+                value.write(&mut bytes, param.offset as usize, param.kind);
+            }
+            shader.params = bytes;
         }
         Ok(records)
     }

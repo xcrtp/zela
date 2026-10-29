@@ -46,6 +46,7 @@ pub use layer::{LayerBlend, LayerId};
 pub use mesh::{PrimitiveTopology, ShaderVariant, TextureHandle, UvProjection};
 pub use paint::{
     BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint, ShaderPaint,
+    ShaderParam, ShaderParamKind,
 };
 pub use params::{
     AmbientOcclusion, Bloom, Msaa, RenderParamError, RenderParams, TextureFilter, ToneCurve,

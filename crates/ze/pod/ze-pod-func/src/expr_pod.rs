@@ -99,6 +99,16 @@ pub struct PendingBinding {
     pub root_type: ChannelType,
 }
 
+/// 一个待注入参数（pod 层只认槽类型；宿主转成渲染 IR 的种类）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct PendingShaderParam {
+    /// 通道的限定名（`time` …）；宿主按它找供给者。
+    pub channel: String,
+    pub kind: ze_comb::SlotType,
+    /// 相对 `Params` 起点的字节偏移（std140）。
+    pub offset: u32,
+}
+
 /// 一条待并入场景的**着色 codegen**（阶段 2）：对象 + 生成的 WGSL。
 #[derive(Clone, Debug)]
 pub struct PendingShader {
@@ -106,6 +116,10 @@ pub struct PendingShader {
     pub object: Handle,
     /// 生成的 WGSL 纯函数（`eval` 返回 `vec3<f32>`）。
     pub source: String,
+    /// **外部注入的参数表**（由生成器的参数表按 uniform 布局推导）。
+    pub params: Vec<PendingShaderParam>,
+    /// `Params` 的 uniform 字节数（16 的倍数）。
+    pub size: u32,
 }
 
 /// 表达式 Pod。
@@ -998,20 +1012,76 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
         );
         return;
     }
-    if !emitted.params.is_empty() {
-        push_binding_error(
-            this,
-            "着色 codegen 本版只支持不含通道的常量表达式（逐帧参数见 GAPS AX-02）".to_string(),
-        );
-        return;
+    // **外部注入**：参数表由生成器的参数表按 WGSL uniform 布局（std140）推导 ——
+    // 与通道语义无关（标量 / 向量 / 矩阵同一套规则）。通道限定名从表达式里收集，
+    // 按与后端**同一 mangle 规则**反查回 `WgslParam.name`。
+    let mut channels: Vec<(String, ze_comb::SlotType)> = Vec::new();
+    let mut collect = CollectChannels(&mut channels);
+    let _ = expr.walk(&mut collect);
+    let mangle = |qualified: &str| {
+        let mut name = String::from("c_");
+        for byte in qualified.bytes() {
+            name.push(if byte.is_ascii_alphanumeric() { byte as char } else { '_' });
+        }
+        name
+    };
+    let mut params: Vec<PendingShaderParam> = Vec::with_capacity(emitted.params.len());
+    let mut offset = 0u32;
+    for param in &emitted.params {
+        let Some((channel, _)) = channels
+            .iter()
+            .find(|(qualified, _)| mangle(qualified) == param.name)
+        else {
+            push_binding_error(
+                this,
+                format!("着色 codegen 无法把参数 `{}` 映射回通道", param.name),
+            );
+            return;
+        };
+        let (kind, align, size) = match param.ty {
+            ze_comb::SlotType::F64 => (ze_comb::SlotType::F64, 4u32, 4u32),
+            ze_comb::SlotType::I64 => (ze_comb::SlotType::I64, 4, 4),
+            ze_comb::SlotType::Vec2 => (ze_comb::SlotType::Vec2, 8, 8),
+            ze_comb::SlotType::Vec3 => (ze_comb::SlotType::Vec3, 16, 12),
+            ze_comb::SlotType::Bool => {
+                push_binding_error(this, "着色 codegen 不支持 Bool 参数（uniform 里没有 bool）".to_string());
+                return;
+            }
+        };
+        offset = offset.div_ceil(align) * align;
+        params.push(PendingShaderParam { channel: channel.clone(), kind, offset });
+        offset += size;
     }
+    let size = offset.div_ceil(16) * 16;
     this.shaders
         .lock()
         .expect("着色 codegen 表未被毒化")
         .push(PendingShader {
             object: spec.object,
             source: emitted.source,
+            params,
+            size,
         });
+}
+
+/// 收集表达式里出现过的通道（限定名 + 槽类型）。
+struct CollectChannels<'a>(&'a mut Vec<(String, ze_comb::SlotType)>);
+
+impl<'a> ze_comb::ExprVisitor<'a> for CollectChannels<'_> {
+    type Error = std::convert::Infallible;
+
+    fn enter(
+        &mut self,
+        expr: &'a ze_comb::Expr,
+        _parent: Option<&'a ze_comb::Node>,
+    ) -> Result<bool, Self::Error> {
+        if let Some(channel) = expr.node.channel() {
+            if let Some(ty) = ze_comb::slot_of_channel(channel.ty) {
+                self.0.push((channel.qualified(), ty));
+            }
+        }
+        Ok(true)
+    }
 }
 
 fn bind(pod: &dyn Pod, spec: BindSpec) {

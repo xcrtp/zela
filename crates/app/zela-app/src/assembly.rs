@@ -301,7 +301,28 @@ impl PodAssembly {
                 }
             })?;
             script
-                .shader_fill(object, pending.source)
+                .shader_fill(
+                    object,
+                    ze_render_ir::ShaderPaint {
+                        source: pending.source,
+                        params: pending
+                            .params
+                            .into_iter()
+                            .map(|param| ze_render_ir::ShaderParam {
+                                channel: param.channel,
+                                kind: match param.kind {
+                                    ze_comb::SlotType::F64 => ze_render_ir::ShaderParamKind::F32,
+                                    ze_comb::SlotType::I64 => ze_render_ir::ShaderParamKind::I32,
+                                    ze_comb::SlotType::Vec2 => ze_render_ir::ShaderParamKind::Vec2,
+                                    ze_comb::SlotType::Vec3 => ze_render_ir::ShaderParamKind::Vec3,
+                                    ze_comb::SlotType::Bool => ze_render_ir::ShaderParamKind::F32,
+                                },
+                                offset: param.offset,
+                            })
+                            .collect(),
+                        size: pending.size,
+                    },
+                )
                 .map_err(|error| BrokerError::Injection {
                     node: EXPR_SERVICE.to_string(),
                     source: PodError::CallFailed(error),
