@@ -15,7 +15,7 @@
 ## 结构指纹基线（[`structures.txt`](structures.txt)，**等式**判据）
 
 > 执行计划《可观测性与性能基准_结构指纹与统一门禁》阶段 1。像素是**投影**
-> （被 GPU / 字体 / 编码器钉死在本机），结构指纹是**状态本身**。
+> （被 GPU / 字体 / 编码器固定在本机），结构指纹是**状态本身**。
 
 - **口径**：`zela-scene-ecs::fingerprint_world` —— 对象按 `ObjectId` 升序，逐字段读
   `TARGETS`（精确 f32 位），再叠 `WorldTransforms`（父子累乘后的 16×f32）。

@@ -56,3 +56,4 @@ README 的阅读导览只指向这里 —— 同一份定义，不复制第二�
 - 文档用语：禁止词表定义在 `xtask/src/lib.rs` 的 `FORBIDDEN_TERMS`；单跑检查
   `cargo run -p xtask -- terms`（也挂在 `--step docs`）。确有合理场合时在
   `FORBIDDEN_TERM_ALLOW` 按「词 + 文件 + 理由」登记
+- 禁止词表不限于清单：每批收尾按字根（钉 / 锚 / 锁 / 真）扫一遍，近义词同样改写（GAPS `BA-03`）

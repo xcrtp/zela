@@ -61,7 +61,7 @@ assemble_runtime → Runtime{ DriverPod, RenderContext, duration/record_hint }
 | 参与帧推进 | **是** | **否** |
 | 回执 | `Receipt::wait()` | — |
 
-**铁律：任何影响场景状态的都必须走命令队列；事件只用于观测。** 两者是**不同的泛型类型**
+**凡影响场景状态的，都走命令队列；事件只用于观测。** 两者是**不同的泛型类型**
 （命令 vs 事件），把事件当命令提交是编译错误——若退化成同一个值类型承载，约束就只剩约定。
 
 GUI 与 headless 共用同一个 Driver pod，差别只在 `dt` 从哪来；因此不存在「另写一套简化帧循环」的分叉。

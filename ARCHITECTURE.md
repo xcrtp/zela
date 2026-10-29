@@ -410,7 +410,7 @@ System 只做"取相机 / 取相位 → 调对象层 `refresh`"的接线。原�
                                  字形内全部子轮廓同路径 ⇒ 填充按 nonzero 挖孔）
 ```
 
-- **铁律**：`typst` 仅允许出现在 `ze-prerender` 且 feature-gated；`zela-render`
+- 约定：`typst` 仅允许出现在 `ze-prerender` 且 feature-gated；`zela-render`
   只依赖 `ze-content`（验收：`cargo tree -p zela-render` 无 typst）。
 - 锚点两级映射：`Glyph.span` → `WorldExt::range`（main source 字节区间）
   → 原始归一化源码 `find`；归一化/哈希统一由 `ze-content` 实现，保证跨引擎一致。
@@ -1588,7 +1588,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
   `cargo verify --step hashes` 用显式的 (作品, 后端) 对表，不经过 Auto 路由。
   页面 `localStorage` 的后端残留值校验回落。
 - **smoke 是第二个吃默认值的入口**（计划 §5.4 漏了）：它调 `zela-render` 不传 `--backend`。
-  B19 把 smoke 显式钉在 `--backend wgpu`（录制时的口径）⇒ `[smoke]` 的 `2847735c…`
+  B19 把 smoke 显式固定在 `--backend wgpu`（录制时的口径）⇒ `[smoke]` 的 `2847735c…`
   逐位不变；新默认路径由 `hashes` 的 13 条 `[vector]` 与 routing 单测守护，
   不靠 smoke 这条 15 帧的短跑。
 - **参照物冻结（GAPS V-04）**：wgpu 只修正确性、不补能力；它作为第二消费者的义务是
@@ -1641,7 +1641,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 > 一句话：**先普查，再暴露；暴露即验证。** 公开面只覆盖了后端能力的一小部分，而"已对拍 27 条"
 > 这句话的覆盖面必须被声明。
 
-**普查对照表**（锚定 `Record` / `Upload` / wgsl，不从上层的 `Style2D` 往外补）
+**普查对照表**（以 `Record` / `Upload` / wgsl 为基准，不从上层的 `Style2D` 往外补）
 
 | 后端能力（字段 / 槽位） | 真实语义 | 矢量 crate 公开面 | 场景层入口 |
 |---|---|---|---|
@@ -2115,4 +2115,4 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **NatRec（B5）**：`nat_rec { count, init, step }` 三语言可达；`count` 装配期强制非负整数
   （非整数请显式 `Floor`）；含 `NatRec` 的绑定 `seek_kind == Replay`。
 - **库版本**：`zela.math@13 → @17`（`time_of/range` → `method` → `nat_rec` 系 →
-  `query_self/bind_each` → `exists`），指纹逐次重钉；`zela.scene` 不受影响。
+  `query_self/bind_each` → `exists`），指纹逐次重算；`zela.scene` 不受影响。

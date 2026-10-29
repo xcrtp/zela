@@ -228,7 +228,7 @@
 |---|---|---|---|---|
 | H-01 | `pod/types.rs` / `scene_service.rs` 反向依赖 ECS 内部（`crate::animation` / `crate::scene::components` / `crate::scene_script`） | 场景层 | **已关闭（B3-1a/b）** | `grep "^use crate::" ze-scene-api/src` = 0（仅剩 crate 内 `crate::types` / `crate::content_service`） |
 | H-02 | `ze-object` 与 `zela-scene` 组件/纯逻辑混居 | 分层 | **已关闭（B3-1b/f）** | `ze-scene-core::object` 承接全部对象；`ze-object` crate 已删除（`cargo tree` 中无该包） |
-| H-03 | 动画目标 `Target::apply(&mut WorldScene)` 把 hecs 适配器钉进"数据层" | 核心层 | **已关闭（B3-1b）** | 新增 `ze_scene_core::scene_write::{SceneWrite, with_component}`（object-safe 擦除写）；ECS 用组件登记表实现分发 |
+| H-03 | 动画目标 `Target::apply(&mut WorldScene)` 把 hecs 适配器写进"数据层" | 核心层 | **已关闭（B3-1b）** | 新增 `ze_scene_core::scene_write::{SceneWrite, with_component}`（object-safe 擦除写）；ECS 用组件登记表实现分发 |
 | H-04 | 组件登记表 / persist / math_pod 写在 ECS 实现里，脚本数据（core）却要依赖它 | 核心层 | **已关闭（B3-1b）** | `registry` / `persist` / `math_pod` 下沉 core；ECS 的 `add_known` 与 `SceneWrite` 共用导出的 `known_component_table!` |
 | H-05 | `pod/` 与实现同 crate，语言边界不独立 | 场景层 | **已关闭（B3-1c）** | 新 crate `ze-scene-api`；`cargo tree` 中 `zela-` / `hecs` = **0**；能力指纹未变 |
 | H-06 | `zela-scene` 自称"契约实现"却有 11k 行 | 场景层 | **已关闭（B3-1d）** | 实现改名 `zela-scene-ecs`；`zela-scene` 变壳层（re-export） |
@@ -712,7 +712,7 @@
 
 | 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| PB-01 | **路由粒度过宽**（整帧 vs 图层级）：`routing::reject_reason` 见 `has_content_texture` 就拒绝整个矢量后端，而 `content_backend_2d` 的注释本身证明"同一帧不同图层可以用不同后端实例" | 路由 / 能力判定 | **记账（PB Step 5：只修错引，不改实现）** | 原拒绝理由写「GAPS V2-12/V2-13」，但 V2-12 是 shapes 契约签名、V2-13 是渐变 / 纹理 / dash 的宿主入口 —— **指向了存在但不相关的东西**（与 B10 的「`params.z` 是半宽，已核对 wgsl:807」同型，读者会以为已核对）。已改为指向本条。代价：3 件作品（`surface_matrix` / `_js` / `atlas`）因此锁死在冻结的 wgpu 上。正确粒度是图层级：内容层继续用 wgpu 渲、视口层走矢量 |
+| PB-01 | **路由粒度过宽**（整帧 vs 图层级）：`routing::reject_reason` 见 `has_content_texture` 就拒绝整个矢量后端，而 `content_backend_2d` 的注释本身证明"同一帧不同图层可以用不同后端实例" | 路由 / 能力判定 | **记账（PB Step 5：只修错引，不改实现）** | 原拒绝理由写「GAPS V2-12/V2-13」，但 V2-12 是 shapes 契约签名、V2-13 是渐变 / 纹理 / dash 的宿主入口 —— **指向了存在但不相关的东西**（与 B10 的「`params.z` 是半宽，已核对 wgsl:807」同型，读者会以为已核对）。已改为指向本条。代价：3 件作品（`surface_matrix` / `_js` / `atlas`）因此只能走冻结的 wgpu 上。正确粒度是图层级：内容层继续用 wgpu 渲、视口层走矢量 |
 | PB-02 | V2-11（miter limit 4 vs 10）的评估结论 | 渲染 / 2D 描边 | **已记录·参数性（PB Step 3）** | 见 K 段 V2-11：1° 与 20° 两个尖角的覆盖率差 1.4% / 2.7%，四象限"最远亮像素"完全相同或差 0.3px ⇒ 无结构性差异，不改 wgsl 语义。测量用例 `miter_limit_difference_on_a_needle_angle`（`#[ignore]`，本机手工跑） |
 | PB-03 | **阴影光源上限（>4）的行为**：`shadow::fit` 只取前 `MOST` 个投射光源，第 5 个起**无提示丢弃** | 渲染 / 阴影 | **已关闭（PB Step 1：显式计数出口）** | `fit` 现在返回 `(maps, requested)`；请求数超过 `MOST` 时 `ShadowTotals { events, requested, cast }` 记录最坏一帧，经 `ZELA_FRAME_REPORT.vector_shadows` / 浏览器 `[vector-shadows]` / `zela-verify` 输出。单测：`more_lights_than_most_are_counted`（6 盏 ⇒ requested = 6、maps = 4）与 `shadow_totals_keep_the_worst_drop` |
 | PB-04 | **ContentTexture 图层在矢量后端仍不可用**：公开面没有多视图 / 内容纹理采样入口 | 渲染 / 图层合成 | **记账（PB Step 4 按 §4.4 剥离到 PC 批）** | 已核实：内部模型**是**同构的（`Player::views` 的 `CameraView` 先渲进画布、`image_groups` 按 key 可采样、`Record.texture` + `TEXTURED` 标志都在），但**全是 `pub(crate)`**；公开的 `render_2d*` / `render_3d*` 只接单视图 + `PathRecord::{Fill,Stroke,Mesh}`。缺的是三处**新公开面**：① 多视图入口（content key → canvas）；② 带纹理的路径 / 网格记录；③ 屏幕空间合成（`LayerBlend` + contain fit）的矢量等价物 —— `Blit` 只做全屏 present，不带图层变换与混合（计划 §4.2① 已点明"这一层没有现成"）。⇒ 按 §4.4 剥离，PB-A 照常落地；剥离代价 = 基线重录分两次（可接受） |
@@ -744,7 +744,7 @@
 ## Z. PD 批次记账（引擎能力普查与 API 暴露，2026-10-25）
 
 > 计划《PD执行计划_引擎能力普查与API暴露》。一句话：**先普查，再暴露；暴露即验证。**
-> 自底向上锚定 `Record` / `Upload` / wgsl —— 两处上轮的判断（"IR 没有图元"、
+> 自底向上以 `Record` / `Upload` / wgsl 为基准 —— 两处上轮的判断（"IR 没有图元"、
 > "多 stop 会绑架内核"）都被源码推翻，这恰好证明普查必须先于设计。
 
 | 编号 | 缺口 / 变更 | 影响层 | 类别 | 证据 |
@@ -923,10 +923,10 @@
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| AG-01 | **寻址数据化已落地（A 批）** | 场景 / 动画 | **已关闭（A）** | `TargetKind` 枚举删除，改为 [`FieldSpec`](crates/scene/ze-scene-core/src/animation/target.rs)：`name`（持久化名）/ `address`（规范地址 `Component.field`）/ `component`（组件登记表名字）/ `field` / `ty` / `write` / `read`。**读写同源**：read 不再是第二张表（[`SceneRead`](crates/scene/ze-scene-core/src/scene_write.rs) 与 `SceneWrite` 对称）。**类型不符显式报错**：`apply` 返回 `Result<(), TargetError>`，`TypeMismatch { target, expected, actual }`（用例 `type_mismatch_is_an_explicit_error`）。**coercion 独立成层**：`target::coerce`（`rotation_z` / `splat3` / `position3`）。**命名唯一来源**：`component` 必须等于 `known_type_name::<_>()`（用例 `component_names_come_from_the_registry`）。`SceneApi::clip` 的 target 改为地址字符串 ⇒ `@11`，指纹 `16274693131949166351` 已钉定。**验收**：36 条像素基线逐位不变；`cargo verify --step demo` 23 条 payload 与 manifest 一致 |
+| AG-01 | **寻址数据化已落地（A 批）** | 场景 / 动画 | **已关闭（A）** | `TargetKind` 枚举删除，改为 [`FieldSpec`](crates/scene/ze-scene-core/src/animation/target.rs)：`name`（持久化名）/ `address`（规范地址 `Component.field`）/ `component`（组件登记表名字）/ `field` / `ty` / `write` / `read`。**读写同源**：read 不再是第二张表（[`SceneRead`](crates/scene/ze-scene-core/src/scene_write.rs) 与 `SceneWrite` 对称）。**类型不符显式报错**：`apply` 返回 `Result<(), TargetError>`，`TypeMismatch { target, expected, actual }`（用例 `type_mismatch_is_an_explicit_error`）。**coercion 独立成层**：`target::coerce`（`rotation_z` / `splat3` / `position3`）。**命名唯一来源**：`component` 必须等于 `known_type_name::<_>()`（用例 `component_names_come_from_the_registry`）。`SceneApi::clip` 的 target 改为地址字符串 ⇒ `@11`，指纹 `16274693131949166351` 已固定。**验收**：36 条像素基线逐位不变；`cargo verify --step demo` 23 条 payload 与 manifest 一致 |
 | AG-02 | **规范地址与旧选择键并存（记账，非缺口）** | 脚本 API / 覆盖门禁 | **记账（A）** | 旧 payload 的 target 名沿用旧名（`CircleRadius` / `RevealRange` / …）⇒ 老产物逐字节不变；规范地址（`Circle.radius` / `Reveal.range` / …）作为**新选择键**同时可用，写同一字段。组合选择键（`Camera2DFraming` = `Framing2D.scale` ∪ `Framing2D.center`；`RevealRange` = `Reveal.end` ∪ `Reveal.range`）没有单一字段地址，`address` 与持久化名相同。**后果**：4 个单字段选择键当前没有作品直接使用（字段写入已被旧组合选择键覆盖）⇒ 在 [`capability_exemptions.txt`](crates/app/zela-app/scripts/demo/capability_exemptions.txt) 豁免并指向本行；B/C 批改用规范地址后应逐条删除（过期豁免会让门禁失败） |
 | AG-03 | **A 批偏差：字段访问器用声明宏而非 derive 宏** | `ze-scene-core` | **记账（A）** | 计划 §7 写「字段访问器（derive 宏）」。实际用 `scalar_spec!` / `vec2_spec!` / `vec3_spec!` 三个声明宏：**新增字段仍只写一行**（`scalar_spec!(CIRCLE_RADIUS, "CircleRadius", "Circle.radius", Circle, radius)`），且不必引入 proc-macro 依赖。`ze-scene-core` 已不依赖 `ze-pod-macro`。若将来字段路径需要嵌套（`a.b.c`），再评估 derive 形态 |
-| AG-04 | **`Select` 只留格式已落地（D 批）** | 表达式层 | **已关闭（D）** | `Node::Select { cond, then, else }` 的序列化形状钉死（命名子表达式，`{"type":"select","data":{…}}`），`children()` 覆盖三个分支 ⇒ 悬空 `Ref` / 环 / 通道校验照常生效。**求值不实现**：`CompiledExpr::compile` 返回 `ExprError::UnsupportedNode("select")`（显式未实现，不给出错误结果）。用例：`select_format_is_pinned`（JSON 形状 + round-trip）、`select_is_explicitly_unimplemented`。**未落地**：`Reveal.current_pos` 的读通道仍未接进宿主 M（AF-07 同一条），所以值分支暂时没有真实条件可用 |
+| AG-04 | **`Select` 只留格式已落地（D 批）** | 表达式层 | **已关闭（D）** | `Node::Select { cond, then, else }` 的序列化形状固定（命名子表达式，`{"type":"select","data":{…}}`），`children()` 覆盖三个分支 ⇒ 悬空 `Ref` / 环 / 通道校验照常生效。**求值不实现**：`CompiledExpr::compile` 返回 `ExprError::UnsupportedNode("select")`（显式未实现，不给出错误结果）。用例：`select_format_is_pinned`（JSON 形状 + round-trip）、`select_is_explicitly_unimplemented`。**未落地**：`Reveal.current_pos` 的读通道仍未接进宿主 M（AF-07 同一条），所以值分支暂时没有真实条件可用 |
 | AG-06 | **三语言构造器便捷化已落地（C 批）** | 脚本绑定 / 声明文件 | **已关闭（C）** | ① 构造器从"函数"变**可调用对象**：Lua 是带 `__call` 元表的表、Python 是 `functools.partial`（`PyCFunction` 不能挂属性）、JS 是原生函数对象 ⇒ 三语言都能把通道常量挂上去（`Circle.channel.radius`，来自 `Pod::channels()`，值是 `{ namespace, name }` 数据）。② **位置参数 + 具名双形态**：唯一实参是 table/对象/kwargs ⇒ 具名；否则按字段顺序取位置参数。⚠️ **偏差记账**：计划 §8 强制约束 5 要求「同一构造器只一种参数形态」，但既有 251 处脚本全用具名，单形态会全部破坏；实际判别规则只看**首参是不是容器**（位置参数永不接受 table/object），Lua 空表歧义（`Vec2()` vs `Vec2{}`）因此不存在。③ 默认值白名单唯一来源在 [`defaults.rs`](crates/ze/pod/ze-pod-binding/src/defaults.rs)：`Color.a = 255`；**不进产物**（构造完即完整值），但进 LuaLS / `.d.ts` / `.pyi`（可选字段 / `a = 255`）。**验收**：Lua 与 JS 的等价脚本（位置 / 具名 / 省 `a` / `Circle.channel.radius`）产出**逐字节相同**的 `SceneScript`（用例 `positional_constructors_and_channel_constants_agree_across_languages`）；23 条 demo payload 逐条不变；声明基线 9 文件重生成后逐字节一致。⚠️ Python 路径在本机只有**编译校验**（`PYO3_PYTHON` 指向 msys Python 时 `cargo check -p ze-pod-py --features python` 通过），链接缺 `libpython3.14.lib` ⇒ 用例 `python_positional_constructors_match_lua` 在 CI 的 MSVC Python 环境下执行 |
 | AG-05 | **handle 绑定 + 通道数据化已落地（B 批）** | 表达式层 / 脚本 API | **已关闭（B）** | ① `ze_func::Channel` 枚举删除，改为 [`ChannelRef { namespace, name }`](crates/kernel/ze-comb/src/expr.rs)：基础通道空 namespace（`time` / `frame`），组件字段 `"zela.scene" + 地址`；`SCHEMA_VERSION` 1→2（受影响作品只有 `expr_demo`）。② `expr.bind{ object = <spawn 句柄> }`：`BindSpec.object` 改为 pod `Handle`，`SceneScript::bind_expr(handle, …)` 取代 `bind_expr_named`，`find_named` / 重名歧义错误删除（`Name{}` 仍在，但只当分组标签）。产物不存 pod 句柄 —— `SceneServicePod::finish` 快照 pod→脚本句柄，`PodAssembly::merge_expr_bindings` 是**唯一转换点**（`handle` 越界是显式错误）。③ `expr.bind{ target = Circle.radius }`：`zela.math.Bind.target` 是 `ChannelSpec { namespace, name }`（`zela.math@3 → @4`）；`Pod::channels()` 从场景地址表导出单字段规格（组合选择键不导出）。**验收**：`expr_demo` 去掉 `Name{}` 与 target 字符串，payload 重录为 `2611dda9…`，23 条 demo payload 断言通过；`--script` 与 `--bundle` 各 80 帧（640×480 / 10fps / vector）序列哈希同为 `0f77479c…` |
 | AG-07 | **定案：声明文件移出仓库 + 通道地址去裸字符串** | 导出 / 脚本 API | **已关闭（定案）** | ① **生成的 API 不进仓库**：删除 `crates/app/zela-app/api/**` 与 `.gitattributes` 里对应的 `-text` 规则；`cargo verify --step docs` 改为**连续生成两次**到 `target/declarations/{a,b}`，断言文件集合非空、每个文件非空、两次输出逐字节相同（生成物只活在构建产物区）。AF-09 的"9 文件基线"口径由本行取代。② **通道地址不再有裸字符串入口**：删除 `zela.math::channel(address: String)`（`zela.math@4 → @5`），通道选择键只剩**组件的 `channel` 字段**（`Circle.channel.radius` / `Opacity.channel.value`，由 `Pod::channels()` 挂到可调用构造器上）；写错常量名在绑定层立即暴露。`BindSpec.target` 仍是 `ChannelSpec` 数据（namespace + name），但作者侧不出现地址字符串。③ **常量进声明文件**（否则编辑器把 `Opacity.channel.value` 诊断成 undefined-field）：`ChannelSpec` 增加 `value_type`，三语言声明都标出常量 —— 常量收在组件的 `channel` 字段下（组件字段可能与地址同名，如 `Opacity.value`，平铺会撞名）；LuaLS 输出 `---@field channel XChannel` + `---@class XChannel`（构造器保持 `function X(spec) end` 形态，`---@operator call(...)` 方案已撤销），`.d.ts` 输出 `interface XChannel` + `namespace X { const channel: XChannel }`，`.pyi` 输出 `class _XChannel` 并在构造器 Protocol 上声明 `channel: _XChannel`。**影响**：`expr_demo` 改用常量；产物里的库版本 `4 → 5` ⇒ payload 重录为 `94d731b4…`（像素不变） |
@@ -1307,13 +1307,14 @@
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
 | AX-01 | **阶段 1 / E-G1：GUI 矢量上屏零回读** | zela-gui / zela-playback / zela-render-vector | **已关闭（E-G1 = A · 原生纹理注册）** | `App::launch` 注入 `init_gpu(device, queue, adapter)`（矢量后端不再自建 device）；帧由 [`render_to_texture_at`](crates/app/zela-playback/src/vector_frame.rs) 直接写进 `Rgba8Unorm` 中间纹理（`RENDER_ATTACHMENT \| STORAGE_BINDING \| TEXTURE_BINDING`），`register_native_texture` 后 `painter().image` ⇒ 每帧**没有** `Vec<u8>`、`ColorImage` 与 `load_texture` 三跳。用例 `vector_gui_zero_copy`：纹理目标与 `render_2d` 的 CPU 读回**逐位相同**，且同帧连渲两次逐位相同（§1.4）。实测（`ZELA_GUI_TIMING=1`，381×829，ppp 1.5）：vector_paths / fourier / surface_matrix / demo3d 四件首帧 `渲染 4–16 ms + 上传 0.0 ms`，其后 `reusable` 生效（矢量 0.0 ms）⇒ 静止作品仍近乎零成本。`cargo verify --step hashes` 36/36 ok（headless 未动）。**边界（诚实）**：① 含 `composite` 内容纹理层的帧仍走 CPU 叠加（GAPS PC-01 未解），surface_matrix 是静止帧、只付首帧；② 宿主 device 的 features 改成"已注册且可用后端之并"（`zela-gui/src/main.rs::request_vector_device`），否则矢量建管线时 `R32Float` 不可混合 —— 这是"注入 device"的**必要条件**，不是可选优化。 |
-| AX-02 | **阶段 2 / E-G2：着色 codegen 进生产 + 最小用例脚本** | ze-comb / ze-func / scene / render-vector / ze-pod-func | **已关闭（E-G2）** | 已落地的三段：① **后端**（`c11b6cf`）：`FilledPath.shader` + `ShaderFill{source, params}`，compute pass 在光栅前把 `eval` 的颜色写进 `Object`（解析路径）与 `Instance`（点云 / 网格）的填充槽，只写 r/g/b（alpha 保持原值）；管线按生成文本摘要缓存，`Params` 走 uniform。② **脚本入口**：`expr.shader { object, root }`（`zela.math@18`）→ `PendingShader` → 装配期 `SceneScript::shader_fill` → 组件 `ShaderPaint` → `paint_of` → `PathOptions.shader`（`FEATURE_CODEGEN = 1<<5` + `feature_names` 条目 ⇒ 路由到 wgpu 时理由里会写"已忽略：着色 codegen"）。③ **作品 / 门禁**：`cap_codegen.lua`（左右同几何、右侧颜色由 GPU 求值）+ manifest 条目 + `dispositions.txt` 豁免 + `--step coverage` 55/55、`--step hashes` 36/36、`--step structure` 全绿。用例 `codegen_fill`：GPU 求值与 CPU 参考容差 4/255 内一致、连渲两次逐位相同、无程序时填充色逐位等于记录值。**后续切片（本批已接）**：④ **外部注入按类型推导**（`aa4962c`）：`Params` 的 uniform 布局由生成器的参数表按 std140 推导（标量 / 向量 / 矩阵同一套规则，不按通道名特判），宿主每帧按参数表填字节；⑤ **对象级内建**（`77a1b0b`）：`zela.shader::center` / `size` 归 `ChannelClass::Element`，不进 uniform，后端从 `Object.rect` 现读；⑥ **逐片元内建**（`93fd0c7`）：`fragment.pos2` / `local` / `uv` 走 `Rgba32Float` 颜色画布（rgb = 颜色，a = 程序标签），合成时按"对象 → 标签"认领，标签不匹配退回普通填充；⑦ **内建 mono**（`a4dccbc`）：`distance` / `smoothstep` / `fract`，CPU / 类型化 / WGSL 三路同源。`zela.math` 因此到 `@21`。**连带影响（需重录）**：`zela.math` API 升到 `@18` ⇒ 表达式产物的 `library.version` 变化 ⇒ 含表达式绑定的作品（expr_demo / cap_channels2d / cap_channels3d / expr_read / storyboard 等）的 manifest payload-hash 需要在录制设备上重录；本机 `--step demo` 因既有的 Typst 字体目录依赖在 fourier 处先失败（与本批无关，manifest 头注释已写明该前提）。 |
+| AX-02 | **阶段 2 / E-G2：着色 codegen 进生产 + 最小用例脚本** | ze-comb / ze-func / scene / render-vector / ze-pod-func | **已关闭（E-G2）** | 已落地的三段：① **后端**（`c11b6cf`）：`FilledPath.shader` + `ShaderFill{source, params}`，compute pass 在光栅前把 `eval` 的颜色写进 `Object`（解析路径）与 `Instance`（点云 / 网格）的填充槽，只写 r/g/b（alpha 保持原值）；管线按生成文本摘要缓存，`Params` 走 uniform。② **脚本入口**：`expr.shader { object, root }`（`zela.math@18`）→ `PendingShader` → 装配期 `SceneScript::shader_fill` → 组件 `ShaderPaint` → `paint_of` → `PathOptions.shader`（`FEATURE_CODEGEN = 1<<5` + `feature_names` 条目 ⇒ 路由到 wgpu 时理由里会写"已忽略：着色 codegen"）。③ **作品 / 门禁**：`cap_codegen.lua`（左右同几何、右侧颜色由 GPU 求值）+ manifest 条目 + `dispositions.txt` 豁免 + `--step coverage` 55/55、`--step hashes` 36/36、`--step structure` 全绿。用例 `codegen_fill`：GPU 求值与 CPU 参考容差 4/255 内一致、连渲两次逐位相同、无程序时填充色逐位等于记录值。**后续切片（本批已接）**：④ **外部注入按类型推导**（`aa4962c`）：`Params` 的 uniform 布局由生成器的参数表按 std140 推导（标量 / 向量 / 矩阵同一套规则，不按通道名特判），宿主每帧按参数表填字节；⑤ **对象级内建**（`77a1b0b`）：`zela.shader::center` / `size` 归 `ChannelClass::Element`，不进 uniform，后端从 `Object.rect` 现读；⑥ **逐片元内建**（`93fd0c7`）：`fragment.pos2` / `local` / `uv` 走 `Rgba32Float` 颜色画布（rgb = 颜色，a = 程序标签），合成时按"对象 → 标签"认领，标签不匹配退回普通填充；⑦ **内建 mono**（`a4dccbc`）：`distance` / `smoothstep` / `fract`，CPU / 类型化 / WGSL 三路同源。`zela.math` 因此到 `@21`。**连带影响（需重录）**：`zela.math` API 升到 `@18` ⇒ 表达式产物的 `library.version` 变化 ⇒ 含表达式绑定的作品（expr_demo / cap_channels2d / cap_channels3d / expr_read / storyboard 等）的 manifest payload-hash 需要在录制设备上重录；重录与验证见 AX-07。 |
 | AX-03 | **阶段 3 / E-G3：AW-07 几何 codegen 接生产** | zela-render-vector | **部分关闭（E-G3 · ①②④ 已接；③ 不需要）** | 见 AW-07 的证据与实测：持久前缀（`Store::retire`）+ 内容复用（path / points / mesh）+ 既有的 `sent` 增量上传；`take_store_upload_bytes()` 是可复现判据（`FrameRun.store_uploads` / `ZELA_OBSERVE.geometry_upload`）。四个重负载 3D 作品的稳态几何上传从 3.4–15.8 MB 降到 **0**；Reveal / 3D 曲线这类"每帧内容不同"的作品不变（诚实边界），内容哈希键留待 `prepare` 成为主瓶颈时再做。compute 写 `ctrl` 记账为不需要（morph 已由 shader 混合）。 |
 | AX-04 | **E-G4：E3 性能补测（uniform select vs 属性 select）** | zela-render-vector | **未执行** | AX-02 已给出着色入口（每对象一个 compute dispatch + 逐片元颜色画布），但"每次 draw 换表达式"的耗时差仍未测：需要同一场景下 A/B（uniform 参数 vs 属性参数）的成对计时，且按纪律要在干净树上录。AW-05 的"待补"状态不变。 |
 | AX-05 | **口径修正：`param_digest` / `grow_records` 不是"已关闭"** | ze-render-ir / render-vector / GAPS | **记账（机制已备、出口未接）** | `ParamGeometry::param_digest` 的调用点只有 `api.rs` 自己的用例（`param_digest_hashes_the_numbers_not_the_geometry`），生产代码零消费者；`grow_records` 只有 `lib.rs` 导出 + 测试，`param_records` 的 `Grow` 分支不走它。二者与 AW-11 同型：**机制在，出口没接** ⇒ 在 AW-01 / AW-02 的"已关闭"之外明确记这一笔，避免把"有用例"读成"有生产路径"。 |
 | AX-06 | **`bench_baselines.txt` 重录（AW-10）** | xtask | **未执行** | 本批开发期间工作树仍有改动，按纪律不在脏树上重录。触发条件不变：合入后的第一个干净树 + 录制设备（`ZELA_RECORD_DEVICE`）。 |
+| AX-07 | **manifest payload 重录（AX-02 的连带项）** | zela-app/scripts、xtask | **已关闭（0）** | `zela.math` 17 → 21 使 `LibraryRef.version` 进 payload ⇒ 含表达式绑定的 manifest 记录需要新 hash。做法：`target/verify/zela.exe compile`（注入 `ZELA_TYPST_FONT_DIR`）逐条取实测值，不猜；18 条变化与计划列出的清单逐条一致（fourier … cap_codegen）。`--step demo` 28/28 通过（`cap_codegen` 由 `-` 提升为断言）。**像素不变**：manifest 只断言 ZSB 内容；`--step hashes` 36/36 与结构 22 项不变（见 BA-02 的读数）。 |
 
-**AX 段小计**：已关闭 2（AX-01、AX-02）· 部分关闭 1（AX-03）· 记账 1（AX-05）· 未执行 2（AX-04、AX-06）· 已记录 0。
+**AX 段小计**：已关闭 3（AX-01、AX-02、AX-07）· 部分关闭 1（AX-03）· 记账 1（AX-05）· 未执行 2（AX-04、AX-06）· 已记录 0。
 
 ---
 
@@ -1407,7 +1408,7 @@
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| AZ-01 | 禁止词门禁 | xtask / docs | **已关闭（0）** | `xtask/src/lib.rs` 的 `FORBIDDEN_TERMS` + `forbidden_term_hits`；挂在 `--step docs`，另有单跑入口 `cargo run -p xtask -- terms`；命中打印文件、行号、建议改写；白名单 `FORBIDDEN_TERM_ALLOW` 按词 + 文件 + 理由登记（当前为空） |
+| AZ-01 | 禁止词门禁 | xtask / docs | **已关闭（0）** | `xtask/src/lib.rs` 的 `FORBIDDEN_TERMS` + `forbidden_term_hits`；挂在 `--step docs`，另有单跑入口 `cargo run -p xtask -- terms`；命中打印文件、行号、建议改写；白名单 `FORBIDDEN_TERM_ALLOW` 按词 + 文件 + 理由登记（现行唯一一条见 BA-04） |
 | AZ-02 | 来源用词统一 | docs / 根 md / 代码注释 | **已关闭（0）** | 唯一来源 / 第二个来源 / 定义在 `X` 三种说法；叙述范围（docs + 根目录 `.md`）清零；代码注释只改来源类（57 处），约束词按分档保留；保留 1 处错误信息字符串（非叙述）。模块文档自动区只随 `//!` 首行同步变化，无其他自动区改动 |
 | AZ-03 | 自造词替换 | docs / 根 md | **已关闭（0）** | GAPS 第 4 类状态词由「档案化」改为「已记录」，`check_gaps_subtotals` 的桶判定 / 标签 / 小计行同步；其余替换为锁定、收敛 / 定案、指出、待核、无引用、作者侧、强制约束、门禁（逐词见 `FORBIDDEN_TERMS`） |
 | AZ-04 | 优先级下调词与 degrade 消歧 | GAPS / docs | **已关闭（0）** | 优先级下调统一写「降为工效项」；degrade 的「降级」保留（由 `ze-render-ir::degrade` 支撑），两者不再混用 |
@@ -1415,17 +1416,33 @@
 | AZ-06 | 代码注释的分档 | crates/**/*.rs | **已关闭（0）** | 只改「来源」类用词（57 处注释）；「强制约束 / 必须」等失效模式说明保留——文档是叙述，注释是约束 |
 | AZ-07 | 加粗密度与语气 | docs / 根 md | **已关闭（0）** | `docs/principles.md` 加粗 56 → 0；CONTRIBUTING「铁律摘要」→「约定摘要」；ARCHITECTURE「任何影响…必须」→「凡影响…都」；docs 人称代词 0 |
 | AZ-08 | 「记账」的裁决 | GAPS / docs | **已关闭（0）** | 保留：它是本仓核心工作方式；核查后未混入需要统一的同义词（记录 / 登记语义不同） |
-| AZ-09 | 门禁误报处理 | docs / xtask | **已关闭（0）** | 决策 007 的文件名含旧词 ⇒ 改名为 `007-作者侧.md` 并同步 4 处链接；其余无误报，白名单保持为空 |
+| AZ-09 | 门禁误报处理 | docs / xtask | **已关闭（0）** | 决策 007 的文件名含旧词 ⇒ 改名为 `007-作者侧.md` 并同步 4 处链接；其余无误报（本批为此新增的白名单见 BA-04） |
 
 **AZ 段小计**：已关闭 9（AZ-01–AZ-09）· 部分关闭 0 · 未执行 0。
+
+---
+
+## BA. 验收收尾批次（2026-10-29）
+
+> 计划《验收收尾批次_执行计划》，依据验收报告的 P1 / P2 / P5。判据同前：
+> 只改叙述、不改事实；像素与结构逐位不变；门禁真的会红。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BA-01 | 「铁律 N」编号体系的定义已消失（27 处引用） | docs / 代码注释 / GAPS | **未执行（3）** | 旧版 CONTRIBUTING 的摘要是 5 条**无编号**列表；改名后仍无编号 ⇒ 27 处编号引用没有对应定义。两个选项：① 重建定义（先确认 2 / 3 / 4 / 5 分别是什么，再加一条防漂移检查）；② 去掉编号（27 处逐条改写，成本大但一劳永逸）。本批只改**孤立用法**并收录禁止词表；编号引用按行豁免。触发条件：下一个文档批次的第一次编辑前定案 |
+| BA-02 | 条目正文里的附带义务必须有独立编号 | GAPS / xtask | **已关闭（0）** | AX-02 正文原有的「需重录」不进小计 ⇒ AX-07 补编号并进 AX 小计；纪律写入本文件「统计与维护约定」。读数：`--step demo` 28/28、`--step hashes` 36/36、结构 22 项不变（本批末实测） |
+| BA-03 | 禁止词表不限于清单：近义词会漏网 | docs / xtask | **已关闭（0）** | 本批补入「钉」字根的近义词并逐处改写，按「钉 / 锚 / 锁 / 真」扫过一遍（其余命中按语境处理）；纪律写入 `docs/README.md` 的维护约定（每批收尾扫一次字根） |
+| BA-04 | 白名单现状 | xtask / GAPS | **已关闭（0）** | `FORBIDDEN_TERM_ALLOW` 仅一条：`GAPS.md` 豁免「铁律」（历史记账引用原名，改名会丢失可追溯性）；其余禁止词无豁免 |
+
+**BA 段小计**：已关闭 3（BA-02、BA-03、BA-04）· 部分关闭 0 · 记账 0 · 未执行 1（BA-01）· 已记录 0。
 
 ---
 
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AY**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AY 段，含"部分关闭"与"已记录"；AF 段为立约段，编号不进该核对器）。
+> （**D–BA**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BA 段，含"部分关闭"与"已记录"；AF 段为立约段，编号不进该核对器）。
 
 | 类别 | 数量 |
 |---|---|
@@ -1443,6 +1460,8 @@ D 段（B1 批次记账）6 条：已关闭 4 · 新增能力 2 —— 不计入
 维护约定：
 
 - 新增缺口必须先落到本文件，再在 crate README 留一行指针；不得只写 README。
+- 条目正文里的「需重录」「待补」必须**有独立编号**，否则段小计看不到（BA-02 的教训）。
+- 禁止词表不限于清单：每批收尾按字根（钉 / 锚 / 锁 / 真）扫一遍（BA-03）。
 - 「可清」必须附代码位置；无法给出证据的标「待定」，不得为了清而清。
 - 每次清理后同步更新 `WASM_PORT_SURVEY.md` 的状态列与本文件统计。
 

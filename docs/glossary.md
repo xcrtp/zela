@@ -358,7 +358,7 @@
 
 ## 升序输出
 
-**一句话**：图的输出一律用 `BTree*` 而非 `HashMap`，把确定性钉在输出边而不是容器实现上。
+**一句话**：图的输出一律用 `BTree*` 而非 `HashMap`，把确定性落在输出边而不是容器实现上。
 
 - **锚点**：GAPS `AN-02` · 表达式图与拓扑路径的 `HashMap` 门禁见 GAPS `AO-05`
 - **所属层**：`crates/kernel/ze-graph-core/`
@@ -518,7 +518,7 @@
 
 ## SceneApi
 
-**一句话**：脚本侧的场景能力面（构造器 / 通道常量 / 方法），由 `SceneServicePod` 注册并按指纹钉定。
+**一句话**：脚本侧的场景能力面（构造器 / 通道常量 / 方法），由 `SceneServicePod` 注册并按指纹固定。
 
 - **代码锚点**：`ze_scene_api::api::SceneApi` · `ze_scene_api::api::SCENE_API_FINGERPRINT`
 - **所属层**：`crates/scene/ze-scene-api/`

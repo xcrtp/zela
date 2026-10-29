@@ -77,7 +77,7 @@ position/attrib0/attrib1/attrib2）：
   宽度仍由 CPU 侧唯一换算点 `draw.rs::resolve_style` 解析（shader 只做几何偏移）
 - `advance`（**R0 书写动画**）：lyon `advancement()` 归一化到 `[0,1]`（除以本条几何的
   实测最大推进量）。`lyon` 在子路径起点沿用上一条的推进量 ⇒ **跨子路径累加**，
-  故书写顺序是"轮廓依次写出"（`reveal_advance_accumulates_across_subpaths` 锁死）
+  故书写顺序是"轮廓依次写出"（`reveal_advance_accumulates_across_subpaths` 锁定）
 - `Tessellation2D { vertices, indices, layout, kind: Fill | Stroke }`
 - `tessellate(shape, transform, style, tolerance) -> Result<Vec<Tessellation2D>, TessellateError>`
   （`Group` 递归展开；`Empty` 返回 `Ok(空 Vec)`；`Custom` 未注册规格 / 规格无几何 ⇒ `Err`）

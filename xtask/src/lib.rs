@@ -2389,12 +2389,41 @@ pub const FORBIDDEN_TERMS: &[(&str, &str)] = &[
     ("硬约束", "强制约束"),
     ("硬门禁", "门禁"),
     ("降格", "降为工效项"),
+    // 验收收尾批次：命令腔与近义词漏网。
+    ("铁律", "约定 / 约束"),
+    ("钉在", "落在 / 固定在 / 绑定到"),
+    ("钉死", "固定 / 锁定"),
+    ("钉定", "固定"),
+    ("钉进", "写进 / 放进"),
+    ("锚定", "以…为基准 / 对齐"),
+    ("锁死", "锁定"),
 ];
 
 /// 禁止词白名单：**按词 + 按文件后缀**登记，理由必填（不许无保护且不声明）。
-///
-/// 目前为空：所有命中都应当改写；真出现合理场合时在这里登记。
-pub const FORBIDDEN_TERM_ALLOW: &[(&str, &str, &str)] = &[];
+pub const FORBIDDEN_TERM_ALLOW: &[(&str, &str, &str)] = &[(
+    "铁律",
+    "GAPS.md",
+    "历史记账引用原名（AZ-07 记录「铁律摘要 → 约定摘要」），改名会丢失可追溯性",
+)];
+
+/// 「铁律 N」是编号引用：定义已消失（GAPS BA-01 记账待决策），本批只做孤立用法。
+/// 一行里**全部**命中都是编号引用时豁免；混有孤立用法仍然报。
+fn numbered_rule_reference(term: &str, line: &str) -> bool {
+    if term != "铁律" {
+        return false;
+    }
+    let mut rest = line;
+    let mut any = false;
+    while let Some(position) = rest.find(term) {
+        any = true;
+        let after = rest[position + term.len()..].trim_start();
+        if !after.chars().next().is_some_and(|value| value.is_ascii_digit()) {
+            return false;
+        }
+        rest = &rest[position + term.len()..];
+    }
+    any
+}
 
 /// 一条禁止词命中：行号（1 起）、该行原文、命中词。
 pub struct ForbiddenHit {
@@ -2408,7 +2437,7 @@ pub fn forbidden_term_hits(text: &str) -> Vec<ForbiddenHit> {
     let mut hits = Vec::new();
     for (index, line) in text.lines().enumerate() {
         for (term, _) in FORBIDDEN_TERMS {
-            if line.contains(term) {
+            if line.contains(term) && !numbered_rule_reference(term, line) {
                 hits.push(ForbiddenHit {
                     line: index + 1,
                     text: line.trim().to_string(),
