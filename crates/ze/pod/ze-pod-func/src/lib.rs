@@ -29,20 +29,20 @@ pub mod signature;
 
 pub use api::{
     AddSpec, AndSpec, BindEachSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec,
-    EqSpec, ExistsSpec, GeSpec, GtSpec, LeSpec, LtSpec, MathApi, MethodCallSpec, METHOD_SIGNATURES,
-    MulSpec, NatRecSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec, SinSpec,
-    SumSpec, method_signature,
+    EqSpec, ExistsSpec, GeSpec, GtSpec, LeSpec, LtSpec, METHOD_SIGNATURES, MathApi, MethodCallSpec,
+    MulSpec, NatRecSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, ScaleSpec, ShaderSpec,
+    SinSpec, SumSpec, method_signature,
 };
 pub use expr_pod::{
-    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBindEach, PendingBinding,
+    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBindEach, PendingBinding, PendingShader,
     QUERY_SELF_OBJECT, SCENE_NAMESPACE,
 };
 pub use infer::{
     Inference, PointwiseReport, TypeError, infer, infer_full, infer_pointwise, infer_predicate,
     infer_root,
 };
-pub use ops::eval as eval_op;
 pub use ops::OPS;
+pub use ops::eval as eval_op;
 pub use signature::{
     SIGNATURES, check_op_revisions, collect_op_revisions, op_revision, signature_of,
 };

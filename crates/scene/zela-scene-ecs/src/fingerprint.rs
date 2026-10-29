@@ -26,23 +26,24 @@
 // 未注册类型静默降级。**本模块不读它**，也不允许它接进指纹线。
 
 use ze_scene_contract::ObjectId;
+use ze_scene_core::WorldTransforms;
 use ze_scene_core::animation::target::TARGETS;
 use ze_scene_core::scene_write::SceneRead;
-use ze_scene_core::WorldTransforms;
 use ze_time::AnimValue;
 
 // `known_component_table!` 展开时用**裸类型名**（与 `contract.rs` 同一张表），
 // 因此这里必须把表里出现的类型全部引入作用域。
 use std::sync::Arc;
 
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, ShaderPaint,
+    StrokeSolid,
+};
 use ze_scene_contract::{Group, LifetimeTracked, Name, Parent, Visibility};
 use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
     Path, Projection, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef, Transform,
     ZOrder,
-};
-use ze_render_ir::{
-    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
 };
 
 use crate::composer::Composer;

@@ -87,13 +87,22 @@ pub struct PathOptions {
     pub curve_window: Option<[f32; 2]>,
     /// 填充（或描边）的渐变。
     pub gradient: Option<Gradient>,
-    /// **屏幕空间叠加**（PF Step 2）：`true` ⇒ 这条记录在 3D 帧里走视图的 overlay 矩阵，
-    /// 固定压在屏幕平面上（z 不参与透视），用于 2D/3D 混排。
-    ///
-    /// 默认 `false` ⇒ 现有行为逐位不变。它是**渲染位置**参数，不是绘制风格，
-    /// 因此不计入 [`feature_bits`](Self::feature_bits)（矢量 / wgpu 都能表达它）。
+    /// 屏幕空间叠加（PF Step 2）...
     #[serde(default)]
     pub overlay: bool,
+    /// **阶段 2（着色 codegen）**：填充色由一段生成的 WGSL 在 GPU 上算
+    /// （`None` = 普通填充）。装饰性：不影响几何 / 状态，也不进结构指纹。
+    #[serde(default)]
+    pub shader: Option<ShaderPaint>,
+}
+
+/// **阶段 2（着色 codegen）**：由表达式生成的一段 WGSL。
+///
+/// 生成的 `eval` 返回 `vec3<f32>`；本版**不含参数**（常量着色），逐帧参数留给后续。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShaderPaint {
+    /// 生成的 WGSL 纯函数（含 `struct Params` 与 `fn eval`）。
+    pub source: String,
 }
 
 impl PathOptions {
@@ -107,6 +116,8 @@ impl PathOptions {
     pub const FEATURE_BACKGROUND: u8 = 1 << 3;
     /// 曲线窗口。
     pub const FEATURE_WINDOW: u8 = 1 << 4;
+    /// **阶段 2**：着色 codegen（颜色由生成的 WGSL 在 GPU 上算）。
+    pub const FEATURE_CODEGEN: u8 = 1 << 5;
 
     /// 本组参数用到了哪些**只有矢量后端支持**的特性（位掩码）。
     ///
@@ -129,17 +140,21 @@ impl PathOptions {
         if self.curve_window.is_some() {
             bits |= Self::FEATURE_WINDOW;
         }
+        if self.shader.is_some() {
+            bits |= Self::FEATURE_CODEGEN;
+        }
         bits
     }
 
     /// 把位掩码展开成人可读的名字（顺序固定 ⇒ 同一输入同一字符串）。
     pub fn feature_names(bits: u8) -> String {
-        const TABLE: [(u8, &str); 5] = [
+        const TABLE: [(u8, &str); 6] = [
             (PathOptions::FEATURE_GRADIENT, "渐变"),
             (PathOptions::FEATURE_DASH, "虚线"),
             (PathOptions::FEATURE_SECOND, "双 paint"),
             (PathOptions::FEATURE_BACKGROUND, "背景描边"),
             (PathOptions::FEATURE_WINDOW, "曲线窗口"),
+            (PathOptions::FEATURE_CODEGEN, "着色 codegen"),
         ];
         let names: Vec<&str> = TABLE
             .iter()
@@ -181,7 +196,23 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(gradient_only.feature_bits(), PathOptions::FEATURE_GRADIENT);
-        assert_eq!(PathOptions::feature_names(gradient_only.feature_bits()), "渐变");
+        assert_eq!(
+            PathOptions::feature_names(gradient_only.feature_bits()),
+            "渐变"
+        );
+
+        // **阶段 2**：着色 codegen 是 vector-only 能力 ⇒ 路由到 wgpu 时必须报"已忽略"。
+        let shader_only = PathOptions {
+            shader: Some(ShaderPaint {
+                source: "fn eval() {}".to_string(),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(shader_only.feature_bits(), PathOptions::FEATURE_CODEGEN);
+        assert_eq!(
+            PathOptions::feature_names(shader_only.feature_bits()),
+            "着色 codegen"
+        );
 
         let all = PathOptions {
             gradient: Some(gradient()),
@@ -200,6 +231,7 @@ mod tests {
             background_width: 2.0,
             curve_window: Some([0.0, 1.0]),
             overlay: false,
+            shader: None,
         };
         assert_eq!(all.feature_bits(), 0b1_1111);
         assert_eq!(

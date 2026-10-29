@@ -61,4 +61,6 @@ cap_channels3d  3D字段通道          cap_channels3d.lua  6d7940c6b35054782f30
 expr_read       通道读端与值分支     expr_read.lua       7fedd6202f9f0bbef8d423552445093745f404a918781a2f0be4fd3b70f95ecf
 # 内容作品：小球随 Reveal 画出正弦（书写进度与小珠位置逐段同步）。
 sine_trace      小球画正弦          sine_trace.lua      8c049eb61664bdc9520ae84dfe0956551c82fd2409f2ddbdb3dba6bbe0df5621
+# 阶段 2 验收作品：填充色由 `expr.shader` 生成的 WGSL 在 GPU 上算（装饰性，静态 1 帧）。
+cap_codegen     着色codegen         cap_codegen.lua     -
 

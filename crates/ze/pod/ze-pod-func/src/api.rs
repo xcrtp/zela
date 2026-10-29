@@ -171,6 +171,19 @@ pub struct BindSpec {
     pub duration: f64,
 }
 
+/// **阶段 2**：`expr.shader { object = <句柄>, root = <表达式> }`。
+///
+/// 把表达式编译成 WGSL（`eval` 返回 `vec3<f32>`），作为对象的"着色 codegen"：
+/// 填充色由 GPU 求值决定（装饰性，不改几何 / 状态）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Shader")]
+pub struct ShaderSpec {
+    /// 目标对象**句柄**（`scene.spawn` 的返回值）。
+    pub object: Handle,
+    /// 表达式根句柄（必须返回 `Vec3`；本版不含通道）。
+    pub root: Handle,
+}
+
 /// `Sin { of = ... }`。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Sin")]
@@ -468,7 +481,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "17",
+    version = "18",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -647,6 +660,11 @@ pub struct MathApi<'a> {
     /// ⚠️ 语义：表达式读**全局** `Time` / `Frame`；`duration` 只决定段区间（`Hold`）。
     /// 需要段内局部时间时应新增通道，而不是改 `Time` 的含义。
     pub bind: fn(&'a dyn Pod, spec: BindSpec) -> (),
+
+    /// **阶段 2**：把表达式编译成 WGSL，作为对象的"着色 codegen"（装饰性）。
+    ///
+    /// 这里只记录；宿主在脚本结束后把它挂成对象组件（`ShaderPaint`）。
+    pub shader: fn(&'a dyn Pod, spec: ShaderSpec) -> (),
 }
 
 // ─── G 批（D14）：能力指纹与版本的配对基线 ─────────────────────────────────
@@ -667,22 +685,22 @@ pub struct MathApi<'a> {
 /// `@15`（5b B2）：新增 `method`（对象方法调用；`Reveal.current_pos` 从字段改为方法）。
 /// `@16`（5b B4）：新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
 /// `@17`（5b B4）：新增 `exists`（集合判空；装配期常量折叠）。
+/// `@18`（阶段 2）：新增 `shader`（表达式 → WGSL；装饰性着色 codegen）。
 ///
 /// **阶段 4 的实测结论（未落地）**：新增一个算子必然改 `signatures()` ⇒ 必须
 /// 递增 version ⇒ `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**。
 /// 即"加算子"与"不重录基线"在本批互斥，故本批只交付注册表机制，不新增算子。
-pub const MATH_API_VERSION: &str = "17";
+pub const MATH_API_VERSION: &str = "18";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 4_840_136_137_552_424_654;
+pub const MATH_API_FINGERPRINT: u64 = 11_581_327_359_153_768_215;
 
 /// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
 ///
 /// 这是 `zela.math` 侧的唯一一份：`infer` 用它给 `Node::Method` 定型。
 /// 求值注册表在 `ze-scene-core::animation::METHODS`；两侧由
 /// `zela-scene-ecs` 的一致性用例逐条对拍（缺失任何一侧都红）。
-pub const METHOD_SIGNATURES: &[(&str, usize, ChannelTypeSpec)] = &[
-    ("Reveal.current_pos", 0, ChannelTypeSpec::Vec2),
-];
+pub const METHOD_SIGNATURES: &[(&str, usize, ChannelTypeSpec)] =
+    &[("Reveal.current_pos", 0, ChannelTypeSpec::Vec2)];
 
 /// 按名字查方法签名（未知 ⇒ `None`）。
 pub fn method_signature(name: &str) -> Option<(usize, ChannelTypeSpec)> {

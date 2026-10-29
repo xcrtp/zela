@@ -40,13 +40,14 @@ use hecs::{EntityBuilder, World};
 
 use crate::scene::components::{Light, Material3D, MeshGeometry};
 use std::sync::Arc;
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, ShaderPaint,
+    StrokeSolid,
+};
 use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
     Path, Projection, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef, Transform,
     ZOrder,
-};
-use ze_render_ir::{
-    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
 };
 
 /// 契约层的**只读 / 读写**能力在此处对外转发：
@@ -61,8 +62,8 @@ use ze_render_ir::{
 /// [`Scene`]（`spawn_dyn` 的宿主）与载荷类型 [`Components`] **没有对外路径**
 /// ⇒ 装配层无法走"经 `add_known` 登记表"的动态创建入口。二者在此补发。
 pub use ze_scene_contract::{
-    Component, Components, Group, GroupId, GroupVisibility, LifetimeTracked, Name, ObjectId, Parent,
-    Scene, SceneRead, Visibility, VisibilityTag,
+    Component, Components, Group, GroupId, GroupVisibility, LifetimeTracked, Name, ObjectId,
+    Parent, Scene, SceneRead, Visibility, VisibilityTag,
 };
 
 use crate::composer::Composer;
@@ -571,7 +572,10 @@ mod tests {
         );
         assert_eq!(known_type_name::<Reveal>(), Some("Reveal"));
         assert_eq!(known_type_name::<Parent>(), Some("Parent"));
-        assert_eq!(known_type_name::<LifetimeTracked>(), Some("LifetimeTracked"));
+        assert_eq!(
+            known_type_name::<LifetimeTracked>(),
+            Some("LifetimeTracked")
+        );
         assert_eq!(known_type_name::<Composer>(), Some("Composer"));
 
         #[derive(Clone)]
@@ -749,22 +753,35 @@ mod tests {
         let handle = graph
             .build(&mut scene, StrokeSolid::new(1.0, (0, 0, 0, 255)))
             .expect("FunctionGraph 已登记");
-        let sampled: Vec<ze_notion::PathCommand> =
-            scene.get_mut::<Path>(handle).expect("Path 组件在").0.commands.clone();
+        let sampled: Vec<ze_notion::PathCommand> = scene
+            .get_mut::<Path>(handle)
+            .expect("Path 组件在")
+            .0
+            .commands
+            .clone();
 
         // 边距内（span = 1，phase = 0.5）：只改窗口，不改几何。
         assert!(graph.refresh(&mut scene, handle, 0.5));
         let window = *scene.get_mut::<CurveWindow>(handle).expect("窗口组件在");
         let expected = graph.window_for(0.5).expect("相位在边距内");
         assert_eq!([window.lo, window.hi], expected);
-        let after: Vec<ze_notion::PathCommand> =
-            scene.get_mut::<Path>(handle).expect("Path 组件在").0.commands.clone();
+        let after: Vec<ze_notion::PathCommand> = scene
+            .get_mut::<Path>(handle)
+            .expect("Path 组件在")
+            .0
+            .commands
+            .clone();
         assert_eq!(sampled, after, "边距内刷新不得重写几何");
 
         // 超出边距（phase = 5 > span）：回落重采样，Path 变成 [0,1] 上的 f(x + 5)。
         assert!(graph.refresh(&mut scene, handle, 5.0));
         let mut pts = Vec::new();
-        for cmd in &scene.get_mut::<Path>(handle).expect("Path 组件在").0.commands {
+        for cmd in &scene
+            .get_mut::<Path>(handle)
+            .expect("Path 组件在")
+            .0
+            .commands
+        {
             if let ze_notion::PathCommand::MoveTo(p) | ze_notion::PathCommand::LineTo(p) = cmd {
                 pts.push(*p);
             }

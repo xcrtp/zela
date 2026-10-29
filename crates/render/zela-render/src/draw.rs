@@ -704,6 +704,13 @@ fn paint_of<S: SceneRead>(
     if let Some(window) = scene.with::<CurveWindow, _>(id, |w| *w) {
         paint.curve_window = Some([window.lo, window.hi]);
     }
+    // **阶段 2（着色 codegen）**：装饰性 —— 颜色由生成的 WGSL 在 GPU 上算。
+    if let Some(shader) = scene.with::<ze_render_ir::ShaderPaint, _>(id, |s| s.clone()) {
+        if std::env::var_os("ZELA_CODEGEN_TRACE").is_some() {
+            eprintln!("[codegen] 对象 {id:?} 挂着色程序（{} 字节 WGSL）", shader.source.len());
+        }
+        paint.shader = Some(shader);
+    }
     paint
 }
 

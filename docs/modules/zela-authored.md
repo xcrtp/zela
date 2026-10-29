@@ -11,16 +11,16 @@
 - 路径：`crates/app/zela-authored`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-notion`、`ze-prerender`、`ze-render-ir`、`ze-scene-core`、`ze-time`、`zela-scene-ecs`
 - 被依赖（下游）：`zela-app`
-- 源文件：4 个 · 929 行
+- 源文件：4 个 · 916 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/capability_demo.rs` | 245 | — |
+| `src/capability_demo.rs` | 247 | — |
 | `src/demo3d.rs` | 135 | — |
 | `src/lib.rs` | 13 | — |
-| `src/storyboard.rs` | 536 | — |
+| `src/storyboard.rs` | 521 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

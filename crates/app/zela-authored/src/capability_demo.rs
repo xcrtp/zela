@@ -31,11 +31,13 @@
 
 use ze_comb::{ChannelRef, Expr, OpRef};
 use ze_notion::{MeasureSpace, Path2D};
-use ze_scene_core::{Camera2DHandle, Framing2D, Path};
 use ze_render_ir::{Opacity, StrokeSolid};
+use ze_scene_core::{Camera2DHandle, Framing2D, Path};
 
 use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
-use zela_scene_ecs::contract::{Group, GroupId, GroupVisibility, Name, ObjectId, Visibility, find_by_name};
+use zela_scene_ecs::contract::{
+    Group, GroupId, GroupVisibility, Name, ObjectId, Visibility, find_by_name,
+};
 use zela_scene_ecs::handle_ref;
 use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene_script::SceneEncoder;
@@ -239,7 +241,7 @@ fn fade_expr(dur: f64) -> Expr {
 fn fade_library() -> LibraryRef {
     LibraryRef {
         namespace: "zela.math".to_string(),
-        version: "17".to_string(),
+        version: "18".to_string(),
         op_revisions: Default::default(),
     }
 }

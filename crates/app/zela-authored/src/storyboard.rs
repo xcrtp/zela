@@ -23,9 +23,9 @@ use std::f32::consts::FRAC_PI_2;
 
 use ze_comb::{ChannelRef, Expr, OpRef};
 use ze_notion::{MeasureSpace, Path2D};
-use ze_scene_core::{Arrow, Axes2D, Camera2DHandle, Framing2D, Path, Transform};
 use ze_prerender::InMemoryEngine;
 use ze_render_ir::{FillSolid, StrokeSolid};
+use ze_scene_core::{Arrow, Axes2D, Camera2DHandle, Framing2D, Path, Transform};
 
 use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
 use zela_scene_ecs::content;
@@ -144,11 +144,7 @@ pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Storyboard {
     enc.bind_expr_gated(
         camera_h,
         "Framing2D.scale",
-        ramp(
-            CAMERA_START.scale as f64,
-            CAMERA_SCALE_PUSHED as f64,
-            1.0,
-        ),
+        ramp(CAMERA_START.scale as f64, CAMERA_SCALE_PUSHED as f64, 1.0),
         library(),
         push_clock.clone(),
         Some(in_segment(1.0)),
@@ -159,13 +155,7 @@ pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Storyboard {
     enc.bind_expr_gated(
         camera_h,
         "Framing2D.center",
-        ramp2(
-            0.0,
-            0.0,
-            FRAC_PI_2 as f64,
-            1.0,
-            1.0,
-        ),
+        ramp2(0.0, 0.0, FRAC_PI_2 as f64, 1.0, 1.0),
         library(),
         push_clock,
         Some(in_segment(1.0)),
@@ -221,7 +211,7 @@ fn sin_samples() -> Vec<ze_notion::Vec2> {
 }
 
 /// 函子库身份（与 `ze_pod_func::LIBRARY_VERSION` 同步；作品层不依赖 Pod 层）。
-const MATH_LIBRARY_VERSION: &str = "17";
+const MATH_LIBRARY_VERSION: &str = "18";
 
 fn library() -> LibraryRef {
     LibraryRef {
@@ -259,10 +249,7 @@ fn ramp(from: f64, to: f64, dur: f64) -> Expr {
 
 /// `Vec2` `(ax, ay) → (bx, by)`（窗口内线性）。
 fn ramp2(ax: f64, ay: f64, bx: f64, by: f64, dur: f64) -> Expr {
-    math(
-        "mix",
-        [vec2(ax, ay), vec2(bx, by), progress(dur)],
-    )
+    math("mix", [vec2(ax, ay), vec2(bx, by), progress(dur)])
 }
 
 fn vec2(x: f64, y: f64) -> Expr {
@@ -353,9 +340,9 @@ fn spawn_text_label(enc: &mut SceneEncoder, engine: &InMemoryEngine) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ze_prerender::placeholder_engine;
     use zela_scene_ecs::animation::{Camera2DFraming, Target};
     use zela_scene_ecs::contract::{ObjectId, SceneRead};
-    use ze_prerender::placeholder_engine;
 
     /// §11.1：六条分镜能被**声明**出来 —— 场景对象齐备且**时序正确**。
     #[test]
@@ -399,11 +386,7 @@ mod tests {
         assert_eq!(offsets[0], (0.0, "Reveal.end".to_string()), "曲线书写 0–2s");
 
         // 分镜 6 是**逐轮廓顺序段**：起点 `3.5 + i·each`，严格递增、合计 1s。
-        let formula: Vec<f64> = offsets
-            .iter()
-            .skip(3)
-            .map(|(offset, _)| *offset)
-            .collect();
+        let formula: Vec<f64> = offsets.iter().skip(3).map(|(offset, _)| *offset).collect();
         assert!(
             formula.len() >= 2,
             "公式应逐轮廓分段（≥2 段），实际 {} 段：{offsets:?}",
@@ -433,7 +416,10 @@ mod tests {
             .map(|b| sb.forest.get(b.clock).expect("节点在").local_offset)
             .collect();
         assert_eq!(cam_offsets.len(), 2, "scale 与 center 各一条绑定");
-        assert_eq!(cam_offsets[0], cam_offsets[1], "两者同起点 = 同区间（并行）");
+        assert_eq!(
+            cam_offsets[0], cam_offsets[1],
+            "两者同起点 = 同区间（并行）"
+        );
     }
 
     /// 每条绑定的 `(时钟起点, target 名)`（按声明顺序）。
@@ -532,5 +518,4 @@ mod tests {
         assert_eq!(t.name(), "Camera2DFraming");
         assert_eq!(t.target_id(), ObjectId::DANGLING);
     }
-
 }

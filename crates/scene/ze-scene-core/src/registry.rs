@@ -13,19 +13,22 @@
 
 use std::sync::Arc;
 
-use ze_scene_contract::{Component, Group, LifetimeTracked, Name, Parent, Visibility};
 use ze_render_ir::{
-    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, ShaderPaint,
+    StrokeSolid,
 };
+use ze_scene_contract::{Component, Group, LifetimeTracked, Name, Parent, Visibility};
 
-use crate::components::{ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PhaseAnim, Reveal};
+use crate::components::{
+    ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PhaseAnim, Reveal,
+};
 use crate::composer::Composer;
 use crate::domain::CameraMode;
-use crate::surface::{Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef};
 use crate::object::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
     Path, Projection, Rect, Transform, ZOrder,
 };
+use crate::surface::{Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef};
 
 /// **组件登记表（唯一来源）**。
 ///
@@ -41,6 +44,8 @@ macro_rules! known_component_table {
                    StrokeSolid, FillSolid,
                    // PE：绘制参数（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）。
                    Gradient, Dash, SecondPaint, BackgroundStroke, CurveWindow,
+                   // 阶段 2：着色 codegen（装饰性；由 `expr.shader` 挂上）。
+                   ShaderPaint,
                    Axes2D, AxesLine, FunctionGraph,
                    PhaseAnim, MorphShape, ContentTextureItem, Reveal, Parent,
                    // B3 Step 3：2D/3D 融合边界（Surface 是数据组件，不含 position）。

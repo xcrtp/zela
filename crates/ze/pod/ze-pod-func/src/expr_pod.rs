@@ -31,8 +31,8 @@ use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
     ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LengthSpec, LtSpec, MixSpec, MulSpec,
     BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
-    PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec, SinSpec,
-    SplatSpec, SumSpec, Vec2FromVec3Spec,
+    PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
+    ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
@@ -54,7 +54,8 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `15`：**5b B2** 新增 `method`（对象方法；`Reveal.current_pos` 改走方法）。
 /// `16`：**5b B4** 新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
 /// `17`：**5b B4** 新增 `exists`（集合判空；装配期常量折叠）。
-pub const LIBRARY_VERSION: &str = "17";
+/// `18`：**阶段 2** 新增 `shader`（表达式 → WGSL，装饰性着色 codegen）。
+pub const LIBRARY_VERSION: &str = "18";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -98,6 +99,15 @@ pub struct PendingBinding {
     pub root_type: ChannelType,
 }
 
+/// 一条待并入场景的**着色 codegen**（阶段 2）：对象 + 生成的 WGSL。
+#[derive(Clone, Debug)]
+pub struct PendingShader {
+    /// 场景对象**句柄**（pod 侧；装配期转成本脚本内的局部句柄）。
+    pub object: Handle,
+    /// 生成的 WGSL 纯函数（`eval` 返回 `vec3<f32>`）。
+    pub source: String,
+}
+
 /// 表达式 Pod。
 pub struct ExprPod {
     id: PodId,
@@ -105,6 +115,8 @@ pub struct ExprPod {
     store: Mutex<HandleTable<Expr>>,
     /// 脚本登记的表达式动画（宿主在脚本结束后取走）。
     bindings: Mutex<Vec<PendingBinding>>,
+    /// 脚本登记的**着色 codegen**（宿主在脚本结束后挂成组件）。
+    shaders: Mutex<Vec<PendingShader>>,
     /// 脚本登记的**批量绑定**（宿主在装配期展开成 N 条具体绑定）。
     bind_each: Mutex<Vec<PendingBindEach>>,
     /// 装配期错误（未知通道 / 未知算子 / 非法句柄）—— 宿主取走时显式失败。
@@ -312,6 +324,13 @@ impl ExprPod {
             "()",
             bind,
         );
+        // **阶段 2**：把表达式编译成 WGSL，作为对象的"着色 codegen"（装饰性）。
+        registry.register_fn1_named::<ShaderSpec, ()>(
+            "zela.math::shader",
+            "zela.math.Shader",
+            "()",
+            shader,
+        );
         // B4 Query：装配期展开的批量绑定 + `it` 占位读。
         registry.register_fn1_named::<ChannelSpec, Handle>(
             "zela.math::query_self",
@@ -337,9 +356,15 @@ impl ExprPod {
             registry,
             store: Mutex::new(HandleTable::new(id)),
             bindings: Mutex::new(Vec::new()),
+            shaders: Mutex::new(Vec::new()),
             bind_each: Mutex::new(Vec::new()),
             errors: Mutex::new(Vec::new()),
         }
+    }
+
+    /// 取走脚本登记的着色 codegen（宿主在 `run` 之后挂成组件）。
+    pub fn take_shaders(&self) -> Vec<PendingShader> {
+        std::mem::take(&mut *self.shaders.lock().expect("着色 codegen 表未被毒化"))
     }
 
     /// 取走脚本登记的表达式动画与装配期错误（宿主在 `run` 之后调用）。
@@ -937,6 +962,56 @@ fn validate_binding(expr: &Expr) -> Result<(), String> {
     }
 
     expr.walk(&mut Check)
+}
+
+/// **阶段 2**：`shader { object, root }` —— 把表达式编译成 WGSL（装饰性着色）。
+///
+/// 边界（诚实）：本版只接受**不含通道**的表达式（常量着色）；同时校验 `eval` 返回
+/// `vec3<f32>`（标量请用 `splat`）。逐帧参数（时间等）随阶段 3 一起接（GAPS AX-02）。
+fn shader(pod: &dyn Pod, spec: ShaderSpec) {
+    let this = expr_pod(pod);
+    let expr = match this.tree(spec.root) {
+        Ok(expr) => expr,
+        Err(error) => {
+            push_binding_error(this, format!("着色 codegen 的表达式句柄无效：{error}"));
+            return;
+        }
+    };
+    if let Err(message) = validate_binding(&expr) {
+        push_binding_error(this, format!("着色 codegen 的表达式非法：{message}"));
+        return;
+    }
+    let emitted = match ze_comb::emit_wgsl(&expr, ze_func::wgsl::backend()) {
+        Ok(emitted) => emitted,
+        Err(error) => {
+            push_binding_error(this, format!("着色 codegen 不能生成 WGSL：{error}"));
+            return;
+        }
+    };
+    if emitted.ret != ze_comb::SlotType::Vec3 {
+        push_binding_error(
+            this,
+            format!(
+                "着色 codegen 的根表达式必须返回 Vec3（当前 {:?}；标量请用 `splat`）",
+                emitted.ret
+            ),
+        );
+        return;
+    }
+    if !emitted.params.is_empty() {
+        push_binding_error(
+            this,
+            "着色 codegen 本版只支持不含通道的常量表达式（逐帧参数见 GAPS AX-02）".to_string(),
+        );
+        return;
+    }
+    this.shaders
+        .lock()
+        .expect("着色 codegen 表未被毒化")
+        .push(PendingShader {
+            object: spec.object,
+            source: emitted.source,
+        });
 }
 
 fn bind(pod: &dyn Pod, spec: BindSpec) {

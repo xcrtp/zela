@@ -105,7 +105,8 @@ fn is_injected(channel: &ChannelRef) -> bool {
         return matches!(channel.name.as_str(), "time" | "frame");
     }
     // 派生量是**方法**（B2），不再作为可读通道；这里只认可写字段地址。
-    channel.namespace == "zela.scene" && crate::animation::target::target_entry(&channel.name).is_some()
+    channel.namespace == "zela.scene"
+        && crate::animation::target::target_entry(&channel.name).is_some()
 }
 
 fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
@@ -239,10 +240,9 @@ fn record_expression(
             return Err(ExprBindError::ConflictingGate);
         }
         (Some(predicate), _) => (Some(predicate), reset),
-        (None, duration) if duration > 0.0 => (
-            Some(duration_predicate(duration)),
-            ResetBehavior::Hold,
-        ),
+        (None, duration) if duration > 0.0 => {
+            (Some(duration_predicate(duration)), ResetBehavior::Hold)
+        }
         (None, _) => (None, reset),
     };
     // **AH-07 硬约束**：Hold 是纯函数 `f(last_active(t))`。不可分析的时间门在装配期
@@ -254,7 +254,7 @@ fn record_expression(
             match crate::animation::predicate::analyze(predicate) {
                 None => return Err(ExprBindError::UnanalyzableHold),
                 Some(active) if active.has_non_time_variable() => {
-                    return Err(ExprBindError::UnanalyzableHold)
+                    return Err(ExprBindError::UnanalyzableHold);
                 }
                 Some(_) => {}
             }
@@ -391,6 +391,18 @@ impl SceneEncoder {
     /// 错误是显式的 —— 不留给运行期静默跳过。
     ///
     /// `duration > 0` 是糖（`predicate = t < duration` + `reset = hold`）。
+    /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
+    ///
+    /// 装饰性：不影响几何 / 状态；组件挂在创建载荷里 ⇒ 提交后与普通组件同样可见。
+    pub fn shader_fill(&mut self, object: Handle, source: String) -> Result<(), String> {
+        let components = self
+            .creates
+            .get_mut(object.0 as usize)
+            .ok_or_else(|| format!("着色 codegen 的对象句柄无效：{}", object.0))?;
+        components.push(Box::new(ze_render_ir::ShaderPaint { source }));
+        Ok(())
+    }
+
     pub fn bind_expr(
         &mut self,
         object: Handle,
@@ -400,7 +412,16 @@ impl SceneEncoder {
         clock: ClockProgram,
         duration: f64,
     ) -> Result<(), ExprBindError> {
-        self.bind_expr_gated(object, target, expr, library, clock, None, ResetBehavior::Hold, duration)
+        self.bind_expr_gated(
+            object,
+            target,
+            expr,
+            library,
+            clock,
+            None,
+            ResetBehavior::Hold,
+            duration,
+        )
     }
 
     /// 带 **predicate / reset** 的表达式绑定（C 批入口）。
@@ -514,6 +535,20 @@ pub struct SceneScript {
     timeline: Timeline,
 }
 
+impl SceneScript {
+    /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
+    ///
+    /// 与 [`SceneEncoder::shader_fill`] 同一口径：装饰性，不影响几何 / 状态。
+    pub fn shader_fill(&mut self, object: Handle, source: String) -> Result<(), String> {
+        let components = self
+            .creates
+            .get_mut(object.0 as usize)
+            .ok_or_else(|| format!("着色 codegen 的对象句柄无效：{}", object.0))?;
+        components.push(Box::new(ze_render_ir::ShaderPaint { source }));
+        Ok(())
+    }
+}
+
 impl serde::Serialize for SceneScript {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -597,7 +632,16 @@ impl SceneScript {
         clock: ClockProgram,
         duration: f64,
     ) -> Result<(), ExprBindError> {
-        self.bind_expr_gated(object, target, expr, library, clock, None, ResetBehavior::Hold, duration)
+        self.bind_expr_gated(
+            object,
+            target,
+            expr,
+            library,
+            clock,
+            None,
+            ResetBehavior::Hold,
+            duration,
+        )
     }
 
     /// 带 **predicate / reset** 的成品脚本入口（C 批）。
@@ -683,7 +727,8 @@ impl SceneScript {
         // 3. 时序：后一段的时钟整体后移到本脚本静止时刻 + 待解析目标句柄偏移。
         //    5b 之后没有顺序游标，"接在后面"必须显式落到时钟上。
         let time_base = self.timeline.still_time().unwrap_or(0.0);
-        self.timeline.append_shifted(&other.timeline, base, time_base);
+        self.timeline
+            .append_shifted(&other.timeline, base, time_base);
 
         HandleRange {
             start: base,
@@ -795,14 +840,9 @@ fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(),
                 // **B2**：方法的读集来自 `MethodSpec.reads`（方法体是黑盒，
                 // 定序器看不见它读了什么 ⇒ 必须静态声明）。
                 Step::Method { method, object, .. } => {
-                    if let Some(spec) =
-                        crate::animation::target::method_entry(&method.name)
-                    {
+                    if let Some(spec) = crate::animation::target::method_entry(&method.name) {
                         for address in spec.reads {
-                            out.push((
-                                ChannelRef::new("zela.scene", *address),
-                                *object,
-                            ));
+                            out.push((ChannelRef::new("zela.scene", *address), *object));
                         }
                     }
                 }

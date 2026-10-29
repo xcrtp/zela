@@ -76,6 +76,7 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_channels3d", "3D字段通道", "cap_channels3d.lua"),
     lua!("expr_read", "通道读端与值分支", "expr_read.lua"),
     lua!("sine_trace", "小球画正弦", "sine_trace.lua"),
+    lua!("cap_codegen", "着色codegen", "cap_codegen.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。
@@ -96,7 +97,11 @@ mod tests {
             .map(|line| {
                 let cells: Vec<&str> = line.split_whitespace().collect();
                 let (id, script) = (cells[0], cells[cells.len() - 2]);
-                (id.to_string(), cells[1..cells.len() - 2].join(" "), script.to_string())
+                (
+                    id.to_string(),
+                    cells[1..cells.len() - 2].join(" "),
+                    script.to_string(),
+                )
             })
             .collect()
     }
@@ -126,6 +131,9 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(actual, expected, "DEMOS 与 manifest 不同源（顺序 / id / 标题 / 脚本）");
+        assert_eq!(
+            actual, expected,
+            "DEMOS 与 manifest 不同源（顺序 / id / 标题 / 脚本）"
+        );
     }
 }

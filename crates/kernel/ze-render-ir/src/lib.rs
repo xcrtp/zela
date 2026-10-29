@@ -36,18 +36,20 @@ pub mod style;
 pub mod target;
 pub mod uniform;
 
-pub use degrade::ToShape2D;
 pub use caps::{
-    CapabilityNegotiationError, MeshForm, MeshFormError, MeshForms, NAMESPACES, PINNED_FINGERPRINTS,
-    RenderCapabilitySet, fingerprints, negotiate, signatures_of,
+    CapabilityNegotiationError, MeshForm, MeshFormError, MeshForms, NAMESPACES,
+    PINNED_FINGERPRINTS, RenderCapabilitySet, fingerprints, negotiate, signatures_of,
 };
+pub use degrade::ToShape2D;
 pub use draw::{DrawCommand, ZIndex, ZOrder};
 pub use layer::{LayerBlend, LayerId};
 pub use mesh::{PrimitiveTopology, ShaderVariant, TextureHandle, UvProjection};
-pub use paint::{BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint};
+pub use paint::{
+    BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint, ShaderPaint,
+};
 pub use params::{
-    AmbientOcclusion, Bloom, Msaa, RenderParamError, RenderParams, TextureFilter,
-    ToneCurve, ToneMapping,
+    AmbientOcclusion, Bloom, Msaa, RenderParamError, RenderParams, TextureFilter, ToneCurve,
+    ToneMapping,
 };
 pub use pipeline::{
     Capabilities, CapabilityError, ColorFormat, CullMode, DepthFormat, PassDepth, PassDesc,
@@ -58,11 +60,11 @@ pub use style::{
     FillSolid, FillStyle, Opacity, ResolveStyle, StrokeCap, StrokeJoin, StrokeShape, StrokeSolid,
     StrokeStyle, fill_style, stroke_style_raw,
 };
+pub use target::{RenderTargetDesc, TargetDescError};
 pub use uniform::{
     UniformField, UniformLayout, UniformLayoutError, UniformType, cube_lights_layout,
     cube_uniforms_layout,
 };
-pub use target::{RenderTargetDesc, TargetDescError};
 
 /// 呈现层度量空间：宽度属**世界**（随缩放）还是**屏幕**（不随缩放）。
 ///

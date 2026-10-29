@@ -161,7 +161,9 @@ impl PodAssembly {
         self.clear_expr_bindings();
         let owned = source.to_string();
         let arg: &dyn std::any::Any = &owned;
-        let script = self.broker.run_with("python", ze_pod_py::RUN_ENTRY, &[arg])?;
+        let script = self
+            .broker
+            .run_with("python", ze_pod_py::RUN_ENTRY, &[arg])?;
         self.merge_expr_bindings(script)
     }
 
@@ -179,16 +181,14 @@ impl PodAssembly {
     fn clear_expr_bindings(&self) {
         let _ = self.expr.take_bindings();
         let _ = self.expr.take_bind_each();
+        let _ = self.expr.take_shaders();
     }
 
     /// 把脚本登记的表达式动画并入成品脚本（S3 / 提案 #6 B）。
     ///
     /// 对象是脚本拿到的 **pod 句柄**：这里（装配期）转成本脚本内的句柄，
     /// 产物只存后者。装配期错误（未知目标 / 越界句柄 / 未注入通道）在这里**显式失败**。
-    fn merge_expr_bindings(
-        &self,
-        mut script: SceneScript,
-    ) -> Result<SceneScript, BrokerError> {
+    fn merge_expr_bindings(&self, mut script: SceneScript) -> Result<SceneScript, BrokerError> {
         let (bindings, errors) = self.expr.take_bindings();
         let bind_each = self.expr.take_bind_each();
         if let Some(message) = errors.into_iter().next() {
@@ -257,15 +257,9 @@ impl PodAssembly {
             };
             // predicate / reset 也是数据：Pod 侧的枚举在这里映射成产物侧的策略。
             let reset = match pending.reset {
-                ze_pod_func::ResetSpec::Hold => {
-                    zela_scene_ecs::animation::ResetBehavior::Hold
-                }
-                ze_pod_func::ResetSpec::Reset => {
-                    zela_scene_ecs::animation::ResetBehavior::Reset
-                }
-                ze_pod_func::ResetSpec::Skip => {
-                    zela_scene_ecs::animation::ResetBehavior::Skip
-                }
+                ze_pod_func::ResetSpec::Hold => zela_scene_ecs::animation::ResetBehavior::Hold,
+                ze_pod_func::ResetSpec::Reset => zela_scene_ecs::animation::ResetBehavior::Reset,
+                ze_pod_func::ResetSpec::Skip => zela_scene_ecs::animation::ResetBehavior::Skip,
             };
             // **第 4 批**：把这条绑定**实际用到的算子** revision 写进产物
             // （predicate 是独立表达式，同样记录；算子身份与 revision 同源于函子库）。
@@ -295,6 +289,24 @@ impl PodAssembly {
                 })?;
         }
         self.expand_bind_each(&mut script, bind_each)?;
+        // **阶段 2（着色 codegen）**：脚本登记的 `expr.shader` 挂成对象组件（装饰性）。
+        for pending in self.expr.take_shaders() {
+            let object = self.scene.object_handle(&pending.object).ok_or_else(|| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "着色 codegen 的对象句柄无效：{}",
+                        pending.object
+                    )),
+                }
+            })?;
+            script
+                .shader_fill(object, pending.source)
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(error),
+                })?;
+        }
         Ok(script)
     }
 
@@ -531,10 +543,7 @@ fn expected_value_type(ty: &TypeSpec) -> Option<ChannelType> {
 /// 静态装配：scene / content / lua（+ feature 开启时的 python / js）。
 pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyError> {
     // `nodes` 在开启 python / js feature 时需要追加节点。
-    #[cfg_attr(
-        not(any(feature = "python", feature = "js")),
-        allow(unused_mut)
-    )]
+    #[cfg_attr(not(any(feature = "python", feature = "js")), allow(unused_mut))]
     let (lua, scene, content, expr, mut nodes) = base_nodes(engine);
 
     #[cfg(feature = "python")]

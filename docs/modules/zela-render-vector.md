@@ -11,22 +11,22 @@
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`
 - 被依赖（下游）：`zela-app`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：10 个 · 11241 行
+- 源文件：10 个 · 11542 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/api.rs` | 3211 | 宿主适配层：`FilledPath` → 上游 `Upload::path` + `Record::filled` → 离屏一帧。 |
+| `src/api.rs` | 3240 | 宿主适配层：`FilledPath` → 上游 `Upload::path` + `Record::filled` → 离屏一帧。 |
 | `src/bloom.rs` | 128 | A 3D view's bloom (`Camera.bloom`): the glow a lens and a sensor spread around the light they take in, which keeps |
 | `src/environment.rs` | 784 | Environments: light from all around a 3D view, a picture of its surroundings (an equirectangular Radiance image, |
-| `src/lib.rs` | 134 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
+| `src/lib.rs` | 136 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
 | `src/mesh.rs` | 105 | A mesh prepared for drawing or recording. Geometry is evaluated in its input precision; |
 | `src/occlusion.rs` | 151 | A 3D view's ambient occlusion (`Camera.ambient_occlusion`): how much of the light from all around reaches the |
-| `src/render.rs` | 3882 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
-| `src/scene.rs` | 1057 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
+| `src/render.rs` | 4099 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
+| `src/scene.rs` | 1062 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
-| `src/vector.rs` | 1588 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
+| `src/vector.rs` | 1636 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -74,6 +74,7 @@ graph LR
 | `src/render.rs` | `pub fn set_shadow_state(on: bool)` |
 | `src/render.rs` | `pub fn set_sample_override(samples: u32)` |
 | `src/render.rs` | `pub fn set_skip(mask: u32)` |
+| `src/render.rs` | `pub struct ShaderFill` |
 | `src/render.rs` | `pub fn init_gpu(` |
 | `src/render.rs` | `pub fn init_gpu(` |
 | `src/render.rs` | `pub fn msaa_samples(adapter: &wgpu::Adapter) -> u32` |
