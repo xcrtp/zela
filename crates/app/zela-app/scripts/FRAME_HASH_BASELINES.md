@@ -92,8 +92,8 @@
 # Python 运行时；`surface_matrix.js` 这件 JS 作品（B7 Step 3）必须开它才编译得出来。
 
 # 1) 编译 ZSB（可选：--script 与 --bundle 两条路径都要跑一遍）
-cargo run -q -p zela-compile --no-default-features --features typst,js -- \
-  crates/app/zela-app/scripts/fourier.lua --out /tmp/fourier.zsb
+cargo run -q -p zela-cli --no-default-features --features typst,js --bin zela -- \
+  compile crates/app/zela-app/scripts/fourier.lua --out /tmp/fourier.zsb
 
 # 2) 渲染并输出序列哈希（--frames 表示不依赖 ffmpeg）
 #    B8 Step 2：哈希是**可选 sink** —— `--hash` 打印、`--hash-out FILE` 打印并写文件；

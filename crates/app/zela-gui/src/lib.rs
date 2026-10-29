@@ -50,6 +50,84 @@ pub enum Initial {
     Choice(SceneChoice),
 }
 
+/// 启动参数 → 初始作品（纯函数；`ZELA_DEMO=1` 由调用方探测后传入）。
+///
+/// 抽出来是为了让「默认先播哪件」可被断言（阶段 0 的默认值快照）。
+pub fn initial_from(args: &[String], demo_env: bool) -> Initial {
+    if let Some(index) = args.iter().position(|arg| arg == "--work") {
+        if let Some(id) = args.get(index + 1) {
+            return Initial::Demo(id.clone());
+        }
+    }
+    if args.iter().any(|a| a == "--script") {
+        return Initial::Demo("storyboard".to_string());
+    }
+    if args
+        .iter()
+        .any(|a| a == "--python" || a == "--python-script")
+    {
+        return Initial::Choice(SceneChoice::PythonStoryboard);
+    }
+    let by_arg = args
+        .iter()
+        .any(|a| a == "--demo" || a == "--capability-demo");
+    if by_arg || demo_env {
+        Initial::Choice(SceneChoice::CapabilityDemo)
+    } else {
+        Initial::First
+    }
+}
+
+/// 从环境读取初始作品（`zela gui` 与旧的 `zela-app` bin 共用）。
+pub fn initial() -> Initial {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let demo_env = std::env::var("ZELA_DEMO")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    initial_from(&args, demo_env)
+}
+
+/// 启动 GUI（`zela gui` 的唯一入口；eframe 事件循环阻塞到窗口关闭）。
+pub fn launch() -> eframe::Result<()> {
+    // 结构化日志：过滤器由 ZELA_LOG 控制（默认 zela=debug,warn）。
+    zela_schedule::telemetry::init_tracing();
+    launch_with(initial())
+}
+
+/// 以指定初始作品启动（`zela play <id>` 用）。
+pub fn launch_with(initial: Initial) -> eframe::Result<()> {
+    let mut options = zela_egui::window_options();
+    request_vector_device(&mut options);
+
+    eframe::run_native(
+        "zela",
+        options,
+        Box::new(move |cc| Ok(Box::new(App::with_initial(cc, initial)?))),
+    )
+}
+
+/// **阶段 1（零回读）**：让 eframe 的 device 带上矢量后端需要的 features / limits。
+fn request_vector_device(options: &mut eframe::NativeOptions) {
+    use zela_render_backends::{BackendKind, BackendRegistry};
+
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup else {
+        // 宿主自带 device（`WgpuSetup::Existing`）⇒ 能力由调用方负责，这里不猜。
+        return;
+    };
+    setup.device_descriptor = std::sync::Arc::new(|adapter| {
+        let mut registry = BackendRegistry::with_standard();
+        let _ = registry.register(BackendKind::Vector);
+        // 并集失败（没有任何可用后端）在 GUI 里不可能发生：wgpu 后端总是注册着。
+        let features = registry.required_device_features(adapter).unwrap_or_default();
+        eframe::wgpu::DeviceDescriptor {
+            label: Some("zela"),
+            required_features: features,
+            required_limits: registry.required_device_limits(adapter),
+            ..Default::default()
+        }
+    });
+}
+
 /// 下拉里的一项：内置作品 / 内置场景 / 用户打开的文件。
 struct Entry {
     title: String,
@@ -868,5 +946,44 @@ mod tests {
                 EntrySource::Choice(SceneChoice::PythonStoryboard)
             ));
         }
+    }
+}
+
+/// **阶段 0：默认值快照**（仓库门面批次 §阶段 0）。
+#[cfg(test)]
+mod launch_defaults {
+    use super::*;
+
+    fn args(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn no_arguments_starts_with_the_first_builtin() {
+        assert!(matches!(initial_from(&[], false), Initial::First));
+    }
+
+    #[test]
+    fn explicit_flags_win_in_documented_priority() {
+        assert!(matches!(
+            initial_from(&args(&["--work", "fourier"]), false),
+            Initial::Demo(id) if id == "fourier"
+        ));
+        assert!(matches!(
+            initial_from(&args(&["--script"]), false),
+            Initial::Demo(id) if id == "storyboard"
+        ));
+        assert!(matches!(
+            initial_from(&args(&["--python"]), false),
+            Initial::Choice(SceneChoice::PythonStoryboard)
+        ));
+        assert!(matches!(
+            initial_from(&args(&["--demo"]), false),
+            Initial::Choice(SceneChoice::CapabilityDemo)
+        ));
+        assert!(matches!(
+            initial_from(&[], true),
+            Initial::Choice(SceneChoice::CapabilityDemo)
+        ));
     }
 }

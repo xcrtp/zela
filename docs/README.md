@@ -4,6 +4,17 @@
 > 会腐烂的内容（文件清单、依赖、行数、API 签名）由机器生成；不会腐烂的内容（职责、边界、
 > 决策理由）由人手写。**自动区勿手改**——见每篇模块文档开头的声明。
 
+## 按角色阅读
+
+README 的「我接下来读什么」只指向这里 —— **同一份定义**，不复制第二份。
+
+| 角色 | 先看 |
+|---|---|
+| 想做动画的 | 脚本怎么写（[`guides/animation.md`](guides/animation.md)）、有哪些能力（`zela api` 生成的补全声明）、`expr.bind` 怎么用 |
+| 想改引擎的 | [加一个组件要改哪几处](guides/adding-a-component.md)、[门禁有哪些](principles.md) |
+| 想接后端的 | [后端契约与路由](guides/render-backends.md)、`feature_bits`、路由口径 |
+| 想复现论文的 | [确定性四层口径](guides/determinism.md)、基线怎么重录 |
+
 ## 阅读顺序
 
 1. [设计原则与判据清单](principles.md) —— 先看判据，再看结论

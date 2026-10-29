@@ -10,7 +10,7 @@
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/zela-scene-bundle`
 - 生产依赖（上游，dev-deps 不计）：`ze-render-ir`、`zela-scene-ecs`
-- 被依赖（下游）：`zela-app`、`zela-compile`、`zela-playback`、`zela-web`
+- 被依赖（下游）：`zela-app`、`zela-cli`、`zela-commands`、`zela-playback`、`zela-web`
 - 源文件：4 个 · 1534 行
 
 ### 文件清单

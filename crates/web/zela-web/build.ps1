@@ -177,22 +177,22 @@ try {
         $outZsb = Join-Path $www "$id.zsb"
 
         Write-Host "[demo] $id ← $script"
-        # zela-compile 把 payload hash 打印到 stderr，需合并捕获；
+        # `zela compile` 把 payload hash 打印到 stderr，需合并捕获；
         # 调用期间临时放宽 ErrorActionPreference（Windows PowerShell 把原生 stderr 当错误）。
         $previous = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         # `js` 只为编译 `surface_matrix.js`（B7 Step 3）：boa 是纯 Rust，**不进 wasm** ——
         # 网页侧只回放 ZSB，没有任何脚本引擎。
-        $compileLog = & cargo run -q -p zela-compile --no-default-features --features typst,js -- $scriptPath --out $outZsb 2>&1 | ForEach-Object { "$_" }
+        $compileLog = & cargo run -q -p zela-cli --no-default-features --features typst,js --bin zela -- compile $scriptPath --out $outZsb 2>&1 | ForEach-Object { "$_" }
         $compileCode = $LASTEXITCODE
         $ErrorActionPreference = $previous
         if ($compileCode -ne 0) {
-            throw "zela-compile 失败（$id，退出码 $compileCode）：`n$($compileLog -join [Environment]::NewLine)"
+            throw "zela compile 失败（$id，退出码 $compileCode）：`n$($compileLog -join [Environment]::NewLine)"
         }
 
         $match = [regex]::Match(($compileLog -join "`n"), 'payload hash = ([0-9a-f]{64})')
         if (-not $match.Success) {
-            throw "未从 zela-compile 输出解析到 payload hash（$id）"
+            throw "未从 zela compile 输出解析到 payload hash（$id）"
         }
         $actual = $match.Groups[1].Value
         $resolved = Resolve-ExpectedPayloadHash $expected $platform "manifest.txt:$lineNumber"

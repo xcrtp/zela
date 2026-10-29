@@ -1370,18 +1370,41 @@
 | zela-app | 应用组装 | 唯一可执行入口 / 导出 |
 | zela-authored | 内置作品 | demo3d / storyboard / capability demo |
 | zela-playback | 回放 | 输入流 / 矢量帧 |
+| zela-commands | 命令帧体（宿主无关） | `CommandSpec` / `CommandHost` / `FrameSink` / `Response`（不含 clap / egui） |
+| zela-cli | `zela` 伞命令 | `CommandSpec → clap` 适配 / 终端宿主 / PNG / mp4 sink |
 | zela-gui | GUI 入口 | eframe 宿主 |
-| zela-compile | 编译入口 | Lua/Python/JS → ZSB |
 | zela-web | wasm 门面 | 浏览器入口 |
 | zela | 应用层门面 | re-export ze-pod + ze-node |
+
+---
+
+## AY. 仓库门面批次（命令层 / 断点续渲 / doctor / examples 门禁，2026-10-29）
+
+> 计划《仓库门面批次_执行计划》。判据：命令层不依赖 UI；默认值不改像素；
+> 断点续渲与一次性渲染逐位相同。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| AY-01 | 命令层独立 crate + 声明式 `CommandSpec` | app | **已关闭（0）** | `crates/app/zela-commands`：`CommandSpec` / `CommandHost` / `FrameSink` / `Response`；其 Cargo.toml 无 clap / egui / eframe；`render` / `list` 经内存宿主与 CLI 宿主跑通（`cargo test -p zela-commands -p zela-cli`） |
+| AY-02 | 默认值快照回归网 | app / gui | **已关闭（0）** | `zela-render` / `zela-verify` / `zela-parity` / GUI 启动项各带 `defaults_snapshot`：钉住 fps 30、640×480、`out.mp4`、`auto`、`wgpu`（verify 的 `--work` 缺省）等；`zela-compile` 的默认值由 `zela-commands::compile` 用例承接 |
+| AY-03 | `zela` 伞命令 + 删 `zela-compile` crate 与 `zela-gui` bin | app / xtask / web | **已关闭（0）** | `zela-cli`（bin `zela`）暴露 render / frames / compile / check / inspect / api / fingerprint / doctor / fonts / list / gui；xtask 的 `zela-compile` 调用（demo / compile_bundle）与 `build.ps1` 改走 `zela compile`，`export_scene_api` 改走 `zela api` |
+| AY-04 | 断点续渲 | app | **已关闭（0）** | `--frames` 写 `.zela-render.json`（参数指纹 + 每帧 SHA-256）；恢复时 `Seek` 到边界并回渲 1 帧校验逐位一致，指纹不符拒绝续渲。实测：`frames smoke.lua` 渲满 15 帧后把 manifest 截到 5 条，重跑输出「从第 5 帧继续」且边界帧哈希与首次渲染相同，manifest 回到 15 条 |
+| AY-05 | `doctor` 查出字体静默回退 | app / kernel | **已关闭（0）** | `zela doctor` 在缺字体时 Warn 并指向 `zela fonts`；`fonts` 用 curl 下载 + SHA-256 校验，并自动设置 `ZELA_TYPST_FONT_DIR` |
+| AY-06 | 使用者命令补全 + 帧范围 | app | **已关闭（0）** | `check` / `inspect` / `list` / `play` 与 `--from` / `--to`；`render` 与 `frames` 共用同一帧体（`run_frames`） |
+| AY-07 | examples 记录门禁 | xtask | **已关闭（0）** | `check_examples_recorded` 纳入 `--step structure`：每个 example 必须在 README / docs 有记录，或用 `required-features` 隔离（`send_probe`） |
+| AY-08 | `dev verify` / `dev parity` 子命令 | app | **未执行（3）** | 两个内部 bin 仍在 `zela-app`，xtask 继续调用；迁入 `zela dev` 需先评估门禁调用点（本轮按"GUI/codegen 批次优先"让路） |
+| AY-09 | README 面向使用者重写 + docs 角色入口 | docs | **已关闭（0）** | README 删除架构章节，改为定位 / 5 分钟 / 第一个动画 / 能力索引 / 角色入口；角色表唯一定义在 `docs/README.md` 的「按角色阅读」 |
+| AY-10 | 全批像素与结构逐位回归 | render | **已关闭（0）** | 本机实测：`cargo verify --step hashes` 合计 36 项全部 ok（DIFF 0）；`--step structure` 全绿（含新门禁）；`--step docs` / `--step check` 全绿 |
+
+**AY 段小计**：已关闭 9（AY-01–AY-07、AY-09、AY-10）· 部分关闭 0 · 未执行 1（AY-08）。
 
 ---
 
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–AW**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–AW 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
+> （**D–AY**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–AY 段，含"部分关闭"与"落档"；AF 段为立约段，编号不进该核对器）。
 
 | 类别 | 数量 |
 |---|---|

@@ -102,8 +102,8 @@
       "name": "app",
       "path": "crates/app",
       "prefix": "zela-",
-      "description": "应用组装层（唯一可执行入口）+ 内置作品 / 回放 / GUI 宿主 / 编译入口",
-      "crates": ["zela-app", "zela-authored", "zela-playback", "zela-gui", "zela-compile"]
+      "description": "应用组装层（唯一可执行入口）+ 内置作品 / 回放 / GUI 宿主 / 宿主无关命令帧体",
+      "crates": ["zela-app", "zela-authored", "zela-playback", "zela-commands", "zela-cli", "zela-gui"]
     },
     {
       "name": "web",

@@ -41,6 +41,7 @@ use zela_scene_bundle::frame_hash::FrameSequenceHash;
 use zela_scene_bundle::{Bundle, MetaInput};
 
 /// 一个待对拍的作品。
+#[derive(Debug)]
 struct Work {
     name: String,
     width: u32,
@@ -48,6 +49,7 @@ struct Work {
     backend: LoopBackend,
 }
 
+#[derive(Debug)]
 struct Args {
     scripts: PathBuf,
     tmp: PathBuf,
@@ -58,8 +60,8 @@ struct Args {
 }
 
 impl Args {
-    fn parse() -> Result<Self, String> {
-        let raw: Vec<String> = std::env::args().skip(1).collect();
+    /// 纯解析入口（默认值快照的被测点）。
+    fn parse_from(raw: &[String]) -> Result<Self, String> {
         if raw.is_empty() || raw.iter().any(|a| a == "--help" || a == "-h") {
             return Err(
                 "用法：zela-verify --scripts DIR --tmp DIR --work name=WxH[:vector] [--work ...]\n\
@@ -144,7 +146,8 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let args = Args::parse()?;
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let args = Args::parse_from(&raw)?;
     std::fs::create_dir_all(&args.tmp)
         .map_err(|e| format!("创建目录 {} 失败：{e}", args.tmp.display()))?;
 
@@ -542,6 +545,8 @@ fn render_png(
         height: work.height,
         fps,
         backend: work.backend,
+        start_frame: 0,
+        end_frame: None,
         vector_params: None,
     };
     let run = run_frames(
@@ -596,6 +601,8 @@ fn render_hash(
         height: work.height,
         fps,
         backend: work.backend,
+        start_frame: 0,
+        end_frame: None,
         vector_params: None,
     };
     let run = run_frames(
@@ -643,4 +650,60 @@ fn assert_structure_matches(work: &str, script: &[u64], bundle: &[u64]) -> Resul
         }
     }
     Ok(())
+}
+
+/// **阶段 0：默认值快照**（仓库门面批次 §阶段 0）。
+///
+/// `zela-verify` 的默认值（fps、`--work` 的尺寸切分与后端缺省）直接决定 36 条像素
+/// 基线与结构指纹的口径 ⇒ 迁移到 `zela-commands` 后必须逐条复现。
+#[cfg(test)]
+mod defaults_snapshot {
+    use super::*;
+
+    fn args(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|value| value.to_string()).collect()
+    }
+
+    fn base(raw: &[&str]) -> Vec<String> {
+        let mut out = args(&["--scripts", "scripts", "--tmp", "tmp"]);
+        out.extend(args(raw));
+        out
+    }
+
+    #[test]
+    fn fps_defaults_to_30_and_sink_bypass_is_off() {
+        let parsed = Args::parse_from(&base(&["--work", "fourier=640x480"])).expect("可解析");
+        assert_eq!(parsed.fps, 30.0, "默认 30 fps");
+        assert!(!parsed.sink_bypass, "--sink-bypass 默认关");
+        assert_eq!(parsed.works.len(), 1);
+        assert_eq!(parsed.works[0].name, "fourier");
+        assert_eq!((parsed.works[0].width, parsed.works[0].height), (640, 480));
+        assert_eq!(
+            parsed.works[0].backend,
+            LoopBackend::Wgpu,
+            "--work 未写后端 ⇒ wgpu（批量对拍基线口径）"
+        );
+    }
+
+    #[test]
+    fn work_backend_suffix_is_parsed() {
+        let parsed = Args::parse_from(&base(&["--work", "vector_paths=640x480:vector"]))
+            .expect("可解析");
+        assert_eq!(parsed.works[0].backend, LoopBackend::Vector);
+        assert!(parse_work("x=640x480:metal").is_err(), "未知后端必须失败");
+        assert!(parse_work("x=640").is_err(), "缺高度必须失败");
+        assert!(parse_work("x").is_err(), "缺尺寸必须失败");
+    }
+
+    #[test]
+    fn required_directories_fail_explicitly() {
+        assert!(Args::parse_from(&args(&["--tmp", "tmp", "--work", "a=1x1"])).is_err());
+        assert!(Args::parse_from(&args(&["--scripts", "s", "--work", "a=1x1"])).is_err());
+    }
+
+    #[test]
+    fn help_is_an_error_with_usage() {
+        let error = Args::parse_from(&args(&["--help"])).expect_err("--help 走用法分支");
+        assert!(error.contains("用法：zela-verify"));
+    }
 }

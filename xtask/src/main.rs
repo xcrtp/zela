@@ -658,24 +658,11 @@ fn step_docs(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 跑一次 `export_scene_api`（输出到给定目录）。
+/// 跑一次 `zela api`（声明文件导出；阶段 3 起 `export_scene_api` example 让位给子命令）。
 fn export_scene_api(root: &Path, out: &Path) -> Result<(), String> {
     let args = [
-        strings(&[
-            "run",
-            "-q",
-            "--profile",
-            "verify",
-            "-p",
-            "zela-app",
-            "--example",
-            "export_scene_api",
-            "--no-default-features",
-            "--features",
-            "typst,js",
-            "--",
-        ]),
-        vec![out.to_string_lossy().into_owned()],
+        run_args("zela-cli", Some("zela")),
+        vec!["api".to_string(), out.to_string_lossy().into_owned()],
     ]
     .concat();
     cargo(root, &args)
@@ -1249,22 +1236,12 @@ fn step_check(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
             "zela-app",
             "--exclude",
             "zela-gui",
-            "--exclude",
-            "zela-compile",
         ]),
     )?;
     cargo(
         root,
         &[
             strings(&["check", "-p", "zela-app", "--all-targets"]),
-            plan.app_args(),
-        ]
-        .concat(),
-    )?;
-    cargo(
-        root,
-        &[
-            strings(&["check", "-p", "zela-compile", "--all-targets"]),
             plan.app_args(),
         ]
         .concat(),
@@ -1303,8 +1280,6 @@ fn step_test(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
             "zela-app",
             "--exclude",
             "zela-gui",
-            "--exclude",
-            "zela-compile",
             "--",
             "--test-threads=1",
         ]),
@@ -1313,15 +1288,6 @@ fn step_test(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
         root,
         &[
             strings(&["test", "-p", "zela-app", "-j", "2"]),
-            plan.app_args(),
-            strings(&["--", "--test-threads=1"]),
-        ]
-        .concat(),
-    )?;
-    cargo(
-        root,
-        &[
-            strings(&["test", "-p", "zela-compile", "-j", "2"]),
             plan.app_args(),
             strings(&["--", "--test-threads=1"]),
         ]
@@ -1612,6 +1578,107 @@ fn check_duplicate_public_names(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// **门禁（阶段 6）**：每个 example 必须在 README / docs 有记录，或在 Cargo.toml
+/// 用 `required-features` 显式隔离（负向编译探针）。
+///
+/// 为什么：`--all-targets` 会构建**全部** examples ⇒ 它们都进 CI，也都会腐烂。
+/// 与 `dispositions.txt` 同一招：**不许无保护且不声明**。
+fn check_examples_recorded(root: &Path) -> Result<(), String> {
+    /// 负向编译探针：Cargo.toml 里 `required-features` 已隔离，不进默认构建。
+    const ISOLATED: &[&str] = &["send_probe"];
+
+    fn walk(dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(dir).map_err(|error| format!("遍历 {} 失败：{error}", dir.display()))? {
+            let path = entry
+                .map_err(|error| format!("遍历 {} 失败：{error}", dir.display()))?
+                .path();
+            if path.is_dir() {
+                walk(&path, out)?;
+            } else if path
+                .parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str())
+                == Some("examples")
+                && path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+            {
+                if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                    out.push((stem.to_string(), path.clone()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    let mut examples = Vec::new();
+    walk(&root.join("crates"), &mut examples)?;
+    let mut corpus = String::new();
+    if let Ok(text) = fs::read_to_string(root.join("README.md")) {
+        corpus.push_str(&text);
+    }
+    for document in repository_markdown_docs(root)? {
+        if let Ok(text) = fs::read_to_string(&document) {
+            corpus.push_str(&text);
+        }
+    }
+
+    let mut missing: Vec<&str> = examples
+        .iter()
+        .filter(|(name, _)| {
+            !ISOLATED.contains(&name.as_str()) && !corpus.contains(name.as_str())
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+    missing.sort_unstable();
+    if !missing.is_empty() {
+        return Err(format!(
+            "以下 examples 在 README / docs 里零记录（新增 example 必须写一行说明，或用 required-features 隔离）：{}",
+            missing.join(", ")
+        ));
+    }
+    println!(
+        "[xtask] OK: examples 记录门禁（{} 个；{} 个显式隔离）",
+        examples.len(),
+        ISOLATED.len()
+    );
+    Ok(())
+}
+
+/// **门禁（§0.1）**：`zela-commands` 的依赖里不得出现 clap / egui / eframe。
+///
+/// 与 `prepare_frame` 的「帧体 + 适配层」同一模式：命令帧体不认识任何宿主框架。
+fn check_commands_layer(root: &Path) -> Result<(), String> {
+    const FORBIDDEN: &[&str] = &["clap", "egui", "eframe", "egui-wgpu", "clap_builder"];
+    let path = root.join("crates").join("app").join("zela-commands").join("Cargo.toml");
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+    let mut offenders = Vec::new();
+    for line in text.lines() {
+        // 注释里的名字（如本仓的说明文字）不算依赖。
+        let code = line.split('#').next().unwrap_or("").trim();
+        if code.is_empty() {
+            continue;
+        }
+        let name = code
+            .split_once('=')
+            .map(|(name, _)| name.trim().trim_matches('"'))
+            .unwrap_or("");
+        if FORBIDDEN.contains(&name) {
+            offenders.push(code.to_string());
+        }
+    }
+    if !offenders.is_empty() {
+        return Err(format!(
+            "zela-commands 依赖了 UI / CLI 框架（§0.1 判据：命令层宿主无关）：\n  {}",
+            offenders.join("\n  ")
+        ));
+    }
+    println!("[xtask] OK: zela-commands 不含 clap / egui / eframe");
+    Ok(())
+}
+
 /// **阶段 4 门禁**：遍历 / 求值 / 装配路径禁用 `HashMap` / `HashSet`。
 ///
 /// 为什么：这些路径的输出顺序会被下游继承（拓扑序、诊断次序、pass 结果），
@@ -1705,7 +1772,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
         "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.", "## AR.",
-        "## AS.", "## AT.", "## AU.", "## AV.", "## AW.", "## AX.",
+        "## AS.", "## AT.", "## AU.", "## AV.", "## AW.", "## AX.", "## AY.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1755,7 +1822,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("AU-")
                     || id.starts_with("AV-")
                     || id.starts_with("AW-")
-                    || id.starts_with("AX-"));
+                    || id.starts_with("AX-")
+                    || id.starts_with("AY-"));
             if !is_item {
                 continue;
             }
@@ -2305,6 +2373,10 @@ fn step_structure(root: &Path) -> Result<(), String> {
     check_duplicate_public_names(root)?;
     // 阶段 4：表达式图 / 拓扑路径的确定性门禁（禁用 HashMap / HashSet）。
     check_no_hashmap_in_graph_paths(root)?;
+    // 阶段 6（仓库门面批次）：每个 example 必须在 README / docs 有记录（或显式隔离）。
+    check_examples_recorded(root)?;
+    // §0.1（仓库门面批次）：命令层不得依赖任何 UI / CLI 框架。
+    check_commands_layer(root)?;
     // B7 Step 0.2：GAPS 的小计必须与条目状态一致（不依赖 jq，先跑）。
     check_gaps_subtotals(root)?;
     // B12 Step 0.3：GAPS 里的 crate 限定语义锚点必须能在源码里找到定义。
@@ -2522,9 +2594,11 @@ fn step_demo(root: &Path) -> Result<(), String> {
             ));
         }
         let out = out_dir.join(format!("{id}.zsb"));
+        // 阶段 3（仓库门面批次）：`zela-compile` crate 已删除，编译改走 `zela compile`。
         let args = [
-            run_args("zela-compile", None),
+            run_args("zela-cli", Some("zela")),
             strings(&[
+                "compile",
                 &script_path.to_string_lossy(),
                 "--out",
                 &out.to_string_lossy(),
@@ -2543,7 +2617,7 @@ fn step_demo(root: &Path) -> Result<(), String> {
         );
         if !output.status.success() {
             eprint!("{log}");
-            return Err(format!("demo {id}：zela-compile 失败（{}）", output.status));
+            return Err(format!("demo {id}：zela compile 失败（{}）", output.status));
         }
         let Some(actual) = log
             .lines()
@@ -3343,7 +3417,11 @@ fn compare_script_vs_bundle(
 }
 
 fn compile_bundle(root: &Path, script: &str, out: &str) -> Result<(), String> {
-    let args = [run_args("zela-compile", None), strings(&[script, "--out", out])].concat();
+    let args = [
+        run_args("zela-cli", Some("zela")),
+        strings(&["compile", script, "--out", out]),
+    ]
+    .concat();
     cargo(root, &args)
 }
 

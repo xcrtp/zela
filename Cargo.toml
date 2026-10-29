@@ -48,8 +48,9 @@ members = [
     "crates/app/zela-app",
     "crates/app/zela-authored",
     "crates/app/zela-playback",
+    "crates/app/zela-commands",
+    "crates/app/zela-cli",
     "crates/app/zela-gui",
-    "crates/app/zela-compile",
     "crates/web/zela-web",
     "crates/zela/zela",
 ]

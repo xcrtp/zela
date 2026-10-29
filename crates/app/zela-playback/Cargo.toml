@@ -34,7 +34,3 @@ thiserror.workspace = true
 # native 同步回读（序列帧 / 测试）；wasm 构建用 `--no-default-features`。
 default = ["blocking"]
 blocking = ["zela-render-backends/blocking"]
-
-[dev-dependencies]
-# 对拍示例：解码逐帧 PNG（结构与数值两层判据）。
-png.workspace = true

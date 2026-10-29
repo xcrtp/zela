@@ -1,0 +1,33 @@
+[package]
+name = "zela-commands"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "宿主无关的命令帧体：CommandSpec 声明 + 结构化 Response（不依赖 clap / egui）"
+
+# **判据（仓库门面批次 §0.1）**：本 crate 的依赖里**不许出现** clap / egui / eframe。
+# `cargo verify --step structure` 的依赖方向检查守住这一条。
+[dependencies]
+zela-app = { path = "../zela-app", default-features = false }
+zela-playback = { path = "../zela-playback" }
+zela-scene-bundle = { path = "../../scene/zela-scene-bundle" }
+zela-scene-ecs = { path = "../../scene/zela-scene-ecs" }
+zela-render-backends = { path = "../../render/zela-render-backends", default-features = false, features = ["wgpu"] }
+zela-render-vector = { path = "../../render/zela-render-vector" }
+# `api` 命令（声明文件导出）与 `fingerprint compare`（PNG 解码）。
+ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
+ze-pod-binding = { path = "../../ze/pod/ze-pod-binding" }
+ze-pod-func = { path = "../../ze/pod/ze-pod-func" }
+ze-pod-lua = { path = "../../ze/pod/ze-pod-lua" }
+# `.pyi` 生成器是纯 Rust（不启用 pyo3）⇒ 文档基线不依赖系统 Python。
+ze-pod-py = { path = "../../ze/pod/ze-pod-py", default-features = false }
+ze-pod-js = { path = "../../ze/pod/ze-pod-js", optional = true }
+png.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+default = ["typst"]
+typst = ["zela-app/typst"]
+python = ["zela-app/python"]
+js = ["zela-app/js", "dep:ze-pod-js"]

@@ -10,7 +10,7 @@
 - 层：`render`（`crates/render`）
 - 路径：`crates/render/zela-render-backends`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-core`、`ze-vertex`、`zela-render`
-- 被依赖（下游）：`zela-app`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-web`
+- 被依赖（下游）：`zela-app`、`zela-cli`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-web`
 - 源文件：21 个 · 13833 行
 
 ### 文件清单

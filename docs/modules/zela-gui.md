@@ -10,15 +10,14 @@
 - 层：`app`（`crates/app`）
 - 路径：`crates/app/zela-gui`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-core`、`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-ecs`、`zela-schedule`
-- 被依赖（下游）：（无）
-- 源文件：2 个 · 954 行
+- 被依赖（下游）：`zela-cli`
+- 源文件：1 个 · 989 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 872 | — |
-| `src/main.rs` | 82 | — |
+| `src/lib.rs` | 989 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -29,6 +28,10 @@
 | 文件 | 项 |
 |---|---|
 | `src/lib.rs` | `pub enum Initial` |
+| `src/lib.rs` | `pub fn initial_from(args: &[String], demo_env: bool) -> Initial` |
+| `src/lib.rs` | `pub fn initial() -> Initial` |
+| `src/lib.rs` | `pub fn launch() -> eframe::Result<()>` |
+| `src/lib.rs` | `pub fn launch_with(initial: Initial) -> eframe::Result<()>` |
 | `src/lib.rs` | `pub struct App` |
 <!-- AUTO:END -->
 

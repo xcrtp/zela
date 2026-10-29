@@ -61,8 +61,6 @@ png.workspace = true
 [dev-dependencies]
 # 像素一致性用例直接驱动 egui-wgpu 的回调路径（不是生产依赖）。
 egui-wgpu.workspace = true
-# 声明文件导出：`.pyi` 生成器是纯 Rust（不需要 pyo3），因此文档基线不依赖 Python。
-ze-pod-py = { path = "../../ze/pod/ze-pod-py", default-features = false }
 
 [features]
 # typst 默认开：否则看不见真公式，demo 无意义。

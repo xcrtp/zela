@@ -40,6 +40,13 @@ pub struct FrameLoopOptions {
     pub height: u32,
     pub fps: f64,
     pub backend: LoopBackend,
+    /// **断点续渲**：从第几帧开始（`0` = 从头）。
+    ///
+    /// `> 0` 时循环先 `Seek(t = start_frame / fps)` 再逐帧推进；
+    /// 调用方负责保证 `start_frame < frames_for(..)`。
+    pub start_frame: u32,
+    /// **帧范围**：渲染到第几帧为止（`None` = 到末尾）。
+    pub end_frame: Option<u32>,
     /// **B10 Step 4**：矢量后端的着色栈覆盖。
     ///
     /// `None` ⇒ 按后端能力取默认（矢量 = `PostCaps::all()` ⇒ tone/bloom/ao 全开）；
@@ -426,6 +433,15 @@ pub fn run_frames(
             rect: Rect2D::new(Vec2::ZERO, Vec2::new(width as f32, height as f32)),
         });
     });
+    // **断点续渲**：先快进到起点（`Seek` 是 Driver 的既有命令，不另造状态迁移）。
+    if options.start_frame > 0 {
+        runtime
+            .driver
+            .submit(DriverCommand::Seek {
+                t: f64::from(options.start_frame) / options.fps,
+            })
+            .wait();
+    }
 
     // B4 Step 2 / B6 §0.3：默认值按后端能力取（wgpu `PostCaps::none()` ⇒ 与旧 `Default`
     // 逐位相同）；显式请求不支持项仍报错。
@@ -452,10 +468,13 @@ pub fn run_frames(
     };
     let dt = 1.0 / options.fps as f32;
     let frames = frames_for(runtime, options.fps);
-    let mut timings = Vec::with_capacity(frames as usize);
+    let start = options.start_frame.min(frames.saturating_sub(1).max(0));
+    let stop = options.end_frame.map_or(frames, |end| end.min(frames));
+    let remaining = stop.saturating_sub(start);
+    let mut timings = Vec::with_capacity(remaining as usize);
     // 执行计划阶段 1：逐帧结构指纹（状态 = f(t) 的等式一侧）。
     let mut structure: Vec<zela_scene_ecs::StructureFingerprint> =
-        Vec::with_capacity(frames as usize);
+        Vec::with_capacity(remaining as usize);
     // B12 Step 2：决策日志（相邻重复只留一条；`AutoFrame` 可能真的换后端）。
     let mut decisions: Vec<RoutingDecision> = Vec::new();
 
@@ -473,7 +492,7 @@ pub fn run_frames(
             None => (None, GpuTimingSupport::unsupported("上下文没有 adapter")),
         }
     };
-    let mut gpu_ms: Vec<Option<f64>> = Vec::with_capacity(frames as usize);
+    let mut gpu_ms: Vec<Option<f64>> = Vec::with_capacity(remaining as usize);
 
     // B12 Step 5：缓存 / 资源计数取本轮增量（计数是进程级累计，取走即清零）。
     let _ = zela_render_backends::diagnostics::take_cache_totals();
@@ -482,7 +501,7 @@ pub fn run_frames(
     let _ = zela_render_vector::take_resource_totals();
     let mut vector_resources = zela_render_vector::ResourceTotals::default();
     let mut resource_frames: Vec<zela_render_vector::ResourceTotals> =
-        Vec::with_capacity(frames as usize);
+        Vec::with_capacity(remaining as usize);
     // B18 Step 2：链表溢出逐帧取增量（0 = 没有片元被丢弃）。
     let _ = zela_render_vector::take_overflow_totals();
     let mut vector_overflow = zela_render_vector::OverflowTotals::default();
@@ -490,7 +509,7 @@ pub fn run_frames(
     let _ = zela_render_vector::take_shadow_totals();
     let mut vector_shadows = zela_render_vector::ShadowTotals::default();
 
-    for index in 0..frames {
+    for index in start..stop {
         let mut timing = FrameTiming::default();
 
         // **与 GUI 同一条命令**：固定 dt（导出比实时墙钟更确定）。

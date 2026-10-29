@@ -35,6 +35,7 @@ use zela_render_backends::{HeadlessTarget, RenderContext, StandardBackends};
 use zela_scene_bundle::Bundle;
 use zela_scene_bundle::frame_hash::FrameSequenceHash;
 
+#[derive(Debug)]
 struct Args {
     script: Option<PathBuf>,
     bundle: Option<PathBuf>,
@@ -58,8 +59,8 @@ struct Args {
 }
 
 impl Args {
-    fn parse() -> Result<Self, String> {
-        let raw: Vec<String> = std::env::args().skip(1).collect();
+    /// 纯解析入口（不读 `std::env::args`）——默认值快照用例的唯一被测点。
+    fn parse_from(raw: &[String]) -> Result<Self, String> {
         if raw.is_empty() || raw.iter().any(|a| a == "--help" || a == "-h") {
             return Err(
                 "用法：zela-render <脚本路径> [--frames DIR] [--fps N] [--out FILE] [--size WxH]"
@@ -209,7 +210,8 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let args = Args::parse()?;
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let args = Args::parse_from(&raw)?;
 
     // ── B11：注册表 → device features 并集 →（矢量可用时）注入同一块 device ──
     //
@@ -371,6 +373,8 @@ fn run() -> Result<(), String> {
             height,
             fps: args.fps,
             backend: args.backend,
+            start_frame: 0,
+            end_frame: None,
             vector_params: None,
         },
         need_rgba,
@@ -623,3 +627,61 @@ impl Ffmpeg {
         Ok(())
     }
 }
+
+/// **阶段 0：默认值快照**（仓库门面批次 §阶段 0）。
+///
+/// 这些默认值**直接进渲染参数**（帧率 / 画幅 / 输出路径 / 后端）⇒ 任何"顺手改掉"
+/// 都会改像素。后续把解析迁到 `zela-commands` 的 `CommandSpec` 时，本模块就是回归网：
+/// 新实现必须复现这里的每一条。
+#[cfg(test)]
+mod defaults_snapshot {
+    use super::*;
+
+    fn args(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn script_only_uses_the_documented_defaults() {
+        let parsed = Args::parse_from(&args(&["demo.lua"])).expect("最小参数可解析");
+        assert_eq!(parsed.script, Some(PathBuf::from("demo.lua")));
+        assert_eq!(parsed.bundle, None);
+        assert_eq!(parsed.frames_dir, None);
+        assert_eq!(parsed.hash_out, None);
+        assert!(!parsed.hash, "--hash 默认不挂");
+        assert_eq!(parsed.fps, 30.0, "默认 30 fps");
+        assert_eq!(parsed.out, PathBuf::from("out.mp4"), "默认输出 out.mp4");
+        assert_eq!(parsed.size, (640, 480), "默认画幅 640x480");
+        assert_eq!(
+            parsed.backend,
+            LoopBackend::Auto,
+            "B19 Step 3 起默认 auto（矢量优先，被拒回退 wgpu）"
+        );
+    }
+
+    #[test]
+    fn size_split_and_backend_parse() {
+        let parsed = Args::parse_from(&args(&[
+            "--script", "a.lua", "--size", "1280x720", "--backend", "vector",
+        ]))
+        .expect("显式参数可解析");
+        assert_eq!(parsed.size, (1280, 720), "--size 按 WxH 切分");
+        assert_eq!(parsed.backend, LoopBackend::Vector);
+    }
+
+    #[test]
+    fn defaults_are_enforced_not_silently_fallback() {
+        // 缺尺寸分隔符 / 非数字 / 缺值都必须**显式失败**，不得静默采用默认值。
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--size", "640"])).is_err());
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--size", "axb"])).is_err());
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--fps", "x"])).is_err());
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--backend", "cpu"])).is_err());
+    }
+
+    #[test]
+    fn help_is_an_error_with_usage() {
+        let error = Args::parse_from(&args(&["--help"])).expect_err("--help 走用法分支");
+        assert!(error.contains("用法：zela-render"));
+    }
+}
+

@@ -10,7 +10,7 @@
 - 层：`pod`（`crates/ze/pod`）
 - 路径：`crates/ze/pod/ze-pod-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-reflect`、`ze-type`
-- 被依赖（下游）：`ze-pod`、`ze-pod-binding`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-pod-tests`、`ze-render-ir`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-ecs`
+- 被依赖（下游）：`ze-pod`、`ze-pod-binding`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-pod-tests`、`ze-render-ir`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-ecs`
 - 源文件：16 个 · 4284 行
 
 ### 文件清单

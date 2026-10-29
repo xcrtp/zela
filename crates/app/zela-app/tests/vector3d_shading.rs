@@ -42,6 +42,8 @@ fn render(
             height: SIZE.1,
             fps: 30.0,
             backend: LoopBackend::Vector,
+            start_frame: 0,
+            end_frame: None,
             vector_params: params,
         },
         true,

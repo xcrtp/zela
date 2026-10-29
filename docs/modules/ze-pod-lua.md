@@ -10,7 +10,7 @@
 - 层：`pod`（`crates/ze/pod`）
 - 路径：`crates/ze/pod/ze-pod-lua`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`
-- 被依赖（下游）：`ze-pod-tests`、`zela-app`
+- 被依赖（下游）：`ze-pod-tests`、`zela-app`、`zela-commands`
 - 源文件：4 个 · 1274 行
 
 ### 文件清单

@@ -3,11 +3,7 @@ name = "zela-gui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "GUI 可执行壳：组装 zela-app 的 Runtime 与 zela-egui 的每帧帧体"
-
-[[bin]]
-name = "zela-app"
-path = "src/main.rs"
+description = "GUI 宿主库：组装 zela-app 的 Runtime 与 zela-egui 的每帧帧体（入口在 zela-cli 的 `gui` 子命令）"
 
 [dependencies]
 # 组装层：Pod 装配 / Resources / Runtime（不依赖 UI）。

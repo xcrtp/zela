@@ -213,6 +213,7 @@ fn metrics(w: u32, h: u32, frame: u32, wgpu: &[u8], vector: &[u8]) -> FrameMetri
     }
 }
 
+#[derive(Debug)]
 struct Work {
     name: String,
     width: u32,
@@ -220,7 +221,7 @@ struct Work {
 }
 
 /// 渲染参数口径（决定差异里有多少是"后处理政策"而不是"渲染算法"）。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum PostMode {
     /// 两侧用**同一份** `RenderParams::default()`（后处理全关）：只比渲染算法。
     Match,
@@ -238,6 +239,7 @@ impl PostMode {
     }
 }
 
+#[derive(Debug)]
 struct Args {
     scripts: PathBuf,
     fps: f64,
@@ -250,8 +252,8 @@ struct Args {
 }
 
 impl Args {
-    fn parse() -> Result<Self, String> {
-        let raw: Vec<String> = std::env::args().skip(1).collect();
+    /// 纯解析入口（默认值快照的被测点）。
+    fn parse_from(raw: &[String]) -> Result<Self, String> {
         if raw.is_empty() || raw.iter().any(|a| a == "--help" || a == "-h") {
             return Err(
                 "用法：zela-parity --scripts DIR [--fps 30] [--sample 30] [--out DIR] \
@@ -373,7 +375,8 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let args = Args::parse()?;
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let args = Args::parse_from(&raw)?;
     if args.works.is_empty() {
         return Err("至少要有一个 --work".to_string());
     }
@@ -565,6 +568,8 @@ fn render_pass(
         height: work.height,
         fps: args.fps,
         backend,
+        start_frame: 0,
+        end_frame: None,
         // `match`：两侧同一份参数（排掉"矢量默认开后处理、wgpu 默认全关"的政策差异）；
         // `backend-default`：生产路径口径（各按自身能力取默认）。
         vector_params: match args.post {
@@ -735,4 +740,49 @@ fn write_summary(
     }
     let path = out.join("summary.md");
     std::fs::write(&path, text).map_err(|e| format!("写 {} 失败：{e}", path.display()))
+}
+
+/// **阶段 0：默认值快照**（仓库门面批次 §阶段 0）。
+///
+/// 对拍口径（fps / 采样步长 / 后处理政策 / 输出目录）决定结论是否可比 ⇒ 迁移到
+/// `zela-commands` 后必须逐条复现。
+#[cfg(test)]
+mod defaults_snapshot {
+    use super::*;
+
+    fn args(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn defaults_are_fps_30_sample_30_match_and_target_dir() {
+        let parsed =
+            Args::parse_from(&args(&["--scripts", "scripts", "--work", "fourier=640x480"]))
+                .expect("可解析");
+        assert_eq!(parsed.fps, 30.0, "默认 30 fps");
+        assert_eq!(parsed.sample, 30, "默认每 30 帧采样一次");
+        assert_eq!(parsed.post, PostMode::Match, "默认同口径后处理");
+        assert_eq!(parsed.out, PathBuf::from("target/xtask/parity"));
+        assert!(!parsed.dump, "--dump 默认关");
+        assert_eq!((parsed.works[0].width, parsed.works[0].height), (640, 480));
+    }
+
+    #[test]
+    fn sample_zero_is_rejected() {
+        assert!(
+            Args::parse_from(&args(&[
+                "--scripts", "s", "--sample", "0", "--work", "a=1x1",
+            ]))
+            .is_err(),
+            "--sample 0 必须显式失败（否则永远不采样 ⇒ 静默全绿）"
+        );
+        assert!(parse_work("a=640").is_err());
+        assert!(parse_work("a").is_err());
+    }
+
+    #[test]
+    fn help_is_an_error_with_usage() {
+        let error = Args::parse_from(&args(&["--help"])).expect_err("--help 走用法分支");
+        assert!(error.contains("用法：zela-parity"));
+    }
 }
