@@ -6937,6 +6937,7 @@ dependencies = [
  "zela-egui",
  "zela-playback",
  "zela-render-backends",
+ "zela-render-vector",
  "zela-scene-ecs",
  "zela-schedule",
 ]

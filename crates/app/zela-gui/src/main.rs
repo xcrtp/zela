@@ -45,9 +45,38 @@ fn main() -> eframe::Result<()> {
 
     let initial = initial();
 
+    let mut options = ui::window_options();
+    request_vector_device(&mut options);
+
     eframe::run_native(
         "zela",
-        ui::window_options(),
+        options,
         Box::new(move |cc| Ok(Box::new(App::with_initial(cc, initial)?))),
     )
+}
+
+/// **阶段 1（零回读）**：让 eframe 的 device 带上矢量后端需要的 features / limits。
+///
+/// 矢量后端现在跑在**宿主这一套** device 上（`App::launch` 的 `init_gpu`），而它建管线时
+/// 需要 `FLOAT32_BLENDABLE`（R32Float 覆盖率累加）与 `DEPTH32FLOAT_STENCIL8`（reversed-Z）；
+/// 缺了就是建管线时直接校验失败。口径与 headless 侧同一份：已注册且可用后端之并。
+fn request_vector_device(options: &mut eframe::NativeOptions) {
+    use zela_render_backends::{BackendKind, BackendRegistry};
+
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup else {
+        // 宿主自带 device（`WgpuSetup::Existing`）⇒ 能力由调用方负责，这里不猜。
+        return;
+    };
+    setup.device_descriptor = std::sync::Arc::new(|adapter| {
+        let mut registry = BackendRegistry::with_standard();
+        let _ = registry.register(BackendKind::Vector);
+        // 并集失败（没有任何可用后端）在 GUI 里不可能发生：wgpu 后端总是注册着。
+        let features = registry.required_device_features(adapter).unwrap_or_default();
+        eframe::wgpu::DeviceDescriptor {
+            label: Some("zela"),
+            required_features: features,
+            required_limits: registry.required_device_limits(adapter),
+            ..Default::default()
+        }
+    });
 }

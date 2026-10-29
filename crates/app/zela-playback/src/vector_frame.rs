@@ -546,22 +546,63 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<(), String> {
+        self.render_to_texture_with(runtime, target, width, height, 1.0, 4, params, background)
+    }
+
+    /// 同 [`Self::render_to_texture`]，但显式给出**点 → 像素**系数与采样数。
+    ///
+    /// **GUI 预览用**：`scale` = 视口 ppp、`samples = 1`（与 [`Self::render_at`] 同口径，
+    /// 只是输出位置从 CPU 内存换成 `target` 纹理）⇒ 像素不经 CPU 往返。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_to_texture_at(
+        &self,
+        runtime: &Runtime,
+        target: &wgpu::Texture,
+        width: u32,
+        height: u32,
+        scale: f32,
+        samples: u32,
+        params: &zela_scene_bundle::RenderParams,
+        background: [f32; 4],
+    ) -> Result<(), String> {
+        self.render_to_texture_with(runtime, target, width, height, scale, samples, params, background)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
+    fn render_to_texture_with(
+        &self,
+        runtime: &Runtime,
+        target: &wgpu::Texture,
+        width: u32,
+        height: u32,
+        scale: f32,
+        samples: u32,
+        params: &zela_scene_bundle::RenderParams,
+        background: [f32; 4],
+    ) -> Result<(), String> {
         self.refuse_zero_copy_with_content()?;
-        match self.prepare(runtime, width, height, 1.0, params, background)? {
+        match self.prepare(runtime, width, height, scale, params, background)? {
             Prepared::ThreeD {
                 view,
                 cameras,
                 records,
             } => zela_render_vector::render_3d_to_texture(
-                target, width, height, 4, &view, &cameras, &records,
+                target, width, height, samples, &view, &cameras, &records,
             ),
             Prepared::TwoD {
                 background,
                 records,
             } => zela_render_vector::render_2d_to_texture(
-                target, width, height, 4, background, &records,
+                target, width, height, samples, background, &records,
             ),
         }
+    }
+
+    /// 本帧是否含 `composite = true` 的内容纹理层（叠加目前只在 CPU 像素上做）。
+    pub fn has_composite_content(&self) -> bool {
+        self.content.iter().any(|layer| layer.composite)
     }
 
     /// **B15（乙）**：同 [`Self::render_to_texture`]，浏览器上的异步版。

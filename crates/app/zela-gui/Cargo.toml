@@ -19,6 +19,8 @@ zela-egui = { path = "../../ui/zela-egui" }
 # 场景类型（Result / DriverPod）与后端安装。
 zela-scene-ecs = { path = "../../scene/zela-scene-ecs" }
 zela-render-backends = { path = "../../render/zela-render-backends", features = ["egui-wgpu", "eframe"] }
+# 矢量后端的 GPU 注入（init_gpu）：注入后帧直接渲进纹理，不由后端自建 device。
+zela-render-vector = { path = "../../render/zela-render-vector" }
 zela-schedule = { path = "../../schedule/zela-schedule" }
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 

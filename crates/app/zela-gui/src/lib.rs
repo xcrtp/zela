@@ -12,8 +12,10 @@
 // 2. **后端可切换**：Auto（按帧路由，被拒回退 Wgpu）/ Vector / Wgpu。路由用
 //    `zela_render_backends::routing`（与 headless 同一实现），决策按作品固定。
 // 3. **矢量帧的呈现**：帧体（`SceneFrame::begin / finish`）仍然只有一份，
-//    只有"呈现"这一步分叉 —— 矢量走离屏 CPU 读回 + egui 纹理，wgpu 走原合成回调。
-//    读回一帧 ≈ 2MB（800×600），只为 GUI 演示的实时性服务；导出 / 对拍仍走 headless 循环。
+//    只有"呈现"这一步分叉 —— 矢量**渲进中间纹理再注册为 egui 原生纹理**（像素不经
+//    CPU 往返；B15 的 `render_2d_to_texture` 出口，`init_gpu` 注入宿主 device），
+//    wgpu 走原合成回调。唯一例外：含 `composite` 内容纹理层的帧仍在 CPU 上叠加
+//    （GAPS PC-01，这些作品是静止帧，`reusable` 下不重渲）。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -71,6 +73,8 @@ pub struct App {
     /// 事件订阅方：只观测 `FrameFinished`（进度条 / health overlay）。
     progress: Arc<FrameProgress>,
     render_ctx: RenderContext,
+    /// wgpu 宿主状态：注册原生纹理要 `Renderer` / `Device`；也是 `init_gpu` 的来源。
+    wgpu: eframe::egui_wgpu::RenderState,
     /// 每帧帧体（墙钟 / health / 呈现）—— UI 层实现，壳只委托。
     frame: SceneFrame,
     /// 可选作品（全部内置 demo + 启动参数场景 + 打开过的文件）。
@@ -80,9 +84,11 @@ pub struct App {
     backend: LoopBackend,
     /// 作品级后端决策（第一帧决定后固定；换作品 / 换偏好时清空）。
     pinned: Option<RoutingDecision>,
-    /// 矢量帧的上传纹理（尺寸变化时重建）。
+    /// 矢量帧的上传纹理（含 `composite` 内容层的 CPU 叠加路径；尺寸变化时重建）。
     vector_texture: Option<gui::TextureHandle>,
     vector_size: (u32, u32),
+    /// 矢量帧的**零回读**目标：渲进它，再注册为 egui 原生纹理。
+    vector_target: Option<VectorTarget>,
     /// 状态行：后端决策 / 渲染失败原因。
     status: String,
     /// 载入失败（红字显示；不覆盖正在播放的作品）。
@@ -95,10 +101,22 @@ pub struct App {
     timing: Option<GuiTiming>,
 }
 
-/// 复用上一帧所需的全部条件（快照 + 画幅 + 背景）。
+/// 复用上一帧所需的全部条件（快照 + 画幅 + 背景 + 走的是哪条上屏路径）。
 struct LastVector {
     frame: VectorFrame,
     background: [f32; 4],
+    size: (u32, u32),
+    /// `true` = 像素在 GPU 内（`vector_target`）；`false` = CPU 叠加后的上传纹理。
+    gpu: bool,
+}
+
+/// 矢量帧的零回读目标（`Rgba8Unorm` + 三种用法，见 `check_target`）。
+///
+/// 只持有纹理与 egui 的纹理 id：`register_native_texture` 建好的 bind group 由
+/// egui 的 `Renderer` 持有，`TextureView` 不必常驻。
+struct VectorTarget {
+    texture: eframe::wgpu::Texture,
+    id: gui::TextureId,
     size: (u32, u32),
 }
 
@@ -139,15 +157,23 @@ impl App {
         install_visuals(&ctx.egui_ctx);
 
         // 渲染环境（后端 + 合成器 + RenderContext）由 backends 侧的"标准安装"负责。
-        let render_ctx = {
-            let rs = ctx
-                .wgpu_render_state
-                .clone()
-                .ok_or(Error::InitializationError(
-                    "Wgpu render state not available".to_string(),
-                ))?;
-            install_standard_backends(&rs)
-        };
+        let wgpu_state = ctx
+            .wgpu_render_state
+            .clone()
+            .ok_or(Error::InitializationError(
+                "Wgpu render state not available".to_string(),
+            ))?;
+        // **阶段 1（零回读）**：矢量后端不再自建 device —— 注入宿主这一套，
+        // 之后帧由 `render_2d_to_texture` 直接写进中间纹理。必须在首次渲染前注入。
+        zela_render_vector::init_gpu(
+            wgpu_state.device.clone(),
+            wgpu_state.queue.clone(),
+            &wgpu_state.adapter,
+        )
+        .map_err(|why| {
+            Error::InitializationError(format!("矢量后端 GPU 注入失败：{why}"))
+        })?;
+        let render_ctx = install_standard_backends(&wgpu_state);
 
         let entries = entries();
         let selected = initial_index(&entries, initial);
@@ -163,6 +189,7 @@ impl App {
             runtime,
             progress,
             render_ctx,
+            wgpu: wgpu_state,
             frame,
             entries,
             selected,
@@ -170,6 +197,7 @@ impl App {
             pinned: None,
             vector_texture: None,
             vector_size: (0, 0),
+            vector_target: None,
             status: String::new(),
             error: None,
             picker: None,
@@ -409,9 +437,14 @@ impl App {
                 && last.frame.same_2d_frame(&snapshot)
         });
         if reusable {
-            if let Some(texture) = &self.vector_texture {
+            let id = match self.last_vector.as_ref() {
+                Some(last) if last.gpu => self.vector_target.as_ref().map(|target| target.id),
+                Some(_) => self.vector_texture.as_ref().map(|texture| texture.id()),
+                None => None,
+            };
+            if let Some(id) = id {
                 ui.painter().image(
-                    texture.id(),
+                    id,
                     begin.viewport,
                     gui::Rect::from_min_max(gui::pos2(0.0, 0.0), gui::pos2(1.0, 1.0)),
                     gui::Color32::WHITE,
@@ -423,56 +456,137 @@ impl App {
             }
             return true;
         }
-        if self.vector_size == (0, 0) {
+        if self.vector_target.is_none() && self.vector_size == (0, 0) {
             eprintln!(
                 "[gui] 矢量画布 {width}×{height}px（视口 {:.0}×{:.0}pt，ppp {scale}）",
                 begin.viewport.width(),
                 begin.viewport.height()
             );
         }
+        // 含 `composite` 内容层的帧：叠加目前只在 CPU 像素上做（PC-01）⇒ 仍走读回。
+        // 这些作品是静止帧，`reusable` 之后不再重渲，因此不是每帧成本。
+        if snapshot.has_composite_content() {
+            let render_start = std::time::Instant::now();
+            let rgba =
+                match snapshot.render_at(&self.runtime, width, height, scale, &params, background)
+                {
+                    Ok(rgba) => rgba,
+                    Err(why) => {
+                        self.status = format!("矢量渲染失败：{why}（本帧回退 Wgpu）");
+                        return false;
+                    }
+                };
+            let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+            let upload_start = std::time::Instant::now();
+            self.last_vector = Some(LastVector {
+                frame: snapshot,
+                background,
+                size: (width, height),
+                gpu: false,
+            });
+            let image =
+                gui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
+            match &mut self.vector_texture {
+                Some(texture) if self.vector_size == (width, height) => {
+                    texture.set(image, gui::TextureOptions::LINEAR);
+                }
+                _ => {
+                    self.vector_texture = Some(ui.ctx().load_texture(
+                        "zela-vector-frame",
+                        image,
+                        gui::TextureOptions::LINEAR,
+                    ));
+                    self.vector_size = (width, height);
+                }
+            }
+            if let Some(texture) = &self.vector_texture {
+                ui.painter().image(
+                    texture.id(),
+                    begin.viewport,
+                    gui::Rect::from_min_max(gui::pos2(0.0, 0.0), gui::pos2(1.0, 1.0)),
+                    gui::Color32::WHITE,
+                );
+            }
+            if let Some(timing) = &mut self.timing {
+                timing.snapshot_ms += snapshot_ms;
+                timing.render_ms += render_ms;
+                timing.upload_ms += upload_start.elapsed().as_secs_f64() * 1000.0;
+                timing.vector_ms += started.elapsed().as_secs_f64() * 1000.0;
+            }
+            return true;
+        }
+        // **零回读**：渲进中间纹理（`Rgba8Unorm` + 三种用法）→ 注册为 egui 原生纹理。
+        // 尺寸变化时重建；纹理内容每帧由渲染覆写，不存在"贴旧图"。
+        if self.vector_target.as_ref().map(|target| target.size) != Some((width, height)) {
+            let texture = self
+                .wgpu
+                .device
+                .create_texture(&eframe::wgpu::TextureDescriptor {
+                    label: Some("zela-vector-target"),
+                    size: eframe::wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: eframe::wgpu::TextureDimension::D2,
+                    format: eframe::wgpu::TextureFormat::Rgba8Unorm,
+                    usage: eframe::wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | eframe::wgpu::TextureUsages::STORAGE_BINDING
+                        | eframe::wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+            let view = texture.create_view(&eframe::wgpu::TextureViewDescriptor::default());
+            let id = self.wgpu.renderer.write().register_native_texture(
+                &self.wgpu.device,
+                &view,
+                eframe::wgpu::FilterMode::Linear,
+            );
+            let replaced = self.vector_target.replace(VectorTarget {
+                texture,
+                id,
+                size: (width, height),
+            });
+            if let Some(old) = replaced {
+                self.wgpu.renderer.write().free_texture(&old.id);
+            }
+        }
         let render_start = std::time::Instant::now();
-        let rgba = match snapshot.render_at(&self.runtime, width, height, scale, &params, background)
-        {
-            Ok(rgba) => rgba,
+        let target = self.vector_target.as_ref().expect("上一段刚建好");
+        let (texture, id) = (target.texture.clone(), target.id);
+        match snapshot.render_to_texture_at(
+            &self.runtime,
+            &texture,
+            width,
+            height,
+            scale,
+            1,
+            &params,
+            background,
+        ) {
+            Ok(()) => {}
             Err(why) => {
                 self.status = format!("矢量渲染失败：{why}（本帧回退 Wgpu）");
                 return false;
             }
-        };
+        }
         let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
-
-        let upload_start = std::time::Instant::now();
         self.last_vector = Some(LastVector {
             frame: snapshot,
             background,
             size: (width, height),
+            gpu: true,
         });
-        let image = gui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
-        match &mut self.vector_texture {
-            Some(texture) if self.vector_size == (width, height) => {
-                texture.set(image, gui::TextureOptions::LINEAR);
-            }
-            _ => {
-                self.vector_texture = Some(ui.ctx().load_texture(
-                    "zela-vector-frame",
-                    image,
-                    gui::TextureOptions::LINEAR,
-                ));
-                self.vector_size = (width, height);
-            }
-        }
-        if let Some(texture) = &self.vector_texture {
-            ui.painter().image(
-                texture.id(),
-                begin.viewport,
-                gui::Rect::from_min_max(gui::pos2(0.0, 0.0), gui::pos2(1.0, 1.0)),
-                gui::Color32::WHITE,
-            );
-        }
+        ui.painter().image(
+            id,
+            begin.viewport,
+            gui::Rect::from_min_max(gui::pos2(0.0, 0.0), gui::pos2(1.0, 1.0)),
+            gui::Color32::WHITE,
+        );
         if let Some(timing) = &mut self.timing {
             timing.snapshot_ms += snapshot_ms;
             timing.render_ms += render_ms;
-            timing.upload_ms += upload_start.elapsed().as_secs_f64() * 1000.0;
             timing.vector_ms += started.elapsed().as_secs_f64() * 1000.0;
         }
         true
