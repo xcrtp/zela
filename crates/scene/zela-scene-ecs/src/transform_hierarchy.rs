@@ -15,7 +15,7 @@
 //
 // # 2D 是投影视图（S1 / D1 / D4）
 //
-// 本资源只存 **3D 世界矩阵（Mat4，单一真源）**；2D 消费方经 [`WorldTransforms::get2d`]
+// 本资源只存 **3D 世界矩阵（Mat4，唯一来源）**；2D 消费方经 [`WorldTransforms::get2d`]
 // 读投影视图（取 xy 子块，`z` 平移与 xy↔z 耦合被丢弃，见 `GAPS.md` G-101）。
 // 旧的"2D 仿射"是派生 getter，不是第二份状态。
 //
@@ -199,7 +199,7 @@ mod tests {
             worlds.get2d(id),
             Some(transform(2.0, 3.0).to_affine2d())
         );
-        // S1：3D 真源与 local 的 to_affine3d 逐位一致。
+        // S1：3D 世界矩阵与 local 的 to_affine3d 逐位一致。
         assert_eq!(
             worlds.get(id),
             Some(&transform(2.0, 3.0).to_affine3d())

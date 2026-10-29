@@ -33,7 +33,7 @@ script:            ze-pod-lua        ze-pod-py
 |------|----------|------|
 | `plan` | `BindingPlan` / `component_ctor` / `collect_types` / `short_name` | 把 `C::calls()` 摊平成函数清单 + 递归可达类型表 |
 | `codec` | `ValueCodec` / `invoke` | 语言值 ↔ `PodValue` 的 trait，以及所有语言共用的调用编排 |
-| `docs` | `CapabilityDocs` / `capabilities_json` / `reachable_types` | 手写 JSON 文档（唯一真源），供 LuaLS / `.pyi` 等派生 |
+| `docs` | `CapabilityDocs` / `capabilities_json` / `reachable_types` | 手写 JSON 文档（唯一来源），供 LuaLS / `.pyi` 等派生 |
 
 ---
 
@@ -98,7 +98,7 @@ let out = invoke(&codec, &service_pod, item, &args)?;
 
 ---
 
-## docs — JSON 是唯一真源
+## docs — JSON 是唯一来源
 
 ```rust
 use ze_pod_binding::{CapabilityDocs, capabilities_json, reachable_types};

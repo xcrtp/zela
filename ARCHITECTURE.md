@@ -260,7 +260,7 @@ graph TD
 >
 > **2026-10-28 更新（图基础设施收敛）**：新增 `ze-graph-core`（kernel，零 crate 依赖）：
 > 纯拓扑层 `Topology` / `topo_sort` / `strongly_connected` / `find_cycle` /
-> `reachable` / `dirty_downstream`，输出一律有序。`ze-graph-algo` 的 Kahn / SCC /
+> `reachable` / `dirty_downstream`，输出始终有序。`ze-graph-algo` 的 Kahn / SCC /
 > BFS 与编辑器的环检测全部委托它（`GraphTopology` 适配器）；`NodeMeta` 只留
 > `{ type_name, version }`，展示数据进 `zela-node-editor::PresentationTable`；
 > `TypeTag` / `TypeCast` 收敛到 `ze-type::tag`。生产边新增
@@ -338,8 +338,8 @@ App / zela-render ──submit(Advance { dt })──► DriverPod（持有 Sched
 | 参与帧推进 | **是** | **否** |
 | 回执 | `Receipt::wait()` | — |
 
-铁律：**任何影响场景状态的，必须走命令队列；事件只能用于观测。**
-命令 / 事件是**不同泛型类型**（`C` vs `E`），把事件当命令提交是**编译错误**；
+凡影响场景状态的，都走命令队列；事件只用于观测。
+命令 / 事件是不同泛型类型（`C` vs `E`），把事件当命令提交是编译错误；
 若退化成 `PodValue` 承载，两者签名会完全相同，约束就只剩约定。
 
 GUI 与 headless（`zela-render` / `export_frames`）**共用同一个 Driver pod**：
@@ -566,23 +566,23 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
   （`Conversion::for_formats`）。3D 离屏沿用主目标格式（源=目标 → Identity，逐字节保持现状），
   2D 离屏为 `Rgba8Unorm`（存 gamma）。
 
-**接线（C5）**：`EguiSceneHost::present` 删除"`.find()` 取第一个 3D 层"的写法，
-改为**遍历 `SceneView::layers`**（索引序 = 合成序）。
+接线（C5）：`EguiSceneHost::present` 删除"`.find()` 取第一个 3D 层"的写法，
+改为遍历 `SceneView::layers`（索引序 = 合成序）。
 `UiConfig::flip_layer_order`（控制面板复选框）仅用于验收时翻转一次顺序。
 两个图层都声明 `LayerBlend::Alpha` —— 离屏是透明底，用 `Opaque`(REPLACE) 会把透明像素
 写进主 pass、抹掉背景与下层。
 
-**单一回调（S3-2 修复）**：`egui_wgpu::CallbackResources` 是**全局共享**的
-`HashMap<TypeId, _>`，**不是 per-callback 的**。早期"每个图层各注册一个回调"的设计里，
+单一回调（S3-2 修复）：`egui_wgpu::CallbackResources` 是全局共享的
+`HashMap<TypeId, _>`，不是 per-callback 的。早期"每个图层各注册一个回调"的设计里，
 `Layer2DCallback` 与 `Layer3DCallback` 各自 `insert::<CompositeFrame>()` —— 后插入覆盖
-先插入，两个 `paint()` 取到**同一帧**，把同一张离屏纹理画两遍（实机现象：顺序 A 只见 3D、
-顺序 B 只见 2D）。故改为**单个** `SceneCompositorCallback`（`zela-render-backends::scene_callback`）：
+先插入，两个 `paint()` 取到同一帧，把同一张离屏纹理画两遍（实机现象：顺序 A 只见 3D、
+顺序 B 只见 2D）。故改为单个 `SceneCompositorCallback`（`zela-render-backends::scene_callback`）：
 - 持有本帧全部图层声明 `Vec<SceneLayer { id, kind, blend, opacity }>` + 两个队列快照；
-- `prepare`：逐层渲染离屏 → 按声明序收集全部 `CompositeOp` → **一次** `Compositor::prepare`
+- `prepare`：逐层渲染离屏 → 按声明序收集全部 `CompositeOp` → 一次 `Compositor::prepare`
   → 单个 `CompositeFrame`，与各层 `_arena_buffer`（保活）一起存入 TypeMap 的 `SceneCompositorFrame`；
 - `paint`：设 scissor → `composite_layers`；
-- `present` 只注册**一个**回调，放在有效序中**首个 GPU 图层**的位置（CPU 2D 层就地回放）。
-- `LayerId` 改为**按层唯一**（`build_scene_view` 按索引派生），并有单测断言两两不相等。
+- `present` 只注册一个回调，放在有效序中首个 GPU 图层的位置（CPU 2D 层就地回放）。
+- `LayerId` 改为按层唯一（`build_scene_view` 按索引派生），并有单测断言两两不相等。
 
 **已知限制**：3D 离屏 MSAA 已与 2D 对齐（4x，B2-5；`DEFAULT_MSAA_SAMPLES`）；每层多一次全屏 blit（层数少时可接受，层多时优化）；
 `opacity` × `blend` 组合未穷举验证；纹理采样走样（mipmap / 各向异性）仍是缺口（GAPS E-08）。
@@ -590,82 +590,82 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > 两条已退出限制：3D 两个 pass 均挂 `Depth32Float` 深度附件（`wgpu_3d::DEPTH_FORMAT`）；
 > 旧 CPU 2D 回放（`egui_2d`）已在 S4.1 删除，2D 统一走 `wgpu_2d` 离屏 + 合成。
 
-> **B1 批次（2026-10-21）已落地**（详见 `GAPS.md` D 段）：
-> - **光照数据化**：`cube.wgsl` 的 `LIGHT_DIR` / `AMBIENT` 硬编码已删，改场景级 light
+> B1 批次（2026-10-21）已落地（详见 `GAPS.md` D 段）：
+> - 光照数据化：`cube.wgsl` 的 `LIGHT_DIR` / `AMBIENT` 硬编码已删，改场景级 light
 >   uniform buffer 驱动；`Light` 不带 position（位置走 `Transform` → `WorldTransforms`）。
-> - **点光 / PBR**：Point light（range 窗口衰减，超限显式报错）；`ShaderVariant::Pbr`
->   （metallic-roughness，线性空间，法线贴图走**屏幕空间 TBN**，铁律 4 未改顶点格式）。
-> - **脚本层 3D 入口**：`camera3d` / `cube` / `parametric_surface` / `material3d` / `light`
+> - 点光 / PBR：Point light（range 窗口衰减，超限显式报错）；`ShaderVariant::Pbr`
+>   （metallic-roughness，线性空间，法线贴图走屏幕空间 TBN，铁律 4 未改顶点格式）。
+> - 脚本层 3D 入口：`camera3d` / `cube` / `parametric_surface` / `material3d` / `light`
 >   参数化构造器（不传顶点数组）⇒ 3D 首入 `--script == --bundle` 对拍网。
-> - **pipeline 按需构建（B1-E）**：废弃 `(topology, variant)` 笛卡尔积预建，改
+> - pipeline 按需构建（B1-E）：废弃 `(topology, variant)` 笛卡尔积预建，改
 >   `get_or_create_pipeline` + 缓存，key 四维定齐 `(topology, variant, cull_mode, blending)`；
->   **不静默（B1-F）**：静默回退 Lambert 已结构性删除，点列表改 `panic!` 显式报错。
+>   静默回退 Lambert 已结构性删除，点列表改 `panic!` 显式报错（B1-F）。
 
-> **B2 批次（2026-10-21）已落地**（详见 `GAPS.md` E 段）：
-> - **队列与层序（B2-1）**：2D / 3D 合并为**一个 `DrawQueue`**（`DrawItem::{Shape,Mesh,Line}`），
+> B2 批次（2026-10-21）已落地（详见 `GAPS.md` E 段）：
+> - 队列与层序（B2-1）：2D / 3D 合并为一个 `DrawQueue`（`DrawItem::{Shape,Mesh,Line}`），
 >   统一 `ZOrder`（IR 唯一声明；`ZOrder` 稳定排序，同层内保持插入序 —— 显式测试锁定 R-F）；
 >   `DrawQueue3D` 成为类型别名；录制合并为 `SceneRecordAllSystem` 单写者。
-> - **管线状态 IR 化（B2-2）**：`PipelineKey` 去 wgpu（`CullMode` / `LayerBlend`）+ 第五维
+> - 管线状态 IR 化（B2-2）：`PipelineKey` 去 wgpu（`CullMode` / `LayerBlend`）+ 第五维
 >   `VertexLayout`；作者只声明 `double_sided` / `transparent`（`Material3D`，D19）。
-> - **2D 进 3D（B2-3）**：`derive_mesh` 把 2D 图元降级为平面网格（Flat + 双面 + 透明推导）；
+> - 2D 进 3D（B2-3）：`derive_mesh` 把 2D 图元降级为平面网格（Flat + 双面 + 透明推导）；
 >   透明桶按 `ZOrder` 排序、透明 pipeline 不写深度；epsilon 由 `ZOrder` 派生为 normal offset
 >   （B2-4，不用常量 depth bias）。
-> - **AA 统一（B2-5）**：3D MSAA 4x，采样数由能力侧给出（`new_with_samples` + `capabilities`）。
-> - **可观测性（B2-6）**：xtask 双槽差分报告器（诊断旁路）；帧级 digest 采样旁路
+> - AA 统一（B2-5）：3D MSAA 4x，采样数由能力侧给出（`new_with_samples` + `capabilities`）。
+> - 可观测性（B2-6）：xtask 双槽差分报告器（诊断旁路）；帧级 digest 采样旁路
 >   （`ZELA_FRAME_DIGEST_SAMPLE=N`，不进序列哈希链）。
-> - **脚本意图层 + demo（B2-7）**：`Material3D` 暴露 `double_sided` / `transparent`（version 6）；
+> - 脚本意图层 + demo（B2-7）：`Material3D` 暴露 `double_sided` / `transparent`（version 6）；
 >   新增 `fusion.lua` 入册。
-> - **对拍与记账（B2-8）**：`demo3d` 升级为 frame hash fixture（3D 首入对拍网）；
+> - 对拍与记账（B2-8）：`demo3d` 升级为 frame hash fixture（3D 首入对拍网）；
 >   `cargo verify --step hashes` 现覆盖 fourier / storyboard / demo3d。
-> - **能力指纹（B2-9）**：`hash(signatures())` × `version` 配对校验，挂 xtask `structure`。
+> - 能力指纹（B2-9）：`hash(signatures())` × `version` 配对校验，挂 xtask `structure`。
 
-> **B3-0 前置批次（2026-10-21）已落地**（详见 `GAPS.md` F 段，**像素冻结**）：
-> - **生产与上传解耦**：新增 `ze_vertex::VertexBufferData{ layout, vertices: Vec<u8>, indices, vertex_count }`，
+> B3-0 前置批次（2026-10-21）已落地（详见 `GAPS.md` F 段，像素冻结）：
+> - 生产与上传解耦：新增 `ze_vertex::VertexBufferData{ layout, vertices: Vec<u8>, indices, vertex_count }`，
 >   生产端（`zela-render::vertex_record`）负责"几何 → 交错字节"，后端只做
 >   `create_buffer_init`（组合由 N×M 降为 N+M）。
-> - **3D 生产迁出**：`interleaved_pos_uv_normal` / `fallback_uvs` / line 顶点构造全部移到
->   `zela-render::vertex_record`（后端零命中），内联构造删除（B7 单一真源）。
-> - **2D 打包迁出**：三角化调用与打包走 `tessellate_to_buffers` / `morph_endpoint_buffers` /
+> - 3D 生产迁出：`interleaved_pos_uv_normal` / `fallback_uvs` / line 顶点构造全部移到
+>   `zela-render::vertex_record`（后端无引用），内联构造删除（B7 唯一来源）。
+> - 2D 打包迁出：三角化调用与打包走 `tessellate_to_buffers` / `morph_endpoint_buffers` /
 >   `tessellate_reveal_to_buffer`；`CachedGeometry` 缓存 `VertexBufferData`（两级缓存不变，B4）。
-> - **不静默（B6）**：2D 三角化失败由 `eprintln + continue` 改为**显式错误**（有 `should_panic` 测试）。
-> - 2D stride 24 / 3D stride 32 未变（D1）；像素与 B2 结束时**逐位相同**。
+> - 失败不再跳过（B6）：2D 三角化失败由 `eprintln + continue` 改为显式错误（有 `should_panic` 测试）。
+> - 2D stride 24 / 3D stride 32 未变（D1）；像素与 B2 结束时逐位相同。
 
-> **B3-0.5 批次（2026-10-21）已落地**（详见 `GAPS.md` G 段：Backend 抽象与 Pod 化）：
-> - **Pod bulk 字节（B3-0.5a）**：`PodBytes` newtype + `PodValue::Bytes`；`Vec<u8>` 仍走
->   `Array(U8)`（语义不撞车）；脚本绑定层对 `Bytes` **显式报错**（bulk 数据不走脚本边界）。
-> - **渲染目标契约进 IR（B3-0.5b）**：`ze_render_ir::target::RenderTargetDesc`
+> B3-0.5 批次（2026-10-21）已落地（详见 `GAPS.md` G 段：Backend 抽象与 Pod 化）：
+> - Pod bulk 字节（B3-0.5a）：`PodBytes` newtype + `PodValue::Bytes`；`Vec<u8>` 仍走
+>   `Array(U8)`（语义不撞车）；脚本绑定层对 `Bytes` 显式报错（bulk 数据不走脚本边界）。
+> - 渲染目标契约进 IR（B3-0.5b）：`ze_render_ir::target::RenderTargetDesc`
 >   （尺寸 / `ColorFormat` / 采样数，serde + Hash + `validate()`）；GPU 句柄仍留后端。
-> - **四个 render capability（B3-0.5c）**：`ze_render_ir::caps` 定义
+> - 四个 render capability（B3-0.5c）：`ze_render_ir::caps` 定义
 >   `zela.render2d` / `zela.render3d` / `zela.render.mixed` / `zela.render.shapes` 的
->   签名集、能力指纹与 `negotiate`（**全有或全无**）；`structure` 步校验钉住指纹。
-> - **后端自述（B3-0.5d）**：`zela-render-backends::render_backend::implemented_capabilities()`
->   声明 wgpu 实现 2d / 3d / mixed；**`shapes` 未实现** ⇒ 请求即显式协商失败。
-> - **分层收口（B3-0.5e）**：`RenderTarget` / `RenderLayer` / `RenderBackend` /
+>   签名集、能力指纹与 `negotiate`（**全有或全无**）；`structure` 步校验锁定指纹。
+> - 后端自述（B3-0.5d）：`zela-render-backends::render_backend::implemented_capabilities()`
+>   声明 wgpu 实现 2d / 3d / mixed；`shapes` 未实现 ⇒ 请求即显式协商失败。
+> - 分层收敛（B3-0.5e）：`RenderTarget` / `RenderLayer` / `RenderBackend` /
 >   `ResourceCache` shim 迁入 backends；`zela-render` 删除 `feature = "wgpu"`
 >   （`cargo tree` 中 wgpu：12 → 0），成为真正的渲染无关层。
 > - **像素口径纠正**：基线是**同后端 + 同机器**的测试夹具，不是跨端产品承诺
 >   （`FRAME_HASH_BASELINES.md` / `baselines.txt` 同步）。
 
-> **B3-1 批次（2026-10-21）已落地**（详见 `GAPS.md` H 段：场景层分层重构）：
+> B3-1 批次（2026-10-21）已落地（详见 `GAPS.md` H 段：场景层分层重构）：
 > 原 `zela-scene` 12k 行按"概念 / 实现 / 能力"三分：
-> - **`ze-scene-core`**（新）：场景对象（原 `ze-object`）+ 组件 + 纯逻辑
+> - `ze-scene-core`（新）：场景对象（原 `ze-object`）+ 组件 + 纯逻辑
 >   （animation 数据 / scene_script / persist / registry / domain / camera_input 纯函数 /
->   composer 数据）。**零 hecs、零 zela-***（CI 判据）。
-> - **`ze-scene-api`**（新）：`SceneApi` / `ContentApi` + 两个 Service Pod（原 `pod/`）。
->   **零 hecs、零 zela-***；能力 namespace / version 不变（`zela.scene@6` / `zela.content@1`）。
-> - **`zela-scene-ecs`**：只留 ECS 实现（world / resources / System 接线 / 生命周期）。
+>   composer 数据）。零 hecs、零 zela-*（CI 判据）。
+> - `ze-scene-api`（新）：`SceneApi` / `ContentApi` + 两个 Service Pod（原 `pod/`）。
+>   零 hecs、零 zela-*；能力 namespace / version 不变（`zela.scene@6` / `zela.content@1`）。
+> - `zela-scene-ecs`：只留 ECS 实现（world / resources / System 接线 / 生命周期）。
 >   兼容壳层 `zela-scene` **已在同批删除**：237 处旧 `zela_scene` 路径全部改为
 >   `zela_scene_ecs::`，ze-macro 派生代码改指向 `ze_scene_core::transform`。
-> - **`ze-scene-hecs`**（收尾新增）：契约层 `SceneRead` 的 hecs 只读适配器
+> - `ze-scene-hecs`（收尾新增）：契约层 `SceneRead` 的 hecs 只读适配器
 >   （`WorldView` / `object_id_of` / `entity_of`）。渲染层因此不再依赖 ECS 实现，
 >   `cargo tree -p zela-render` 中 `zela-scene-ecs` 归零。
-> - **`WorldTransforms` 下沉**：容器移入 `ze_scene_core::world_transforms`
+> - `WorldTransforms` 下沉：容器移入 `ze_scene_core::world_transforms`
 >   （`from_map` / `insert` / `get` / `get2d`），生产仍由 ECS 侧
 >   `TransformHierarchySystem` 负责。
-> - **`zela-authored`**（新）：分镜 / demo 等**作品**移出场景层，app 按需依赖。
-> - **`SceneWrite` 擦除写入口**：动画目标（`Target`）不再接受 `WorldScene`，
+> - `zela-authored`（新）：分镜 / demo 等作品移出场景层，app 按需依赖。
+> - `SceneWrite` 擦除写入口：动画目标（`Target`）不再接受 `WorldScene`，
 >   核心层因此完全不知道 hecs；ECS 用组件登记表实现具体分发。
-> - **单一真源不变**：`ZOrder` 仍只在 `ze-render-ir` 声明；`ze-object` crate 已删除。
+> - 唯一来源不变：`ZOrder` 仍只在 `ze-render-ir` 声明；`ze-object` crate 已删除。
 
 > **B3 批次（2026-10-21，进行中）**：Surface 双路径。
 > - **派生桥复用三角化器**：`derive_mesh` 统一走 `tessellate_with`（lyon），覆盖
@@ -680,7 +680,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   `filter` / `mipmap` 不取后端默认值；mipmap **生成**仍未实现（E-08 仍成立）。
 > - **Direct 路由**（`zela_render::surface_route`）：仅 `Renderer3D` 走 Direct；
 >   失败（缺 renderer / 环 / Screen 映射 / Reveal·Morph·ContentTexture / 派生失败）
->   写进 `DrawQueue::surface_errors()`，不静默。
+>   写进 `DrawQueue::surface_errors()`，不丢错误。
 > - **Texture 契约链（B3 Step 4c-2）**：`ContentTextureSpecs` / `ContentTextureQueue`
 >   均为多实例容器；`ObjectId → LayerId → TextureHandle` 由
 >   `content_layer_id` / `content_texture_handle` **单一映射**派生，
@@ -695,8 +695,8 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   材质纹理句柄由 `content_texture_handle` 派生。**四基线逐位不变（零差异）**。
 > - **录制器泛化（B3 Step 5-1）**：`record_scene_for_surface` 复用 9 组
 >   (图元 × 样式) 全组合 + `Parent` 归属过滤；`ContentTextureItem` 标记不再是
->   归属条件（组件保留登记以兼容旧数据），不再出现"只录 `(Path, StrokeSolid)`
->   静默丢内容"。
+>   归属条件（组件保留登记以兼容旧数据），不再出现"只录 `(Path, StrokeSolid)`、
+>   其余内容被丢掉"的情况。
 > - **`composite` 可声明（B3 Step 5-2）**：`SurfaceTexture.composite`（默认 `false`），
 >   `content_texture_specs` 不再硬编码。
 > - **视口不再重复绘制 Surface 内容（B3 Step 5 修正）**：`record_group` 用
@@ -712,41 +712,41 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > - **fourier / storyboard 迁移到纹理路径仍未执行（S5-01）**：两者仍走默认 2D
 >   直画路径；迁移会引入一次纹理采样 ⇒ 需重录。
 
-> **B4 批次（2026-10-22，Step 1-6 已落地）**：渲染参数契约 + 矢量后端移植。
-> - **`RenderParams` 进 IR（Step 1）**：`ze_render_ir::params` 收口
+> B4 批次（2026-10-22，Step 1-6 已落地）：渲染参数契约 + 矢量后端移植。
+> - `RenderParams` 进 IR（Step 1）：`ze_render_ir::params` 收敛
 >   size / supersample / msaa / filter / tone / bloom / ao / env。`Default` 逐字段
 >   等价当前行为；`validate()` 管有效性、`is_supported_by(&Capabilities)` 管一致性
 >   （**不支持 ⇒ 显式失败，不降级**）；`target_desc()` 是 `RenderTargetDesc` 的唯一上游投影。
 >   `TextureFilter` 移入 IR，`ze-scene-core` 转发（调用点不变）。
-> - **`PostCaps` 进 `Capabilities`（Step 1）**：tone / bloom / ao / env 四维能力。
+> - `PostCaps` 进 `Capabilities`（Step 1）：tone / bloom / ao / env 四维能力。
 >   wgpu 三角化后端声明 `none()` —— 一旦要求后处理就显式失败。
-> - **Meta 承载 + 回放照参（Step 2）**：`Meta.render_params`（`#[serde(default)]`，
+> - Meta 承载 + 回放照参（Step 2）：`Meta.render_params`（`#[serde(default)]`，
 >   不进内容 hash）；`zela-playback` 提供 `bundle_render_params`（有效性）与
 >   `check_render_params_supported`（一致性）；`zela-render` 开渲前两项都查。
-> - **许可证基线（Step 3）**：新 crate `zela-render-vector` 收录上游
+> - 许可证基线（Step 3）：新 crate `zela-render-vector` 收录上游
 >   `LICENSES/{MIT,Apache-2.0}.txt`，`UPSTREAM.md` 记录 `manimgx @ dcfe01a` 与逐文件
 >   许可（light / occlusion / tone / bloom + dfg.bin 为 Apache-2.0，源自 Filament）。
 >   只开上游 `render` feature ⇒ x264(GPL) / ffmpeg(LGPL) / pyo3 / typst 不进依赖树。
-> - **去掉单后端假设（Step 4）**：删除 `RenderCapabilitySet::ALL`，系统能力 =
+> - 去掉单后端假设（Step 4）：删除 `RenderCapabilitySet::ALL`，系统能力 =
 >   已注册后端之并（`union`）；`BackendKind::{Wgpu, Vector}` 各自自述 namespace，
 >   `BackendRegistry` 提供注册 / 选择 / 协商（未实现或未注册 ⇒ 显式错误）。
-> - **三角化资产的性质（记账）**：`tessellate.rs` / `shape_to_mesh` 在双后端下是
->   **wgpu 后端专用路径**，不是全局唯一真源（矢量后端不做三角化）。
-> - **矢量后端移植（Step 5）**：`zela-render-vector` 收录上游 `manimgx` 的三 pass
->   路径渲染（flatten / raster / composite，**解析 AA**，无三角化 / 无 stencil / 无 MSAA）
+> - 三角化资产的性质（记账）：`tessellate.rs` / `shape_to_mesh` 在双后端下是
+>   wgpu 后端专用路径，不是全局唯一来源（矢量后端不做三角化）。
+> - 矢量后端移植（Step 5）：`zela-render-vector` 收录上游 `manimgx` 的三 pass
+>   路径渲染（flatten / raster / composite，解析 AA，无三角化 / 无 stencil / 无 MSAA）
 >   与着色栈、光栅后端；每个 `.rs` / `.wgsl` 都带 SPDX 头，修改处标 `Modified by Zela`。
 >   宿主适配层 `api::{FilledPath, render_2d}` 把 zela 的填充路径喂到离屏一帧。
 >   移植时令 `m1 = m2`（丢掉上游"一次上传 + GPU 插值"的性能模型，见 `GAPS.md` V2-03）。
-> - **双后端容差回归（Step 6）**：`zela-render-backends/tests/vector_vs_wgpu.rs`
->   在同一进程里同时挂载两个后端，同一形状各渲一帧，**不断言像素相同**
+> - 双后端容差回归（Step 6）：`zela-render-backends/tests/vector_vs_wgpu.rs`
+>   在同一进程里同时挂载两个后端，同一形状各渲一帧，不断言像素相同
 >   （解析 AA vs MSAA 本来就不同），只断言：非空 + 覆盖率相对差 ≤ 10% + 逐像素
 >   RGB MAE ≤ 8/255，且内部区 MAE ≤ 2/255（区分"AA 方式不同"与"色彩管线不同"）。
 >   实测：轴对齐矩形逐位一致（MAE 0.00），非 45° 斜边三角形 MAE 0.09（内部区 0.00、
 >   边缘带 3.44；早期 12.18 的读数来自夹具把屏幕坐标当世界坐标的镜像错误）。
-> - **矢量后端的场景适配（V2-06，B4 验收：填充族）**：`zela-render-vector::scene`
+> - 矢量后端的场景适配（V2-06，B4 验收：填充族）：`zela-render-vector::scene`
 >   把 `Shape2D + Transform2D + Style2D` 映射成上游填充记录（圆/椭圆 → 4 段三次曲线、
 >   矩形/多边形、路径含 Quad/Cubic/Arc），变换与"画布中心为原点、y 向上"的坐标换算
->   在 CPU 侧烘进控制点；描边 / 渐变 / `Custom` **显式报错**（不静默丢图元）。
+>   在 CPU 侧烘进控制点；描边 / 渐变 / `Custom` 显式报错，不丢图元。
 >   真实 `DrawQueue` 帧对拍：覆盖率 4568 vs 4580、MAE 0.05/255、内部区 0.00。
 >   仍缺描边 / 渐变 / 纹理 ⇒ `BackendKind::Vector` 仍不可注册，也没有矢量作品基线。
 > - **合成层保比例适配（S4-11，B4 验收）**：`CompositeOp::fit` 为 `Some(源尺寸)` 时，
@@ -757,36 +757,36 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   提交后 `cargo verify --rebind` 把整段换成携带录制的提交；`smoke` / `hashes`
 >   见到未归因的 `+dirty` 直接失败；`# delta:` 逐条记录 slotA → slotB 的变化。
 >   （详见 `FRAME_HASH_BASELINES.md`；`GAPS.md` V2-08。）
-> - **B5（2026-10-22）：描边形态进契约 + 孤儿 Surface 报错**。
+> - B5（2026-10-22）：描边形态进契约 + 孤儿 Surface 报错。
 >   `StrokeCap` / `StrokeJoin` / `StrokeShape` 进 `ze-render-ir`：`StrokeSolid` 带
 >   `#[serde(default)]`（默认 butt + miter = lyon 实测默认），`Style2D.stroke_shape`
->   是后端唯一消费点；`tessellate.rs` 由 `stroke_options()` **显式**驱动 lyon
->   （`StrokeOptions::default()` 不再裸用）⇒ 把一处静默默认变成契约字段，既有基线不变。
+>   是后端唯一消费点；`tessellate.rs` 由 `stroke_options()` 显式驱动 lyon
+>   （`StrokeOptions::default()` 不再裸用）⇒ 把一处隐式默认值变成契约字段，既有基线不变。
 >   同时关闭 S4-14：`Renderer2D + composite=false` 且无 `Material3D.texture` 引用的
->   孤儿 Surface 现在**显式报错**（S4-10 修掉重影后留下的"彻底沉默"）。
->   仍缺：矢量侧描边记录（B5 当时的理由是"需先移植 `Curves.miter` 计算"—— **B6 复核推翻**：
+>   孤儿 Surface 现在显式报错（S4-10 修掉重影后留下的"彻底沉默"）。
+>   仍缺：矢量侧描边记录（B5 当时的理由是"需先移植 `Curves.miter` 计算"—— B6 复核推翻：
 >   `Store::add_path` 已自动算 miter，缺的只是 `Record` 的描边构造，见 V2-14）、`shapes` 签名
 >   （缺 target / `PathList` 表达力不足，V2-12）、渐变 / 纹理 / dash（V2-13）。
 >
-> **B6 批次（2026-10-23，Step 1 / 2.1 / 3 / 4 已落地）**：矢量后端从"能画一个填充三角形"
+> B6 批次（2026-10-23，Step 1 / 2.1 / 3 / 4 已落地）：矢量后端从"能画一个填充三角形"
 > 推进到"能出带质感的作品，且进基线门禁"。
-> - **策略转变（B6 §0.1）**：基线是手段不是目的。新能力**默认开**，基线变化**允许**但须逐条
->   可解释；主校验从"逐位不变"改为**每帧容差回归**（内部区 ≤ 2、边缘带 ≤ 8、时域无跳变）。
-> - **默认值绑定后端能力（§0.3）**：`RenderParams::default_for(caps)` ——
+> - 策略转变（B6 §0.1）：基线是手段不是目的。新能力默认开，基线变化允许但须逐条
+>   可解释；主校验从"逐位不变"改为每帧容差回归（内部区 ≤ 2、边缘带 ≤ 8、时域无跳变）。
+> - 默认值绑定后端能力（§0.3）：`RenderParams::default_for(caps)` ——
 >   wgpu `PostCaps::none()` ⇒ tone / bloom / ao 全关；矢量 `all()` ⇒ 全开。
->   这不是静默降级：**显式**请求不支持项仍然 `is_supported_by` 报错。
-> - **`ToneCurve` 语义修正（V2-16）**：上游 `tone.wgsl:45` 只有 `0 = clip / 1 = AgX`，
+>   这不是静默降级：显式请求不支持项仍然由 `is_supported_by` 报错。
+> - `ToneCurve` 语义修正（V2-16）：上游 `tone.wgsl:45` 只有 `0 = clip / 1 = AgX`，
 >   B4 建的 `Reinhard / Aces` 是猜的 ⇒ 改为 `ToneCurve { Clip, #[default] AgX }`。
-> - **描边记录（V2-14）**：`Record::stroked`（`params.z` = 描边**宽度**、`flags >> STYLE` =
+> - 描边记录（V2-14）：`Record::stroked`（`params.z` = 描边宽度、`flags >> STYLE` =
 >   `cap | joint << 2`）+ `scene::scene_records`（逐对象先填充后描边）；
 >   `scene_mapping` / 双后端对拍覆盖描边三角形（MAE 0.20）。
-> - **3D 视图与着色栈入口（Step 1.2）**：`api::{View3, Light, render_3d}` 按上游
+> - 3D 视图与着色栈入口（Step 1.2）：`api::{View3, Light, render_3d}` 按上游
 >   `feed.py::view` / `lighting` 打包（reversed Z、`NEAR = 0.05`、灯 16 float × 8）；
 >   `FilledPath::{shade_in_3d, material}` 是上游 `shade_in_3d` 与材质编码，不是新发明。
->   **验收 = 像素**：AgX ≠ clip（clip 死白、AgX 压回）、bloom 让亮区外溢、AO 让"墙+地板"内角
->   变暗，且**只有方向光时 AO 无效**（上游 `occlusion_of()` 依赖环境光）。
-> - **`--backend vector` 作品进基线（V2-07）**：`zela-render --backend vector` 用**同一份**
->   `DrawQueue` 快照喂矢量后端（只支持纯 2D 帧；含 3D / 内容图层即显式报错，不静默跳过）。
+>   验收 = 像素：AgX ≠ clip（clip 死白、AgX 压回）、bloom 让亮区外溢、AO 让"墙+地板"内角
+>   变暗，且只有方向光时 AO 无效（上游 `occlusion_of()` 依赖环境光）。
+> - `--backend vector` 作品进基线（V2-07）：`zela-render --backend vector` 用同一份
+>   `DrawQueue` 快照喂矢量后端（只支持纯 2D 帧；含 3D / 内容图层即显式报错，不跳过）。
 >   `vector_paths.lua` 覆盖填充 + 描边 + 折线 + 文本路径；`baselines.txt` 新增 `[vector]` 段，
 >   `xtask` 的 `hashes` / `--record` / `--rebind` / `+dirty` 门禁都覆盖该段（`is_managed_section`）。
 > - **仍未做**：`zela.render.shapes` 签名（V2-12，`submit_shapes` **没有任何实现**，改签名只会
@@ -828,141 +828,141 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > - **`hashes` 全量**：167s（B8 前 dev）→ 52.48s（profile 切换）→ **13.07s**（批量 + V3-12）；
 >   编译：首次 verify-profile 全量 + 六步 530.57s，增量 9.03s。
 >
-> **B7 批次（2026-10-23）：内容丰满期（能力兑现 · JS 落地 · 覆盖矩阵）**。
-> - **原则：已建能力必须在作品中可见，且由机制保证**（口号没有机制必然漂移）。
->   "零使用"要分三种：真没人用 / **脚本层不可达** / 纯标签（合理但无像素）。
-> - **Step 1（`@7→@8`）**：删 `Target.TransformValue` 与 `TransformChannel.Auto`
->   （按值类型猜写哪一列、猜不中静默跳过、且没有 Rotation 分支）；六条基线逐位不变。
-> - **Step 2**：manifest 的 13 个作品全部进 `[native]` 对拍 + `payload-hash` 全量非 `-`
+> B7 批次（2026-10-23）：内容丰满期（能力兑现 · JS 落地 · 覆盖矩阵）。
+> - 原则：已建能力必须在作品中可见，且由机制保证（口号没有机制必然漂移）。
+>   "零使用"要分三种：真没人用 / 脚本层不可达 / 纯标签（合理但无像素）。
+> - Step 1（`@7→@8`）：删 `Target.TransformValue` 与 `TransformChannel.Auto`
+>   （按值类型猜写哪一列、猜不中直接跳过、且没有 Rotation 分支）；六条基线逐位不变。
+> - Step 2：manifest 的 13 个作品全部进 `[native]` 对拍 + `payload-hash` 全量非 `-`
 >   （此前 12 件写 `-`，唯一有值的 fourier 也已不可复现 —— W1-02）。
->   顺带发现 `MeshGeometry.id` 取自**进程内**计数器且随 serde 进 payload
+>   顺带发现 `MeshGeometry.id` 取自进程内计数器且随 serde 进 payload
 >   ⇒ ZSB 不是源码的纯函数（W1-01，记账未修）。
-> - **Step 3**：`surface_matrix.js` 是 `surface_matrix.lua` 的逐语句翻译，分镜 JSON 与
->   帧序列哈希**逐位相同**（"同一场景、两种语言、同一像素"，Pod 架构最强实证）；
+> - Step 3：`surface_matrix.js` 是 `surface_matrix.lua` 的逐语句翻译，分镜 JSON 与
+>   帧序列哈希逐位相同（"同一场景、两种语言、同一像素"，Pod 架构最强实证）；
 >   `js`（boa，纯 Rust）进对拍 features，否则它会继续腐烂。
-> - **Step 4（`@8→@9`，用户豁免 A6 的"只变一次"）**：`Group` / `Target.Phase` /
->   `Target.MorphT` 此前**根本没有脚本入口**（不是没人用）⇒ 新增 `scene.group` /
+> - Step 4（`@8→@9`，用户豁免 A6 的"只变一次"）：`Group` / `Target.Phase` /
+>   `Target.MorphT` 此前根本没有脚本入口（不是没人用）⇒ 新增 `scene.group` /
 >   `scene.phase_anim` / `scene.morph`；作品 `capability_gaps.lua` 一次覆盖
 >   `despawn` / `Curve.Const` / `Phase` / `CameraEye` / `MorphT` / `Group`。
->   `Group` 判断结论 = **纯组合标签、不做父子变换累乘，与 `Parent` 分工清晰 ⇒ 补，不删**。
-> - **Step 5（覆盖矩阵机制）**：`cargo verify --step coverage` 从**源码**抽能力清单
+>   `Group` 判断结论 = 纯组合标签、不做父子变换累乘，与 `Parent` 分工清晰 ⇒ 补，不删。
+> - Step 5（覆盖矩阵机制）：`cargo verify --step coverage` 从源码抽能力清单
 >   （`SceneApi` / `ContentApi` 的方法 + `Target` / `Curve` / `TransformChannel` 的变体），
->   与 manifest 作品的脚本（**去注释后**）比对：未覆盖 ⇒ 必须在
->   `demo/capability_exemptions.txt` 豁免，且该行必须指向 GAPS 里**真实存在**的 `W1-xx`
+>   与 manifest 作品的脚本（去注释后）比对：未覆盖 ⇒ 必须在
+>   `demo/capability_exemptions.txt` 豁免，且该行必须指向 GAPS 里真实存在的 `W1-xx`
 >   表格行；豁免过期（能力已被覆盖）同样失败 ⇒ 能力不落地就会红，机制不会腐烂。
 >
-> **B10 批次（2026-10-23）：着色栈生效与 3D 记录接入**。
-> - **路线裁决：A（矢量后端自己承载 3D 网格），B（跨后端混合）否决**。两条硬理由：
->   ① B 路线下 mesh 由 wgpu 渲、不进矢量 store，而 **AO 的深度 pass 与阴影的 `cast_by`
->   都只吃 store 里的 `Kind::Mesh`** ⇒ 参数填了没效果、还不报错（静默失效）；
+> B10 批次（2026-10-23）：着色栈生效与 3D 记录接入。
+> - 路线裁决：A（矢量后端自己承载 3D 网格），B（跨后端混合）否决。两条硬理由：
+>   ① B 路线下 mesh 由 wgpu 渲、不进矢量 store，而 AO 的深度 pass 与阴影的 `cast_by`
+>   都只吃 store 里的 `Kind::Mesh` ⇒ 参数填了没效果、还不报错（失效而不报错）；
 >   ② 两个后端各有自己的 device（`zela-render-vector` 内部 `Gpu::new()` 自建），
 >   纹理无法直接共享 ⇒ B 需要先改造 `with_gpu` 注入外部 device，是架构级改动，而 A 是接线。
-> - **真正的门闩不是"没有 3D 视图"，是"没有 Mesh 记录"**：`material` / `light` / `glow`
+> - 真正的门闩不是"没有 3D 视图"，是"没有 Mesh 记录"：`material` / `light` / `glow`
 >   三级条件都要 `Kind::Mesh`，缺了它 bloom 的合成 pass 不创建 —— tone 也就无处应用。
-> - **契约（Step 1）**：`RenderCapabilitySet` 新增 `mesh: MeshForms`（`Tri` / `Line`）
->   与 `require_mesh()`；后端必须显式自述，不支持所请求形态即**报错**。
-> - **接线（Step 2/3）**：`MeshRecord` + `PathRecord::Mesh` + `render_3d_with`；
->   `Record::mesh` 写 `material[3] = 1` 是"受光"的开关。**计划 §5.1 与代码不符**：
+> - 契约（Step 1）：`RenderCapabilitySet` 新增 `mesh: MeshForms`（`Tri` / `Line`）
+>   与 `require_mesh()`；后端必须显式自述，不支持所请求形态即报错。
+> - 接线（Step 2/3）：`MeshRecord` + `PathRecord::Mesh` + `render_3d_with`；
+>   `Record::mesh` 写 `material[3] = 1` 是"受光"的开关。计划 §5.1 与代码不符：
 >   本仓 `mesh::Mesh::new` 吃 f64 三元组、内部再压成 GPU 布局 ⇒ 不需要新顶点格式分支。
-> - **作品级证据（Step 4）**：`shaded_meshes.lua`（真网格的墙 / 地板 / 亮立方体）走
+> - 作品级证据（Step 4）：`shaded_meshes.lua`（真网格的墙 / 地板 / 亮立方体）走
 >   `--backend vector`，帧哈希进 `[vector]` 基线；同一份 ZSB 只切 `vector_params`，
 >   tone（AgX≠clip）/ bloom（开更亮）/ AO（开更暗）逐项可判读。
 >   `Camera3D → View3`、`LightQueue → Light`（方向取反 + 环境 0.2）的桥在
 >   `zela-playback/src/vector3d.rs`（`zela-render-vector` 只依赖 kernel，不认识场景队列）。
 >
-> **B11 批次（2026-10-23）：Device 注入与动态后端路由**。
-> - **后端自述 device features（Step 0）**：`BackendKind::required_features(adapter)`
->   返回 `BackendFeatures { required, preferred }`。wgpu **显式空集**；矢量 required =
+> B11 批次（2026-10-23）：Device 注入与动态后端路由。
+> - 后端自述 device features（Step 0）：`BackendKind::required_features(adapter)`
+>   返回 `BackendFeatures { required, preferred }`。wgpu 显式空集；矢量 required =
 >   `DEPTH32FLOAT_STENCIL8` + adapter 自述的 `FLOAT32_BLENDABLE`，preferred =
 >   `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`（只影响 MSAA 档位）。
-> - **features 并集（Step 1）**：`BackendRegistry::required_device_features` 只对
->   **已注册且可用**的后端取并（不可用的后端不请求它的 feature —— 否则"以前能起 device
+> - features 并集（Step 1）：`BackendRegistry::required_device_features` 只对
+>   已注册且可用的后端取并（不可用的后端不请求它的 feature —— 否则"以前能起 device
 >   的机器现在起不来"）。仅 wgpu 注册 ⇒ `Features::empty()`，与改动前逐位相同（有断言）。
-> - **注入（Step 3）**：`zela_render_vector::init_gpu(device, queue, adapter)` —— 绕开
->   `Gpu::new()`（wasm 上 `pollster::block_on` / `Instance::new` 不合法）；**adapter 必须
->   一起传**，否则 `max_samples` 无从查询 = 能力校验静默消失。`RenderContext` 也补了
+> - 注入（Step 3）：`zela_render_vector::init_gpu(device, queue, adapter)` —— 绕开
+>   `Gpu::new()`（wasm 上 `pollster::block_on` / `Instance::new` 不合法）；adapter 必须
+>   一起传，否则 `max_samples` 无从查询 = 能力校验随之消失。`RenderContext` 也补了
 >   `with_adapter`，web 的 compare 路径同样带 adapter。
-> - **路由（Step 4）**：`zela-render-backends/src/routing.rs`（native 与浏览器共用一份）：
->   「帧内容 × 后端自述能力」⇒ 选后端，并给出**拒绝理由**。默认自动路径**优先 wgpu**
+> - 路由（Step 4）：`zela-render-backends/src/routing.rs`（native 与浏览器共用一份）：
+>   「帧内容 × 后端自述能力」⇒ 选后端，并给出拒绝理由。默认自动路径优先 wgpu
 >   （16 条基线逐位不变）；`--backend vector` 是"偏好"，被拒则回退 wgpu 并打印理由
 >   （消除"`--backend vector` + 内容纹理必失败"的假失败）；`BackendKind` 不再用于
 >   可用性判断（`is_available_on(adapter)` 取而代之）。
-> - **浏览器（Step 5）**：device/surface 全页面只建一次，切后端 = 重播（不整页重载、
+> - 浏览器（Step 5）：device/surface 全页面只建一次，切后端 = 重播（不整页重载、
 >   不重新 request_device）；状态栏常驻"选了谁 / 为什么 / 谁被拒、理由"。
->   **矢量后端在浏览器能编译但不能出帧**：`Player::pixels` 的同步回读在 map 完成前取
+>   矢量后端在浏览器能编译但不能出帧：`Player::pixels` 的同步回读在 map 完成前取
 >   `getMappedRange` ⇒ `OperationError`（GAPS X2-03）⇒ 路由在 wasm 上显式拒绝矢量。
 >
-> **B12 批次（2026-10-23）：可观测性专题**。
-> 原则：**把已经存在但看不见的东西接出来，把不存在但需要的东西建起来**；本批不优化性能、
+> B12 批次（2026-10-23）：可观测性专题。
+> 原则：把已经存在但看不见的东西接出来，把不存在但需要的东西建起来；本批不优化性能、
 > 不改渲染语义。
-> - **L0**：`init_tracing_headless()` 接入 headless 入口（默认 `warn`，`ZELA_LOG` 控级别，
+> - L0：`init_tracing_headless()` 接入 headless 入口（默认 `warn`，`ZELA_LOG` 控级别，
 >   `ZELA_LOG_FILE` 控目标）；`zela-verify`（唯一默认门禁路径）与 `zela-render` 共用
->   `frame_loop::FrameStats` 的同一套字段；`verify_ms` 保留但**显式标注"未启用"**。
-> - **决策可观测（Step 2）**：`RoutingDecision::{validate, json, object_json}`；空拒绝理由
->   = 静默决策 ⇒ `run_frames` 直接失败；`zela-verify` 每作品每遍输出 `[decision]`。
->   浏览器 compare 上下文补 `with_adapter`（此前 `caps = None`，能力校验静默消失）。
-> - **结构化落盘（Step 3）**：`ZELA_FRAME_REPORT=<path>` 追加 JSONL（逐帧计时汇总 + 决策 +
->   **环境指纹**：GPU / API / os / arch / debug_assertions）。**环境指纹必填**——
+>   `frame_loop::FrameStats` 的同一套字段；`verify_ms` 保留但显式标注"未启用"。
+> - 决策可观测（Step 2）：`RoutingDecision::{validate, json, object_json}`；空拒绝理由
+>   = 无法解释的决策 ⇒ `run_frames` 直接失败；`zela-verify` 每作品每遍输出 `[decision]`。
+>   浏览器 compare 上下文补 `with_adapter`（此前 `caps = None`，能力校验随之消失）。
+> - 结构化落盘（Step 3）：`ZELA_FRAME_REPORT=<path>` 追加 JSONL（逐帧计时汇总 + 决策 +
+>   环境指纹：GPU / API / os / arch / debug_assertions）。环境指纹必填——
 >   B8 的 dev/release 与 X1-11 的字体是同一类教训：脱离环境的数字不可比。
-> - **GPU 归因（Step 4）**：`zela_render_backends::gpu_timing` 三态
->   （disabled / unsupported / measured）；做法是主帧前后各提交一个**空 compute pass**
+> - GPU 归因（Step 4）：`zela_render_backends::gpu_timing` 三态
+>   （disabled / unsupported / measured）；做法是主帧前后各提交一个空 compute pass
 >   写 timestamp（队列按提交顺序执行 ⇒ span 覆盖主帧全部 GPU 工作，不改现有 24 处 pass）。
 >   `TIMESTAMP_QUERY` 只在 `ZELA_GPU_TIMING=1` 时请求（默认 device features 仍是空集）；
->   测不出时给 `unsupported` + 理由，**不填 0**。
-> - **缓存与资源计数（Step 5）**：`FrameCacheStats` 此前零消费者 ⇒
+>   测不出时给 `unsupported` + 理由，不填 0。
+> - 缓存与资源计数（Step 5）：`FrameCacheStats` 此前零消费者 ⇒
 >   `diagnostics::{CacheTotals, take_cache_totals}` 接出；新增 `textures_created`
->   （后端创建渲染目标的次数）——B8 "每帧建纹理"修好与否现在**有数**为证
+>   （后端创建渲染目标的次数）——B8 "每帧建纹理"修好与否现在有数为证
 >   （pendulum 300 帧只建 2 张）。
-> - **量级门禁（Step 6）**：`FrameStats::check()` 恒开（单帧 > 500ms 即失败），打印才是可选的。
+> - 量级门禁（Step 6）：`FrameStats::check()` 恒开（单帧 > 500ms 即失败），打印才是可选的。
 >
-> **B13 批次（2026-10-23）：矢量作品对拍与字体口径**。
-> - **字体口径（Step 0）**：`tools/typst-fonts.txt` 是版本 / 文件名 / SHA-256 的**唯一真源**，
+> B13 批次（2026-10-23）：矢量作品对拍与字体口径。
+> - 字体口径（Step 0）：`tools/typst-fonts.txt` 是版本 / 文件名 / SHA-256 的唯一来源，
 >   `build.ps1`（下载+校验）与 xtask（对拍环境）共读；xtask 给所有对拍子进程注入
->   `ZELA_TYPST_FONT_DIR`，缺失即报错。关闭判据 = **可复现**（同代码连续两次录制逐位相同），
+>   `ZELA_TYPST_FONT_DIR`，缺失即报错。关闭判据 = 可复现（同代码连续两次录制逐位相同），
 >   而不是"值被更新"。
-> - **对拍设施（Step 1）**：`zela-parity` —— 同一脚本走 `run_frames` 跑两遍
+> - 对拍设施（Step 1）：`zela-parity` —— 同一脚本走 `run_frames` 跑两遍
 >   （wgpu / 矢量），逐采样帧按 `vector_vs_wgpu.rs` 的判据比较（覆盖率相对差 ≤10% /
 >   全图 MAE ≤8 / 内部区 MAE ≤2，不放宽），另报差异 bbox、差异像素占比、有符号偏差；
 >   `--post match|backend-default` 把"后处理政策差异"与"渲染算法差异"分开，
 >   `--dump` 落盘最差帧两张图。
-> - **实测结论（Step 2，落档 GAPS Q 段）**：矢量后端在**2D 开放折线与 `Axes2D` 网格**
+> - 实测结论（Step 2，记入 GAPS Q 段）：矢量后端在 2D 开放折线与 `Axes2D` 网格
 >   上缺内容（`scene::push_shape` 把 Polyline 当闭合多边形、<3 点直接丢），
->   在**3D 光照**上系统性偏暗（同参数下 fusion 内部区 MAE 149、偏差 +140/+158/+146）。
+>   在 3D 光照上系统性偏暗（同参数下 fusion 内部区 MAE 149、偏差 +140/+158/+146）。
 >   2D 颜色 / 文字 / 圆形填充与 wgpu 基本一致（vector_paths 内部区 MAE 0.35）。
->   ⇒ "后端融合还是分立"的判断现在有据：**修掉这两类差异之前，矢量不是 wgpu 的等价替代**。
-> - **纳管（Step 3）**：`[vector]` 段 2 → 11 条（同一作品在 `[native]` 与 `[vector]` 各一条，
+>   ⇒ "后端融合还是分立"的判断现在有据：修掉这两类差异之前，矢量不是 wgpu 的等价替代。
+> - 纳管（Step 3）：`[vector]` 段 2 → 11 条（同一作品在 `[native]` 与 `[vector]` 各一条，
 >   标签 `name#vector`，批量模式按 `--work` 顺序配对）；25 条对拍全绿。
->   ⚠️ 这批矢量基线锁的是**当前行为**，X4-01 / X4-02 修好后必须重录。
-> - **被拒的 5 件**（不强行对拍，属既有能力边界）：`demo3d`（线框）、
+>   ⚠️ 这批矢量基线锁的是当前行为，X4-01 / X4-02 修好后必须重录。
+> - 被拒的 5 件（不强行对拍，属既有能力边界）：`demo3d`（线框）、
 >   `surface_matrix` / `_js` / `atlas`（内容纹理）、`capability_gaps`（2D+3D 混排）。
 >
-> **B14 批次（2026-10-23）：矢量 2D 开放折线与 3D 亮度口径**。
+> B14 批次（2026-10-23）：矢量 2D 开放折线与 3D 亮度口径。
 > 目标：把 B13 对拍暴露的两类差异修到"可解释、且大部分收敛"，门限不放宽。
-> - **2D（X4-01）**：差异有**两层**。① `shape_to_scene` 的 `push_shape` 把 `Line` 直接丢弃、
+> - 2D（X4-01）：差异有两层。① `shape_to_scene` 的 `push_shape` 把 `Line` 直接丢弃、
 >   把 `Polyline` 当闭合多边形（<3 点不产出）⇒ 网格线 / 地面线 / 2 点摆杆消失；修为
->   `Line`/`Polyline` 走**开放子路径**（`ranges` 闭合位 0）、`Polygon` 仍闭合，填充的隐式闭合
->   与描边的"不回连"各有一条 GPU 用例钉住。② 更宽的一层：**`RevealQueue` / `MorphQueue`
->   根本不在 `DrawQueue` 里**，而矢量快照只取了 DrawQueue ⇒ 所有 `content.polyline` /
->   `Reveal` 的曲线整片缺失。`zela_playback::vector_frame` 现按**归一化弧长**把 reveal 裁成
->   开放折线（与 wgpu 的"预细分 + 着色器丢弃"同语义），morph 则**显式拒绝**（不静默丢）。
+>   `Line`/`Polyline` 走开放子路径（`ranges` 闭合位 0）、`Polygon` 仍闭合，填充的隐式闭合
+>   与描边的"不回连"各有一条 GPU 用例锁定。② 更宽的一层：`RevealQueue` / `MorphQueue`
+>   根本不在 `DrawQueue` 里，而矢量快照只取了 DrawQueue ⇒ 所有 `content.polyline` /
+>   `Reveal` 的曲线整片缺失。`zela_playback::vector_frame` 现按归一化弧长把 reveal 裁成
+>   开放折线（与 wgpu 的"预细分 + 着色器丢弃"同语义），morph 则显式拒绝（不丢内容）。
 >   实测 `--post match`：fourier 覆盖率 0.7239 → 0.0195、MAE 4.45 → 0.54；storyboard
 >   0.6394 → 0.0039 / 7.25 → 0.62；pendulum 0.3614 → 0.0258 / 0.35 → 0.06；orbit、spring 全绿。
-> - **3D（X4-02）**：Step 0 用"关 tone（A）/ 换 albedo / 探针场景"把候选逐个排除——
->   **不是 tone**（关掉差异仍在）、**不是 sRGB**（白与灰两种 albedo 下比值恒为 2.26）。
->   真因是**光照口径**：① 桥把光源方向**多取反了一次**（旧注释称 `LightQueue.direction`
+> - 3D（X4-02）：Step 0 用"关 tone（A）/ 换 albedo / 探针场景"把候选逐个排除——
+>   不是 tone（关掉差异仍在）、不是 sRGB（白与灰两种 albedo 下比值恒为 2.26）。
+>   真因是光照口径：① 桥把光源方向多取反了一次（旧注释称 `LightQueue.direction`
 >   是"传播方向"，而 wgpu 的 `fs_pbr` 直接 `dot(n, dirs)` 当"指向光源"）；② 强度归一化
 >   不同（wgpu `(1−ambient)·I·NdotL·(kd·albedo/π+spec)` vs 矢量 `I·NdotL`）⇒ 桥里乘
 >   `(1−ambient)/π`；③ 电介质反射率 0.5 → 0.04。修后 pbr_scene 内部区 26.11 → 7.63
 >   （MAE 0.73）、pbr_lights 24.22 → 4.59（0.54）。
-> - **顺带挖出的第四层（X5-01）**：`LightQueue` **从未注入 Resources** ⇒ 两个后端一直只用
->   默认灯，脚本里的 `Light` 组件被**一起静默忽略**。已补注入；含灯的 7 件 `[native]` 与
+> - 顺带挖出的第四层（X5-01）：`LightQueue` 从未注入 Resources ⇒ 两个后端一直只用
+>   默认灯，脚本里的 `Light` 组件被一并忽略，且没有任何提示。已补注入；含灯的 7 件 `[native]` 与
 >   5 件 `[vector]` 基线随之重录（用户明确豁免"native 不动"）。
-> - **仍未收敛（记账，不在本批假装解决）**：3D 取景（矢量大约 8%、偏移 ≈35px，X5-02）、
+> - 仍未收敛（记账，不在本批假装解决）：3D 取景（矢量大约 8%、偏移 ≈35px，X5-02）、
 >   点光衰减与高光实现（X5-03）、`fusion` 的透明面板合成（X5-05）、2D 细笔画内部区
 >   （fourier 3.01 / storyboard 6.96，X5-04）。⇒ "后端融合还是分立"的判断更新为：
->   **亮度项已对齐，剩下的都是可点名的具体口径**，不再是"算法完全不同"。
-> - **两条"注释宣称与另一侧一致"的错误在本批清除**（`LightQueue.direction` 的"传播方向"、
->   `scene.rs` 的"与 wgpu 三角化一致"）。规则：此类断言必须指向**可执行的用例**。
+>   亮度项已对齐，剩下的都是可以指出的具体口径，不再是"算法完全不同"。
+> - 两条"注释宣称与另一侧一致"的错误在本批清除（`LightQueue.direction` 的"传播方向"、
+>   `scene.rs` 的"与 wgpu 三角化一致"）。规则：此类断言必须指向可执行的用例。
 
 
 ### 已知未接线项（Known unwired，记账非缺陷）
@@ -974,7 +974,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > **S5 已把 `Parent` 移出本表**：`TransformHierarchySystem` 每帧产出 `WorldTransforms`，
 > `SceneRecordSystem` / `RevealRecordSystem` 已消费（详见
 > [`transform_hierarchy.rs`](crates/scene/zela-scene-ecs/src/transform_hierarchy.rs)）。
-> **S1 换型为 3D**：`WorldTransforms` 只存 `Transform3D`（Mat4 单一真源），2D 消费方经
+> **S1 换型为 3D**：`WorldTransforms` 只存 `Transform3D`（Mat4 唯一来源），2D 消费方经
 > `get2d` 读投影视图（丢 `z`，见 `GAPS.md` R-21）；`SceneRecord3DSystem` 同消费
 > （`Reads = (WorldTransforms,)`），3D 父子层级已接线。
 
@@ -982,7 +982,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 |---|---|---|---|
 | `ObjectId` generation 失效检测 | 契约层 `ze_scene_contract::ObjectId::is_stale` | 有单元测试；**无生产消费方** | 引入对象销毁-重建流程时 |
 | `Path3D` | 理念层 `ze-notion` | 已建、**零消费方**；与 `Path2D` **不同构**（不是同一类型的 3D 版本） | 需要真 3D 曲线时；因不同构，届时是**破坏性变更**，需单独立项 |
-| `ze-notion`「全仓唯一数学元语出口」 | 全仓 | **2026-10-19 已收口**：`zela-render-backends` / `zela-app` / `zela-scene` / `zela-render` / `ze-time` / `zela-egui` / `zela-playback` 已改经 `ze-notion` 并删除 glam 依赖，CI 加门禁。剩余直接引用共 **25 次**（`*.rs` 出现次数口径）：`ze-notion` 定义侧 6 处、节点图组 17 处（`GAPS.md` R-19）、`zela-scene` 2 行说明性注释 | 节点图组在合成图（ComposerGraph）接入场景前统一；其余不再新增 |
+| `ze-notion`「全仓唯一数学元语出口」 | 全仓 | **2026-10-19 已定案**：`zela-render-backends` / `zela-app` / `zela-scene` / `zela-render` / `ze-time` / `zela-egui` / `zela-playback` 已改经 `ze-notion` 并删除 glam 依赖，CI 加门禁。剩余直接引用共 **25 次**（`*.rs` 出现次数口径）：`ze-notion` 定义侧 6 处、节点图组 17 处（`GAPS.md` R-19）、`zela-scene` 2 行说明性注释 | 节点图组在合成图（ComposerGraph）接入场景前统一；其余不再新增 |
 | 节点编辑器（`zela-node-editor` / `zela-node-egui` / `zela-node-egui-ui`） | `crates/ui/*` + `crates/ze/graph/*` | **已排期（当前冻结）**：类型/算法/UI 齐备但**零生产消费方**（graph 6364 行 + UI 4502 行 ≈ 10866 行）。用户决策：**肯定要做，但要等 UI 接口与交互层稳定之后**，且**后期可能引入破坏性变更** | UI 接口与交互层稳定后单独立项 |
 | 2D / 3D 录制 System 仍是两个 | `zela-render::record_systems`（`SceneRecordSystem` / `SceneRecord3DSystem`） | 两者已同住渲染层（A6），但仍是两个 System / 两个队列；是否合并取决于真实 3D 动画的录制结构 | 有真实 3D 动画时 |
 | `formula.rs` 归位（632 行，约一半测试） | `crates/app/zela-app/src/formula.rs` | 承载"空心字"这一**既定视觉**；归位目标 crate 亦有争议（`ze-content` / `zela-render` / 新桥接层） | 真实动画确定它的形态之后 |
@@ -1043,9 +1043,9 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   共 10 个函数。**未开启 `bindings` 的 capability 不受影响**（`calls()` 默认空）。
 >
 > **脚本接口补全（2026-10-17，W 线）**：
-> - **target 变枚举**：`TargetKind`（`zela-scene`，`#[derive(PodType)]`）成为唯一真源；
+> - **target 变枚举**：`TargetKind`（`zela-scene`，`#[derive(PodType)]`）成为唯一来源；
 >   `target_ctor_by_name` 退化为 `TargetKind::from_name` 的薄查询，字符串表已删除。
->   拼错变体在 Lua 绑定层即报错（不再静默不排期）；
+>   拼错变体在 Lua 绑定层即报错（不会悄悄跳过排期）；
 > - **接口补齐**：`Axes2D` / `Arrow` / `Fill` / `Transform` / `RevealPath` / `PathShape`；
 >   组件句柄可对应**组件组**（`RevealPath` = `Reveal` + `StrokeSolid`），内容样式不必在脚本重述；
 > - **Injector 第二次真实使用**：`ContentApi`（`formula` / `text` → `Array<Path>`）独立成
@@ -1054,7 +1054,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   （占位引擎：25 对象 / 9 绑定）。`storyboard.rs` 保留为**参考实现**（默认启动路径仍在用），
 >   是否删除由用户决定；
 > - **W4**：删除 `spawn` 的 `ComponentList` 字符串 override（`Vec<Handle>` 自带 schema 名
->   `Array<ze_pod_core.Handle>`）；非法组件句柄从"静默跳过"改为 `run` 的明确失败。
+>   `Array<ze_pod_core.Handle>`）；非法组件句柄从"直接跳过"改为 `run` 的明确失败。
 >
 > **Pod 解耦与 Broker（2026-10-17，B 线）**：
 > - **B1 语言无关绑定层**：新增 kernel crate `ze-pod-binding`（只依赖 `ze-pod-core`，可进 wasm gate）。
@@ -1321,7 +1321,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   `pipeline_count() == 1`）。
 > - **C2 三类滤镜各一**：点运算 `Gain`（每通道增益）、几何重映射 `Distortion`
 >   （**逆向映射** `uv' = c + (uv−c)·scale·(1+k1·r²n+k2·r²n²)`）、邻域 `Blur`（3×3 高斯，
->   权重 4/2/1、和 16）。**预乘 alpha 硬约束**：增益对 rgb 与 a 同乘（或 rgb 增益 ≤ 1）、
+>   权重 4/2/1、和 16）。预乘 alpha 的强制约束：增益对 rgb 与 a 同乘（或 rgb 增益 ≤ 1）、
 >   模糊在**预乘空间**做 —— 证据：`gpu_post_filters_point_geometry_neighborhood`
 >   断言边界半透明像素 `r ≈ a`（非预乘空间会出现黑边 ⇒ 该断言会失败）。
 > - **C3 惰性管线缓存**：`Compositor::new` **不再预建** 9 条；`ensure_for(&mut self, ..)`
@@ -1418,7 +1418,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   `transform.rs` 的"Y 翻转只有一份"约定）—— 按纪律**不为凑 grep 删注释**。
 >   `types.rs` **未**补 `Mat3/Mat4/Quat` 转发：`transform.rs` 的 11 处只有 Vec2/Vec3，
 >   不需要新增类型（不留纸面能力）。
->   2026-10-19 收口后全仓 `*.rs` 中 `glam::` **出现 25 次**
+>   2026-10-19 定案后全仓 `*.rs` 中 `glam::` 出现 25 次
 >   （口径：含注释、含 3 个豁免 crate；不含 `.md` 文档提及；不含根 `Cargo.toml`
 >   workspace 声明）：`ze-notion` 定义侧 6 + 节点图组 17 + `zela-scene` 注释 2。
 >   `zela-scene` 的 `glam` 依赖已在同批从 Cargo.toml 删除。
@@ -1449,7 +1449,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   **显式 `impl Default` = `FULL`**（不 derive，以免得到 `0.0` 全透明这种危险缺省）。
 >   通道 = 组件 + target `OpacityValue`（`Scalar → Opacity.0`）+ 目标类别变体
 >   （**T0-② 已删除**，照 `Camera2DFraming` 的"单 target 按变体分派"口径）。
->   ⚠️ **预乘 alpha 硬约束（实测纠正计划初稿）**：`Style2D` 存**直色**，预乘发生在 GPU 侧
+>   ⚠️ 预乘 alpha 的强制约束（实测纠正计划初稿）：`Style2D` 存**直色**，预乘发生在 GPU 侧
 >   （`uniform_bytes` 写 `rgb * a`）⇒ **施加不透明度 = 只缩直色的 alpha**（`rgb` 不动）；
 >   计划 §6.2.4 写的"`rgb` 与 `a` 同乘"对直色是**错的** —— 同乘会被 GPU 再乘一次 `a`，
 >   预乘后 `rgb` 变成 `o²` 档（`o = 0.5` 时应得 `r ≈ a ≈ 128`，那样只得 `r ≈ 64`）。
@@ -1485,7 +1485,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   `ContentTextureRecordSystem` **不参与过滤**（它是**纹理源**而非显示层，其"相机"是
 >   `spec.camera`、不是当前 2D 相机，按相机 tag 过滤没有明确语义）。**不新建 crate**。
 > - **一处登记缺口顺带补上**：`Reveal` 此前**未进 `add_known` 白名单**（R 线遗留）——
->   漏登记会让 `spawn_dyn` 静默返回 `None`；本轮与 `Name`/`Group`/`Visibility`/`Opacity`
+>   漏登记会让 `spawn_dyn` 无提示地返回 `None`；本轮与 `Name`/`Group`/`Visibility`/`Opacity`
 >   一并 `arm!`。
 > - **能力测试 demo**（N 线之后追加）：`zela-app` 增 `capability_demo.rs`，用**最小场景**
 >   （两条曲线 + 一个对照组）把四项能力各跑一遍；`--demo` / `ZELA_DEMO=1` 切换
@@ -1494,13 +1494,13 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 >   `cos`=**0** 而 `sin` **仍为 714**；`Opacity = 0` ⇒ `cos`=0 / `sin` 仍 714）。
 >   三条实测教训见该模块头注与 `zela-app/README.md`：① 光挂 `Group` **不会**随组开关走
 >   （还要 `Visibility::of_group`，两组件正交）；② 两条曲线相交 ⇒ 像素读数互相污染
->   （demo 里竖直错开）；③ `Opacity` 组件缺席时 `OpacityValue` **静默跳过**（动画静默失效）。
+>   （demo 里竖直错开）；③ `Opacity` 组件缺席时 `OpacityValue` 被跳过（动画不生效）。
 
 待上游提供 workspace 模式后补充 `cargo archtest` 步骤。
 
 ### B15 矢量后端进 wasm（浏览器出帧）
 
-> 一句话：**根因只有一处同步回读，异步容器（rAF + `spawn_local`）早已存在**。
+> 一句话：根因只有一处同步回读，异步容器（rAF + `spawn_local`）早已存在。
 > 本批把矢量后端的公开面按目标切成"native 同步 / 浏览器异步"，并让显示路径不再经过 CPU。
 
 - **甲（异步回读）**：`Player::pixels` 里的 `map_async` → `poll(wait)` → `get_mapped_range`
@@ -1534,7 +1534,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 ### B17 矢量后端资源生命周期（Player 常驻）
 
-> 一句话：**`Player` 是常驻资源容器，不是逐帧对象。** 这条是上游的设计意图，此前无人写下，
+> 一句话：`Player` 是常驻资源容器，不是逐帧对象。这条是上游的设计意图，此前无人写下，
 > 也正是它被逐帧新建的原因。本批把它写进契约，并补上"每帧建了多少"的计数。
 
 - **契约**：`Player` 持有画布、MSAA/深度附件、`rasters`、`buffers`、`targets`、`lists`、
@@ -1556,7 +1556,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 ### B18 移动端 3D 条纹与 MSAA 能力判据
 
-> 一句话：**能力判据不得有无条件常量分支**，但"统一判据"不等于"条纹已修"。
+> 一句话：能力判据不得有无条件常量分支，但"统一判据"不等于"条纹已修"。
 > 源码证据表明：wgpu 的 WebGPU 后端只返回规范保证的格式能力，`Rgba8Unorm` /
 > `Depth32FloatStencil8` 都保证 `MULTISAMPLE_X4` ⇒ 移动端 `max_samples` 本来就是 4。
 > 因此计划里的 H1（"没有 adapter-specific formats ⇒ 不支持 4x"）**被证伪**。
@@ -1566,7 +1566,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 - **判据**：`msaa_samples(adapter)` 只查 `get_texture_format_features(COLOR / DEPTH)` 的
   `MULTISAMPLE_X4` / `MULTISAMPLE_X8`；`Gpu::from_parts` 与浏览器 `[adapter-facts]` 共用
   这一源。桌面/移动在 WebGPU 上都得到 4（保证位），旧硬编码分支与查询同值；改动只是删掉
-  静默常量分支，25 条基线逐位不变。
+  无条件的常量分支，25 条基线逐位不变。
 - **判别实验**：`?msaa=1` 把所有帧的采样数压到 1（`set_sample_override`，默认 0 不生效）。
   条纹消失 ⇒ 与 MSAA 路径有关（`depth.wgsl` / `blend_lists.wgsl` 的采样表或驱动）；
   仍在 ⇒ 非 MSAA（行分块 / 链表溢出 / 阴影等）。
@@ -1578,8 +1578,8 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 ### B19 渲染后端收尾与转向
 
-> 一句话：**渲染后端阶段到此结束。** B10~B18 建的能力第一次走**默认路径**（Auto 首选矢量），
-> 参照物 wgpu 冻结为"第二消费者"，四条参数性残差落档不再收敛。结束是有判据的，不是感觉。
+> 一句话：渲染后端阶段到此结束。B10~B18 建的能力第一次走默认路径（Auto 首选矢量），
+> 参照物 wgpu 冻结为"第二消费者"，四条参数性残差记入 GAPS 后不再收敛。结束是有判据的，不是感觉。
 
 - **默认后端**：`routing::order_of` 的 `Auto` 从 `[Wgpu, Vector]` 换成 `[Vector, Wgpu]`；
   `zela-render` 默认 `--backend auto`。矢量被拒（材质采样的内容纹理 / 2D3D 混排 / 线框 /
@@ -1592,7 +1592,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
   逐位不变；新默认路径由 `hashes` 的 13 条 `[vector]` 与 routing 单测守护，
   不靠 smoke 这条 15 帧的短跑。
 - **参照物冻结（GAPS V-04）**：wgpu 只修正确性、不补能力；它作为第二消费者的义务是
-  证明抽象能容纳异构后端。X5-02/03/04/05 因此**落档为参数性差异**（两边都对），
+  证明抽象能容纳异构后端。X5-02/03/04/05 因此记录为参数性差异（两边都对），
   `zela-parity` 输出新增 `kind: structural | parametric, filed`。
 - **门禁**：GAPS 新增 V 段 13 条（讨论过但没进账的定位与失效契约）；锚点检查从只认
   `crate::mod::Item` 扩到 `crates/...` 路径形态，**存量 7 条死链清零**（此前门禁全绿）。
@@ -1601,7 +1601,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 - 矢量：2D 完整（开放折线、reveal）、3D 几何对齐、着色栈生效、资源常驻；桌面 + 移动端
   均无已知错误画面。
-- 路由：拒绝必带理由，无静默默认值；对拍 27 条 + 差异分类；资源计数 + GPU 三态计时。
+- 路由：拒绝必带理由，没有隐式默认值；对拍 27 条 + 差异分类；资源计数 + GPU 三态计时。
 
 **明确不可用（已记账，不掩盖）**
 
@@ -1611,16 +1611,16 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
   对点拓扑 / 未对齐形变 / 无生产方纹理显式报错 —— 那是带理由的失败，不是静默回退。
 - 阴影默认关（V-01，显式开关已就位）、bloom 三参已全部接通（V-02 关闭）；IBL 已由 PG
   Step 3 打开（`ZELA_IBL` + 槽位编码修复，V-03 的 `env` 失效项已划掉）。
-- 四条参数性残差落档（X5-02/03/04/05）；wgpu 无后处理栈 / IBL（冻结，不补）。
+- 四条参数性残差记入 GAPS（X5-02/03/04/05）；wgpu 无后处理栈 / IBL（冻结，不补）。
 - miter limit 两边不一致（V2-11）：已实测评估（1°/20° 尖角差 1.4% / 2.7% 覆盖率），
-  落档为参数性差异（PB-02）。
+  记录为参数性差异（PB-02）。
 
 **转向后的第一批**：内容表达力 + Render Attachment 三层（L1 画面语义进产物 / L2 宿主能力 /
 L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产出不同 payload）。
 
 ### PC 内容纹理层（图层级叠加）
 
-> 一句话：**拒绝的粒度错了。** 原先"整帧含内容纹理 ⇒ 整帧拒绝矢量"，而正确粒度是**图层**：
+> 一句话：拒绝的粒度错了。原先"整帧含内容纹理 ⇒ 整帧拒绝矢量"，而正确粒度是图层：
 > 内容层自己渲成纹理，再叠到视口上。改完后 `surface_matrix` 与 `_js` 第一次走上矢量路径。
 
 - **路线 A（本批）**：内容层由矢量自己的 2D 路径渲染成 RGBA8（尺寸 = `LayerKind::ContentTexture`
@@ -1671,9 +1671,9 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### PE 能力入口与展示作品
 
-> 一句话：**接一个、证明一个。** PD 暴露的 6 个参数在场景层**一个入口都没有** ——
+> 一句话：接一个、证明一个。PD 暴露的 6 个参数在场景层一个入口都没有 ——
 > "能力在后端，出口没修通"。本批把类型下沉到 IR（依赖方向允许），给每个能力配
-> 一件作品，并让 wgpu 侧**不再静默忽略**。
+> 一件作品，并让 wgpu 侧不再无提示地忽略。
 
 **Step 1 类型下沉（依赖方向）**：`Gradient` / `Dash` / `SecondPaint` / `PathOptions` 从
 `zela-render-vector::api` 移到 `ze-render-ir::paint`。原因不是"好看"：场景层
@@ -1689,19 +1689,19 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 | 双 paint | `SecondPaint { fill, stroke, background, mix }` | `*2` 三色 + `dash[3]` | `cap_second` |
 | 背景描边 | `BackgroundStroke { color, width }` | `Record.background` + `params[3]` | `cap_background` |
 | 曲线窗口 | `CurveWindow { lo, hi }`（曲线索引 + t） | `params[0..2]` | `cap_window` |
-| 顶点色 | ——（脚本层没有网格构造入口） | `MeshRecord.colors` | **不入作品**：由 PD 的 `per_vertex_colors_replace_the_mesh_fill` 与 `option_errors_are_explicit` 钉住 |
+| 顶点色 | ——（脚本层没有网格构造入口） | `MeshRecord.colors` | 不入作品：由 PD 的 `per_vertex_colors_replace_the_mesh_fill` 与 `option_errors_are_explicit` 锁定 |
 
 - **组件 → `Style2D`**：`record_scene` 的 `paint_of` 把 5 个独立组件汇成 `PathOptions`；
   渐变端点与背景宽度用**同一份相机仿射 / scale** 换算（`record_scene` 仍是唯一换算点）。
 - **`Style2D` 因此不再 `Copy`**（渐变 stops 是 `Vec`）—— 这是"能力进样式"的必然后果，
   已写进类型文档；所有克隆点都是显式的。
-- **5 件作品只进 `[vector]`**：给它们录 `[native]` 基线等于把"wgpu 静默丢弃"固化成基线。
+- 5 件作品只进 `[vector]`：给它们录 `[native]` 基线等于把"wgpu 丢弃这些样式"固化成基线。
 - **能力面付一次账**：`zela.scene@9 → @10`，指纹
   `10_059_647_094_731_395_853 → 83_729_276_200_230_347`；能力覆盖 `49/49 → 54/54`。
 
 **Step 3 wgpu 显式化**：`FrameContent.vector_only_styles`（位掩码）由帧快照统计；
 选到 wgpu（显式或回退）时决策理由追加「wgpu 忽略本帧仅矢量支持的样式：渐变 / 虚线 …」。
-判据由 `routing.rs` 的两条用例钉住（正向点名 + 反向不误报）。
+判据由 `routing.rs` 的两条用例锁定（正向指出 + 反向不误报）。
 
 **Step 4 指纹扩列**：`zela-app` 的 `object_fingerprint` 加入 5 个新组件（含渐变 stops 的
 逐色标量化）—— 否则"脚本改了渐变 ⇒ 指纹不变 ⇒ 对拍抓不到差异"（X1-11 同型）。
@@ -1711,7 +1711,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### PF 接缝弥合（透明 / 相机统一 / 2D-3D 混排）
 
-> 一句话：**三件事都在接缝层**（`vector_frame` / `vector3d`），后端机制早已具备。
+> 一句话：三件事都在接缝层（`vector_frame` / `vector3d`），后端机制早已具备。
 > Step 0 的 E-2 判伪推翻了"alpha 被当成 coverage"的原假设，真根因是
 > **`ShaderVariant` 在 3D 桥里被吞掉**。
 
@@ -1721,9 +1721,9 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 - **Step 1 变体映射**：`Flat` → 无材质（平涂，`fs_flat` 同语义）、`Lambert` → `[0,1,0.04]`
   （纯漫反射近似）、`Pbr` → 透传。`transparent=false` ⇒ `fill.a` 抬到 1（wgpu 的 REPLACE
   不消费颜色 alpha）；`transparent=true` 保留 alpha（矢量 OIT 本来按深度混合）。
-  `double_sided` **不可表达**（后端无 culling）⇒ 记账 PF-04，不静默。
+  `double_sided` **不可表达**（后端无 culling）⇒ 记账 PF-04。
   fusion 修正后：中心均值 77.7 → 128.6、峰值 137 → 222（wgpu 213.6 / 20.9）。
-- **X5-05 重定性**：原"参数性落档"的前提是"两个实现都对"；当时矢量侧**没有变体映射**，
+- **X5-05 重定性**：原"参数性残差记入 GAPS"的前提是"两个实现都对"；当时矢量侧**没有变体映射**，
   属结构性缺失。剩余亮度差在 **wgpu 侧**（透明 pipeline 用预乘 alpha，而 `cube.wgsl`
   输出直色，注释与代码不符）⇒ PF-02，属 V-04 允许的正确性修复，本批不做。
 - **Step 2 相机统一**：`SceneAssembly.camera2d: Option<Camera2DHandle>`；纯 3D 场景不再需要
@@ -1739,7 +1739,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### PG 渲染能力全开放与自封闭
 
-> 一句话：**后端已写好、没有出口的能力全部开出来；渲染层强加给调用方的约束拆掉**。
+> 一句话：后端已写好、没有出口的能力全部开出来；渲染层强加给调用方的约束拆掉。
 > 仍不碰 `ze-scene-*`；每个能力先做判别实验（G-1 / IBL 实测），做不到就剥离。
 
 - **Step 0 自封闭**：删掉 4 处占位 `Camera2D`（`pbr_materials` / `pbr_scene` /
@@ -1769,7 +1769,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### PH 能力缺口归零（Morph / Lines / 自定义环境）
 
-> 一句话：**最后两条被拒路由变成映射，两个 `pub(crate)` 出口开给宿主。** 至此矢量后端相对
+> 一句话：最后两条被拒路由变成映射，两个 `pub(crate)` 出口开给宿主。至此矢量后端相对
 > wgpu **无已知能力缺失**，22/22 作品全部可走矢量。三个 Step 都先做判别实验（H-1 / H-2）。
 
 - **Morph（PH-02）**：后端语义是"首形状 + **差值形状** + 权重烤进 `m2`"，不是"基准 + 目标 + mix"。
@@ -1791,7 +1791,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### PI 渲染层收尾与成本度量
 
-> 一句话：**把成本测出来，再按数字拍默认值**。本批不改渲染行为（除了两项收尾修复与默认值），
+> 一句话：把成本测出来，再按数字拍默认值。本批不改渲染行为（除了两项收尾修复与默认值），
 > 主要交付是**可引用的数字**（全部落 GAPS PI-06…PI-09）。
 
 - **纹理出口（PI-01 / PI-02）**：`routing.rs` 的拒绝理由改写 —— 前半句"没有生产方 ⇒ 拒绝"仍生效，
@@ -1812,19 +1812,19 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 提案 #6 A 批：寻址数据化（2026-10-26）
 
-> 一句话：**target 从枚举变成数据**。`(组件名, 字段路径) + TypeSpec + 读写方向` 一张表说清；
+> 一句话：target 从枚举变成数据。`(组件名, 字段路径) + TypeSpec + 读写方向` 一张表说清；
 > 加一个字段只写一行，而不是改枚举 + 改 `name()` + 改构造器 + 改表。
 
-- **`FieldSpec` 是唯一真源**（[`target.rs`](crates/scene/ze-scene-core/src/animation/target.rs)）：
+- `FieldSpec` 是唯一来源（[`target.rs`](crates/scene/ze-scene-core/src/animation/target.rs)）：
   `name`（持久化名，旧 payload 逐字节不变）/ `address`（规范地址 `Component.field`）/
   `component` / `field` / `ty` / `write` / `read`。`TARGETS` 是唯一地址表，
   `target_entry` 同时匹配持久化名与规范地址。
 - **读写同源**：`SceneRead` 与 `SceneWrite` 对称（[`scene_write.rs`](crates/scene/ze-scene-core/src/scene_write.rs)），
   read 不再是第二张表。
 - **类型不符显式报错**：`Target::apply` 返回 `Result<(), TargetError>`；
-  `BindingApplySystem` 打印错误而不是静默跳帧。
+  `BindingApplySystem` 打印错误而不是跳过该帧。
 - **coercion 独立成层**：`target::coerce`（`rotation_z` / `splat3` / `position3`）——值转换不混进地址。
-- **命名唯一真源**：`component` 必须等于组件登记表的 `known_type_name::<_>()`（测试钉住）；
+- 命名唯一来源：`component` 必须等于组件登记表的 `known_type_name::<_>()`（用测试固定）；
   `ze-scene-core` 不再依赖 `ze-pod-macro`。
 - **`zela.scene@10 → @11`**：`clip(target: String, curve: Curve)`；未知地址在装配期 `rec.fail`，
   旧名与规范地址都接受 ⇒ 既有作品零改动。验收：36 条像素基线逐位不变、
@@ -1833,7 +1833,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 提案 #6 B 批：handle 绑定与通道数据化（2026-10-26）
 
-> 一句话：**对象用句柄、通道用数据**。`expr.bind{ object = dot, target = expr.channel("Circle.radius") }`；
+> 一句话：对象用句柄、通道用数据。`expr.bind{ object = dot, target = expr.channel("Circle.radius") }`；
 > `find_named` 退场，`Channel` 枚举退场。
 
 - **通道是数据**：`ze_func::Channel`（封闭枚举）→ `ChannelRef { namespace, name }`（[`expr.rs`](crates/kernel/ze-comb/src/expr.rs)）。
@@ -1850,13 +1850,13 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 提案 #6 C 批：三语言构造器便捷化（2026-10-26）
 
-> 一句话：**构造器是可调用对象**，位置参数与通道常量都挂在它上面；默认值只在边界补。
+> 一句话：构造器是可调用对象，位置参数与通道常量都挂在它上面；默认值只在边界补。
 
 - **Lua**：`Table` + `__call` 元表（全仓首次使用 `__call`）；**JS**：原生函数对象直接 `set` 属性；
   **Python**：`PyCFunction` → `functools.partial`（C 函数不能挂属性）。
 - **位置参数 + 具名双形态**：唯一实参是容器 ⇒ 具名；否则按字段顺序。判别只看"首参是不是容器"，
   位置参数永不接受 table / object ⇒ Lua 的 `Vec2()` vs `Vec2{}` 歧义不存在。
-  ⚠️ 与计划硬约束 5「同一构造器只一种形态」有偏差（既有 251 处脚本全具名），见 GAPS AG-06。
+  ⚠️ 与计划强制约束 5「同一构造器只一种形态」有偏差（既有 251 处脚本全具名），见 GAPS AG-06。
 - **默认值白名单**（[`defaults.rs`](crates/ze/pod/ze-pod-binding/src/defaults.rs)）：`Color.a = 255`。
   **不进产物**（构造完即完整值），但进 LuaLS / `.d.ts` / `.pyi`（可选字段 / `a = 255`）。
 - **通道常量**：`Circle.channel.radius` 挂在构造器上，值是 `{ namespace, name }` 数据 —— 与
@@ -1867,13 +1867,13 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 提案 #6 D 批：`Select` 只留格式（2026-10-26）
 
-> 一句话：**格式先付，求值后置**。`Node::Select { cond, then, else }` 写进 schema v2，
+> 一句话：格式先付，求值后置。`Node::Select { cond, then, else }` 写进 schema v2，
 > 但 `CompiledExpr::compile` 对它返回显式未实现错误。
 
 - 形状是三个**命名子表达式**（`cond` / `then` / `else`），不是位置数组 —— 事后加字段
   就是新格式，而本批已经付过 `payload 1 → 2` 的代价。
 - `Node::children()` 覆盖三个分支 ⇒ 悬空 `Ref` / 环 / 通道校验对 `Select` 同样生效。
-- **本批不实现**：求值遇到 `Select` 是 `ExprError::UnsupportedNode("select")`，不静默算错。
+- 本批不实现：求值遇到 `Select` 是 `ExprError::UnsupportedNode("select")`，不会算错却不报错。
 - **未落地**：`Reveal.current_pos` 的读通道还没接进宿主 `M`，值分支暂时没有真实条件可用（GAPS AG-04）。
 
 ### H 批：`Select` 求值（2026-10-27）
@@ -1882,13 +1882,13 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 - `Step::Select { cond, then, else }`：`cond` 编进外层程序，两个分支各自是**独立子程序**
   （各自的值表 + 根索引）⇒ 运行期只 `eval` 被选中那一支，未选中支的通道 / 算子一次都不求值。
-- `cond` 不是 `Bool` ⇒ `EvalError::SelectCondition`（显式，不静默当真 / 假）。
+- `cond` 不是 `Bool` ⇒ `EvalError::SelectCondition`（显式报错，不默认当真或假）。
 - G 批的通道读端（`expr.read`）提供了真实条件（组件状态），`Select` 因此不再是"时间分支"的糖。
 
 
-### 提案 #6 收口：声明文件出仓库 + 通道常量唯一入口（2026-10-26）
+### 提案 #6 定案：声明文件出仓库 + 通道常量唯一入口（2026-10-26）
 
-> 一句话：**生成物不进仓库，地址不写成字符串**。
+> 一句话：生成物不进仓库，地址不写成字符串。
 
 - **声明文件是生成物**：删除 `crates/app/zela-app/api/**` 与 `.gitattributes` 里的 `-text` 规则。
   `cargo verify --step docs` 改为连续生成两次到 `target/declarations/{a,b}`，断言文件集合非空、
@@ -1913,7 +1913,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 时钟显式化 A 批：比较 / 布尔算子（2026-10-26）
 
-> 一句话：**predicate 的原料先备齐**。`zela.math` 从"只有算术"扩到"算术 + 比较 + 布尔"，
+> 一句话：predicate 的原料先备齐。`zela.math` 从"只有算术"扩到"算术 + 比较 + 布尔"，
 > 但 Bool 是**值**，不改变 root 绑定的可写类型。
 
 - **算子**（[`ops.rs`](crates/ze/pod/ze-pod-func/src/ops.rs)）：`lt` / `gt` / `le` / `ge` /
@@ -1930,7 +1930,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 时钟显式化 B 批：clock 显式化（2026-10-26）
 
-> 一句话：**时间不再是全局单例**。每条绑定自带一条纯线性时钟链，表达式的 `time`
+> 一句话：时间不再是全局单例。每条绑定自带一条纯线性时钟链，表达式的 `time`
 > 读该绑定的局部时间 —— 于是 `Curve` 与表达式**同源**，G1 消失。
 
 - **时钟是数据**：`Clock { links: [{shift, rate}] }`（[`api.rs`](crates/ze/pod/ze-pod-func/src/api.rs)），
@@ -1943,7 +1943,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   不属于表达式 —— 求值时宿主用 `forest.eval_local(clock, t)` 构造 `SceneMono`
   （[`system.rs`](crates/scene/zela-scene-ecs/src/animation/system.rs)）。这是 G1 的根治：
   两条路径读同一个 `eval_local`。（**5b AP 起 `expr.time()` 已删除**，见文末
-  「作者面兑现」：时间叶子带时钟身份，`c.time()` 在全局时间上反算。）
+  「作者侧兑现」：时间叶子带时钟身份，`c.time()` 在全局时间上反算。）
 - **产物**：`ClockProgram`（`ze-time`）随 `Step::Expr` 走；空链用
   `skip_serializing_if = "ClockProgram::is_global"` ⇒ **全局时钟的 payload 逐字节不变**。
   `LIBRARY_VERSION 5 → 6`（绑定签名变了）⇒ `expr_demo` 的 payload 重录一次。
@@ -1953,12 +1953,12 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 时钟显式化 C 批：predicate / reset（2026-10-26）
 
-> 一句话：**区间不是时长，是 Bool 表达式**。`duration` 降为糖，
+> 一句话：区间不是时长，是 Bool 表达式。`duration` 降为糖，
 > 失效行为由 `reset` 三态显式选择；引擎按结构推导 seek 策略。
 
 - **`predicate`**：`Predicate.Always`（缺省）或 `Predicate.Of { expr }`（Bool 表达式）。
   运行期与 root **分开求值**：predicate 只求 Bool，root 只在生效时求值 ——
-  Bool 不经过 `anim_value`（硬约束 3）。
+  Bool 不经过 `anim_value`（强制约束 3）。
 - **`reset` 三态**：`Hold`（保持最后一次生效值，有历史依赖）/ `Reset`（写回 `commit`
   时的初值，经 `Target::read` 快照）/ `Skip`（不写；计划里的 `none`，因 Python
   字面量冲突改名）。
@@ -1967,14 +1967,14 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   产物里只剩 predicate / reset（`Step::Expr.duration` 仅用于解码历史 payload）。
   与显式 predicate 同时出现 ⇒ `ExprBindError::ConflictingGate`。
 - **`SeekKind` 是推导结果**：`predicate + Hold` ⇒ `Replay`（保守；单调性分析未实现），
-  其余 `O1`。不进脚本（硬约束 2）。
+  其余 `O1`。不进脚本（强制约束 2）。
 - **新语义不钳局部时间**：时钟只做线性映射；区间由 predicate 决定。
   历史 payload（带 `duration`）仍走旧的 `span + Hold` 段节点 —— 老 ZSB 语义不变。
 
 
 ### 时钟显式化 D 批：去 cursor 与时长（2026-10-26）
 
-> 一句话：**"作品有多长"是个不存在的概念**。只有"所有纯 Time 门都失效的最晚时刻"
+> 一句话："作品有多长"是个不存在的概念。只有"所有纯 Time 门都失效的最晚时刻"
 > （可分析时），以及"录多少帧"（`ExportSpec.frames`）。
 
 - **删除**：`SceneScript::duration()` / `Timeline::total_duration()`。
@@ -1983,7 +1983,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   （`Lt { time, Pure(d) }`）求上界：时钟链先复合为仿射 `local = rate·t + shift`
   （`rate > 0`），再反解 `t`。`Play` 段按 `start + duration` 计入（段后 Hold）。
 - **不可分析 ⇒ `None`**：恒生效 predicate、`Gt` 等非可解形状、负/零速率时钟
-  一律不给数；日志显式写"静止时刻不可推导：含非时间依赖或恒生效的 predicate"。
+  都不给数；日志显式写"静止时刻不可推导：含非时间依赖或恒生效的 predicate"。
 - **ZSB 没有终止时间字段**：删掉 `Meta.duration`；静止时刻**不进产物**（U3 —— 派生量、
   可能不可求）。CLI / web 需要时从 payload 现算 `SceneScript::still_time()`，
   状态行写"静止时刻 ≈ Xs / 不可推导"。
@@ -1991,7 +1991,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 类型系统 A 批：类型数据就位（2026-10-26）
 
-> 一句话：**通道带类型、算子带签名**；A 批只加元数据，不改行为。
+> 一句话：通道带类型、算子带签名；A 批只加元数据，不改行为。
 
 - `ChannelRef.ty`（`ChannelType`：Unknown / Number / Bool / Vec2 / Vec3）是**元数据**：
   `#[serde(skip)]` ⇒ 不进 payload；手写 `PartialEq` / `Hash` 只比 `(namespace, name)`，
@@ -2004,11 +2004,11 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 类型系统 B 批：L2 合一与装配期检查（2026-10-26）
 
-> 一句话：**类型错误在装配期死掉**。binding 不再接受"运行期才发现算错"的表达式。
+> 一句话：类型错误在装配期死掉。binding 不再接受"运行期才发现算错"的表达式。
 
 - [`infer.rs`](crates/ze/pod/ze-pod-func/src/infer.rs)：每条签名独立实例化，
   `Subst` 做槽位合一 + kind 检查 + occurs check；重载**逐条尝试**，0 条 ⇒ 错误带
-  「签名 + 第 N 个参数」，>1 条 ⇒ 显式歧义（硬约束 4，不静默选第一条）。
+  「签名 + 第 N 个参数」，>1 条 ⇒ 显式歧义（强制约束 4，不默认取第一条）。
 - **叶子类型封闭**：字面量 / 通道直接给出数值 / 布尔 / Vec2 / Vec3；`Ref` 继承定义类型；
   `Select.cond` 必须是 Bool、两个分支同型。
 - **两道门在 `bind`**：`infer_root` 拒绝 Bool 根（Bool 只用于 predicate），
@@ -2022,7 +2022,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 类型系统 C 批：区间代数与 Hold 反算（2026-10-26）
 
-> 一句话：**Hold 不需要历史**。predicate 先编译成**局部时间区间集**，
+> 一句话：Hold 不需要历史。predicate 先编译成**局部时间区间集**，
 > `f(last_active(t))` 是纯函数 —— seek 到任意一帧都能直接算。
 
 - **区间代数**（[`predicate.rs`](crates/scene/ze-scene-core/src/animation/predicate.rs)）：
@@ -2045,7 +2045,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 类型系统 D 批：输入流产品（2026-10-26）
 
-> 一句话：**ZSB 不记录输入**。`Render(ZSB, InputStream) → Frames`，零输入是默认。
+> 一句话：ZSB 不记录输入。`Render(ZSB, InputStream) → Frames`，零输入是默认。
 
 - **独立产物**（[`input_stream.rs`](crates/scene/zela-scene-bundle/src/input_stream.rs)）：
   `zela.input/1`，**按帧号索引**的稀疏事件（`{ frame, events }`，空帧不写）。
@@ -2065,7 +2065,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
 
 ### 类型存根优化：L2 签名 → `Expr<T>`（2026-10-26）
 
-> 一句话：**声明文件不再把表达式句柄写成 `Handle`**。运行期不变，收益全在编辑器。
+> 一句话：声明文件不再把表达式句柄写成 `Handle`。运行期不变，收益全在编辑器。
 
 - **`OpDef.spec`**（`zela.math.Sin`）把签名挂到构造器上；JSON `ops[].spec`
   （`DOCS_SCHEMA_VERSION 2 → 3`），脚本侧不必按名字猜。
@@ -2079,9 +2079,9 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   组件常量 `radius: Channel<number>` / `Channel[float]`，`Bind.target: Channel<any>`。
 - **零运行时变化**：只改声明文件与 JSON；payload / 像素基线不受影响。
 
-### 作者面兑现（5b 退役 + 时钟身份化 + 方法 / Query / Bounds，2026-10-28）
+### 作者侧兑现（5b 退役 + 时钟身份化 + 方法 / Query / Bounds，2026-10-28）
 
-> 一句话：**内核已有的能力第一次全部有作者出口，同时把 5b 的老 API 拆干净**。
+> 一句话：内核已有的能力第一次全部有作者出口，同时把 5b 的老 API 拆干净。
 > 记账见 [GAPS AP 段](GAPS.md)。
 
 **A · 5b 退役（纯减法）**
@@ -2094,7 +2094,7 @@ L3 执行旋钮**绝不进产物**，否则同一作品在不同机器上会产�
   （顺序语义 = 时钟链，不再有游标）。
 - `capability_exemptions.txt` **清空**（AK-05 九条兑现）；coverage 55/55、0 豁免。
 
-**B · 作者面兑现**
+**B · 作者侧兑现**
 
 - **时钟身份化（B1）**：`ChannelRef.clock` 随 payload 走 ⇒ `c.time()` 在**全局时间**上
   按叶子时钟链反算，"时间只有一个数"的说法正式作废；窗口写成 `clock.range(lo, hi)`，

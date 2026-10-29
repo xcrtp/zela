@@ -468,7 +468,7 @@ impl VectorFrame {
             .collect();
         let mut records =
             zela_render_vector::scene_records(&items, canvas).map_err(|error| error.to_string())?;
-        // **阶段 2（降格）**：reveal 不再逐帧裁剪几何 —— 完整折线 + 曲线窗口，
+        // **阶段 2（归约）**：reveal 不再逐帧裁剪几何 —— 完整折线 + 曲线窗口，
         // 逐帧只变两个 f32（`curve_window` 的单位是曲线索引 + t）。
         // 与 wgpu 的 reveal 管线同语义（着色器丢弃区间外参数），只是换算发生在 CPU。
         for reveal in &self.reveals {

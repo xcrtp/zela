@@ -1,4 +1,4 @@
-//! `api`：导出 domain 能力的机器可读文档（JSON 真源 + LuaLS + TypeScript + `.pyi`）。
+//! `api`：导出 domain 能力的机器可读文档（JSON 唯一来源 + LuaLS + TypeScript + `.pyi`）。
 //!
 //! 帧体搬自 `export_scene_api` example；产物默认写到 `target/scene_api/`。
 //! 写脚本有没有补全是天壤之别 ⇒ 这条命令是使用者旅程里的高价值项。

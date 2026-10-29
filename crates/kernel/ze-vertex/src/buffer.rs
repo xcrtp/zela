@@ -3,7 +3,7 @@
 // 生产端（渲染无关层）把几何按 `VertexLayout` **交错了字节**，产出本结构；
 // 后端只做 `vertices → create_buffer_init`，不再理解顶点结构（B3：后端只会上传）。
 //
-// 单一真源（铁律 3）：`layout` 是唯一的格式声明；`vertices` 必须恰好是
+// 唯一来源（铁律 3）：`layout` 是唯一的格式声明；`vertices` 必须恰好是
 // `vertex_count × layout.stride` 字节，`validate()` 显式校验（不静默）。
 
 use crate::layout::{VertexLayout, VertexLayoutError};

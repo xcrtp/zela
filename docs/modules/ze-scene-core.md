@@ -275,7 +275,7 @@ graph LR
 
 内部文件分工：
 - `src/object/`：场景对象 —— 图元 newtype、摆放与层序（`Transform` / `ZOrder`）、2D/3D 相机与 FpsView、装配对象（`Axes2D` / `FunctionGraph`）；
-- `src/animation/`：动画词汇与数据 —— `target.rs` 是目标表与 `FieldSpec` 的唯一真源，`binding.rs` 是 Binding 表，`timeline.rs` 是时序，`predicate.rs` 把谓词化成区间集合；
+- `src/animation/`：动画词汇与数据 —— `target.rs` 是目标表与 `FieldSpec` 的唯一来源，`binding.rs` 是 Binding 表，`timeline.rs` 是时序，`predicate.rs` 把谓词化成区间集合；
 - `src/domain/`：UI 与场景之间的纯数据契约（`SceneView` 向下声明图层、`SceneEvent` 向上表达输入、`CameraCommand` / `UiConfig`），红线是不得出现 egui 类型；
 - `src/components.rs` + `src/components/3d.rs`：组件定义（`Reveal` / `MorphShape` / `PhaseAnim` / `ContentTextureItem` / `MeshGeometry` / `Material3D` / `Light`）；
 - `src/mesh_primitives/`：内置 3D 图元网格生成（立方体 / 参数曲面）；
@@ -287,7 +287,7 @@ graph LR
 
 - **零 hecs、零 `zela-*`**（`JQ_SCENE_LAYERS` 判据守住）：world / 资源 / System 接线与生命周期都在 `zela-scene-ecs`，本 crate 只留数据与纯逻辑。
 - **不得包含任何 egui 类型**（`domain` 模块红线）：UI 适配的唯一入口在 `zela-egui` 的 host。
-- **不做渲染**：不建 GPU 资源、不产 `DrawQueue`、不做三角化；绘制参数（`Gradient` / `Dash` / `SecondPaint` / `CurveWindow`）的真源在 `ze-render-ir`，这里只登记与转发。
+- **不做渲染**：不建 GPU 资源、不产 `DrawQueue`、不做三角化；绘制参数（`Gradient` / `Dash` / `SecondPaint` / `CurveWindow`）定义在 `ze-render-ir`，这里只登记与转发。
 - **不做表达式类型推导**：那是 `ze-pod-func` 的 `infer`；本 crate 只提供表达式绑定的数据面（Binding 表与目标构造器）。
 - **不做排版**：`src/content.rs` 只把 `ze-prerender` 的 request / take 包成函数，IR → 描边轮廓的唯一实现在 `ze-content`。
 - **不做调度**：没有 System、没有帧循环，推进由 `zela-schedule` / ECS 层负责。

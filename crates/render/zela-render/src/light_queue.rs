@@ -4,7 +4,7 @@
 // 的形状（颜色归一化到 [0,1]、含强度）：
 // - 方向光：`direction`（世界空间）+ 颜色 + 强度；
 // - 点光（B1-B）：`position` 已由录制侧从 `Transform` → `WorldTransforms` 解析
-//   （单一真源：`Light` 组件本身不带位置）+ 颜色 + 强度 + range。
+//   （唯一来源：`Light` 组件本身不带位置）+ 颜色 + 强度 + range。
 //
 // `LightQueue` 是 `SceneRecord3DSystem` 的写集资源；后端每帧按它上传
 // **场景级** light uniform buffer（所有 draw 共享一份，铁律 3）。
@@ -41,7 +41,7 @@ impl DirectionalLightRecord {
 /// 点光（渲染层形态，uniform 友好；B1-B）。
 ///
 /// `position` 是**世界空间**光源位置 —— 录制侧由 `Light` 组件所在对象的
-/// `Transform` → `WorldTransforms` 解析（`Light` 组件本身不带位置，单一真源）。
+/// `Transform` → `WorldTransforms` 解析（`Light` 组件本身不带位置，唯一来源）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PointLightRecord {
     /// 光源位置（世界空间）。

@@ -156,10 +156,10 @@ graph LR
 
 ### 内部文件怎么分工
 
-- **容器与契约适配**：`src/scene.rs` 是装配期的场景容器（world / resources / deferred）；`src/contract.rs` 是 hecs 与契约层的唯一接触面，负责 `ObjectId` ↔ `Entity` 互转，并用一张 `known_component_table!` 登记表实现类型擦除的动态创建（未登记类型返回 `None`，不静默丢组件）。
+- **容器与契约适配**：`src/scene.rs` 是装配期的场景容器（world / resources / deferred）；`src/contract.rs` 是 hecs 与契约层的唯一接触面，负责 `ObjectId` ↔ `Entity` 互转，并用一张 `known_component_table!` 登记表实现类型擦除的动态创建（未登记类型返回 `None`，不会无提示地丢组件）。
 - **时间与输入（系统类）**：`src/director_state.rs` 的 `DirectorAdvanceSystem` 是**唯一推进时间**的地方，每帧 `advance(dt)` 后把 `Director` 的全局时间与帧号同步进 `TimeState`；`src/input.rs` 消费 UI 发来的纯数据事件（播放/暂停、seek、参数面板）；`src/camera_input.rs` 把相机语义命令写进**场景里的相机对象**组件。
 - **动画（系统类）**：`src/animation/system.rs` 的 `BindingApplySystem` 遍历绑定表，用时钟树采样曲线并把结果写进组件字段（System 本身不认识任何具体目标）；`src/animation/camera_drive.rs` 只做「谁驱动哪台相机」——通过把绑定移出 / 放回 `BindingTable` 显式让位，因此必须与 `CameraInputSystem` 同相位且排在其前；`src/animation/morph.rs` 是形变的 CPU 回退路径（App 走 GPU 插值，不注册它）。
-- **表达式**：`src/expr_mono.rs` 是表达式求值的宿主单子 `M`，把 `TimeState`（time / frame）、`SceneRead`（组件字段读端）与 `zela.math` 算子拼在一起；缺失通道显式返回错误，不静默给 0。
+- **表达式**：`src/expr_mono.rs` 是表达式求值的宿主单子 `M`，把 `TimeState`（time / frame）、`SceneRead`（组件字段读端）与 `zela.math` 算子拼在一起；缺失通道显式返回错误，不给 0。
 - **对象增删与生命周期（系统类）**：`src/deferred.rs` 定义延迟命令队列，并提供帧末应用 System 与重播清理 System；`src/lifetime.rs` 在帧末按**集合差**产生 spawn / despawn 事件（opt-in，按 `ObjectId` 显式排序）。
 - **派生态刷新（系统类）**：`src/transform_hierarchy.rs` 每帧把父子 `local` 累乘成世界矩阵（`WorldTransforms`，不进持久化）；`src/geometry.rs` 的两个 System 只做接线，几何算法在对象层；`src/composer.rs` 消费上一帧末的生命周期事件维护合成派生态（首次看到合成器对象时做一次全量快照）。
 - **回归判据**：`src/fingerprint.rs` 只吃纯数值状态（组件字段 + 世界矩阵），按 `ObjectId` 与 `TARGETS` 声明序生成稳定摘要；派生几何只写占位标记、不读内容。

@@ -13,7 +13,7 @@
 // 2D 三角化的容差依赖相机 scale（`tolerance_for_scale`）。本模块只把"调用 + 打包"
 // 从后端搬出来，**调用时机仍在渲染阶段**（相机已确定），不提前到场景录制。
 //
-// # 单一真源
+// # 唯一来源
 // - 2D：顶点格式由 `tessellate` 产出的 `VertexLayout` 声明（stride 24）；
 // - 3D：`VertexLayout::standard_3d()`（stride 32）；
 // - 打包后的字节必须满足 `VertexBufferData::validate()`（长度 / 索引范围）。
@@ -171,7 +171,7 @@ fn collapsed_like(template: &Tessellation2D, zero_path: &Path2D) -> Tessellation
 /// 3D 顶点格式：`[pos.xyz, uv.xy, normal.xyz]`（8 个 f32 = 32 字节）。
 pub const VERTEX_3D_FLOATS: usize = 8;
 
-/// 3D 标准布局（stride 32）—— 单一真源是 `ze-vertex`。
+/// 3D 标准布局（stride 32）—— 唯一来源是 `ze-vertex`。
 pub fn layout_3d() -> VertexLayout {
     VertexLayout::standard_3d()
 }
@@ -260,7 +260,7 @@ pub fn mesh_vertex_buffer(
 /// 3D 线段（两点）→ 顶点缓冲。
 ///
 /// line 无材质纹理 ⇒ UV 恒 0；法线 `(0,0,1)`（配合默认头顶光 `lit = 1`，
-/// 颜色不受光照影响）。**不再内联**（B7：内联是第二份真源）。
+/// 颜色不受光照影响）。**不再内联**（B7：内联是第二个来源）。
 pub fn line_vertex_buffer(start: Vec3, end: Vec3) -> Result<VertexBufferData, VertexRecordError> {
     let floats: [f32; VERTEX_3D_FLOATS * 2] = [
         start.x, start.y, start.z, 0.0, 0.0, 0.0, 0.0, 1.0, end.x, end.y, end.z, 0.0, 0.0, 0.0,

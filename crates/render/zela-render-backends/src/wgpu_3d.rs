@@ -1166,7 +1166,7 @@ impl WgpuBackend3D {
             let cached_copy = if let Some(handle_ref) = cache_guard.get(line_key) {
                 extract_buffers(handle_ref)
             } else {
-                // B3-0b：line 顶点也走生产端（B7：内联是第二份真源）。
+                // B3-0b：line 顶点也走生产端（B7：内联是第二个来源）。
                 let data = zela_render::vertex_record::line_vertex_buffer(line.start, line.end)
                     .unwrap_or_else(|error| {
                         panic!("不静默：3D 线段顶点生产失败：{error}")

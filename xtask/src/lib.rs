@@ -2373,6 +2373,65 @@ pub fn glossary_entries(text: &str) -> Vec<GlossaryEntry> {
     out
 }
 
+/// **门禁（文档用语统一）**：禁止词表。
+///
+/// 背景见 GAPS AZ 段：文档大量使用命令式强词与自造词，读者不友好。
+/// 代码注释不纳入扫描（约束词在注释里是失效模式说明，语气不同）。
+pub const FORBIDDEN_TERMS: &[(&str, &str)] = &[
+    ("真源", "唯一来源 / 第二个来源 / 定义在"),
+    ("钉住", "锁定 / 用测试固定"),
+    ("落档", "记录"),
+    ("收口", "收敛 / 定案"),
+    ("点名", "指出"),
+    ("挂账", "待核"),
+    ("零命中", "无引用 / 没有调用点"),
+    ("作者面", "作者侧 / 作者接口"),
+    ("硬约束", "强制约束"),
+    ("硬门禁", "门禁"),
+    ("降格", "降为工效项"),
+];
+
+/// 禁止词白名单：**按词 + 按文件后缀**登记，理由必填（不许无保护且不声明）。
+///
+/// 目前为空：所有命中都应当改写；真出现合理场合时在这里登记。
+pub const FORBIDDEN_TERM_ALLOW: &[(&str, &str, &str)] = &[];
+
+/// 一条禁止词命中：行号（1 起）、该行原文、命中词。
+pub struct ForbiddenHit {
+    pub line: usize,
+    pub text: String,
+    pub term: &'static str,
+}
+
+/// 扫描一段文本里的禁止词（逐行、逐词；同一行多次命中只报一次）。
+pub fn forbidden_term_hits(text: &str) -> Vec<ForbiddenHit> {
+    let mut hits = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        for (term, _) in FORBIDDEN_TERMS {
+            if line.contains(term) {
+                hits.push(ForbiddenHit {
+                    line: index + 1,
+                    text: line.trim().to_string(),
+                    term,
+                });
+            }
+        }
+    }
+    hits
+}
+
+/// 白名单判定：`file` 用 `/` 分隔的相对路径，按后缀匹配。
+pub fn forbidden_term_allowed(term: &str, file: &str) -> bool {
+    FORBIDDEN_TERM_ALLOW
+        .iter()
+        .any(|(allowed, suffix, _)| *allowed == term && file.ends_with(suffix))
+}
+
+/// 某个词在全仓文档里的出现次数（用于「静默」的软阈值提示）。
+pub fn count_term(text: &str, term: &str) -> usize {
+    text.matches(term).count()
+}
+
 /// **门禁 7.2**：每条术语必须有 `- **代码锚点**：…` 或 `- **锚点**：…`，且内容非空。
 ///
 /// 锚点本身的**存在性**由 `check_gaps_anchors` 的 docs 扫描负责（7.1），这里只管

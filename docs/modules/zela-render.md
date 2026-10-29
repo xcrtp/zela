@@ -148,7 +148,7 @@ graph LR
 ### 内部文件怎么分工
 
 - **队列与数据模型（数据结构类）**：`src/draw.rs` 是核心——`DrawQueue` / `DrawItem` / `Drawable` 与 `record_scene` 一族，负责世界 → 屏幕的落地、描边宽度的**唯一换算点**、图元与样式的组合，以及稳定排序（同 `ZOrder` 保持插入序）；`src/draw_queue_3d.rs` 定义 `MeshDraw` / `LineDraw`，并让 3D 队列成为统一队列的类型别名；`src/light_queue.rs` 是本帧光源快照（颜色归一化、点光位置由世界矩阵解析）；`src/filters.rs` 是固定 4 槽的滤镜链纯数据；`src/viewport.rs` 与 `src/view_rect.rs` 是视口 / 目标矩形的纯数据；`src/components.rs` 是有意的兼容 facade，把组件与样式从各层转发出来。
-- **录制（场景 → 队列，系统类）**：`src/record_systems.rs` 提供 2D / 3D / 形变 / 写入动画 / 内容纹理几个录制 System，全部在 `RenderCommit` 相位，写集互不相交，因此可同相注册；`src/surface_route.rs` 判定 2D 图元是否因所属 Surface 走 Direct（派生成 3D 网格），失败写入队列的 `surface_errors` 而不静默。
+- **录制（场景 → 队列，系统类）**：`src/record_systems.rs` 提供 2D / 3D / 形变 / 写入动画 / 内容纹理几个录制 System，全部在 `RenderCommit` 相位，写集互不相交，因此可同相注册；`src/surface_route.rs` 判定 2D 图元是否因所属 Surface 走 Direct（派生成 3D 网格），失败写入队列的 `surface_errors`，不丢弃错误。
 - **几何生产（纯 CPU）**：`src/tessellate.rs` 是 lyon 适配层，产出顶点（路径点 / 法线 / side / 归一化 advance）与索引；描边宽度**不进几何**，由着色器现场补偿；`src/vertex_record.rs` 把三角化结果打成 `VertexBufferData`（2D 与 3D 两套布局，另含形变两端缓冲）；`src/shape_to_mesh.rs` 是 2D 图元 → 3D 平面网格的派生桥。
 - **入口与帧体**：`src/frame.rs` 负责「场景 + 资源 → 后端中立输入」（图层声明、`FrameInputs`、帧末清队列、绘制数统计），不含 egui，也不构造任何后端类型；`src/content_ir.rs` 把内容 IR 展平为形状 + 样式 + 变换；`src/painter_2d.rs` / `src/painter_3d.rs` 是后端实现预留的绘制 trait。
 - **转发**：crate 根把顶点契约与图元 / 样式体系以转发模块保留原路径，真实定义在 kernel 层。

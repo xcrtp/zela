@@ -54,7 +54,7 @@
 
 ## 运行机制
 
-装配期把类型描述注册进 src/codec.rs 的类型注册表（名字 → 布局，没有布局的变长类型安全退回序列化慢路径）；src/handle.rs 的槽位表按 owner + slot + generation 解析与校验，src/sym.rs 复用同一机制把限定名解析成带 generation 的符号 id，快路径只做符号 → 槽位 → 引用。src/cache.rs 按算子名缓存单态化实例，实例数越界返回显式错误而不是静默截断，同一份签名永远得到同一组实例。
+装配期把类型描述注册进 src/codec.rs 的类型注册表（名字 → 布局，没有布局的变长类型安全退回序列化慢路径）；src/handle.rs 的槽位表按 owner + slot + generation 解析与校验，src/sym.rs 复用同一机制把限定名解析成带 generation 的符号 id，快路径只做符号 → 槽位 → 引用。src/cache.rs 按算子名缓存单态化实例，实例数越界返回显式错误，而不是截断后继续，同一份签名永远得到同一组实例。
 
 ## 边界与不做什么
 

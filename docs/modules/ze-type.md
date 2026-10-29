@@ -88,7 +88,7 @@ graph LR
 
 ## 运行机制
 
-`src/ty.rs` 定义语言无关的 IDL schema（全部是编译期常量）；`src/unify.rs` 在其上做合一、子类型与布局计算 —— 名义类型，同名但字段或布局不同即判冲突，`layout: None` 不报错而是走序列化慢路径；`src/layout.rs` 把定长类型算成 size / align / 字段偏移，并提供 record 与 path 的编解码；`src/gen.rs` 按 `Kind` 约束做按需单态化（`lift` + 笛卡尔积，超过 `MAX_INSTANCES` 是显式错误而不是静默截断）；`src/conflict.rs` 把重名 / 类型 / 布局 / 版本 / 能力五类冲突收敛成 `ReflectError` 并带 `Blame` 污染源；`src/tag.rs` 是 socket 级的 `TypeTag` / `TypeCast` 兼容判断与描述。
+`src/ty.rs` 定义语言无关的 IDL schema（全部是编译期常量）；`src/unify.rs` 在其上做合一、子类型与布局计算 —— 名义类型，同名但字段或布局不同即判冲突，`layout: None` 不报错而是走序列化慢路径；`src/layout.rs` 把定长类型算成 size / align / 字段偏移，并提供 record 与 path 的编解码；`src/gen.rs` 按 `Kind` 约束做按需单态化（`lift` + 笛卡尔积，超过 `MAX_INSTANCES` 是显式错误，而不是截断后继续）；`src/conflict.rs` 把重名 / 类型 / 布局 / 版本 / 能力五类冲突收敛成 `ReflectError` 并带 `Blame` 污染源；`src/tag.rs` 是 socket 级的 `TypeTag` / `TypeCast` 兼容判断与描述。
 
 内部文件分工：`ty` 是数据（schema），`unify` 是判定（合一 / 子类型 / 布局），`layout` 是字节编码，`gen` 是实例化计划（只产计划，不建缓存），`conflict` 是诊断，`tag` 是类型擦除边界上的兼容描述。依赖方向也是这个顺序：`unify` → `layout` + `conflict`，`gen` → `ty`，`ty` → `layout`，没有反向边。
 

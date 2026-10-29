@@ -528,7 +528,7 @@ pub fn render_step_to_view(
 
 /// 矢量后端自述的能力：后处理四项全开，采样数取 4（与 2D 路径同口径）。
 ///
-/// **单一真源**：headless 帧循环（`zela-app::frame_loop`）与 GUI 都从这里取 ——
+/// **唯一来源**：headless 帧循环（`zela-app::frame_loop`）与 GUI 都从这里取 ——
 /// 否则同一个后端在两处得到不同的默认参数。
 pub fn vector_capabilities() -> ze_render_ir::Capabilities {
     ze_render_ir::Capabilities {

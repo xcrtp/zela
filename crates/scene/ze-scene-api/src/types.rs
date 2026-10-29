@@ -71,7 +71,7 @@ pub struct Cube {
     pub solid: bool,
 }
 
-/// 3D 摆放（B1-D）。映射到原生 `Transform`（单一真源：位置 / 旋转 / 缩放
+/// 3D 摆放（B1-D）。映射到原生 `Transform`（唯一来源：位置 / 旋转 / 缩放
 /// 都在摆放组件上）。**不扩展** 2D 的 `Transform { x, y, z }` —— 那会破坏
 /// 冻结的 fourier / storyboard 脚本（Lua 绑定要求全字段）。
 #[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
@@ -175,7 +175,7 @@ pub enum LightKind {
     /// 方向光：`direction` 是光传播方向（世界空间，从光源指向场景）。
     Directional { direction: Vec3 },
     /// 点光：`range` 是有效半径（世界单位）。**不带 position** —— 位置由
-    /// 同一对象的 `Transform` 提供（B1 铁律 3：单一真源）。
+    /// 同一对象的 `Transform` 提供（B1 铁律 3：唯一来源）。
     Point { range: f32 },
 }
 

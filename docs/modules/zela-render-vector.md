@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：10 个 · 11557 行
+- 源文件：10 个 · 11771 行
 
 ### 文件清单
 
@@ -23,10 +23,10 @@
 | `src/lib.rs` | 136 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
 | `src/mesh.rs` | 105 | A mesh prepared for drawing or recording. Geometry is evaluated in its input precision; |
 | `src/occlusion.rs` | 151 | A 3D view's ambient occlusion (`Camera.ambient_occlusion`): how much of the light from all around reaches the |
-| `src/render.rs` | 4107 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
-| `src/scene.rs` | 1068 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
+| `src/render.rs` | 4261 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
+| `src/scene.rs` | 1069 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
-| `src/vector.rs` | 1637 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
+| `src/vector.rs` | 1696 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -112,5 +112,5 @@ graph LR
 - **不依赖场景 / ECS / UI 实现**：工作区依赖只有 `ze-notion` 与 `ze-render-ir` 两个 crate；它不认识 `DrawQueue`、场景队列与任何 `zela-*`，录制在 `zela-playback`。
 - **同步读回只在 native**：同步版本用 `pollster` 阻塞等 GPU；浏览器侧只暴露 `render_2d_async` / `render_3d_with_async` / `*_to_texture_async`（B15，`futures-channel` 仅在 wasm32 依赖里）。`zela-web` 直接依赖本 crate，所以它并非「编不到 wasm32」；不在 xtask 的 wasm 名单里，是因为那份名单只覆盖 kernel / facade 组。
 - **不含上游未移植的模块**：python / typeset / text / export / mp4 / audio / window / web / player / take / encode 等一并未移植（逐文件归属见 `UPSTREAM.md`），因此本 crate 不产 MP4，也没有窗口与事件循环。
-- **不定义绘制参数类型**：`Gradient` / `Dash` / `SecondPaint` / `PathOptions` 的真源在 `ze-render-ir` 的 paint 模块，这里只 re-export。
-- **不静默降级**：`src/scene.rs` 只映射填充族，`Custom` 图元返回 `SceneMapError` 的 `Unsupported`；形变两端曲线数不一致返回 `UnalignedMorph`。
+- **不定义绘制参数类型**：`Gradient` / `Dash` / `SecondPaint` / `PathOptions` 定义在 `ze-render-ir` 的 paint 模块，这里只 re-export。
+- **不降级**：`src/scene.rs` 只映射填充族，`Custom` 图元返回 `SceneMapError` 的 `Unsupported`；形变两端曲线数不一致返回 `UnalignedMorph`。

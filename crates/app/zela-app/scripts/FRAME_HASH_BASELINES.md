@@ -140,7 +140,7 @@ CI 分层（`.github/workflows/architecture.yml` 的 `hashes` job）：
 
 ## 基线（2026-10-20，Windows / RTX 4060 Laptop）
 
-**哈希值的唯一真源是 [`baselines.txt`](baselines.txt)**；本文件只解释口径，
+**哈希值的唯一来源是 [`baselines.txt`](baselines.txt)**；本文件只解释口径，
 不重复写哈希。三个基线**都要保留**，来源不同、用途不同：
 
 | 段 | 端 | 作品 | 帧数 / 分辨率 | 来源 | 自动比对 |

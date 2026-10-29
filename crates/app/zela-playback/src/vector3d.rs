@@ -278,7 +278,7 @@ pub fn lights(queue: Option<&LightQueue>) -> Vec<Light> {
 /// 本帧的全部 3D 网格 → 矢量记录（顺序 = 队列顺序）。
 ///
 /// **PH Step 2**：`lines` 给出线框细条的朝向与宽度。后端没有线框路径
-/// （`MeshForm::Line` 零命中、`vector3d.rs` 对非 Tri 显式 `Err`）⇒ 在**接缝层**
+/// （`MeshForm::Line` 无引用、`vector3d.rs` 对非 Tri 显式 `Err`）⇒ 在**接缝层**
 /// 把 `Lines` 转成细条三角形。宽度是 1 屏幕像素（与 wgpu 的 `LineList` 同口径，
 /// 见 [`LineStyle`]）。
 pub fn mesh_records(queue: &DrawQueue, lines: LineStyle) -> Result<Vec<PathRecord>, String> {

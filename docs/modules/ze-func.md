@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`ze-pod-func`、`ze-scene-core`、`zela-scene-ecs`
-- 源文件：7 个 · 2339 行
+- 源文件：7 个 · 2517 行
 
 ### 文件清单
 
@@ -19,11 +19,11 @@
 |---|---|---|
 | `src/layout.rs` | 102 | **Layout / Codec 的门面**：实现已迁至 `ze-type`（纯代数）与 `ze-reflect`（运行时注册表）。 |
 | `src/lib.rs` | 41 | ze-func：**基础函子库**（namespace `zela.math`）。 |
-| `src/mono.rs` | 347 | **单态解析器**：把 `(算子, 实参槽类型)` 解析成具体类型的函数指针。 |
-| `src/op.rs` | 479 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
-| `src/ops.rs` | 762 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
+| `src/mono.rs` | 380 | **单态解析器**：把 `(算子, 实参槽类型)` 解析成具体类型的函数指针。 |
+| `src/op.rs` | 512 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
+| `src/ops.rs` | 865 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
 | `src/simplify.rs` | 328 | **符号化简**（阶段 4）：常量折叠 + **层间迁移**（离散层 → 连续层）。 |
-| `src/wgsl.rs` | 280 | **WGSL codegen 后端**（阶段 4-A）：把 `zela.math` 的算子渲染成 WGSL 表达式。 |
+| `src/wgsl.rs` | 289 | **WGSL codegen 后端**（阶段 4-A）：把 `zela.math` 的算子渲染成 WGSL 表达式。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -70,6 +70,9 @@ graph LR
 | `src/ops.rs` | `pub fn length(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn normalize(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn round_f32(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn distance(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn smoothstep(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
+| `src/ops.rs` | `pub fn fract(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn lt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn gt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
 | `src/ops.rs` | `pub fn le(op: &OpRef, args: &[Value]) -> Result<Value, EvalError>` |
@@ -94,12 +97,12 @@ graph LR
 
 `ze-comb` 的算子调用节点进来后：`src/ops.rs` 的 `is_known` 先校验 namespace 与符号（首次查询解析进 `ze-reflect` 的符号表，之后是整数槽位，查表 O(1)）→ `eval` 按算子引用分派到标量 / 向量纯函数，逐位结果与运行期一致。`src/simplify.rs` 是语义保持的 transform pass：自底向上折叠 —— 实参全是字面量的 `Call` 直接用**同一份** `eval` 求值；闭合的 `NatRec`（不含通道 / 组件读 / `Ref`）在装配期展开成常量，从离散层降为连续层，`SIMPLIFY_REC_LIMIT` 是成本护栏，不闭合的原样保留。`src/layout.rs` 只是门面：布局代数在 `ze-type`，运行时注册表在 `ze-reflect`。
 
-内部文件分工：`op.rs` 是目录（唯一真源），`ops.rs` 是算子语义与 `eval`，`simplify.rs` 是符号化简，`layout.rs` 是 Layout / Codec 门面，`lib.rs` 是对外 re-export 面。
+内部文件分工：`op.rs` 是目录（唯一来源），`ops.rs` 是算子语义与 `eval`，`simplify.rs` 是符号化简，`layout.rs` 是 Layout / Codec 门面，`lib.rs` 是对外 re-export 面。
 
 ## 边界与不做什么
 
 - **不引入 pod 机制、不依赖任何宿主 crate**：只依赖 kernel 内的 `ze-comb` / `ze-type` / `ze-reflect`；表达式内核因此能在没有 pod / 场景 / 渲染时独立测试。
 - **不做三语言接线与装配期类型推导**：那是 `ze-pod-func`（capability + `infer` + revision 校验）。
-- **不持有布局 / Codec 的真源**：路径等私有类型只以 `Value` 的字节块 + 命名类型流经；布局代数在 `ze-type`，运行时注册表在 `ze-reflect`。
+- **不持有布局 / Codec 的定义**：路径等私有类型只以 `Value` 的字节块 + 命名类型流经；布局代数在 `ze-type`，运行时注册表在 `ze-reflect`。
 - **不做递归控制与求值调度**：那是 `ze-comb` 的 `CompiledExpr` 与宿主 `Mono`。
 - **不做私有类型算子**：当前算子只覆盖标量 / 向量，且全部声明为 pointwise（离散层由 `NatRec` 承担）。

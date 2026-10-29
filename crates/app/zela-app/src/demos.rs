@@ -1,6 +1,6 @@
 //! 内置作品清单（GUI 的"作品"下拉；默认加载**全部** demo）。
 //!
-//! # 真源
+//! # 唯一来源
 //!
 //! 条目与 `scripts/demo/manifest.txt` **同序同脚本**：manifest 负责构建期断言
 //! （`cargo verify --step demo` 逐条编译并校验 payload hash），这里只把同样的脚本
@@ -106,7 +106,7 @@ mod tests {
             .collect()
     }
 
-    /// **单一真源**：本表必须与 `scripts/demo/manifest.txt` 同序、同 id / 标题 / 脚本。
+    /// **唯一来源**：本表必须与 `scripts/demo/manifest.txt` 同序、同 id / 标题 / 脚本。
     ///
     /// 证伪：往 DEMOS 里加一件 manifest 没有的作品（或改了脚本名）⇒ 本用例失败。
     /// `surface_matrix.js` 只在 `js` feature 下列入 ⇒ 两侧都按当前 feature 过滤。

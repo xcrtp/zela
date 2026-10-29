@@ -5,7 +5,7 @@
 //! 以前下载字体要 `pwsh crates/web/zela-web/build.ps1 -FontsOnly` —— 对使用者完全
 //! 莫名其妙，还要求装 pwsh。这里用系统自带的 `curl` 完成同一件事。
 //!
-//! 字体目录固定为 `target/fonts/typst-assets-v<version>`（与 build.ps1 同一真源）。
+//! 字体目录固定为 `target/fonts/typst-assets-v<version>`（与 build.ps1 同一来源）。
 //! 找到后**自动设置** `ZELA_TYPST_FONT_DIR`（当前进程），避免静默回退系统字体。
 
 use std::path::{Path, PathBuf};

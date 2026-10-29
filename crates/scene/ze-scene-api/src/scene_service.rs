@@ -586,7 +586,7 @@ fn scene_light(pod: &dyn Pod, light: Light) -> Handle {
         .insert(vec![Box::new(native)])
 }
 
-/// `Transform3D` → 原生 `Transform`（同一摆放组件，单一真源）。
+/// `Transform3D` → 原生 `Transform`（同一摆放组件，唯一来源）。
 fn scene_transform3d(pod: &dyn Pod, transform: Transform3D) -> Handle {
     let native = NativeTransform {
         position: NotionVec3::new(

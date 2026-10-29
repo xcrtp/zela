@@ -110,4 +110,4 @@ graph LR
 - **不认识任何语言运行时**：没有 mlua / pyo3；语言适配器只依赖这里的能力类型，绑定驱动在 `ze-pod-binding`，与本 crate 无编译期耦合。
 - **不做场景逻辑**：对象 / 组件 / 动画的语义在 `ze-scene-core`，这里只做「结构化值 → 场景原语」的落点转换。
 - **不做排版**：内容编译由 `ze-prerender` / `ze-content` 完成，本 crate 只做引擎调用与类型适配；也不依赖 `zela-render`，否则 scene 层会反向依赖 render 层。
-- **不定义绘制参数真源**：`Fill` / `Stroke` 等在这里只是脚本面结构体，落点是 `ze-render-ir` 的 `FillSolid` / `StrokeSolid`。
+- **不定义绘制参数**：`Fill` / `Stroke` 等在这里只是脚本面结构体，落点是 `ze-render-ir` 的 `FillSolid` / `StrokeSolid`。

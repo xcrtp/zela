@@ -1,6 +1,6 @@
-//! `list`：内置作品清单（GUI 下拉与 CLI 共用同一份真源）。
+//! `list`：内置作品清单（GUI 下拉与 CLI 共用同一份定义）。
 //!
-//! 真源是 `zela_app::demos::DEMOS`（编译期 `include_str!`，换机器 / 换目录都能播）。
+//! 唯一来源是 `zela_app::demos::DEMOS`（编译期 `include_str!`，换机器 / 换目录都能播）。
 //! 命令层只做投影，不复制清单。
 
 use zela_app::demos::DEMOS;

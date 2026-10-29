@@ -21,7 +21,7 @@
 //   `require_sample_count` 协商，`target_desc` 用它写 target；实际采样数由宿主选
 //   （`frame_loop` = 4 / GUI 预览 = 1）。
 //
-// # 单一真源
+// # 唯一来源
 // `sample_count` 等 target 字段**只由本结构决定**；[`RenderTargetDesc`] 是它的下游投影
 // （见 [`RenderParams::target_desc`]），不得反向成为第二入口。
 

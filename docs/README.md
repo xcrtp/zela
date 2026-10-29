@@ -6,7 +6,7 @@
 
 ## 按角色阅读
 
-README 的「我接下来读什么」只指向这里 —— **同一份定义**，不复制第二份。
+README 的阅读导览只指向这里 —— 同一份定义，不复制第二份。
 
 | 角色 | 先看 |
 |---|---|
@@ -40,7 +40,7 @@ README 的「我接下来读什么」只指向这里 —— **同一份定义**�
 
 ## 未落地项 / 下一阶段去哪看
 
-**这里不维护清单**（复制 = 第二真源 = 必然腐烂）：
+这里不维护清单（复制 = 第二个来源 = 必然腐烂）：
 
 - 缺口、未接线、已声明的债 → [`GAPS.md`](../GAPS.md)（按批次分段，小计由 `check_gaps_subtotals` 机器核对）
 - 架构规则与依赖图 → [`ARCHITECTURE.md`](../ARCHITECTURE.md)（自动区由 `cargo-workspace-analyzer` 生成）
@@ -53,3 +53,6 @@ README 的「我接下来读什么」只指向这里 —— **同一份定义**�
 - 漂移会被 `cargo verify --step docs` 拦下（生成两次逐字节比对 + 与已提交内容比对）
 - 新增 crate 必须建 `docs/modules/<crate>.md`，并在 `architecture.json` 登记（两处缺一即 fail）
 - 术语表每条必须有 `- **代码锚点**：` 或 `- **锚点**：`；决策记录必须有状态 / 锚点 / 三段正文
+- 文档用语：禁止词表定义在 `xtask/src/lib.rs` 的 `FORBIDDEN_TERMS`；单跑检查
+  `cargo run -p xtask -- terms`（也挂在 `--step docs`）。确有合理场合时在
+  `FORBIDDEN_TERM_ALLOW` 按「词 + 文件 + 理由」登记

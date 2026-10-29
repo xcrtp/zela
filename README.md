@@ -8,7 +8,7 @@
 - 渲染：headless GPU（wgpu / 矢量后端），mp4 或 PNG 序列帧；
 - 回放：native GUI 与浏览器（WASM + WebGPU）共用一条回放路径。
 
-> 想改引擎、接后端、复现确定性基线？看文末「我接下来读什么」。
+> 想改引擎、接后端、复现确定性基线？看文末「接下来读什么」。
 > 缺口与未接线项：[`GAPS.md`](GAPS.md)。
 
 ## 5 分钟看到第一个 mp4
@@ -118,7 +118,7 @@ cargo run -p zela-cli --bin zela -- render hello.lua --out out/hello.mp4
 
 ## 能力索引
 
-**不在这里复制能力清单**（复制 = 第二真源 = 必然腐烂）：
+不在这里复制能力清单（复制 = 第二个来源 = 必然腐烂）：
 
 - 动画怎么写（时钟 / 谓词 / 通道 / 批量绑定）：[`docs/guides/animation.md`](docs/guides/animation.md)
 - 能画什么（图元 / 样式 / 3D / 内容纹理）：[`docs/architecture/runtime.md`](docs/architecture/runtime.md)
@@ -126,7 +126,7 @@ cargo run -p zela-cli --bin zela -- render hello.lua --out out/hello.mp4
 - 后端选型与路由（wgpu / 矢量）：[`docs/guides/render-backends.md`](docs/guides/render-backends.md)
 - 每个 crate 的职责 / 边界 / 运行机制：[`docs/modules/`](docs/modules/)
 
-## 我接下来读什么
+## 接下来读什么
 
 按角色入口（**同一份**定义在 [`docs/README.md`](docs/README.md#按角色阅读)，这里只给指针）：
 

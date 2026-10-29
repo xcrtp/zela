@@ -30,7 +30,7 @@ use ze_notion::Transform2D as Affine2D;
 use ze_scene_core::Camera2D;
 // 对象层的绘制层级（M4）：可缺席 —— 缺席即用录制默认层。
 // T1：逐对象摆放（`Transform`，可缺席 ⇒ 恒等）。
-// `ZOrder` 由对象层 re-export（唯一声明在 IR，B2-1 单一真源）。
+// `ZOrder` 由对象层 re-export（唯一声明在 IR，B2-1 唯一来源）。
 use ze_scene_core::{Transform, ZOrder};
 // `Path::to_screen(camera)`（世界 → 屏幕）由 zela-scene 的场景层 trait 提供。
 use ze_scene_core::transform::Transform2D as _;
@@ -804,7 +804,7 @@ pub fn record_scene_tagged_with<S: SceneRead>(
 ///
 /// 复用 [`record_scene_tagged_with`] 的同一套 `(图元, 样式)` 组合与唯一换算点；
 /// 唯一差别是按 `Parent` 链归属过滤（**不再要求 `ContentTextureItem` 标记**
-/// —— 归属本身就是唯一真源）。
+/// —— 归属本身就是唯一来源）。
 ///
 /// `camera` 是该 Surface 的内容相机（见 `SurfaceTexture::camera_for`）。
 pub fn record_scene_for_surface<S: SceneRead>(

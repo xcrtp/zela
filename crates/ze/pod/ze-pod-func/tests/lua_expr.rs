@@ -284,7 +284,7 @@ fn table_constructors_are_generated_for_expression_ops() {
     );
 }
 
-/// **类型存根优化**：L2 签名 → `Expr<T>`（Lua / TS / Python 三侧同一份真源）。
+/// **类型存根优化**：L2 签名 → `Expr<T>`（Lua / TS / Python 三侧同一份定义）。
 #[test]
 fn typed_stubs_carry_l2_signatures() {
     let capabilities = [ze_pod_binding::CapabilityDocs {
@@ -342,7 +342,7 @@ fn typed_stubs_carry_l2_signatures() {
     assert!(math_mod.contains("def sin(spec: Any) -> Expr[float]: ..."));
     assert!(math_mod.contains("from zela import Handle, Expr"));
 
-    // JSON 真源也带 spec：脚本侧不必按名字猜构造器。
+    // JSON 定义也带 spec：脚本侧不必按名字猜构造器。
     let json = ze_pod_binding::capabilities_json(&capabilities);
     assert!(json.contains("\"spec\":\"zela.math.Sin\""));
     assert!(json.contains("\"spec\":\"zela.math.Mul\""));

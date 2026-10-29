@@ -17,7 +17,7 @@
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/commands/api.rs` | 132 | `api`：导出 domain 能力的机器可读文档（JSON 真源 + LuaLS + TypeScript + `.pyi`）。 |
+| `src/commands/api.rs` | 132 | `api`：导出 domain 能力的机器可读文档（JSON 唯一来源 + LuaLS + TypeScript + `.pyi`）。 |
 | `src/commands/check.rs` | 56 | `check`：只做装配期检查、不渲染。 |
 | `src/commands/compile.rs` | 187 | `compile`：脚本 → ZSB 装配产物（不渲染、不需要 GPU）。 |
 | `src/commands/doctor.rs` | 141 | `doctor`：环境自检（本批最值钱的发现之一）。 |
@@ -25,7 +25,7 @@
 | `src/commands/fonts.rs` | 193 | 确定字体（`fonts`）：下载 + SHA-256 校验 `tools/typst-fonts.txt` 的清单。 |
 | `src/commands/frames.rs` | 76 | `frames`：PNG 序列帧导出（`render --frames` 的一等入口）。 |
 | `src/commands/inspect.rs` | 92 | `inspect`：读取 `.zsb` 的 Meta（container 版本 / payload 格式 / 能力 / 降级 / 来源）。 |
-| `src/commands/list.rs` | 54 | `list`：内置作品清单（GUI 下拉与 CLI 共用同一份真源）。 |
+| `src/commands/list.rs` | 54 | `list`：内置作品清单（GUI 下拉与 CLI 共用同一份定义）。 |
 | `src/commands/mod.rs` | 15 | 命令帧体（每条命令一个模块）。 |
 | `src/commands/render.rs` | 565 | `render`：脚本 / ZSB → 帧（唯一帧体）。 |
 | `src/host.rs` | 134 | 宿主接缝：进度 / 取消 / 诊断 + 帧 sink。 |

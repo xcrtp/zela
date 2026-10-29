@@ -128,7 +128,7 @@ let out: MyRecord = js.run(script)?;
 - `required = false` ⇒ 该 Service 是 **optional**：没有提供者也能装配，
   只是 JS 全局对象上不会出现对应命名空间；
 - `#[capability(bindings)]` 生成 `calls()`（`FnIo` + 类型擦除 trampoline）；
-- 语言无关部分（`BindingPlan` / `invoke` / 类型收集 / JSON 真源）在 `ze-pod-binding`；
+- 语言无关部分（`BindingPlan` / `invoke` / 类型收集 / JSON 定义）在 `ze-pod-binding`；
 - 本 crate 的 `binding.rs` 只实现 `JsCodec`，然后按计划生成命名空间与类型构造器。
 
 ### JS 侧的形状（与 Lua / Python 的对应关系）
@@ -196,7 +196,7 @@ let text = ze_pod_js::d_ts(&capabilities);
 let written = ze_pod_js::export_docs(dir, &capabilities)?;
 ```
 
-- JSON 是唯一真源（`ze-pod-binding`），`.d.ts` 只是翻译，不维护第二份类型表；
+- JSON 是唯一来源（`ze-pod-binding`），`.d.ts` 只是翻译，不维护第二份类型表；
 - JS 侧没有 LuaLS 那种注解方言，TypeScript 声明是**工具链原生**的补全来源；
 - 本 crate 不引用任何具体 domain 类型。
 

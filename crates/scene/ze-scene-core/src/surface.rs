@@ -1,11 +1,11 @@
 // surface.rs — 2D/3D 融合的**归属边界**与渲染策略（B3 Step 3）。
 //
 // # 设计要点
-// - `Surface` 只描述**边界与映射**，**不带 position**（位置仍由 `Transform` 单一真源）；
+// - `Surface` 只描述**边界与映射**，**不带 position**（位置仍由 `Transform` 唯一来源）；
 // - `SurfaceRenderer` 是正交维度：`Renderer2D`（离屏 → 纹理 → 代理平面）/
 //   `Renderer3D`（内容直接派生为 3D 网格）；
 // - **不存 `surface_id`**：归属沿 `Parent` 链向上找最近的 `Surface` 祖先，
-//   避免"关系"出现第二份真源；
+//   避免"关系"出现第二个来源；
 // - 找不到 `SurfaceRenderer` ⇒ **显式错误**（不静默取默认策略）；
 // - 沿 `Parent` 链做**树的环检测**并保留完整链（诊断不降级）。
 

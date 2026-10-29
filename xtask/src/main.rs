@@ -224,6 +224,15 @@ fn main() {
         }
         return;
     }
+    // 文档用语门禁的单跑入口（与 `--step docs` 内的检查同一实现）。
+    if raw.first().map(String::as_str) == Some("terms") {
+        let result = repo_root().and_then(|root| check_document_terms(&root));
+        if let Err(message) = result {
+            eprintln!("[xtask] 失败：{message}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let options = match Options::parse(&raw) {
         Ok(options) => options,
         Err(message) => {
@@ -655,6 +664,67 @@ fn step_docs(root: &Path) -> Result<(), String> {
         "[xtask] 模块文档：{} 个文件，生成两次逐字节一致，且与已提交内容一致",
         first_docs.len()
     );
+    // 文档用语门禁：禁止词出现即失败；「静默」超阈值只警告。
+    check_document_terms(root)?;
+    Ok(())
+}
+
+/// **门禁（文档用语统一）**：扫描 `docs/**` 与根目录 `*.md` 的禁止词。
+///
+/// 白名单按词 + 按文件登记（`xtask::FORBIDDEN_TERM_ALLOW`），理由在 GAPS AZ 段。
+/// 代码注释不扫描（约束词在注释里是失效模式说明）。
+fn check_document_terms(root: &Path) -> Result<(), String> {
+    const SILENT_LIMIT: usize = 20;
+    /// 「静默」在少数文件里是必要的对照（静默失败 vs 显式失败），允许超量但不阻断。
+    const SILENT_ALLOWED: &[&str] = &["docs/glossary.md"];
+
+    let mut offenders: Vec<String> = Vec::new();
+    let mut silent_total = 0usize;
+    let mut silent_allowed = 0usize;
+    for document in repository_markdown_docs(root)? {
+        let relative = relative_path(root, &document)?;
+        let text = fs::read_to_string(&document)
+            .map_err(|error| format!("读取 {} 失败：{error}", document.display()))?;
+        silent_total += xtask::count_term(&text, "静默");
+        if SILENT_ALLOWED.contains(&relative.as_str()) {
+            // 只豁免「静默」的计数，不豁免禁止词扫描。
+            silent_allowed += xtask::count_term(&text, "静默");
+        }
+        for hit in xtask::forbidden_term_hits(&text) {
+            if xtask::forbidden_term_allowed(hit.term, &relative) {
+                continue;
+            }
+            let replacement = xtask::FORBIDDEN_TERMS
+                .iter()
+                .find(|(term, _)| *term == hit.term)
+                .map(|(_, replacement)| *replacement)
+                .unwrap_or("");
+            offenders.push(format!(
+                "{relative}:{}  [{term}] → {replacement}\n    {}",
+                hit.line,
+                hit.text,
+                term = hit.term,
+            ));
+        }
+    }
+    if !offenders.is_empty() {
+        return Err(format!(
+            "文档用语门禁：{} 处禁止词（改写建议见括号）\n  {}",
+            offenders.len(),
+            offenders.join("\n  ")
+        ));
+    }
+    let silent_counted = silent_total.saturating_sub(silent_allowed);
+    if silent_counted > SILENT_LIMIT {
+        println!(
+            "[xtask][warn] 「静默」出现 {silent_counted} 次（阈值 {SILENT_LIMIT}）：\
+             只在「静默失败 vs 显式失败」处使用，其余请写具体行为（不报错 / 跳过 / 用默认值）"
+        );
+    } else {
+        println!(
+            "[xtask] OK: 文档用语门禁（禁止词 0 处；「静默」{silent_counted} 次 ≤ {SILENT_LIMIT}）"
+        );
+    }
     Ok(())
 }
 
@@ -1772,7 +1842,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
         "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.", "## AR.",
-        "## AS.", "## AT.", "## AU.", "## AV.", "## AW.", "## AX.", "## AY.",
+        "## AS.", "## AT.", "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1781,7 +1851,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
             .find(prefix)
             .map(|at| text[..at].lines().count())
             .unwrap_or(0);
-        // 0 = 已关闭，1 = 部分关闭，2 = 记账，3 = 未执行，4 = 落档（参数性差异，终态）
+        // 0 = 已关闭，1 = 部分关闭，2 = 记账，3 = 未执行，4 = 已记录（参数性差异，终态）
         let mut counts = [0usize; 5];
         for (index, line) in body.lines().enumerate() {
             let cells = table_cells(line);
@@ -1823,7 +1893,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("AV-")
                     || id.starts_with("AW-")
                     || id.starts_with("AX-")
-                    || id.starts_with("AY-"));
+                    || id.starts_with("AY-")
+                    || id.starts_with("AZ-"));
             if !is_item {
                 continue;
             }
@@ -1842,7 +1913,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                 1
             } else if status.contains("已关闭") {
                 0
-            } else if status.contains("落档") {
+            } else if status.contains("已记录") {
                 4
             } else if status.contains("记账") {
                 2
@@ -1863,7 +1934,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
             ("部分关闭", 1),
             ("记账", 2),
             ("未执行", 3),
-            ("落档", 4),
+            ("已记录", 4),
         ];
         for (label, bucket) in labels {
             match number_after(summary, label) {
@@ -1887,7 +1958,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
             }
         }
         println!(
-            "[xtask] GAPS {prefix} 小计一致：已关闭 {} · 部分关闭 {} · 记账 {} · 未执行 {} · 落档 {}",
+            "[xtask] GAPS {prefix} 小计一致：已关闭 {} · 部分关闭 {} · 记账 {} · 未执行 {} · 已记录 {}",
             counts[0], counts[1], counts[2], counts[3], counts[4]
         );
     }
@@ -2287,7 +2358,7 @@ fn subtotal_line(counts: &[usize; 5]) -> String {
         ("部分关闭", counts[1]),
         ("记账", counts[2]),
         ("未执行", counts[3]),
-        ("落档", counts[4]),
+        ("已记录", counts[4]),
     ] {
         if count > 0 {
             parts.push(format!("{label} {count}"));
@@ -3528,7 +3599,7 @@ fn cargo_program() -> String {
 
 // ─── 确定字体（B13 Step 0 / GAPS X1-11） ────────────────────────────────────
 
-/// 确定字体的唯一真源：`build.ps1`（下载 + 校验）与本文件（对拍环境）都读它。
+/// 确定字体的唯一来源：`build.ps1`（下载 + 校验）与本文件（对拍环境）都读它。
 const FONT_MANIFEST: &str = "tools/typst-fonts.txt";
 /// 与 `ze_prerender::typst::FONT_DIR_ENV` 同名。xtask 是独立 workspace（零依赖），
 /// 不能依赖 `ze-prerender` ⇒ 这里重复的是**环境变量名**，不是路径 / 版本 / 哈希。

@@ -1,6 +1,6 @@
 // export.rs — **Python 侧文档生成**：`.pyi` 按 capability 的命名空间路径落盘。
 //
-// 与 `ze-pod-lua` 的 `lua_ls` 对称：JSON 真源在 `ze-pod-binding`，
+// 与 `ze-pod-lua` 的 `lua_ls` 对称：JSON 定义在 `ze-pod-binding`，
 // 本文件只负责把同一份 schema 翻译成 Python 类型存根（不依赖 pyo3）。
 //
 // ```text

@@ -15,7 +15,7 @@
 //! |------|------|------|
 //! | [`plan`] | `BindingPlan` / `component_ctor` / 类型收集 | `ze-pod-core` |
 //! | [`codec`] | `ValueCodec` + 通用调用编排 [`invoke`] | `ze-pod-core` |
-//! | [`docs`] | JSON 文档（唯一真源） | `ze-pod-core` |
+//! | [`docs`] | JSON 文档（唯一来源） | `ze-pod-core` |
 //!
 //! **本 crate 不出现任何具体语言类型**（不含语言运行时依赖）；
 //! `cargo tree -p ze-pod-binding` 只有 `ze-pod-core` + 自身，可进 wasm gate。

@@ -235,7 +235,7 @@ impl ParamGeometry {
 }
 
 
-/// **PE Step 1**：绘制参数类型的唯一真源在 `ze-render-ir`（场景层与后端共用一份）。
+/// **PE Step 1**：绘制参数类型的唯一来源在 `ze-render-ir`（场景层与后端共用一份）。
 ///
 /// 它们原先定义在本 crate 里 ⇒ 场景层（不依赖本 crate）**无法引用**，能力没有入口。
 pub use ze_render_ir::{Dash, Gradient, PathOptions, SecondPaint};

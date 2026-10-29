@@ -18,7 +18,7 @@
 // 1. **类型不符显式报错**：`apply` 返回 `Result`；不再静默跳过本帧；
 // 2. **coercion 独立成层**：`Scalar → Quat` / `Scalar → Vec3` 是值转换，
 //    放在 `coerce` 模块，不混进地址；
-// 3. **命名唯一真源**：`component` 必须等于组件登记表的名字（有测试钉住），
+// 3. **命名唯一来源**：`component` 必须等于组件登记表的名字（有测试钉住），
 //    持久化名沿用旧名（`CircleRadius`），保证既有 payload 不变。
 //
 // # 兼容
@@ -128,7 +128,7 @@ pub trait TargetCtor: Send + Sync + 'static {
     fn make(id: ObjectId) -> Arc<dyn Target>;
 }
 
-/// **组件字段地址 + 读写入口**（唯一真源）。
+/// **组件字段地址 + 读写入口**（唯一来源）。
 #[derive(Clone, Copy, Debug)]
 pub struct FieldSpec {
     /// 持久化名（旧 payload 用的名字；新目标可直接用规范地址）。
@@ -450,7 +450,7 @@ pub static CIRCLE_BOUNDS_METHOD: MethodSpec = MethodSpec {
     },
 };
 
-/// 全部方法（脚本面与方法名的**唯一真源**）。
+/// 全部方法（脚本面与方法名的**唯一来源**）。
 pub const METHODS: &[&MethodSpec] = &[
     &REVEAL_CURRENT_POS_METHOD,
     &OBJECT_BOUNDS_METHOD,
@@ -784,7 +784,7 @@ fn targets_index() -> &'static ze_reflect::SymbolTable<&'static str, usize> {
         let mut table = ze_reflect::SymbolTable::new();
         for (index, entry) in TARGETS.iter().enumerate() {
             // 同一个字段的两个可寻址名字（持久化名 / 规范地址）。
-            // 若某个组件的两者恰好相同，第一次登记即真源，第二次忽略。
+            // 若某个组件的两者恰好相同，第一次登记者为准，第二次忽略。
             let _ = table.intern(entry.spec.name, index, ze_reflect::Blame::Assembly);
             let _ = table.intern(entry.spec.address, index, ze_reflect::Blame::Assembly);
         }
@@ -799,7 +799,7 @@ pub fn target_ctor_by_name(name: &str) -> Option<(fn(ObjectId) -> Arc<dyn Target
 
 /// **存储组件 → 脚本组件**的登记表（只有两者不同时才需要一行）。
 ///
-/// 单一真源：`channel_home` 与 xtask 的能力覆盖门禁都读这里（后者解析本文件源码）。
+/// 唯一来源：`channel_home` 与 xtask 的能力覆盖门禁都读这里（后者解析本文件源码）。
 pub const CHANNEL_HOMES: &[(&str, &str)] = &[
     // `Camera2D { center, scale }` 的存储组件。
     ("Framing2D", "Camera2D"),

@@ -2,7 +2,7 @@
 
 > 这是 **hub**，不是字典：每条只回答「它是什么 · 在哪 · 和谁相邻」，不复述文档。
 > 每条必须挂锚点——能挂符号就挂「crate 名 + `::` + 符号名」（用符号名定位，不用行号），
-> 无符号可挂时挂 GAPS 编号或决策记录。锚点腐烂是响亮的（grep 0 命中），行号腐烂是静默的。
+> 无符号可挂时挂 GAPS 编号或决策记录。锚点腐烂是响亮的（grep 无结果），行号腐烂则没有提示。
 
 ## 确定性谱系（L0–L3）
 
@@ -58,7 +58,7 @@
 
 - **代码锚点**：`ze_pod_core::pod::Pod`（trait）· `ze_pod_core::pod::ChannelDecl`
 - **所属层**：`crates/ze/pod/`
-- **相关**：[Channel](#channel) · [MethodDecl](#methoddecl) · [决策 007](decisions/007-作者面.md)
+- **相关**：[Channel](#channel) · [MethodDecl](#methoddecl) · [决策 007](decisions/007-作者侧.md)
 
 ## Channel
 
@@ -158,7 +158,7 @@
 
 ## AnalysisPass
 
-**一句话**：只读 IR、产出 side table 的 pass；结果不进产物，因为派生量不该有第二个真源。
+**一句话**：只读 IR、产出 side table 的 pass；结果不进产物，因为派生量不该有第二个来源。
 
 - **代码锚点**：`ze_comb::pass::AnalysisPass`（trait）
 - **所属层**：`crates/kernel/ze-comb/`
@@ -174,7 +174,7 @@
 
 ## AnimValue
 
-**一句话**：可动画量的值域（`Scalar` / `Vec2` / `Vec3` / `Color` / `Path`），内核层的唯一真源。
+**一句话**：可动画量的值域（`Scalar` / `Vec2` / `Vec3` / `Color` / `Path`），内核层的唯一来源。
 
 - **代码锚点**：`ze_time::curve::AnimValue`
 - **所属层**：`crates/kernel/ze-time/`
@@ -286,7 +286,7 @@
 
 ## TypeRegistry
 
-**一句话**：运行时类型登记表；同名重复由 `ReflectError` 统一诊断，不静默覆盖。
+**一句话**：运行时类型登记表；同名重复由 `ReflectError` 统一诊断，不自动覆盖。
 
 - **代码锚点**：`ze_reflect::codec::TypeRegistry`
 - **所属层**：`crates/kernel/ze-reflect/`
@@ -402,7 +402,7 @@
 
 - **代码锚点**：`ze_scene_core::animation::target::Target`（trait）· `ze_scene_core::animation::target::TargetError`
 - **所属层**：`crates/scene/ze-scene-core/`
-- **相关**：[FieldSpec](#fieldspec) · [SceneWrite](#scenewrite) · [决策 007](decisions/007-作者面.md)
+- **相关**：[FieldSpec](#fieldspec) · [SceneWrite](#scenewrite) · [决策 007](decisions/007-作者侧.md)
 
 ## TARGETS
 
@@ -418,7 +418,7 @@
 
 - **代码锚点**：`ze_scene_core::animation::target::MethodSpec`
 - **所属层**：`crates/scene/ze-scene-core/`
-- **相关**：[METHODS](#methods) · [MethodDecl](#methoddecl) · [决策 007](decisions/007-作者面.md)
+- **相关**：[METHODS](#methods) · [MethodDecl](#methoddecl) · [决策 007](decisions/007-作者侧.md)
 
 ## METHODS
 
@@ -478,7 +478,7 @@
 
 ## SceneScript
 
-**一句话**：脚本装配的产物脚本（创建 + 绑定 + 时钟），`still_time` 与读序检查都在这里收口。
+**一句话**：脚本装配的产物脚本（创建 + 绑定 + 时钟），`still_time` 与读序检查都在这里收敛。
 
 - **代码锚点**：`ze_scene_core::scene_script::SceneScript`
 - **所属层**：`crates/scene/ze-scene-core/`
@@ -494,7 +494,7 @@
 
 ## SceneWrite
 
-**一句话**：场景的写端协议；写失败必须显式（`TypeMismatch`），不静默丢弃。
+**一句话**：场景的写端协议；写失败必须显式（`TypeMismatch`），不丢弃。
 
 - **代码锚点**：`ze_scene_core::scene_write::SceneWrite`（trait）
 - **所属层**：`crates/scene/ze-scene-core/`

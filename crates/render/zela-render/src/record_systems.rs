@@ -292,7 +292,7 @@ impl System for SceneRecord3DSystem {
         let worlds = ctx.get::<WorldTransforms>().cloned();
         // 光源：清空并录制。方向光的 `direction` 声明在组件内；点光（B1-B）的
         // **位置**由 `Transform` → `WorldTransforms` 解析 —— `Light` 组件本身
-        // 不带 position（单一真源，铁律 3）。
+        // 不带 position（唯一来源，铁律 3）。
         ctx.with_world_and_resource_mut::<LightQueue, _>(|world, lights| {
             lights.clear();
             let scene = WorldView::new(world);
@@ -982,7 +982,7 @@ mod tests {
     }
 
     /// **B1-A 验收**：世界中的 `Light` 组件被录进 `LightQueue`（方向光逐字段保留，
-    /// 颜色归一化到 [0,1]、强度原样）。`Light` **不带 position**（单一真源）。
+    /// 颜色归一化到 [0,1]、强度原样）。`Light` **不带 position**（唯一来源）。
     #[test]
     fn record_directional_lights_into_queue() {
         use ze_notion::Color32;
@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     /// **B1-B 验收**：点光被录进 `LightQueue.points`，且位置**来自世界矩阵**
-    /// （父子累乘），而非 `Light` 组件字段（单一真源：Light 不带 position）。
+    /// （父子累乘），而非 `Light` 组件字段（唯一来源：Light 不带 position）。
     #[test]
     fn record_point_lights_resolve_world_position() {
         use ze_notion::Color32;

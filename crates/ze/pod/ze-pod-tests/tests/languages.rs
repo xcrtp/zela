@@ -162,7 +162,7 @@ fn all_languages_generate_docs_from_the_same_calls() {
     }
     assert!(lua_text.contains("---@class Dot"), "LuaLS 缺少类型 Dot");
 
-    // JS：TypeScript `.d.ts`（同一份 `MiniApi`，同一份 JSON 真源）。
+    // JS：TypeScript `.d.ts`（同一份 `MiniApi`，同一份 JSON 定义）。
     let ts_text = ze_pod_js::d_ts(&capabilities);
     for function in ["dot", "emit", "total", "kind"] {
         assert!(
@@ -185,7 +185,7 @@ fn all_languages_generate_docs_from_the_same_calls() {
         );
     }
 
-    // 两侧都来自同一份 JSON 真源。
+    // 两侧都来自同一份 JSON 定义。
     let json: serde_json::Value =
         serde_json::from_str(&ze_pod_binding::capabilities_json(&capabilities))
             .expect("合法 JSON");

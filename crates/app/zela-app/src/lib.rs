@@ -208,7 +208,7 @@ fn compile_script_on_this_thread(
     })
 }
 
-/// 单个 capability 的版本声明（名字取自签名，唯一真源）。
+/// 单个 capability 的版本声明（名字取自签名，唯一来源）。
 fn capability_of<C: ze_pod_core::Capability<'static>>() -> zela_scene_bundle::Capability {
     let meta = C::meta();
     let name = C::signatures()
@@ -1811,7 +1811,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
     /// **ZSB 三路径同构**：`script` → `.zsb` → 还原，产物与直接脚本逐对象 / 逐绑定相等。
     ///
     /// 三条路径（默认 / `--script` / `--bundle`）共用 `build_runtime`；本用例锁死
-    /// "装配产物"这一层等价，防止 `.zsb` 引入新的双轨真源。
+    /// "装配产物"这一层等价，防止 `.zsb` 引入新的双轨来源。
     #[test]
     fn bundle_roundtrip_matches_script_path() {
         use ze_prerender::placeholder_engine;

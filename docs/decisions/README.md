@@ -13,7 +13,7 @@
 | [004](004-Pass架构.md) | Pass 架构 | `Expr` → `Step` → 后端；analysis 只写 side table，transform 才写 IR |
 | [005](005-类型与反射.md) | 类型与反射 | `ze-type` 纯代数 + `ze-reflect` 运行时；统一解析协议；慢路径不能删 |
 | [006](006-图基础设施.md) | 图基础设施 | 零 crate 依赖、升序输出、算法只依赖最小 `Topology` |
-| [007](007-作者面.md) | 作者面 | `clock.range` / `clock.time_of` / `expr.method` / `bind_each` / `nat_rec`；`wait` / `parallel` 不加 API |
+| [007](007-作者侧.md) | 作者侧 | `clock.range` / `clock.time_of` / `expr.method` / `bind_each` / `nat_rec`；`wait` / `parallel` 不加 API |
 | [008](008-定位与控制系统视角.md) | 定位与控制系统视角 | 动画是无反馈的开环控制；护城河是确定性不是通用性；不照理论重构 |
 
 ## 如何写一篇决策记录

@@ -8,10 +8,10 @@
 //   - `transparent` 由填充/描边颜色 alpha 推导（`< 255`）—— 透明桶排序见后端；
 //   - `variant = Flat`：二维图元不参与光照，颜色即终值。
 //
-// # 单一真源（B3 Step 1）
+// # 唯一来源（B3 Step 1）
 // 三角化只走 [`crate::tessellate`]（lyon）：Rect / Circle / Ellipse / Polygon /
 // Line / **Path** / **Group** 七种图元在这里统一派生。原先手写的 ellipse /
-// polygon / line_ribbon 三个近似三角化函数已删除（第二份真源）。
+// polygon / line_ribbon 三个近似三角化函数已删除（第二个来源）。
 //
 // # 明确限制（不静默）
 // - `Polyline` / `Custom` 仍**显式报错**（Direct 路径未声明支持；不静默丢弃）；

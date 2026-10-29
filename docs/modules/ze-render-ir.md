@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-render-ir`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-pod-core`、`ze-vertex`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-web`
-- 源文件：13 个 · 2862 行
+- 源文件：13 个 · 2867 行
 
 ### 文件清单
 
@@ -23,7 +23,7 @@
 | `src/layer.rs` | 30 | — |
 | `src/lib.rs` | 74 | — |
 | `src/mesh.rs` | 64 | — |
-| `src/paint.rs` | 309 | — |
+| `src/paint.rs` | 314 | — |
 | `src/params.rs` | 417 | — |
 | `src/pipeline.rs` | 259 | — |
 | `src/shape.rs` | 400 | — |
@@ -136,4 +136,4 @@ src/degrade.rs 的降级接口吃调用点算好的仿射矩阵而不是相机�
 - 不含 wgpu / egui / ECS 类型，也不依赖任何 zela-* 或场景对象层。
 - 不做三角化与合批，那是渲染管线的动作；本层不产生顶点数据。
 - 不定义相机：降级接口只接收矩阵，相机属于场景对象层。
-- 能力签名只是契约，不含实现；后端能力不足时返回显式协商错误，不静默降级。
+- 能力签名只是契约，不含实现；后端能力不足时返回显式协商错误，不自动降级。

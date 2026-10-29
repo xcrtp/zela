@@ -1,12 +1,12 @@
 # 系统总览
 
 > **依赖图见 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 的自动区**（`cargo-workspace-analyzer` 产物）。
-> 本篇只写三件事：分层、依赖方向、**合规校验在哪**。不复制依赖图——复制即第二真源。
+> 本篇只写三件事：分层、依赖方向、合规校验在哪。不复制依赖图——复制即第二个来源。
 
 ## 一句话
 
 `crates/` 按 10 层垂直切分，依赖只能自上而下；分层声明由 [`architecture.json`](../../architecture.json)
-写成机器可读数据，与 `cargo metadata` **双向比对**，任何一边漏登记都红。
+写成机器可读数据，与 `cargo metadata` 双向比对，任何一边漏登记都红。
 
 ## 分层表（以 `architecture.json` 为准）
 
@@ -33,7 +33,7 @@ kernel → pod → graph → schedule → scene → render → ui → app
 ```
 
 - 反向禁止：`ze-*` 不得依赖任何 `zela-*` / egui / wgpu；任何 crate 不得依赖 `zela-app`。
-- `kernel` / `pod` 是底座：`render` / `ui` / `app` 也可以**直接**依赖它们（不必逐层穿透）。
+- `kernel` / `pod` 是底座：`render` / `ui` / `app` 也可以直接依赖它们（不必逐层穿透）。
 - `schedule` 无内部依赖（只依赖 hecs），因此谁都能依赖它；`scene` 依赖它。
 - `web` 是旁路门面：只依赖 `playback` / 渲染后端 / 产物格式，不被任何 crate 依赖。
 - `zela` 是应用层门面，不属于原生命令链。
@@ -56,14 +56,14 @@ kernel → pod → graph → schedule → scene → render → ui → app
 | 模块文档覆盖 + 手写段 | `docs/modules/<crate>.md` 缺失或多余；手写段缺失、留占位 |
 | 术语表 / 决策记录 | 术语无锚点；决策记录缺状态 / 锚点 / 三段正文 |
 | 5 条 jq 判据（跑在 `cargo metadata` 输出上） | pod 层不含 `zela-*`；backends 不含 `zela-scene`；场景核心层不含 `zela-*` / hecs；`zela-render` 不含 `zela-scene-ecs`；未豁免处不得直接引 glam |
-| 能力指纹 × 版本 | `signatures()` 变了而 `version` / 指纹常量没同步（两条钉住用例） |
+| 能力指纹 × 版本 | `signatures()` 变了而 `version` / 指纹常量没同步（两条用测试锁定的用例） |
 
 > 判据实现见 [`xtask/src/main.rs`](../../xtask/src/main.rs) 的 `step_structure` 与其调用的各 `check_*`。
 > 未安装 `jq` 时 jq 段会被**跳过并打印**（不静默通过），其余不依赖 jq 的判据照常跑。
 
 ### 2. `cargo verify --step docs`
 
-用 `export_scene_api` **连续生成两次**声明文件到构建产物区并逐字节比对，再与已提交的模块文档
+用 `export_scene_api` 连续生成两次声明文件到构建产物区并逐字节比对，再与已提交的模块文档
 自动区比对。生成物不进仓库，因此不存在「手写声明忘更新」的腐烂路径。
 
 ### 3. 编译期

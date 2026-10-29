@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：13 个 · 6108 行
+- 源文件：13 个 · 6123 行
 
 ### 文件清单
 
@@ -28,7 +28,7 @@
 | `src/pass.rs` | 293 | **Pass 抽象**：把已有的能力收进一个约定（不是为假想需求预付）。 |
 | `src/program.rs` | 1901 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
 | `src/reference.rs` | 287 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
-| `src/typed.rs` | 567 | **单态化求值**（typed fast path）：编译期定类型、按类型分槽、直接调函数指针。 |
+| `src/typed.rs` | 582 | **单态化求值**（typed fast path）：编译期定类型、按类型分槽、直接调函数指针。 |
 | `src/walk.rs` | 165 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

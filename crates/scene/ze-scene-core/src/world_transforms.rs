@@ -2,7 +2,7 @@
 //
 // B3-1 收尾：数据结构下沉核心层（渲染层只读它，不该依赖 ECS 实现）。
 // **生产**（父子累乘）在 `zela-scene-ecs::transform_hierarchy::TransformHierarchySystem`；
-// 本模块只提供容器与读取口径（3D 唯一真源 + 2D 投影视图）。
+// 本模块只提供容器与读取口径（3D 唯一来源 + 2D 投影视图）。
 //
 // 组合约定（与生成侧一致）：`scale → rotation → translation`；父子
 // `world = parent ∘ local`。无 `Parent` 的对象其世界矩阵与 local 逐位相同。
@@ -33,7 +33,7 @@ impl WorldTransforms {
         self.world.insert(id, transform);
     }
 
-    /// 取对象的**世界矩阵**（3D 唯一真源；缺席 ⇒ 该对象没有 Transform，
+    /// 取对象的**世界矩阵**（3D 唯一来源；缺席 ⇒ 该对象没有 Transform，
     /// 渲染侧回退 local / 恒等）。
     pub fn get(&self, id: ObjectId) -> Option<&Transform3D> {
         self.world.get(&id)

@@ -89,7 +89,7 @@ let capabilities = [
 let [json, lua] = ze_pod_lua::export_docs(dir, &capabilities)?;
 ```
 
-- JSON 是唯一真源（`ze-pod-binding` 手写，无外部依赖）；
+- JSON 是唯一来源（`ze-pod-binding` 手写，无外部依赖）；
 - `scene_api.lua` 是 LuaLS 注解，从同一份 `CapabilityDocs` 生成；
 - 本 crate 不引用任何具体 domain 类型。
 
