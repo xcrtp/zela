@@ -556,6 +556,14 @@
 - **所属层**：`crates/ze/pod/ze-pod-func/` + `crates/app/zela-app/`
 - **相关**：[Binding](#binding) · [ObjectId](#objectid)
 
+## 零回读上屏
+
+**一句话**：矢量帧渲进 `Rgba8Unorm` 中间纹理、注册成 egui 原生纹理直接采样，像素不经 CPU 往返（对照：`render_at` → `ColorImage` → `set/load_texture`）。
+
+- **锚点**：GAPS `AX-01` · 宿主在拿到 `wgpu_render_state` 时 `init_gpu(device, queue, adapter)`，此后矢量后端不自建 device；device features 取"已注册且可用后端之并"
+- **所属层**：`crates/app/zela-gui/` + `crates/render/zela-render-vector/`
+- **相关**：[像素基线](#像素基线) · [门禁](#门禁)
+
 ## 结构指纹
 
 **一句话**：全量对象 × 全量字段的逐位摘要（含 `WorldTransforms`），每帧独立、不链式，能定位到具体帧。

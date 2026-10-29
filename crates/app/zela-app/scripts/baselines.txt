@@ -24,7 +24,7 @@
 # pbr_lights / pbr_scene / pendulum / orbit / spring）—— 它们此前只有像素好看，没有任何
 # 门禁证明；尤其 pbr_* 三件曾被 cube 的 NaN 噪点影响，"修好了"一直没有证据。
 # device = windows / RTX 4060 Laptop
-# reason: 阶段 2 Reveal 降格为 curve_window：书写脉冲的笔尖端点由着色器裁剪（无 CPU 端点 cap），[vector] fourier 像素在端点附近变化 @ 0cd6b50
+# reason: 阶段 2 Reveal 降格为 curve_window：书写脉冲的笔尖端点由着色器裁剪（无 CPU 端点 cap），[vector] fourier / storyboard / pendulum 三条序列的像素在端点附近变化 @ 0cd6b50
 # slotA: fourier = 0cb8b4a19232aa90723f68a28d87af8537220adf3cbde82f99677a0497a0edc1 @ 83b4b13
 # slotA: storyboard = be286560cf4930dd40ab3da5d30385776d32bd448abafc5b2c8c6ac216957607 @ 83b4b13
 # slotA: demo3d = 983c0d88980d22d6bc222e64f7904ecaa2af9bf8a6c39200a72328e529ab00ec @ 83b4b13
@@ -73,7 +73,7 @@ capability_gaps = d66b333a8b03594e20c0c1ff94c51c62505444d26f556cffdeff51c9898f65
 # 边界：抓不到跨端浮点分歧（已知首次分歧在 fourier 第 103 帧）——
 # 本段绿只说明链路没断；完整基线必须在 main push / nightly 跑。
 # device = windows / RTX 4060 Laptop
-# reason: 阶段 2 Reveal 降格为 curve_window：书写脉冲的笔尖端点由着色器裁剪（无 CPU 端点 cap），[vector] fourier 像素在端点附近变化 @ 0cd6b50
+# reason: 阶段 2 Reveal 降格为 curve_window：书写脉冲的笔尖端点由着色器裁剪（无 CPU 端点 cap），[vector] fourier / storyboard / pendulum 三条序列的像素在端点附近变化 @ 0cd6b50
 # slotA: smoke = 2847735c2b708fed676416d21759695b872e43529b11e3a23c3402a7fca6368f @ 83b4b13
 # slotB: smoke = 2847735c2b708fed676416d21759695b872e43529b11e3a23c3402a7fca6368f @ 0cd6b50
 smoke = 2847735c2b708fed676416d21759695b872e43529b11e3a23c3402a7fca6368f @ 0cd6b50
@@ -98,7 +98,7 @@ smoke = 2847735c2b708fed676416d21759695b872e43529b11e3a23c3402a7fca6368f @ 0cd6b
 # 口径与 [native] 相同：不符即 fail；`--script` 与 `--bundle` 两条路径逐位相同。
 # 已知残差（记账，不是基线错误）：X5-02 取景 / X5-03 点光与高光 / X5-05 透明合成 / X5-04 细笔画。
 # device = windows / RTX 4060 Laptop
-# reason: 阶段 2 Reveal 降格为 curve_window：书写脉冲的笔尖端点由着色器裁剪（无 CPU 端点 cap），[vector] fourier 像素在端点附近变化 @ 0cd6b50
+# reason: 阶段 2 Reveal 降格为 curve_window：书写脉冲的笔尖端点由着色器裁剪（无 CPU 端点 cap），[vector] fourier / storyboard / pendulum 三条序列的像素在端点附近变化 @ 0cd6b50
 # slotA: vector_paths = c34f7a3db03db2a683399e567573fb86dc52bcd8b80b79599942083dcb69b3b5 @ 83b4b13
 # slotA: shaded_meshes = 05ead5f24ac9a5671cef5d75382bb62226f110d9314f1a96014e6741147f295c @ 83b4b13
 # slotA: fourier = 88690b24379bafc23c4359116855eee75b5a74cce273c994e77be16203627433 @ 83b4b13

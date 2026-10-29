@@ -9,16 +9,16 @@
 
 - 层：`app`（`crates/app`）
 - 路径：`crates/app/zela-gui`
-- 生产依赖（上游，dev-deps 不计）：`ze-pod-core`、`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`、`zela-scene-ecs`、`zela-schedule`
+- 生产依赖（上游，dev-deps 不计）：`ze-pod-core`、`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：（无）
-- 源文件：2 个 · 811 行
+- 源文件：2 个 · 954 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 758 | — |
-| `src/main.rs` | 53 | — |
+| `src/lib.rs` | 872 | — |
+| `src/main.rs` | 82 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

@@ -10,7 +10,7 @@
 - 层：`render`（`crates/render`）
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`
-- 被依赖（下游）：`zela-app`、`zela-playback`、`zela-web`
+- 被依赖（下游）：`zela-app`、`zela-gui`、`zela-playback`、`zela-web`
 - 源文件：10 个 · 11241 行
 
 ### 文件清单
