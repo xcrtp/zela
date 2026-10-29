@@ -283,6 +283,40 @@ fn sugar_expands_to_the_hand_written_core_form() {
     }
 }
 
+/// **第 BB 批（阶段 5，方案 a）**：存根的参数侧按签名展开，不再一律 `Expr<any>`。
+#[test]
+fn lua_stub_expands_vector_parameters() {
+    use ze_pod_binding::CapabilityDocs;
+
+    let capabilities = [CapabilityDocs {
+        name: "expr",
+        calls: MathApi::calls(),
+        docs: MathApi::docs(),
+        meta: MathApi::meta(),
+        channels: &[],
+        methods: &[],
+        ops: ze_pod_func::SIGNATURES,
+    }];
+    let stub = ze_pod_lua::lua_ls(&capabilities);
+    // `Mul` 的签名是 `(VAR_A: Num|Vector, VAR_A)` ⇒ 参数展开成三种候选。
+    assert!(
+        stub.contains(
+            "---@overload fun(a: Expr<number>|Expr<Vec2>|Expr<Vec3>, \
+             b: Expr<number>|Expr<Vec2>|Expr<Vec3>): Expr<number> | Expr<Vec2> | Expr<Vec3>"
+        ),
+        "`Mul` 的参数应是具体候选（实际未命中）"
+    );
+    // `Dot` 的签名里两个参数都是向量变量。
+    assert!(
+        stub.contains("---@overload fun(a: Expr<Vec2>|Expr<Vec3>, b: Expr<Vec2>|Expr<Vec3>)"),
+        "`Dot` 的参数应是 Vec2|Vec3"
+    );
+    assert!(
+        !stub.contains("---@overload fun(a: Expr<any>, b: Expr<any>)"),
+        "参数侧不再隐式接受任意表达式"
+    );
+}
+
 /// 能力身份：namespace 是 `zela.math`，与 `zela.scene` 隔离。
 #[test]
 fn capability_lives_in_its_own_namespace() {
@@ -370,10 +404,17 @@ fn typed_stubs_carry_l2_signatures() {
 
     let lua = ze_pod_lua::lua_ls(&capabilities);
     assert!(lua.contains("---@class Expr<T>: Handle"), "缺 Expr<T>：\n{lua}");
-    assert!(lua.contains("---@field of Expr<any>"), "Sin.of 应是表达式：\n{lua}");
+    // 阶段 5：`Sin.of` 的签名是 `F64` ⇒ 参数侧展开成 `Expr<number>`（不再是 `Expr<any>`）。
     assert!(
-        lua.contains("---@overload fun(a: Expr<any>, b: Expr<any>): Expr<number> | Expr<Vec2> | Expr<Vec3>"),
-        "Mul 的返回应是具体类型并集：\n{lua}"
+        lua.contains("---@field of Expr<number>"),
+        "Sin.of 应是具体表达式：\n{lua}"
+    );
+    assert!(
+        lua.contains(
+            "---@overload fun(a: Expr<number>|Expr<Vec2>|Expr<Vec3>, \
+             b: Expr<number>|Expr<Vec2>|Expr<Vec3>): Expr<number> | Expr<Vec2> | Expr<Vec3>"
+        ),
+        "Mul 的参数与返回都应是具体类型：\n{lua}"
     );
     assert!(lua.contains("---@return Expr<number>"));
     assert!(lua.contains("---@return Expr<boolean>"));

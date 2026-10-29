@@ -96,7 +96,7 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                 } else {
                     out.push_str(&format!("---@class {lua_name}\n"));
                 }
-                for field in *fields {
+                for (index, field) in fields.iter().enumerate() {
                     // 提案 #6 C：默认值进声明文件（`Color.a = 255`），但不进产物。
                     // **有默认值 ⇒ 字段可选**：LuaLS 的 `@field` 不带 `?` 就是必填，
                     // 少了 `?` 会把 `expr.bind{ … }`（省略 duration 等）误报成"缺字段"。
@@ -105,12 +105,12 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     let default = default
                         .map(|value| format!(" 默认 {value}"))
                         .unwrap_or_default();
+                    // 阶段 5：算子 spec 的字段也按签名展开（与 `---@overload` 同一份口径）。
+                    let ty = lua_op_param(capabilities, full_name, index)
+                        .unwrap_or_else(|| lua_field_type(full_name, field, typed_expr));
                     out.push_str(&format!(
                         "---@field {}{} {}{}\n",
-                        field.name,
-                        optional,
-                        lua_field_type(full_name, field, typed_expr),
-                        default
+                        field.name, optional, ty, default
                     ));
                 }
                 // 通道常量收在 `X.channel.*` 下（与组件字段不撞名）。
@@ -158,23 +158,25 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                 };
                 let spec_type = if is_channel { "Channel<any>" } else { lua_name };
                 // 无通道常量的类型保持函数形态（与旧声明一致）。
+                let spec_op = op_by_spec(capabilities, full_name).is_some();
                 let positional: Vec<String> = fields
                     .iter()
-                    .map(|field| {
+                    .enumerate()
+                    .map(|(index, field)| {
+                        // 阶段 5：算子 spec 的参数按签名表展开（向量 ⇒ Vec2 | Vec3）。
+                        let ty = if spec_op {
+                            lua_op_param(capabilities, full_name, index).unwrap_or_else(|| {
+                                lua_field_type(full_name, field, typed_expr)
+                            })
+                        } else {
+                            lua_field_type(full_name, field, typed_expr)
+                        };
                         let optional =
                             ze_pod_binding::field_default_literal(name, field.name).is_some();
                         if optional {
-                            format!(
-                                "{}?: {}",
-                                field.name,
-                                lua_field_type(full_name, field, typed_expr)
-                            )
+                            format!("{}?: {}", field.name, ty)
                         } else {
-                            format!(
-                                "{}: {}",
-                                field.name,
-                                lua_field_type(full_name, field, typed_expr)
-                            )
+                            format!("{}: {}", field.name, ty)
                         }
                     })
                     .collect();
@@ -314,6 +316,51 @@ fn lua_field_type(parent: &str, field: &Field, typed_expr: bool) -> String {
         }
     }
     lua_type_name(field.ty).to_string()
+}
+
+/// **参数侧泛型（阶段 5，方案 a）**：算子 spec 的第 `index` 个字段按签名表展开。
+///
+/// LuaLS 没有类型变量 ⇒ `add(Vec2,Vec2)→Vec2` 与 `add(Vec3,Vec3)→Vec3` 在签名表里
+/// 是同一条，编辑器却需要具体类型。这里把 `Kind::Vector` 展开成 `Vec2` / `Vec3`
+/// 两个**候选**，参数不再退化成 `Expr<any>`（= 隐式接受任意表达式）。
+///
+/// 返回 `None` ⇒ 不是算子 spec（`Bind` / `Select` 等），调用方沿用 `lua_field_type`。
+fn lua_op_param(capabilities: &[CapabilityDocs], spec: &str, index: usize) -> Option<String> {
+    let op = op_by_spec(capabilities, spec)?;
+    let mut names: Vec<&'static str> = Vec::new();
+    for signature in op.sigs {
+        let candidate: &[&'static str] = match signature.params.get(index).copied()? {
+            TypeSpec::Scalar(ScalarKind::F64) | TypeSpec::Scalar(ScalarKind::F32) => &["number"],
+            TypeSpec::Scalar(ScalarKind::Bool) => &["boolean"],
+            TypeSpec::Struct { name, .. } if *name == "zela.Vec2" => &["Vec2"],
+            TypeSpec::Struct { name, .. } if *name == "zela.Vec3" => &["Vec3"],
+            TypeSpec::Var(var) => {
+                let (_, kind) = signature.vars.iter().find(|(name, _)| name == var)?;
+                match kind {
+                    Kind::Num => &["number"],
+                    // 方案 a：只展开向量变量（覆盖绝大多数场景）。
+                    Kind::Vector => &["Vec2", "Vec3"],
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        for name in candidate {
+            if !names.contains(name) {
+                names.push(name);
+            }
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    Some(
+        names
+            .into_iter()
+            .map(|name| format!("Expr<{name}>"))
+            .collect::<Vec<_>>()
+            .join("|"),
+    )
 }
 
 /// 一条能力函数的返回类型：算子按签名表给 `Expr<…>`，其余按 `TypeSpec`。
