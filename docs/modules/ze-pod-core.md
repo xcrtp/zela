@@ -11,7 +11,7 @@
 - 路径：`crates/ze/pod/ze-pod-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`ze-pod`、`ze-pod-binding`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-pod-tests`、`ze-render-ir`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-ecs`
-- 源文件：16 个 · 4284 行
+- 源文件：16 个 · 4394 行
 
 ### 文件清单
 
@@ -28,7 +28,7 @@
 | `src/ordering.rs` | 327 | 逻辑时序（Ord）与显式 flush 边界。 |
 | `src/pod.rs` | 279 | Pod trait：不透明状态机 + 函数集合 + 协商 + 快慢双路径。 |
 | `src/qualified.rs` | 177 | 完整函数名（内部链接器）：`"ns::path::name(A, B) -> R"`。 |
-| `src/registry.rs` | 368 | 第一 Pod：闭包注册表（内置小 Pod）。 |
+| `src/registry.rs` | 478 | 第一 Pod：闭包注册表（内置小 Pod）。 |
 | `src/topic.rs` | 60 | topic 机制：**广播降级为「查询 + 迭代单播」**。 |
 | `src/type_name.rs` | 85 | 稳定类型名（与 `ze-node-core::TypeTag::type_name()` 形态同构）。 |
 | `src/typespec.rs` | 49 | 类型描述（IDL schema）：**实现已迁至 `ze-type`**，本模块只做 re-export + |

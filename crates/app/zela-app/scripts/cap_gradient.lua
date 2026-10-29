@@ -29,8 +29,8 @@ scene.spawn({
     Fill { color = white },
     Gradient {
         stops = { red, blue },
-        from = Vec3 { x = -4.3, y = 0.0, z = 0.0 },
-        to = Vec3 { x = -0.9, y = 0.0, z = 0.0 },
+        from = scene.vec3(-4.3, 0.0, 0.0),
+        to = scene.vec3(-0.9, 0.0, 0.0),
     },
 })
 
@@ -40,7 +40,7 @@ scene.spawn({
     Fill { color = white },
     Gradient {
         stops = { red, green, blue },
-        from = Vec3 { x = 0.9, y = 0.0, z = 0.0 },
-        to = Vec3 { x = 4.3, y = 0.0, z = 0.0 },
+        from = scene.vec3(0.9, 0.0, 0.0),
+        to = scene.vec3(4.3, 0.0, 0.0),
     },
 })

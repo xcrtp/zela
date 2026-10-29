@@ -23,46 +23,9 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
-local function f32(v)
-    return RoundF32 { of = v }
-end
-
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
-
-local function ramp2(ax, ay, bx, by, dur)
-    return Mix {
-        a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
-        b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
-local function sin_curve(base, amp, omega)
-    local angle = Mul(f32(expr.pure(omega)), clock.time())
-    local s = f32(Sin { of = angle })
-    local prod = f32(Mul(f32(expr.pure(amp)), s))
-    return f32(Add { a = f32(expr.pure(base)), b = prod })
-end
 
 local WINDOW = Predicate.Of {
     expr = And {
@@ -90,74 +53,74 @@ local cam = scene.spawn({
 -- ── 圆：中心平移 + 半径呼吸 ────────────────────────────────────────────
 local ball = scene.spawn({
     Circle { x = -3.4, y = 2.2, r = 0.45 },
-    Fill { color = rgba(96, 196, 255, 255) },
+    Fill { color = scene.rgba(96, 196, 255, 255) },
 })
-bind(ball, Circle.channel.center, ramp2(-3.4, 2.2, -2.0, 2.2, T))
-bind(ball, Circle.channel.radius, sin_curve(0.45, 0.18, 3.0))
+bind(ball, Circle.channel.center, sugar.ramp2(-3.4, 2.2, -2.0, 2.2, T))
+bind(ball, Circle.channel.radius, sugar.wave(0.45, 0.18, 3.0))
 
 -- ── 箭头：四个字段同时动 ──────────────────────────────────────────────
 local arrow = scene.spawn({
     Arrow {
-        from = Vec2 { x = 0.4, y = -0.6 },
-        to = Vec2 { x = 2.6, y = -0.6 },
+        from = scene.vec2(0.4, -0.6),
+        to = scene.vec2(2.6, -0.6),
         head_length = 0.24,
         head_width = 0.18,
     },
-    Fill { color = rgba(255, 180, 80, 255) },
+    Fill { color = scene.rgba(255, 180, 80, 255) },
 })
-bind(arrow, Arrow.channel.from, ramp2(0.4, -0.6, -0.4, -1.0, T))
-bind(arrow, Arrow.channel.to, ramp2(2.6, -0.6, 3.2, 0.2, T))
-bind(arrow, Arrow.channel.head_length, ramp(0.24, 0.42, T))
-bind(arrow, Arrow.channel.head_width, ramp(0.18, 0.30, T))
+bind(arrow, Arrow.channel.from, sugar.ramp2(0.4, -0.6, -0.4, -1.0, T))
+bind(arrow, Arrow.channel.to, sugar.ramp2(2.6, -0.6, 3.2, 0.2, T))
+bind(arrow, Arrow.channel.head_length, sugar.ramp(0.24, 0.42, T))
+bind(arrow, Arrow.channel.head_width, sugar.ramp(0.18, 0.30, T))
 
 -- ── 书写：start / end / range 各一条（避免同一字段互相覆盖）────────────
 local function line(y)
     local pts = {}
     for i = 0, 20 do
-        pts[#pts + 1] = Vec2 { x = q(-4.0 + 4.0 * i / 20), y = y }
+        pts[#pts + 1] = scene.vec2(q(-4.0 + 4.0 * i / 20), y)
     end
     return pts
 end
 
-local ink = rgba(220, 235, 255, 255)
+local ink = scene.rgba(220, 235, 255, 255)
 
 local reveal_start = scene.spawn({
     Reveal { points = line(3.2), closed = false },
     Stroke { width = 2.5, color = ink },
 })
-bind(reveal_start, Reveal.channel.start, ramp(0.0, 0.5, T))
+bind(reveal_start, Reveal.channel.start, sugar.ramp(0.0, 0.5, T))
 
 local reveal_end = scene.spawn({
     Reveal { points = line(-3.2), closed = false },
-    Stroke { width = 2.5, color = rgba(180, 255, 210, 255) },
+    Stroke { width = 2.5, color = scene.rgba(180, 255, 210, 255) },
 })
-bind(reveal_end, Reveal.channel["end"], ramp(1.0, 0.6, T))
+bind(reveal_end, Reveal.channel["end"], sugar.ramp(1.0, 0.6, T))
 
 local reveal_range = scene.spawn({
     Reveal { points = line(-3.6), closed = false },
-    Stroke { width = 2.5, color = rgba(255, 210, 150, 255) },
+    Stroke { width = 2.5, color = scene.rgba(255, 210, 150, 255) },
 })
-bind(reveal_range, Reveal.channel.range, ramp2(0.0, 1.0, 0.3, 0.8, T))
+bind(reveal_range, Reveal.channel.range, sugar.ramp2(0.0, 1.0, 0.3, 0.8, T))
 
 -- ── 虚线：周期 / 占空 / 相位 ──────────────────────────────────────────
 local dashed = scene.spawn({
     Circle { x = 3.0, y = 2.4, r = 0.9 },
-    Stroke { width = 4.0, color = rgba(160, 255, 200, 255) },
+    Stroke { width = 4.0, color = scene.rgba(160, 255, 200, 255) },
     Dash { period = 0.05, duty = 0.6, phase = 0.0 },
 })
-bind(dashed, Dash.channel.period, ramp(0.05, 0.08, T))
-bind(dashed, Dash.channel.duty, ramp(0.6, 0.3, T))
-bind(dashed, Dash.channel.phase, ramp(0.0, 0.5, T))
+bind(dashed, Dash.channel.period, sugar.ramp(0.05, 0.08, T))
+bind(dashed, Dash.channel.duty, sugar.ramp(0.6, 0.3, T))
+bind(dashed, Dash.channel.phase, sugar.ramp(0.0, 0.5, T))
 
 -- ── 曲线窗口：lo / hi ────────────────────────────────────────────────
 local window = scene.spawn({
     Circle { x = 0.6, y = 1.6, r = 0.7 },
-    Fill { color = rgba(210, 150, 255, 255) },
+    Fill { color = scene.rgba(210, 150, 255, 255) },
     CurveWindow { lo = 0.0, hi = 4.0 },
 })
-bind(window, CurveWindow.channel.lo, ramp(0.0, 0.5, T))
-bind(window, CurveWindow.channel.hi, ramp(4.0, 2.0, T))
+bind(window, CurveWindow.channel.lo, sugar.ramp(0.0, 0.5, T))
+bind(window, CurveWindow.channel.hi, sugar.ramp(4.0, 2.0, T))
 
 -- ── 2D 相机：缩放 + 中心 ─────────────────────────────────────────────
-bind(cam, Camera2D.channel.scale, ramp(58.0, 54.0, T))
-bind(cam, Camera2D.channel.center, ramp2(0.0, 0.0, 0.0, 0.15, T))
+bind(cam, Camera2D.channel.scale, sugar.ramp(58.0, 54.0, T))
+bind(cam, Camera2D.channel.center, sugar.ramp2(0.0, 0.0, 0.0, 0.15, T))

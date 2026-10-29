@@ -20,7 +20,7 @@ use ze_pod_core::{
 };
 use ze_pod_func::{
     ChannelType, ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SCENE_NAMESPACE,
-    SERVICE as EXPR_SERVICE,
+    SERVICE as EXPR_SERVICE, SugarApi,
 };
 use ze_pod_lua::LuaPod;
 use ze_prerender::InMemoryEngine;
@@ -583,6 +583,8 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
                     python.register_capability::<SceneApi>("scene", true);
                     python.register_capability::<ContentApi>("content", true);
                     python.register_capability::<MathApi>(EXPR_SERVICE, true);
+                    // 第 BB 批（阶段 4）：糖层——同一个 expr Pod，脚本里是 `sugar` 表。
+                    python.register_capability_as::<SugarApi>(EXPR_SERVICE, "sugar", true);
                     // P1：Python 闭包要求 `Send + Sync` ⇒ 登记 SyncPod 徽章，Broker 走 inject_sync。
                     nodes.push(PodNode::new_sync("python", python, &["python"]));
                 }
@@ -602,6 +604,8 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
         js.register_capability::<SceneApi>("scene", true);
         js.register_capability::<ContentApi>("content", true);
         js.register_capability::<MathApi>(EXPR_SERVICE, true);
+        // 第 BB 批（阶段 4）：糖层（`sugar.ramp` …）。
+        js.register_capability_as::<SugarApi>(EXPR_SERVICE, "sugar", true);
         // boa 的 `Context` 是 `!Send + !Sync`（`examples/send_probe.rs` 实测）
         // ⇒ 与 LuaPod 一样不登记 SyncPod 徽章。
         nodes.push(PodNode::new("js", Arc::clone(&js) as Arc<dyn Pod>, &["js"]));
@@ -639,6 +643,8 @@ fn base_nodes(
     lua.register_capability::<SceneApi>("scene", true);
     lua.register_capability::<ContentApi>("content", true);
     lua.register_capability::<MathApi>(EXPR_SERVICE, true);
+    // 第 BB 批（阶段 4）：糖层（`sugar.ramp` / `sugar.wave` …）。
+    lua.register_capability_as::<SugarApi>(EXPR_SERVICE, "sugar", true);
     #[cfg(feature = "python")]
     lua.register_capability::<ze_pod_py::PythonApi>("python", false);
 

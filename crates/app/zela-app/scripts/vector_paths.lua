@@ -32,8 +32,8 @@ scene.spawn({
 -- ② 实心箭头 + 空心箭头（箭头是**一等图元**，两条样式各一张记录）。
 scene.spawn({
     Arrow {
-        from = Vec2 { x = 2.2, y = 1.2 },
-        to = Vec2 { x = 4.8, y = 2.8 },
+        from = scene.vec2(2.2, 1.2),
+        to = scene.vec2(4.8, 2.8),
         head_length = 0.9,
         head_width = 0.6,
     },
@@ -41,8 +41,8 @@ scene.spawn({
 })
 scene.spawn({
     Arrow {
-        from = Vec2 { x = 2.2, y = -0.6 },
-        to = Vec2 { x = 4.8, y = -2.2 },
+        from = scene.vec2(2.2, -0.6),
+        to = scene.vec2(4.8, -2.2),
         head_length = 0.9,
         head_width = 0.6,
     },
@@ -51,11 +51,11 @@ scene.spawn({
 
 -- ③ 折线（尖角 ⇒ miter 的实际形态；描边走 Reveal 的同一录制路径）。
 local zigzag = {
-    Vec2 { x = -4.6, y = -1.0 },
-    Vec2 { x = -3.2, y = -3.4 },
-    Vec2 { x = -1.8, y = -0.6 },
-    Vec2 { x = -0.4, y = -3.0 },
-    Vec2 { x = 1.0, y = -0.8 },
+    scene.vec2(-4.6, -1.0),
+    scene.vec2(-3.2, -3.4),
+    scene.vec2(-1.8, -0.6),
+    scene.vec2(-0.4, -3.0),
+    scene.vec2(1.0, -0.8),
 }
 scene.spawn({
     Reveal { points = zigzag, closed = false },

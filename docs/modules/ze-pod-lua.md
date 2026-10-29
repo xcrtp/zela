@@ -11,7 +11,7 @@
 - 路径：`crates/ze/pod/ze-pod-lua`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`
 - 被依赖（下游）：`ze-pod-tests`、`zela-app`、`zela-commands`
-- 源文件：4 个 · 1274 行
+- 源文件：4 个 · 1302 行
 
 ### 文件清单
 
@@ -20,7 +20,7 @@
 | `src/binding.rs` | 525 | — |
 | `src/export.rs` | 410 | — |
 | `src/lib.rs` | 26 | — |
-| `src/lua_pod.rs` | 313 | — |
+| `src/lua_pod.rs` | 341 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

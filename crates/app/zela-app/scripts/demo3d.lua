@@ -11,29 +11,6 @@
 local T = 2.0
 
 -- `Ramp` / `Ramp2` 的算子化形态（显式时钟；`t` 是时钟局部时间）。
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
-
-local function ramp2(ax, ay, bx, by, dur)
-    return Mix {
-        a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
-        b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
@@ -47,9 +24,9 @@ local cube = scene.spawn({
         roughness = 0.6,
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
+        position = scene.vec3(0.0, 0.0, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
@@ -57,7 +34,7 @@ local cube = scene.spawn({
 expr.bind {
     object = cube,
     target = Transform.channel.rotation,
-    root = ramp(0.0, 6.28318530718, T),
+    root = sugar.ramp(0.0, 6.28318530718, T),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
@@ -67,7 +44,7 @@ expr.bind {
     object = cube,
     target = Transform.channel.position,
     root = Vec3FromVec2 {
-        v = ramp2(-1.5, -1.0, 1.5, 1.0, T),
+        v = sugar.ramp2(-1.5, -1.0, 1.5, 1.0, T),
         z = expr.pure(0.0),
     },
     clock = clock.scale(1.0),
@@ -81,9 +58,9 @@ local wire = scene.spawn({
         color = Color { r = 80, g = 200, b = 255, a = 255 },
     },
     Transform3D {
-        position = Vec3 { x = -2.8, y = 1.0, z = 0.0 },
+        position = scene.vec3(-2.8, 1.0, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.38268343, z = 0.0, w = 0.92387953 },
-        scale = Vec3 { x = 1.5, y = 0.8, z = 1.0 },
+        scale = scene.vec3(1.5, 0.8, 1.0),
     },
 })
 
@@ -91,7 +68,7 @@ local wire = scene.spawn({
 expr.bind {
     object = wire,
     target = Transform.channel.scale,
-    root = ramp(0.8, 1.6, T),
+    root = sugar.ramp(0.8, 1.6, T),
     clock = clock.shift(T),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
@@ -100,7 +77,7 @@ expr.bind {
 local key_light = scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.4, y = -0.6, z = -0.7 },
+            direction = scene.vec3(0.4, -0.6, -0.7),
         },
         color = Color { r = 255, g = 240, b = 220, a = 255 },
         intensity = 1.2,
@@ -120,7 +97,7 @@ local rim = scene.spawn({
 -- 3D 相机（aspect 由渲染视口覆盖，脚本不传）。
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 4.0, y = 3.0, z = 5.0 },
+        eye = scene.vec3(4.0, 3.0, 5.0),
         fov_y = 1.1,
     },
 })

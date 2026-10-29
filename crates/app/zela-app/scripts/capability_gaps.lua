@@ -24,33 +24,13 @@ local T = 3.0 -- 唯一动画段时长（秒）
 -- 旧 `Step::Play` 区间 `[0, T)`（显式时钟；段外由 Hold 钳到两端）。
 
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
-local function f32(v)
-    return RoundF32 { of = v }
-end
 
 -- `Phase { omega }`：`omega × t`（`t` 是时钟局部时间；与旧曲线的 f32 口径一致）。
 local function phase(omega)
-    return f32(Mul(f32(expr.pure(omega)), f32(clock.time())))
+    return sugar.f32(Mul(sugar.f32(expr.pure(omega)), sugar.f32(clock.time())))
 end
 
 -- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
-local function orbit2d(radius, speed, initial_angle)
-    local angle = Add {
-        a = Mul(f32(expr.pure(speed)), clock.time()),
-        b = f32(expr.pure(initial_angle)),
-    }
-    return Vec3FromVec2 {
-        v = Vec2Of {
-            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
-            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
-        },
-        z = expr.pure(0.0),
-    }
-end
-
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
 
 -- 2D 相机（morph / 圆都在世界坐标里；scale 30 ⇒ 视口约 21.3 × 16 世界单位）。
 scene.spawn({
@@ -64,22 +44,22 @@ local layer = Group { id = 1 }
 local morph = scene.spawn({
     Morph {
         from = {
-            Vec2 { x = -7.5, y = -2.0 },
-            Vec2 { x = -3.5, y = -2.0 },
-            Vec2 { x = -3.5, y = 2.0 },
-            Vec2 { x = -7.5, y = 2.0 },
+            scene.vec2(-7.5, -2.0),
+            scene.vec2(-3.5, -2.0),
+            scene.vec2(-3.5, 2.0),
+            scene.vec2(-7.5, 2.0),
         },
         to = {
-            Vec2 { x = -5.5, y = -3.0 },
-            Vec2 { x = -2.5, y = 0.0 },
-            Vec2 { x = -5.5, y = 3.0 },
-            Vec2 { x = -8.5, y = 0.0 },
+            scene.vec2(-5.5, -3.0),
+            scene.vec2(-2.5, 0.0),
+            scene.vec2(-5.5, 3.0),
+            scene.vec2(-8.5, 0.0),
         },
         closed = true,
         t = 0.0,
         samples = 0,
     },
-    Stroke { width = 6.0, color = rgba(120, 255, 160, 255) },
+    Stroke { width = 6.0, color = scene.rgba(120, 255, 160, 255) },
     layer,
 })
 -- ⑤ Morph：形变进度由 `MorphShape.t` 线性推进到 0.9（显式时钟，段 [0, T)）。
@@ -95,7 +75,7 @@ expr.bind {
 -- ④ 相位目标：挂在右侧圆上；`phase` 每帧被写（无消费者 ⇒ 画面不变，见文件头）。
 local phase_dot = scene.spawn({
     Circle { x = 5.5, y = 2.5, r = 1.2 },
-    Fill { color = rgba(255, 220, 90, 255) },
+    Fill { color = scene.rgba(255, 220, 90, 255) },
     PhaseAnim { phase = 0.0, omega = 0.0 },
     layer,
 })
@@ -110,7 +90,7 @@ expr.bind {
 -- ③ 常量曲线：整段保持 0.6（对照上面两条"随时间变化"的曲线）。
 local dim_dot = scene.spawn({
     Circle { x = 5.5, y = -2.5, r = 1.2 },
-    Fill { color = rgba(90, 190, 255, 255) },
+    Fill { color = scene.rgba(90, 190, 255, 255) },
     layer,
 })
 expr.bind {
@@ -126,8 +106,8 @@ expr.bind {
 --    平行，look-at 退化（画面会出现 NaN / 全黑）。
 local cam3 = scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 9.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 0.0, z = 1.0 },
+        eye = scene.vec3(9.0, 0.0, 0.0),
+        up = scene.vec3(0.0, 0.0, 1.0),
         fov_y = 0.7,
     },
 })
@@ -135,7 +115,7 @@ local cam3 = scene.spawn({
 expr.bind {
     object = cam3,
     target = Camera3D.channel.eye,
-    root = orbit2d(9.0, 0.5, 0.0),
+    root = sugar.orbit2d(9.0, 0.5, 0.0),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
@@ -144,7 +124,7 @@ expr.bind {
 scene.spawn({
     Cube { half_extent = 1.6, solid = true },
     Material3D {
-        color = rgba(235, 120, 120, 255),
+        color = scene.rgba(235, 120, 120, 255),
         variant = ShaderVariant.Flat,
     },
     layer,
@@ -154,7 +134,7 @@ scene.spawn({
 --    若 despawn 失效，画面正中会多出一个白圆（下面的对拍就是靠这一点自证的）。
 local ghost = scene.spawn({
     Circle { x = 0.0, y = -6.0, r = 1.5 },
-    Fill { color = rgba(255, 255, 255, 255) },
+    Fill { color = scene.rgba(255, 255, 255, 255) },
     layer,
 })
 scene.despawn(ghost)

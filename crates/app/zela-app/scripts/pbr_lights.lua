@@ -23,57 +23,19 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
 -- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
-local function f32(v)
-    return RoundF32 { of = v }
-end
-
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
-local function sin_curve(base, amp, omega)
-    local angle = Mul(f32(expr.pure(omega)), clock.time())
-    local s = f32(Sin { of = angle })
-    local prod = f32(Mul(f32(expr.pure(amp)), s))
-    return f32(Add { a = f32(expr.pure(base)), b = prod })
-end
 
 -- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
-local function orbit2d(radius, speed, initial_angle)
-    local angle = Add {
-        a = Mul(f32(expr.pure(speed)), clock.time()),
-        b = f32(expr.pure(initial_angle)),
-    }
-    return Vec3FromVec2 {
-        v = Vec2Of {
-            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
-            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
-        },
-        z = expr.pure(0.0),
-    }
-end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 0.0, y = 3.4, z = 6.8 },
+        eye = scene.vec3(0.0, 3.4, 6.8),
         fov_y = 1.05,
     },
 })
@@ -83,19 +45,19 @@ scene.spawn({
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.4, y = -0.6, z = -0.7 },
+            direction = scene.vec3(0.4, -0.6, -0.7),
         },
-        color = rgba(255, 255, 250, 255),
+        color = scene.rgba(255, 255, 250, 255),
         intensity = 1.2,
     },
 })
 
 -- 点光公转参数：{ 半径, 速度, 初始角, z 高度, range, 颜色, 强度 }
 local RIG = {
-    { 3.4, 1.3, 0.0, 1.8, 3.2, rgba(255, 70, 70, 255), 1.0 },
-    { 3.0, -1.5, 1.2, 0.6, 3.0, rgba(70, 230, 120, 255), 0.9 },
-    { 2.6, 1.7, 2.6, -0.6, 3.6, rgba(90, 150, 255, 255), 0.95 },
-    { 2.2, -1.9, 4.0, -1.8, 2.8, rgba(255, 190, 70, 255), 0.85 },
+    { 3.4, 1.3, 0.0, 1.8, 3.2, scene.rgba(255, 70, 70, 255), 1.0 },
+    { 3.0, -1.5, 1.2, 0.6, 3.0, scene.rgba(70, 230, 120, 255), 0.9 },
+    { 2.6, 1.7, 2.6, -0.6, 3.6, scene.rgba(90, 150, 255, 255), 0.95 },
+    { 2.2, -1.9, 4.0, -1.8, 2.8, scene.rgba(255, 190, 70, 255), 0.85 },
 }
 local lights = {}
 for i = 1, 4 do
@@ -120,15 +82,15 @@ end
 local hero = scene.spawn({
     Cube { half_extent = 0.85, solid = true },
     Material3D {
-        color = rgba(235, 185, 60, 255),
+        color = scene.rgba(235, 185, 60, 255),
         variant = ShaderVariant.Pbr,
         metallic = 1.0,
         roughness = 0.14,
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
+        position = scene.vec3(0.0, 0.0, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
@@ -136,23 +98,23 @@ local hero = scene.spawn({
 local matte = scene.spawn({
     Cube { half_extent = 0.5, solid = true },
     Material3D {
-        color = rgba(210, 140, 170, 255),
+        color = scene.rgba(210, 140, 170, 255),
         variant = ShaderVariant.Pbr,
         roughness = 0.95,
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = 2.7, z = 0.5 },
+        position = scene.vec3(0.0, 2.7, 0.5),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
 -- 绕行立方体：{ 公转半径, 速度, 初始角, z, 颜色, metallic, roughness }
 local MINIS = {
-    { 2.35, 1.0, 0.0, -1.6, rgba(220, 70, 60, 255), 0.0, 0.3 },
-    { 2.35, 1.3, 1.57, -0.5, rgba(200, 205, 215, 255), 1.0, 0.2 },
-    { 2.35, -1.15, 3.14, 0.5, rgba(60, 200, 120, 255), 0.4, 0.6 },
-    { 2.35, 0.8, 4.71, 1.6, rgba(90, 160, 255, 255), 0.0, 0.1 },
+    { 2.35, 1.0, 0.0, -1.6, scene.rgba(220, 70, 60, 255), 0.0, 0.3 },
+    { 2.35, 1.3, 1.57, -0.5, scene.rgba(200, 205, 215, 255), 1.0, 0.2 },
+    { 2.35, -1.15, 3.14, 0.5, scene.rgba(60, 200, 120, 255), 0.4, 0.6 },
+    { 2.35, 0.8, 4.71, 1.6, scene.rgba(90, 160, 255, 255), 0.0, 0.1 },
 }
 local minis = {}
 for i = 1, 4 do
@@ -173,7 +135,7 @@ for i = 1, 4 do
                 z = z,
             },
             rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-            scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+            scale = scene.vec3(1.0, 1.0, 1.0),
         },
     })
 end
@@ -183,14 +145,14 @@ end
 expr.bind {
     object = hero,
     target = Transform.channel.rotation,
-    root = ramp(0.0, q(TAU * 1.5), MAIN),
+    root = sugar.ramp(0.0, q(TAU * 1.5), MAIN),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
 expr.bind {
     object = hero,
     target = Transform.channel.scale,
-    root = sin_curve(1.0, 0.12, 1.1),
+    root = sugar.wave(1.0, 0.12, 1.1),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
@@ -199,7 +161,7 @@ for i = 1, 4 do
     expr.bind {
         object = minis[i],
         target = Transform.channel.position,
-        root = orbit2d(MINIS[i][1], MINIS[i][2], MINIS[i][3]),
+        root = sugar.orbit2d(MINIS[i][1], MINIS[i][2], MINIS[i][3]),
         clock = clock.scale(1.0),
         predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
     }
@@ -209,7 +171,7 @@ for i = 1, 4 do
     expr.bind {
         object = lights[i],
         target = Transform.channel.position,
-        root = orbit2d(RIG[i][1], RIG[i][2], RIG[i][3]),
+        root = sugar.orbit2d(RIG[i][1], RIG[i][2], RIG[i][3]),
         clock = clock.scale(1.0),
         predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
     }
@@ -218,7 +180,7 @@ end
 expr.bind {
     object = matte,
     target = Transform.channel.rotation,
-    root = sin_curve(0.0, q(PI * 0.5), 0.8),
+    root = sugar.wave(0.0, q(PI * 0.5), 0.8),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }

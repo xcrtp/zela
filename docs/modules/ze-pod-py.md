@@ -11,14 +11,14 @@
 - 路径：`crates/ze/pod/ze-pod-py`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-macro`
 - 被依赖（下游）：`ze-pod-tests`、`zela-app`、`zela-commands`
-- 源文件：3 个 · 1902 行
+- 源文件：3 个 · 1926 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/export.rs` | 794 | — |
-| `src/imp.rs` | 1015 | — |
+| `src/imp.rs` | 1039 | — |
 | `src/lib.rs` | 93 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

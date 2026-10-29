@@ -27,10 +27,11 @@ use ze_scene_contract::{Components, Group as NativeGroup, GroupId as NativeGroup
 use crate::content_service::PathStore;
 use crate::RegisterSceneComponent;
 use crate::types::{
-    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, CurveWindow, Dash,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
     Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
     Path, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, ShaderVariant, Stroke,
-    Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D,
+    Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D, Vec2,
+    Vec3,
 };
 use ze_scene_core::components::{
     Light as NativeLight, Material3D as NativeMaterial3D, MorphShape as NativeMorphShape,
@@ -178,6 +179,32 @@ impl SceneServicePod {
         // ── 对象 ────────────────────────────────────────────────────────
         registry.register_fn1::<Vec<Handle>, Handle>("zela.scene::spawn", scene_spawn);
         registry.register_fn1::<Handle, ()>("zela.scene::despawn", scene_despawn);
+
+        // ── 第 BB 批（阶段 4）：构造糖（值形态；展开成与 `Color{...}` 相同的值）──
+        registry.register_fn4_named::<f64, f64, f64, f64, Color>(
+            "zela.scene::rgba",
+            "f64",
+            "f64",
+            "f64",
+            "f64",
+            "zela.Color",
+            scene_rgba,
+        );
+        registry.register_fn2_named::<f64, f64, Vec2>(
+            "zela.scene::vec2",
+            "f64",
+            "f64",
+            "zela.Vec2",
+            scene_vec2,
+        );
+        registry.register_fn3_named::<f64, f64, f64, Vec3>(
+            "zela.scene::vec3",
+            "f64",
+            "f64",
+            "f64",
+            "zela.Vec3",
+            scene_vec3,
+        );
 
         // ── 内部交接（不是脚本可见 API；走 erased / `Pod::call`）────────────
         registry.register_erased(
@@ -906,5 +933,40 @@ fn scene_despawn(pod: &dyn Pod, object: Handle) {
     let mut rec = service(pod).rec.borrow_mut();
     if let Ok(handle) = rec.objects.get(&object).copied() {
         rec.encoder.despawn(handle);
+    }
+}
+
+// ─── 第 BB 批（阶段 4）：构造糖 ─────────────────────────────────────────
+//
+// 三者都只**返回值**（不碰录制状态）：`rgba(235, 120, 120, 255)` 与
+// `Color { r = 235, g = 120, b = 120, a = 255 }` 产生同一个 `PodValue`，
+// 因此产物逐字节相同（全批验收 #5）。
+
+/// 颜色分量：四舍五入后收敛到 0–255（与 8-bit 颜色表示一致）。
+fn byte_channel(value: f64) -> u8 {
+    value.round().clamp(0.0, 255.0) as u8
+}
+
+fn scene_rgba(_pod: &dyn Pod, r: f64, g: f64, b: f64, a: f64) -> Color {
+    Color {
+        r: byte_channel(r),
+        g: byte_channel(g),
+        b: byte_channel(b),
+        a: byte_channel(a),
+    }
+}
+
+fn scene_vec2(_pod: &dyn Pod, x: f64, y: f64) -> Vec2 {
+    Vec2 {
+        x: x as f32,
+        y: y as f32,
+    }
+}
+
+fn scene_vec3(_pod: &dyn Pod, x: f64, y: f64, z: f64) -> Vec3 {
+    Vec3 {
+        x: x as f32,
+        y: y as f32,
+        z: z as f32,
     }
 }

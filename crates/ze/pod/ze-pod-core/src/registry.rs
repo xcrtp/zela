@@ -85,6 +85,46 @@ impl<A1: Clone + 'static, A2: Clone + 'static, A3: Clone + 'static, R: 'static> 
     }
 }
 
+/// arity 4（第 BB 批：糖层的 `rgba(r, g, b, a)` 需要四个独立标量）。
+impl<
+        A1: Clone + 'static,
+        A2: Clone + 'static,
+        A3: Clone + 'static,
+        A4: Clone + 'static,
+        R: 'static,
+    > ErasedCall for fn(&dyn Pod, A1, A2, A3, A4) -> R
+{
+    fn invoke(&self, pod: &dyn Pod, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
+        expect_arity(args, 4)?;
+        let a1 = arg::<A1>(args, 0)?.clone();
+        let a2 = arg::<A2>(args, 1)?.clone();
+        let a3 = arg::<A3>(args, 2)?.clone();
+        let a4 = arg::<A4>(args, 3)?.clone();
+        Ok(Box::new((*self)(pod, a1, a2, a3, a4)))
+    }
+}
+
+/// arity 5（第 BB 批：糖层的 `ramp2(ax, ay, bx, by, dur)` 需要五个独立标量）。
+impl<
+        A1: Clone + 'static,
+        A2: Clone + 'static,
+        A3: Clone + 'static,
+        A4: Clone + 'static,
+        A5: Clone + 'static,
+        R: 'static,
+    > ErasedCall for fn(&dyn Pod, A1, A2, A3, A4, A5) -> R
+{
+    fn invoke(&self, pod: &dyn Pod, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
+        expect_arity(args, 5)?;
+        let a1 = arg::<A1>(args, 0)?.clone();
+        let a2 = arg::<A2>(args, 1)?.clone();
+        let a3 = arg::<A3>(args, 2)?.clone();
+        let a4 = arg::<A4>(args, 3)?.clone();
+        let a5 = arg::<A5>(args, 4)?.clone();
+        Ok(Box::new((*self)(pod, a1, a2, a3, a4, a5)))
+    }
+}
+
 /// 适配器：把 `Fn(&dyn Pod, &[&dyn Any]) -> Result<..>` 包成 [`ErasedCall`]。
 ///
 /// （不能对闭包做 blanket impl —— 那会与上面的 fn 指针 impl 冲突。）
@@ -237,6 +277,76 @@ impl RegistryPod {
         let name = QualifiedName::from_path(
             path,
             vec![param0.to_string(), param1.to_string(), param2.to_string()],
+            ret,
+        );
+        self.put(name, Some(Box::new(f)), Box::new(f));
+    }
+
+    /// 注册 arity 4 的 typed 函数（显式类型名）。
+    ///
+    /// 第 BB 批：糖层的 `rgba(r, g, b, a)` 用四个独立标量（比一个 4 字段结构体
+    /// 更接近作者的写法）。零额外机制：与 arity 1–3 走同一条 `put` 路径。
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_fn4_named<A1, A2, A3, A4, R>(
+        &mut self,
+        path: &str,
+        param0: PodTypeName,
+        param1: PodTypeName,
+        param2: PodTypeName,
+        param3: PodTypeName,
+        ret: PodTypeName,
+        f: fn(&dyn Pod, A1, A2, A3, A4) -> R,
+    ) where
+        A1: Clone + 'static,
+        A2: Clone + 'static,
+        A3: Clone + 'static,
+        A4: Clone + 'static,
+        R: 'static,
+    {
+        let name = QualifiedName::from_path(
+            path,
+            vec![
+                param0.to_string(),
+                param1.to_string(),
+                param2.to_string(),
+                param3.to_string(),
+            ],
+            ret,
+        );
+        self.put(name, Some(Box::new(f)), Box::new(f));
+    }
+
+    /// 注册 arity 5 的 typed 函数（显式类型名）。
+    ///
+    /// 第 BB 批：糖层的 `ramp2(ax, ay, bx, by, dur)` 用五个独立标量。
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_fn5_named<A1, A2, A3, A4, A5, R>(
+        &mut self,
+        path: &str,
+        param0: PodTypeName,
+        param1: PodTypeName,
+        param2: PodTypeName,
+        param3: PodTypeName,
+        param4: PodTypeName,
+        ret: PodTypeName,
+        f: fn(&dyn Pod, A1, A2, A3, A4, A5) -> R,
+    ) where
+        A1: Clone + 'static,
+        A2: Clone + 'static,
+        A3: Clone + 'static,
+        A4: Clone + 'static,
+        A5: Clone + 'static,
+        R: 'static,
+    {
+        let name = QualifiedName::from_path(
+            path,
+            vec![
+                param0.to_string(),
+                param1.to_string(),
+                param2.to_string(),
+                param3.to_string(),
+                param4.to_string(),
+            ],
             ret,
         );
         self.put(name, Some(Box::new(f)), Box::new(f));

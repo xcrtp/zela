@@ -18,7 +18,7 @@ scene.spawn({
 -- 3D 相机 + 立方体（Lambert ⇒ 可见明暗，证明它走的是透视而不是屏幕平面）。
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 3.2, y = 2.4, z = 4.2 },
+        eye = scene.vec3(3.2, 2.4, 4.2),
         fov_y = 0.9,
     },
 })
@@ -31,7 +31,7 @@ scene.spawn({
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.3, y = -0.5, z = -0.8 },
+            direction = scene.vec3(0.3, -0.5, -0.8),
         },
         color = Color { r = 255, g = 245, b = 230, a = 255 },
         intensity = 1.1,
@@ -45,8 +45,8 @@ scene.spawn({
 })
 scene.spawn({
     Arrow {
-        from = Vec2 { x = 3.2, y = -3.0 },
-        to = Vec2 { x = 5.0, y = -1.2 },
+        from = scene.vec2(3.2, -3.0),
+        to = scene.vec2(5.0, -1.2),
         head_length = 0.6,
         head_width = 0.4,
     },

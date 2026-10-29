@@ -56,6 +56,8 @@ struct ScriptState {
 struct BinderEntry {
     /// 协商 + 建语言侧命名空间。
     bind: fn(&mut Context, &str, Arc<dyn Pod>) -> Result<(), PodError>,
+    /// 语言侧的全局命名空间名（同一个 Service 可以有多个能力 → 多个命名空间）。
+    global: String,
     /// 自述需求（`required` 由注册时决定）。
     requirements: Vec<ServiceRequirement>,
 }
@@ -67,8 +69,8 @@ pub struct JsPod {
     id: PodId,
     names: Vec<QualifiedName>,
     state: RefCell<ScriptState>,
-    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**）。
-    binders: RefCell<BTreeMap<String, BinderEntry>>,
+    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**；同一 Service 可有多个能力）。
+    binders: RefCell<BTreeMap<String, Vec<BinderEntry>>>,
     requirements_fn: RequirementsFn,
     inject_fn: InjectFn,
     run_fn: RunFn,
@@ -114,17 +116,29 @@ impl JsPod {
     /// `required = false` ⇒ 该 Service 是 **optional**：没有提供者也能装配，
     /// 只是 JS 全局对象上不会出现对应的命名空间。
     pub fn register_capability<C: Capability<'static>>(&self, service: &str, required: bool) {
+        self.register_capability_as::<C>(service, service, required);
+    }
+
+    /// 注册一个能力，并指定它在 JS 里的全局命名空间（可以与 Service 名不同）。
+    pub fn register_capability_as<C: Capability<'static>>(
+        &self,
+        service: &str,
+        global: &str,
+        required: bool,
+    ) {
         let requirements = C::signatures()
             .iter()
             .map(|sig| ServiceRequirement::new(service, &sig.qualified().to_string(), required))
             .collect();
-        self.binders.borrow_mut().insert(
-            service.to_string(),
-            BinderEntry {
+        self.binders
+            .borrow_mut()
+            .entry(service.to_string())
+            .or_default()
+            .push(BinderEntry {
                 bind: bind_capability::<C>,
+                global: global.to_string(),
                 requirements,
-            },
-        );
+            });
     }
 
     /// 当前 JS 全局对象上某个命名空间注册的函数名（排序后）。
@@ -260,20 +274,29 @@ fn requirements_impl(pod: &dyn Pod) -> Vec<ServiceRequirement> {
     this.binders
         .borrow()
         .values()
-        .flat_map(|entry| entry.requirements.iter().cloned())
+        .flat_map(|entries| entries.iter().flat_map(|entry| entry.requirements.iter().cloned()))
         .collect()
 }
 
 fn inject_impl(pod: &dyn Pod, service: String, service_pod: Arc<dyn Pod>) -> Result<(), PodError> {
     let this = js_pod(pod);
-    let binder = this.binders.borrow().get(&service).map(|entry| entry.bind);
-    let Some(binder) = binder else {
-        return Err(PodError::CallFailed(format!(
-            "未知 Service `{service}`（能力未注册；先调用 `JsPod::register_capability`）"
-        )));
+    let entries: Vec<(fn(&mut Context, &str, Arc<dyn Pod>) -> Result<(), PodError>, String)> = {
+        match this.binders.borrow().get(&service) {
+            Some(entries) => entries
+                .iter()
+                .map(|entry| (entry.bind, entry.global.clone()))
+                .collect(),
+            None => {
+                return Err(PodError::CallFailed(format!(
+                    "未知 Service `{service}`（能力未注册；先调用 `JsPod::register_capability`）"
+                )));
+            }
+        }
     };
     let mut state = this.state.borrow_mut();
-    binder(&mut state.context, &service, Arc::clone(&service_pod))?;
+    for (binder, global) in entries {
+        binder(&mut state.context, &global, Arc::clone(&service_pod))?;
+    }
     if service == ENTRY_SERVICE {
         state.scene = Some(service_pod);
     }

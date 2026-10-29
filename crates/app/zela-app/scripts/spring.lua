@@ -18,22 +18,7 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- `Ramp` / `Ramp2` 的算子化形态（显式时钟；`t` 是时钟局部时间）。
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- `Transform.position` 的字段类型是 `Vec3`；旧的 `Ramp2`（Vec2）在这里显式补 z。
 local function move2(ax, ay, bx, by, dur)
@@ -57,16 +42,16 @@ end
 scene.spawn({
     Polyline {
         points = {
-            Vec2 { x = -2.4, y = q(FLOOR_Y) },
-            Vec2 { x = 2.4, y = q(FLOOR_Y) },
+            scene.vec2(-2.4, q(FLOOR_Y)),
+            scene.vec2(2.4, q(FLOOR_Y)),
         },
         closed = false,
     },
-    Stroke { width = 2.0, color = rgba(150, 150, 175, 255) },
+    Stroke { width = 2.0, color = scene.rgba(150, 150, 175, 255) },
 })
 
 local camera = scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.7 }, scale = 55.0 },
+    Camera2D { center = scene.vec2(0.0, 0.7), scale = 55.0 },
 })
 
 -- 一只小球的完整弹跳：下落（挤压）→ 弹起（拉伸）→ 回落归一。
@@ -96,14 +81,14 @@ local function hop(x, color)
     expr.bind {
         object = b,
         target = Transform.channel.scale,
-        root = ramp(1.0, 0.7, DOWN),
+        root = sugar.ramp(1.0, 0.7, DOWN),
         clock = clock.shift(down),
         predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
     }
     expr.bind {
         object = b,
         target = Opacity.channel.value,
-        root = ramp(0.0, 1.0, 0.3),
+        root = sugar.ramp(0.0, 1.0, 0.3),
         clock = clock.shift(down),
         predicate = Predicate.Of { expr = clock.range(0.0, DOWN) },
     }
@@ -119,7 +104,7 @@ local function hop(x, color)
     expr.bind {
         object = b,
         target = Transform.channel.scale,
-        root = ramp(0.7, 1.15, UP),
+        root = sugar.ramp(0.7, 1.15, UP),
         clock = clock.shift(up),
         predicate = Predicate.Of { expr = clock.range(0.0, UP) },
     }
@@ -128,7 +113,7 @@ local function hop(x, color)
     expr.bind {
         object = b,
         target = Transform.channel.scale,
-        root = ramp(1.15, 1.0, SETTLE),
+        root = sugar.ramp(1.15, 1.0, SETTLE),
         clock = clock.shift(settle),
         predicate = Predicate.Of { expr = clock.range(0.0, SETTLE) },
     }
@@ -137,17 +122,17 @@ local function hop(x, color)
 end
 
 -- 三只球错峰弹跳：旧 `scene.wait` 只推进游标（没有写入）。
-hop(-1.2, rgba(255, 120, 120, 255))
+hop(-1.2, scene.rgba(255, 120, 120, 255))
 cursor = cursor + 0.4
-hop(0.0, rgba(120, 220, 130, 255))
+hop(0.0, scene.rgba(120, 220, 130, 255))
 cursor = cursor + 0.4
-hop(1.2, rgba(140, 170, 255, 255))
+hop(1.2, scene.rgba(140, 170, 255, 255))
 
 -- 收尾推近（最后一段）。
 expr.bind {
     object = camera,
     target = Camera2D.channel.scale,
-    root = ramp(55.0, 74.0, 1.3),
+    root = sugar.ramp(55.0, 74.0, 1.3),
     clock = clock.shift(cursor),
     predicate = Predicate.Of { expr = clock.range(0.0, 1.3) },
 }

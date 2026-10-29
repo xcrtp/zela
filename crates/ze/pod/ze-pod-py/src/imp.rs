@@ -638,8 +638,8 @@ pub struct PyPod {
     registry: RegistryPod,
     module: Py<PyModule>,
     injected: Mutex<Vec<String>>,
-    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**）。
-    binders: Mutex<BTreeMap<String, BinderEntry>>,
+    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**；同一 Service 可有多个能力）。
+    binders: Mutex<BTreeMap<String, Vec<BinderEntry>>>,
     /// 已注入 Service 的线程安全视图（`Drop` 时随 `Arc` 一起释放）。
     slots: Mutex<HashMap<String, Arc<dyn SyncPod>>>,
     /// capability 包树（`zela` 等）；脚本执行前安装到 `sys.modules`。
@@ -652,6 +652,8 @@ pub struct PyPod {
 struct BinderEntry {
     /// 协商 + 建 Python 侧模块。
     bind: BindFn,
+    /// 能力在脚本里的命名空间名（缺省 = Service 名；`zela.sugar` 与 `expr` 同源）。
+    global: String,
     /// 自述需求（`required` 由注册时决定）。
     requirements: Vec<ServiceRequirement>,
 }
@@ -724,6 +726,16 @@ impl PyPod {
     ///
     /// `required = false` ⇒ 该 Service 是 **optional**：没有提供者也能装配。
     pub fn register_capability<C: Capability<'static>>(&self, service: &str, required: bool) {
+        self.register_capability_as::<C>(service, service, required);
+    }
+
+    /// 注册一个能力，并指定它在脚本里的命名空间名（可以与 Service 名不同）。
+    pub fn register_capability_as<C: Capability<'static>>(
+        &self,
+        service: &str,
+        global: &str,
+        required: bool,
+    ) {
         let requirements = C::signatures()
             .iter()
             .map(|sig| ServiceRequirement::new(service, &sig.qualified().to_string(), required))
@@ -731,13 +743,13 @@ impl PyPod {
         self.binders
             .lock()
             .expect("Python 绑定表锁中毒")
-            .insert(
-                service.to_string(),
-                BinderEntry {
-                    bind: bind_capability::<C>,
-                    requirements,
-                },
-            );
+            .entry(service.to_string())
+            .or_default()
+            .push(BinderEntry {
+                bind: bind_capability::<C>,
+                global: global.to_string(),
+                requirements,
+            });
     }
 
     /// 宿主 → 脚本：执行一段 Python 源码，取回入口 Service 的产物 `T`。
@@ -812,7 +824,7 @@ fn py_requirements(pod: &dyn Pod) -> Vec<ServiceRequirement> {
         .lock()
         .expect("Python 绑定表锁中毒")
         .values()
-        .flat_map(|entry| entry.requirements.iter().cloned())
+        .flat_map(|entries| entries.iter().flat_map(|entry| entry.requirements.iter().cloned()))
         .collect()
 }
 
@@ -832,16 +844,23 @@ fn py_inject_sync(
     service_pod: Arc<dyn SyncPod>,
 ) -> Result<(), PodError> {
     let this = py_pod(pod);
-    let binder = this
-        .binders
-        .lock()
-        .expect("Python 绑定表锁中毒")
-        .get(&service)
-        .map(|entry| entry.bind);
-    let Some(binder) = binder else {
-        return Err(PodError::CallFailed(format!(
-            "未知 Service `{service}`（能力未注册；先调用 `PyPod::register_capability`）"
-        )));
+    let entries: Vec<(BindFn, String)> = {
+        match this
+            .binders
+            .lock()
+            .expect("Python 绑定表锁中毒")
+            .get(&service)
+        {
+            Some(entries) => entries
+                .iter()
+                .map(|entry| (entry.bind, entry.global.clone()))
+                .collect(),
+            None => {
+                return Err(PodError::CallFailed(format!(
+                    "未知 Service `{service}`（能力未注册；先调用 `PyPod::register_capability`）"
+                )));
+            }
+        }
     };
 
     this.slots
@@ -853,7 +872,12 @@ fn py_inject_sync(
         .expect("Python 注入表锁中毒")
         .push(service.clone());
 
-    let result = Python::attach(|py| binder(py, this, &service, service_pod));
+    let result = Python::attach(|py| -> PyResult<()> {
+        for (binder, global) in entries {
+            binder(py, this, &global, Arc::clone(&service_pod))?;
+        }
+        Ok(())
+    });
     if let Err(error) = result {
         this.slots
             .lock()

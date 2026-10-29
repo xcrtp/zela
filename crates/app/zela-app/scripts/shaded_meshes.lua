@@ -16,8 +16,8 @@
 -- 相机：从 +Z 斜上方看向内角。
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 2.6, y = 2.2, z = 6.0 },
-        target = Vec3 { x = 0.0, y = 0.8, z = -0.4 },
+        eye = scene.vec3(2.6, 2.2, 6.0),
+        target = scene.vec3(0.0, 0.8, -0.4),
         fov_y = 0.75,
     },
 })
@@ -26,7 +26,7 @@ scene.spawn({
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.45, y = -0.55, z = -0.7 },
+            direction = scene.vec3(0.45, -0.55, -0.7),
         },
         color = Color { r = 255, g = 246, b = 232, a = 255 },
         intensity = 2.6,
@@ -39,9 +39,9 @@ scene.spawn({
         intensity = 1.2,
     },
     Transform3D {
-        position = Vec3 { x = -2.4, y = 2.0, z = 2.4 },
+        position = scene.vec3(-2.4, 2.0, 2.4),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
@@ -54,9 +54,9 @@ scene.spawn({
         roughness = 0.85,
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = 1.6, z = -1.2 },
+        position = scene.vec3(0.0, 1.6, -1.2),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 3.6, y = 1.6, z = 0.08 },
+        scale = scene.vec3(3.6, 1.6, 0.08),
     },
 })
 
@@ -69,9 +69,9 @@ scene.spawn({
         roughness = 0.95,
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = 0.0, z = 0.4 },
+        position = scene.vec3(0.0, 0.0, 0.4),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 3.6, y = 0.08, z = 2.0 },
+        scale = scene.vec3(3.6, 0.08, 2.0),
     },
 })
 
@@ -84,8 +84,8 @@ scene.spawn({
         roughness = 0.18,
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = 0.85, z = 0.2 },
+        position = scene.vec3(0.0, 0.85, 0.2),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 0.7, y = 0.7, z = 0.7 },
+        scale = scene.vec3(0.7, 0.7, 0.7),
     },
 })

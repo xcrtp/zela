@@ -46,8 +46,8 @@ scene.spawn({
 -- Arrow × Fill / Stroke。
 scene.spawn({
     Arrow {
-        from = Vec2 { x = -2.0, y = 3.0 },
-        to = Vec2 { x = 1.5, y = 3.0 },
+        from = scene.vec2(-2.0, 3.0),
+        to = scene.vec2(1.5, 3.0),
         head_length = 0.9,
         head_width = 0.6,
     },
@@ -56,8 +56,8 @@ scene.spawn({
 })
 scene.spawn({
     Arrow {
-        from = Vec2 { x = -2.0, y = -3.0 },
-        to = Vec2 { x = 1.5, y = -3.0 },
+        from = scene.vec2(-2.0, -3.0),
+        to = scene.vec2(1.5, -3.0),
         head_length = 0.9,
         head_width = 0.6,
     },

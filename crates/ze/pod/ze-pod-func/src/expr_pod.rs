@@ -408,6 +408,47 @@ impl ExprPod {
         );
         // 第 BB 批（算子扩充）：29 个 WGSL 标准库算子由宏一次登记。
         register_numeric_ops(&mut registry);
+        // 第 BB 批（阶段 4）：糖层（独立 namespace，不进 `zela.math` 的签名）。
+        registry.register_fn3_named::<f64, f64, f64, Handle>(
+            "zela.sugar::ramp",
+            "f64",
+            "f64",
+            "f64",
+            HANDLE,
+            sugar_ramp,
+        );
+        registry.register_fn5_named::<f64, f64, f64, f64, f64, Handle>(
+            "zela.sugar::ramp2",
+            "f64",
+            "f64",
+            "f64",
+            "f64",
+            "f64",
+            HANDLE,
+            sugar_ramp2,
+        );
+        registry.register_fn3_named::<f64, f64, f64, Handle>(
+            "zela.sugar::orbit2d",
+            "f64",
+            "f64",
+            "f64",
+            HANDLE,
+            sugar_orbit2d,
+        );
+        registry.register_fn3_named::<f64, f64, f64, Handle>(
+            "zela.sugar::wave",
+            "f64",
+            "f64",
+            "f64",
+            HANDLE,
+            sugar_wave,
+        );
+        registry.register_fn1_named::<Handle, Handle>(
+            "zela.sugar::f32",
+            HANDLE,
+            HANDLE,
+            sugar_narrow,
+        );
 
         Self {
             id,
@@ -596,6 +637,34 @@ impl Pod for ExprPod {
             )),
             "bind_each" => Box::new(bind_each(self, arg::<BindEachSpec>(args, 0)?.clone())),
             "exists" => Box::new(exists_ctor(self, arg::<ExistsSpec>(args, 0)?.clone())),
+            // 糖层（第 BB 批）：短名与 `zela.math` 不重名，直接在这里分派。
+            "ramp" => Box::new(sugar_ramp(
+                self,
+                *arg::<f64>(args, 0)?,
+                *arg::<f64>(args, 1)?,
+                *arg::<f64>(args, 2)?,
+            )),
+            "ramp2" => Box::new(sugar_ramp2(
+                self,
+                *arg::<f64>(args, 0)?,
+                *arg::<f64>(args, 1)?,
+                *arg::<f64>(args, 2)?,
+                *arg::<f64>(args, 3)?,
+                *arg::<f64>(args, 4)?,
+            )),
+            "orbit2d" => Box::new(sugar_orbit2d(
+                self,
+                *arg::<f64>(args, 0)?,
+                *arg::<f64>(args, 1)?,
+                *arg::<f64>(args, 2)?,
+            )),
+            "wave" => Box::new(sugar_wave(
+                self,
+                *arg::<f64>(args, 0)?,
+                *arg::<f64>(args, 1)?,
+                *arg::<f64>(args, 2)?,
+            )),
+            "f32" => Box::new(sugar_narrow(self, *arg::<Handle>(args, 0)?)),
             other => {
                 // 第 BB 批算子（一次展开的分派表）先试；不命中才是未知函数。
                 if let Some(result) = dispatch_numeric_op(self, other, args) {
@@ -741,6 +810,93 @@ numeric_ops! {
     cross_ctor: "cross", CrossSpec, "zela.math.Cross", [a, b];
     reflect_ctor: "reflect", ReflectSpec, "zela.math.Reflect", [e1, e2];
     faceforward_ctor: "faceforward", FaceforwardSpec, "zela.math.Faceforward", [e1, e2, e3];
+}
+
+// ─── 糖层（第 BB 批，阶段 4）────────────────────────────────────────────
+//
+// 全部是**装配期展开**：每个糖构造出与脚本手写完全相同的 `Expr` 树
+// （因此产物逐字节相同），本身不是新的 payload 概念。
+// 等价 core 写法登记在 `crate::sugar::SUGAR`（有门禁用例逐条核对）。
+
+/// `clamp(t / dur, 0, 1)`：`ramp` / `ramp2` 共用的进度量（`t` = 绑定时钟局部时间）。
+fn sugar_progress(pod: &dyn Pod, dur: f64) -> Handle {
+    let scaled = call_args(
+        pod,
+        "scale",
+        &[pure(pod, 1.0 / dur), clock_time(pod)],
+    );
+    call_args(pod, "clamp", &[scaled, pure(pod, 0.0), pure(pod, 1.0)])
+}
+
+/// `ramp(from, to, dur)`。
+fn sugar_ramp(pod: &dyn Pod, from: f64, to: f64, dur: f64) -> Handle {
+    call_args(
+        pod,
+        "mix",
+        &[pure(pod, from), pure(pod, to), sugar_progress(pod, dur)],
+    )
+}
+
+/// `ramp2(ax, ay, bx, by, dur)`。
+fn sugar_ramp2(pod: &dyn Pod, ax: f64, ay: f64, bx: f64, by: f64, dur: f64) -> Handle {
+    let a = call_args(pod, "vec2", &[pure(pod, ax), pure(pod, ay)]);
+    let b = call_args(pod, "vec2", &[pure(pod, bx), pure(pod, by)]);
+    call_args(pod, "mix", &[a, b, sugar_progress(pod, dur)])
+}
+
+/// `f32(x)`：落到 f32 精度（= `RoundF32 { of = x }`）。
+///
+/// 展开用**旧算子名** `round_f32`（与脚本现有写法逐字节相同）；新名字
+/// `narrow_f32` 是同一算子的别名（见 GAPS `BB-08`）。
+fn sugar_narrow(pod: &dyn Pod, of: Handle) -> Handle {
+    call_args(pod, "round_f32", &[of])
+}
+
+/// `wave(base, amp, omega)`：`base + amp · sin(omega · t)`（每步落 f32）。
+fn sugar_wave(pod: &dyn Pod, base: f64, amp: f64, omega: f64) -> Handle {
+    let angle = call_args(
+        pod,
+        "mul",
+        &[sugar_narrow(pod, pure(pod, omega)), clock_time(pod)],
+    );
+    let sine = sugar_narrow(pod, call_args(pod, "sin", &[angle]));
+    let product = sugar_narrow(
+        pod,
+        call_args(pod, "mul", &[sugar_narrow(pod, pure(pod, amp)), sine]),
+    );
+    sugar_narrow(
+        pod,
+        call_args(
+            pod,
+            "add",
+            &[sugar_narrow(pod, pure(pod, base)), product],
+        ),
+    )
+}
+
+/// `orbit2d(radius, speed, phase)`：`Vec3 { x = r cos θ, y = r sin θ, z = 0 }`。
+fn sugar_orbit2d(pod: &dyn Pod, radius: f64, speed: f64, phase: f64) -> Handle {
+    let angle = call_args(
+        pod,
+        "add",
+        &[
+            call_args(
+                pod,
+                "mul",
+                &[sugar_narrow(pod, pure(pod, speed)), clock_time(pod)],
+            ),
+            sugar_narrow(pod, pure(pod, phase)),
+        ],
+    );
+    let radius = sugar_narrow(pod, pure(pod, radius));
+    let axis = |op: &str| {
+        sugar_narrow(
+            pod,
+            call_args(pod, "mul", &[radius, sugar_narrow(pod, call_args(pod, op, &[angle]))]),
+        )
+    };
+    let xy = call_args(pod, "vec2", &[axis("cos"), axis("sin")]);
+    call_args(pod, "vec3_from_vec2", &[xy, pure(pod, 0.0)])
 }
 
 fn pure(pod: &dyn Pod, value: f64) -> Handle {

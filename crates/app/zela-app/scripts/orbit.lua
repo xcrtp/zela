@@ -22,50 +22,12 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
 -- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
-local function f32(v)
-    return RoundF32 { of = v }
-end
-
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
-local function sin_curve(base, amp, omega)
-    local angle = Mul(f32(expr.pure(omega)), clock.time())
-    local s = f32(Sin { of = angle })
-    local prod = f32(Mul(f32(expr.pure(amp)), s))
-    return f32(Add { a = f32(expr.pure(base)), b = prod })
-end
 
 -- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
-local function orbit2d(radius, speed, initial_angle)
-    local angle = Add {
-        a = Mul(f32(expr.pure(speed)), clock.time()),
-        b = f32(expr.pure(initial_angle)),
-    }
-    return Vec3FromVec2 {
-        v = Vec2Of {
-            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
-            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
-        },
-        z = expr.pure(0.0),
-    }
-end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
@@ -95,24 +57,24 @@ end
 -- ── 天体 ────────────────────────────────────────────────────────────
 local sun = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.5 },
-    Fill { color = rgba(255, 225, 130, 255) },
+    Fill { color = scene.rgba(255, 225, 130, 255) },
 })
 
 local planet1 = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.16 },
-    Fill { color = rgba(255, 150, 90, 255) },
+    Fill { color = scene.rgba(255, 150, 90, 255) },
     Transform { x = q(R1), y = 0.0 },
     Opacity { value = 0.0 },
 })
 local planet2 = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.24 },
-    Fill { color = rgba(120, 190, 255, 255) },
+    Fill { color = scene.rgba(120, 190, 255, 255) },
     Transform { x = q(R2), y = 0.0 },
     Opacity { value = 0.0 },
 })
 local moon = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.07 },
-    Fill { color = rgba(235, 235, 245, 255) },
+    Fill { color = scene.rgba(235, 235, 245, 255) },
     Transform { x = 0.32, y = 0.0 },
     Opacity { value = 0.0 },
     Parent { parent = planet2 },
@@ -121,19 +83,19 @@ local moon = scene.spawn({
 -- 轨道环：初态不可见，预演段先后书写，主段淡入。
 local ring1 = scene.spawn({
     Reveal { points = ring_points(R1), closed = true },
-    Stroke { width = 1.0, color = rgba(90, 90, 120, 255) },
+    Stroke { width = 1.0, color = scene.rgba(90, 90, 120, 255) },
     Opacity { value = 0.0 },
 })
 local ring2 = scene.spawn({
     Reveal { points = ring_points(R2), closed = true },
-    Stroke { width = 1.0, color = rgba(90, 90, 120, 255) },
+    Stroke { width = 1.0, color = scene.rgba(90, 90, 120, 255) },
     Opacity { value = 0.0 },
 })
 
 -- 流星：初态不可见，主段结束后划过并淡出。
 local comet = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.07 },
-    Fill { color = rgba(255, 255, 255, 255) },
+    Fill { color = scene.rgba(255, 255, 255, 255) },
     Opacity { value = 0.0 },
 })
 
@@ -141,14 +103,14 @@ local comet = scene.spawn({
 expr.bind {
     object = ring1,
     target = Reveal.channel["end"],
-    root = ramp(0.0, 1.0, PRE_RUN),
+    root = sugar.ramp(0.0, 1.0, PRE_RUN),
     clock = clock.shift(0.0),
     predicate = Predicate.Of { expr = clock.range(0.0, PRE_RUN) },
 }
 expr.bind {
     object = ring2,
     target = Reveal.channel["end"],
-    root = ramp(0.0, 1.0, PRE_RUN),
+    root = sugar.ramp(0.0, 1.0, PRE_RUN),
     clock = clock.shift(PRE_RUN),
     predicate = Predicate.Of { expr = clock.range(0.0, PRE_RUN) },
 }
@@ -157,28 +119,28 @@ expr.bind {
 expr.bind {
     object = sun,
     target = Transform.channel.scale,
-    root = sin_curve(1.0, 0.12, 1.5),
+    root = sugar.wave(1.0, 0.12, 1.5),
     clock = clock.shift(MAIN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
 expr.bind {
     object = planet1,
     target = Transform.channel.position,
-    root = orbit2d(q(R1), q(TAU / 3.0), 0.0),
+    root = sugar.orbit2d(q(R1), q(TAU / 3.0), 0.0),
     clock = clock.shift(MAIN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
 expr.bind {
     object = planet2,
     target = Transform.channel.position,
-    root = orbit2d(q(R2), q(TAU / 6.0), 0.0),
+    root = sugar.orbit2d(q(R2), q(TAU / 6.0), 0.0),
     clock = clock.shift(MAIN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
 expr.bind {
     object = moon,
     target = Transform.channel.position,
-    root = orbit2d(0.32, q(TAU / 0.9), 0.0),
+    root = sugar.orbit2d(0.32, q(TAU / 0.9), 0.0),
     clock = clock.shift(MAIN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
 }
@@ -186,7 +148,7 @@ for _, object in ipairs({ ring1, ring2, planet1, planet2, moon }) do
     expr.bind {
         object = object,
         target = Opacity.channel.value,
-        root = ramp(0.0, 1.0, 1.0),
+        root = sugar.ramp(0.0, 1.0, 1.0),
         clock = clock.shift(MAIN_START),
         predicate = Predicate.Of { expr = clock.range(0.0, MAIN) },
     }
@@ -214,7 +176,7 @@ expr.bind {
 expr.bind {
     object = comet,
     target = Opacity.channel.value,
-    root = ramp(1.0, 0.0, COMET_DUR),
+    root = sugar.ramp(1.0, 0.0, COMET_DUR),
     clock = clock.shift(COMET_START),
     predicate = Predicate.Of { expr = clock.range(0.0, COMET_DUR) },
 }

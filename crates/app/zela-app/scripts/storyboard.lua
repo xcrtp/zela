@@ -20,29 +20,6 @@ local N = 128
 local FORMULA_WRITE_SECONDS = 1.0
 
 -- `Ramp` / `Ramp2` 的算子化形态（显式时钟；`t` 是时钟局部时间）。
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
-
-local function ramp2(ax, ay, bx, by, dur)
-    return Mix {
-        a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
-        b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- 旧的 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
@@ -64,7 +41,7 @@ local camera = scene.spawn({
 local points = {}
 for i = 0, N do
     local x = -math.pi + i * (2 * math.pi / N)
-    points[#points + 1] = Vec2 { x = x, y = math.sin(x) }
+    points[#points + 1] = scene.vec2(x, math.sin(x))
 end
 local curve = scene.spawn({
     Reveal { points = points, closed = false },
@@ -100,8 +77,8 @@ end
 -- ── T2：箭头（实心，指向曲线峰值）────────────────────────────────────
 scene.spawn({
     Arrow {
-        from = Vec2 { x = 0.2, y = 2.1 },
-        to = Vec2 { x = math.pi / 2 - 0.15, y = 1.0 + 0.15 },
+        from = scene.vec2(0.2, 2.1),
+        to = scene.vec2(math.pi / 2 - 0.15, 1.0 + 0.15),
         head_length = 0.25,
         head_width = 0.25,
     },
@@ -122,14 +99,14 @@ expr.bind {
 expr.bind {
     object = camera,
     target = Camera2D.channel.scale,
-    root = ramp(40.0, 110.0, 1.0),
+    root = sugar.ramp(40.0, 110.0, 1.0),
     clock = clock.shift(2.5),
     predicate = Predicate.Of { expr = clock.range(0.0, 1.0) },
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.center,
-    root = ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
+    root = sugar.ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
     clock = clock.shift(2.5),
     predicate = Predicate.Of { expr = clock.range(0.0, 1.0) },
 }
@@ -141,7 +118,7 @@ if #formula_handles > 0 then
         expr.bind {
             object = formula_handles[i],
             target = Reveal.channel["end"],
-            root = ramp(0.0, 1.0, each),
+            root = sugar.ramp(0.0, 1.0, each),
             clock = clock.shift(start),
             predicate = Predicate.Of { expr = clock.range(0.0, each) },
         }

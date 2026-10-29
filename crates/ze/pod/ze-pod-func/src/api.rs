@@ -897,6 +897,52 @@ pub const MATH_API_VERSION: &str = "22";
 /// `zela.math` 的 `hash(signatures())` 基线。
 pub const MATH_API_FINGERPRINT: u64 = 5_482_242_184_379_522_694;
 
+/// **糖层能力**（第 BB 批，阶段 4）：装配期展开成 `zela.math` 的 core 算子组合。
+///
+/// # 为什么是独立 namespace（不是 `zela.math` 的字段）
+///
+/// 加一个 `zela.math` 字段 ⇒ `signatures()` 变 ⇒ `LIBRARY_VERSION` 必须递增 ⇒
+/// **所有表达式 payload 变化**。糖的定位是"改它不 bump、不重录"（计划 §5.1），
+/// 所以它挂在 `zela.sugar`：独立 namespace、独立版本，不碰 `zela.math` 的签名。
+///
+/// # 形式：函数（不是表构造器）
+///
+/// 算子是表构造器 `Mix { a = … }`，糖是函数 `sugar.ramp(0, 1, 0.5)` —— 形式差异
+/// 是**有意的**：一眼能看出哪个是糖，以及糖该去哪里找等价 core 写法
+/// （每个糖的文档都带「核心形态」，见 [`crate::sugar`] 的门禁用例）。
+///
+/// # 签名吃 `f64`
+///
+/// 糖的数值实参是 `f64`（不是 `Handle`）⇒ 作者不再写 `expr.pure(0.0)`；
+/// 展开时由糖自己补 `pure` 叶子。
+#[capability(
+    namespace = "zela.sugar",
+    version = "1",
+    description = "表达式糖：装配期展开成 zela.math 的 core 算子组合（不进 payload）",
+    bindings
+)]
+pub struct SugarApi<'a> {
+    /// `ramp(from, to, dur)`：`Mix{pure(from), pure(to), Clamp{Scale{1/dur, t}, 0, 1}}`。
+    pub ramp: fn(&'a dyn Pod, from: f64, to: f64, dur: f64) -> Handle,
+
+    /// `ramp2(ax, ay, bx, by, dur)`：`ramp` 的 `Vec2` 版本（`Vec2Of` 两端）。
+    pub ramp2: fn(&'a dyn Pod, ax: f64, ay: f64, bx: f64, by: f64, dur: f64) -> Handle,
+
+    /// `orbit2d(radius, speed, phase)`：绕原点的圆轨道（`Vec3`，z = 0）。
+    pub orbit2d: fn(&'a dyn Pod, radius: f64, speed: f64, phase: f64) -> Handle,
+
+    /// `wave(base, amp, omega)`：`base + amp · sin(omega · t)`（f32 落位）。
+    pub wave: fn(&'a dyn Pod, base: f64, amp: f64, omega: f64) -> Handle,
+
+    /// `f32(x)`：把表达式落到 f32 精度（= `RoundF32 { of = x }`）。
+    pub f32: fn(&'a dyn Pod, of: Handle) -> Handle,
+}
+
+/// `zela.sugar` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
+pub const SUGAR_API_VERSION: &str = "1";
+/// `zela.sugar` 的 `hash(signatures())` 基线。
+pub const SUGAR_API_FINGERPRINT: u64 = 7_485_630_297_182_827_369;
+
 /// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
 ///
 /// 这是 `zela.math` 侧的唯一一份：`infer` 用它给 `Node::Method` 定型。
@@ -930,6 +976,21 @@ mod fingerprint_tests {
             capability_fingerprint(MathApi::<'static>::signatures()),
             MATH_API_FINGERPRINT,
             "signatures 变了 ⇒ 必须递增 version **并**更新指纹常量（D14：变而未递增即 fail）"
+        );
+    }
+
+    /// 糖层的版本与指纹同样配对（独立 namespace ⇒ 独立基线）。
+    #[test]
+    fn sugar_api_fingerprint_is_pinned_to_version() {
+        assert_eq!(
+            SugarApi::<'static>::meta().version,
+            Some(SUGAR_API_VERSION),
+            "版本常量与 capability 声明不一致（以代码为准，先修常量）"
+        );
+        assert_eq!(
+            capability_fingerprint(SugarApi::<'static>::signatures()),
+            SUGAR_API_FINGERPRINT,
+            "糖的签名变了 ⇒ 递增 `zela.sugar` 的 version 并更新指纹"
         );
     }
 }

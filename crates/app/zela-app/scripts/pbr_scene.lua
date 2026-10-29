@@ -22,57 +22,19 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
 -- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
-local function f32(v)
-    return RoundF32 { of = v }
-end
-
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
-local function sin_curve(base, amp, omega)
-    local angle = Mul(f32(expr.pure(omega)), clock.time())
-    local s = f32(Sin { of = angle })
-    local prod = f32(Mul(f32(expr.pure(amp)), s))
-    return f32(Add { a = f32(expr.pure(base)), b = prod })
-end
 
 -- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
-local function orbit2d(radius, speed, initial_angle)
-    local angle = Add {
-        a = Mul(f32(expr.pure(speed)), clock.time()),
-        b = f32(expr.pure(initial_angle)),
-    }
-    return Vec3FromVec2 {
-        v = Vec2Of {
-            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
-            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
-        },
-        z = expr.pure(0.0),
-    }
-end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 0.0, y = 2.6, z = 7.2 },
+        eye = scene.vec3(0.0, 2.6, 7.2),
         fov_y = 1.0,
     },
 })
@@ -81,9 +43,9 @@ scene.spawn({
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.3, y = -0.5, z = -0.81 },
+            direction = scene.vec3(0.3, -0.5, -0.81),
         },
-        color = rgba(255, 250, 240, 255),
+        color = scene.rgba(255, 250, 240, 255),
         intensity = 1.1,
     },
 })
@@ -91,10 +53,10 @@ scene.spawn({
 -- 巡游点光：{ 出生 x, 出生 y, 目标 x, 目标 y, z, range, 颜色, 强度 }
 -- 出生点都在 range 之外（× 距离熄灭），扫描入场时灯光效果逐渐叠加。
 local LIGHTS = {
-    { -6.5, -2.2, 1.2, -2.2, 1.4, 3.4, rgba(255, 90, 80, 255), 1.0 },
-    { -6.5, 0.4, -1.2, 0.4, 0.4, 3.2, rgba(80, 225, 130, 255), 0.9 },
-    { 6.5, 1.6, 1.2, 1.6, -0.6, 3.6, rgba(100, 150, 255, 255), 0.95 },
-    { 6.5, -0.9, -1.2, -0.9, -1.6, 3.0, rgba(255, 200, 90, 255), 0.85 },
+    { -6.5, -2.2, 1.2, -2.2, 1.4, 3.4, scene.rgba(255, 90, 80, 255), 1.0 },
+    { -6.5, 0.4, -1.2, 0.4, 0.4, 3.2, scene.rgba(80, 225, 130, 255), 0.9 },
+    { 6.5, 1.6, 1.2, 1.6, -0.6, 3.6, scene.rgba(100, 150, 255, 255), 0.95 },
+    { 6.5, -0.9, -1.2, -0.9, -1.6, 3.0, scene.rgba(255, 200, 90, 255), 0.85 },
 }
 local lights = {}
 for i = 1, 4 do
@@ -111,11 +73,11 @@ end
 -- ── 立方体：材质光谱一字排开 ─────────────────────────────────────────
 -- { x, 颜色, metallic, roughness }
 local SPECTRUM = {
-    { -2.4, rgba(220, 80, 60, 255), 0.0, 0.15 },    -- 电介质 · 亮面
-    { -1.2, rgba(195, 120, 60, 255), 0.7, 0.35 },   -- 青铜金属
-    { 0.0, rgba(215, 218, 225, 255), 1.0, 0.2 },    -- 银金属 · 亮面
-    { 1.2, rgba(60, 190, 130, 255), 0.5, 0.55 },    -- 半金属
-    { 2.4, rgba(170, 90, 230, 255), 0.0, 0.75 },    -- 电介质 · 哑面
+    { -2.4, scene.rgba(220, 80, 60, 255), 0.0, 0.15 },    -- 电介质 · 亮面
+    { -1.2, scene.rgba(195, 120, 60, 255), 0.7, 0.35 },   -- 青铜金属
+    { 0.0, scene.rgba(215, 218, 225, 255), 1.0, 0.2 },    -- 银金属 · 亮面
+    { 1.2, scene.rgba(60, 190, 130, 255), 0.5, 0.55 },    -- 半金属
+    { 2.4, scene.rgba(170, 90, 230, 255), 0.0, 0.75 },    -- 电介质 · 哑面
 }
 local cubes = {}
 for i = 1, 5 do
@@ -128,9 +90,9 @@ for i = 1, 5 do
             roughness = SPECTRUM[i][4],
         },
         Transform3D {
-            position = Vec3 { x = SPECTRUM[i][1], y = 0.0, z = 0.0 },
+            position = scene.vec3(SPECTRUM[i][1], 0.0, 0.0),
             rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-            scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+            scale = scene.vec3(1.0, 1.0, 1.0),
         },
     })
 end
@@ -157,7 +119,7 @@ local function act(a, start)
         expr.bind {
             object = cubes[i],
             target = Transform.channel.rotation,
-            root = ramp(from, turns[i][a], ACT),
+            root = sugar.ramp(from, turns[i][a], ACT),
             clock = clock.shift(start),
             predicate = Predicate.Of { expr = clock.range(0.0, ACT) },
         }
@@ -216,7 +178,7 @@ for i = 1, 5 do
     expr.bind {
         object = cubes[i],
         target = Transform.channel.rotation,
-        root = ramp(turns[i][4], turns[i][5], FINALE),
+        root = sugar.ramp(turns[i][4], turns[i][5], FINALE),
         clock = clock.shift(FINALE_START),
         predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
     }
@@ -224,7 +186,7 @@ end
 expr.bind {
     object = lights[4],
     target = Transform.channel.position,
-    root = orbit2d(1.5, 1.2, 3.7851),
+    root = sugar.orbit2d(1.5, 1.2, 3.7851),
     clock = clock.shift(FINALE_START),
     predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
 }
@@ -232,7 +194,7 @@ expr.bind {
 expr.bind {
     object = cubes[3],
     target = Transform.channel.scale,
-    root = sin_curve(1.0, 0.16, 1.4),
+    root = sugar.wave(1.0, 0.16, 1.4),
     clock = clock.shift(FINALE_START),
     predicate = Predicate.Of { expr = clock.range(0.0, FINALE) },
 }

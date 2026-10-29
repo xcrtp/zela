@@ -15,37 +15,12 @@
 -- ⇒ 写者不晚于读者，装配期定序检查通过（倒置会在装配期报 `ReadOrderConflict`）。
 
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 1.2 }, scale = 80.0 },
+    Camera2D { center = scene.vec2(0.0, 1.2), scale = 80.0 },
 })
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
-local function f32(v)
-    return RoundF32 { of = v }
-end
-
-local function ramp2(ax, ay, bx, by, dur)
-    return Mix {
-        a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
-        b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
-local function sin_curve(base, amp, omega)
-    local angle = Mul(f32(expr.pure(omega)), clock.time())
-    local s = f32(Sin { of = angle })
-    local prod = f32(Mul(f32(expr.pure(amp)), s))
-    return f32(Add { a = f32(expr.pure(base)), b = prod })
-end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
@@ -54,19 +29,19 @@ local T = 4.0
 -- ── 写者 A：圆点（半径 + 中心都由曲线驱动 ⇒ 读端有非平凡值）────────────
 local dot = scene.spawn({
     Circle { x = -3.6, y = 2.0, r = 0.55 },
-    Fill { color = rgba(96, 196, 255, 255) },
+    Fill { color = scene.rgba(96, 196, 255, 255) },
 })
 expr.bind {
     object = dot,
     target = Circle.channel.radius,
-    root = sin_curve(0.55, 0.25, 2.4),
+    root = sugar.wave(0.55, 0.25, 2.4),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 expr.bind {
     object = dot,
     target = Circle.channel.center,
-    root = ramp2(-3.6, 2.0, -1.2, 1.2, T),
+    root = sugar.ramp2(-3.6, 2.0, -1.2, 1.2, T),
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
@@ -77,14 +52,14 @@ local b = scene.spawn({ Transform { x = 2.4, y = -0.8 } })
 expr.bind {
     object = a,
     target = Transform.channel.position,
-    root = Vec3FromVec2 { v = ramp2(-2.4, -0.8, -3.0, 0.2, T), z = expr.pure(0.0) },
+    root = Vec3FromVec2 { v = sugar.ramp2(-2.4, -0.8, -3.0, 0.2, T), z = expr.pure(0.0) },
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 expr.bind {
     object = b,
     target = Transform.channel.position,
-    root = Vec3FromVec2 { v = ramp2(2.4, -0.8, 3.0, 0.2, T), z = expr.pure(0.0) },
+    root = Vec3FromVec2 { v = sugar.ramp2(2.4, -0.8, 3.0, 0.2, T), z = expr.pure(0.0) },
     clock = clock.scale(1.0),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
@@ -92,12 +67,12 @@ expr.bind {
 -- ── 读者 1（Vec2）：箭头终点 = 圆点中心 ───────────────────────────────
 local arrow = scene.spawn({
     Arrow {
-        from = Vec2 { x = -3.6, y = -2.4 },
-        to = Vec2 { x = -3.0, y = -2.4 },
+        from = scene.vec2(-3.6, -2.4),
+        to = scene.vec2(-3.0, -2.4),
         head_length = 0.22,
         head_width = 0.18,
     },
-    Fill { color = rgba(255, 180, 80, 255) },
+    Fill { color = scene.rgba(255, 180, 80, 255) },
 })
 expr.bind {
     object = arrow,
@@ -109,7 +84,7 @@ expr.bind {
 -- ── 读者 2（Number + Select）：半径 > 0.6 ⇒ 0.22，否则 0.34 ────────────
 local halo = scene.spawn({
     Circle { x = 3.0, y = 2.0, r = 0.34 },
-    Stroke { width = 2.0, color = rgba(255, 220, 120, 255) },
+    Stroke { width = 2.0, color = scene.rgba(255, 220, 120, 255) },
 })
 expr.bind {
     object = halo,
@@ -128,11 +103,11 @@ expr.bind {
 -- ── 读者 3 / 4（Vec3）：渐变端点 = 两个方块的位置 ────────────────────
 local grad = scene.spawn({
     Circle { x = 0.0, y = -1.6, r = 1.1 },
-    Fill { color = rgba(255, 255, 255, 255) },
+    Fill { color = scene.rgba(255, 255, 255, 255) },
     Gradient {
-        stops = { rgba(230, 80, 90, 255), rgba(80, 140, 255, 255) },
-        from = Vec3 { x = -2.4, y = -0.8, z = 0.0 },
-        to = Vec3 { x = 2.4, y = -0.8, z = 0.0 },
+        stops = { scene.rgba(230, 80, 90, 255), scene.rgba(80, 140, 255, 255) },
+        from = scene.vec3(-2.4, -0.8, 0.0),
+        to = scene.vec3(2.4, -0.8, 0.0),
     },
 })
 expr.bind {

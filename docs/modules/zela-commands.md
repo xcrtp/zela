@@ -11,13 +11,13 @@
 - 路径：`crates/app/zela-commands`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`zela-app`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`
 - 被依赖（下游）：`zela-cli`
-- 源文件：15 个 · 2758 行
+- 源文件：15 个 · 2767 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/commands/api.rs` | 132 | `api`：导出 domain 能力的机器可读文档（JSON 唯一来源 + LuaLS + TypeScript + `.pyi`）。 |
+| `src/commands/api.rs` | 141 | `api`：导出 domain 能力的机器可读文档（JSON 唯一来源 + LuaLS + TypeScript + `.pyi`）。 |
 | `src/commands/check.rs` | 56 | `check`：只做装配期检查、不渲染。 |
 | `src/commands/compile.rs` | 187 | `compile`：脚本 → ZSB 装配产物（不渲染、不需要 GPU）。 |
 | `src/commands/doctor.rs` | 141 | `doctor`：环境自检（本批最值钱的发现之一）。 |

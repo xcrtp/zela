@@ -14,7 +14,7 @@ use std::sync::Arc;
 use ze_pod_core::{
     Broker, Capability, FunctionId, Pod, PodError, PodId, PodNode, QualifiedName, RegistryPod,
 };
-use ze_pod_func::{ExprPod, MathApi, LIBRARY_NAMESPACE, LIBRARY_VERSION, SERVICE};
+use ze_pod_func::{ExprPod, MathApi, LIBRARY_NAMESPACE, LIBRARY_VERSION, SERVICE, SugarApi};
 use ze_pod_lua::{LuaPod, RUN_ENTRY};
 use ze_pod_macro::capability;
 
@@ -108,6 +108,8 @@ fn assembly() -> (Arc<ExprPod>, Arc<Sink>, Broker) {
     let sink = Arc::new(Sink::new());
     let lua = Arc::new(LuaPod::new());
     lua.register_capability::<MathApi>(SERVICE, true);
+    // 第 BB 批（阶段 4）：糖层是独立能力、同一个 Pod（脚本里是 `sugar` 表）。
+    lua.register_capability_as::<SugarApi>(SERVICE, "sugar", true);
     lua.register_capability::<SinkApi>("scene", true);
 
     let broker = Broker::new(vec![
@@ -210,6 +212,75 @@ fn lua_can_build_a_nat_rec() {
         node["data"]["step"]["node"]["data"]["args"][0]["node"]["type"],
         "rec_prev"
     );
+}
+
+/// **第 BB 批（阶段 4）**：糖的展开与手写 core 写法**逐字节相同**。
+///
+/// 这是"糖不进 payload"的直接证据：同一个表达式，写糖与写 core 得到同一份 JSON。
+#[test]
+fn sugar_expands_to_the_hand_written_core_form() {
+    let out = run(
+        r#"
+        local ramp = sugar.ramp(0.0, 1.0, 2.0)
+        local ramp_core = Mix {
+            a = expr.pure(0.0), b = expr.pure(1.0),
+            t = Clamp {
+                x = Scale { k = 1.0 / 2.0, of = clock.time() },
+                lo = expr.pure(0.0), hi = expr.pure(1.0),
+            },
+        }
+        local ramp2 = sugar.ramp2(0.0, 0.0, 2.0, 1.0, 2.0)
+        local ramp2_core = Mix {
+            a = Vec2Of { x = expr.pure(0.0), y = expr.pure(0.0) },
+            b = Vec2Of { x = expr.pure(2.0), y = expr.pure(1.0) },
+            t = Clamp {
+                x = Scale { k = 1.0 / 2.0, of = clock.time() },
+                lo = expr.pure(0.0), hi = expr.pure(1.0),
+            },
+        }
+        local wave = sugar.wave(1.0, 0.5, 2.0)
+        local wave_core = sugar.f32(Add {
+            a = sugar.f32(expr.pure(1.0)),
+            b = sugar.f32(Mul {
+                a = sugar.f32(expr.pure(0.5)),
+                b = sugar.f32(Sin {
+                    of = Mul { a = sugar.f32(expr.pure(2.0)), b = clock.time() },
+                }),
+            }),
+        })
+        local orbit = sugar.orbit2d(3.0, 1.5, 0.25)
+        local orbit_core = Vec3FromVec2 {
+            v = Vec2Of {
+                x = sugar.f32(Mul {
+                    a = sugar.f32(expr.pure(3.0)),
+                    b = sugar.f32(Cos { of = Add {
+                        a = Mul { a = sugar.f32(expr.pure(1.5)), b = clock.time() },
+                        b = sugar.f32(expr.pure(0.25)),
+                    } }),
+                }),
+                y = sugar.f32(Mul {
+                    a = sugar.f32(expr.pure(3.0)),
+                    b = sugar.f32(Sin { of = Add {
+                        a = Mul { a = sugar.f32(expr.pure(1.5)), b = clock.time() },
+                        b = sugar.f32(expr.pure(0.25)),
+                    } }),
+                }),
+            },
+            z = expr.pure(0.0),
+        }
+        scene.emit(
+            expr.expression(ramp) .. "\n" .. expr.expression(ramp_core) .. "\n" ..
+            expr.expression(ramp2) .. "\n" .. expr.expression(ramp2_core) .. "\n" ..
+            expr.expression(wave) .. "\n" .. expr.expression(wave_core) .. "\n" ..
+            expr.expression(orbit) .. "\n" .. expr.expression(orbit_core)
+        )
+        "#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 8, "每个糖与它的 core 写法各一行");
+    for pair in lines.chunks(2) {
+        assert_eq!(pair[0], pair[1], "糖的展开必须与手写 core 逐字节相同");
+    }
 }
 
 /// 能力身份：namespace 是 `zela.math`，与 `zela.scene` 隔离。

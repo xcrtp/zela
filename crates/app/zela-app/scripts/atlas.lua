@@ -55,9 +55,9 @@ local plane = scene.spawn({
         texture = Texture.Surface { surface = surf },
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
+        position = scene.vec3(0.0, 0.0, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 4.0, y = 3.0, z = 0.05 },
+        scale = scene.vec3(4.0, 3.0, 0.05),
     },
 })
 
@@ -84,7 +84,7 @@ expr.bind {
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.2, y = -0.4, z = -0.9 },
+            direction = scene.vec3(0.2, -0.4, -0.9),
         },
         color = Color { r = 255, g = 245, b = 230, a = 255 },
         intensity = 1.1,
@@ -92,7 +92,7 @@ scene.spawn({
 })
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 0.0, y = 0.0, z = 9.0 },
+        eye = scene.vec3(0.0, 0.0, 9.0),
         fov_y = 1.0,
     },
 })

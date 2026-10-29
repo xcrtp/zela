@@ -73,6 +73,15 @@ pub fn run(host: &dyn CommandHost, dir: &std::path::Path) -> Result<Response, St
             ops: ze_pod_func::SIGNATURES,
         },
         CapabilityDocs {
+            name: "sugar",
+            calls: ze_pod_func::SugarApi::calls(),
+            docs: ze_pod_func::SugarApi::docs(),
+            meta: ze_pod_func::SugarApi::meta(),
+            channels: &[],
+            methods: &[],
+            ops: &[],
+        },
+        CapabilityDocs {
             name: "python",
             calls: ze_pod_py::PythonApi::calls(),
             docs: ze_pod_py::PythonApi::docs(),

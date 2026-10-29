@@ -11,18 +11,19 @@
 - 路径：`crates/ze/pod/ze-pod-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-func`、`ze-pod-core`、`ze-pod-macro`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-playback`、`zela-scene-ecs`
-- 源文件：6 个 · 3955 行
+- 源文件：7 个 · 4270 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/api.rs` | 935 | `zela.math`：表达式层的**叶子算子**能力（函子库）。 |
-| `src/expr_pod.rs` | 1909 | 表达式 Pod：**表达式数据留在 Pod 内，跨边界只传 [`Handle`]**。 |
+| `src/api.rs` | 996 | `zela.math`：表达式层的**叶子算子**能力（函子库）。 |
+| `src/expr_pod.rs` | 2065 | 表达式 Pod：**表达式数据留在 Pod 内，跨边界只传 [`Handle`]**。 |
 | `src/infer.rs` | 815 | **装配期类型推导**（L2）：rank-1 合一 + kind 约束 + 重载列表。 |
-| `src/lib.rs` | 63 | ze-pod-func: **函子库 Pod**（namespace `zela.math`）。 |
+| `src/lib.rs` | 65 | ze-pod-func: **函子库 Pod**（namespace `zela.math`）。 |
 | `src/ops.rs` | 19 | `zela.math` 算子的**接线入口**（语义实现已迁到基础函子库 `ze-func`）。 |
 | `src/signature.rs` | 214 | **算子签名表的接线层**：数据面在 `ze-func`（[`OpDef`] 的唯一来源）。 |
+| `src/sugar.rs` | 96 | **糖层的穿透文档**（计划 §5.5）：每个糖都必须写出等价的 core 写法。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -31,8 +32,10 @@ graph LR
     f1["src/api.rs"]
     f0["src/infer.rs"]
     f2["src/signature.rs"]
+    f3["src/sugar.rs"]
     f0 --> f1
     f0 --> f2
+    f3 --> f1
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -85,6 +88,7 @@ graph LR
 | `src/api.rs` | `pub struct MethodCallSpec` |
 | `src/api.rs` | `pub struct NatRecSpec` |
 | `src/api.rs` | `pub struct MathApi<'a>` |
+| `src/api.rs` | `pub struct SugarApi<'a>` |
 | `src/api.rs` | `pub fn method_signature(name: &str) -> Option<(usize, ChannelTypeSpec)>` |
 | `src/expr_pod.rs` | `pub struct PendingBindEach` |
 | `src/expr_pod.rs` | `pub struct PendingBinding` |
@@ -105,6 +109,7 @@ graph LR
 | `src/signature.rs` | `pub fn collect_op_revisions(expr: &ze_comb::Expr) -> BTreeMap<String, (u32, u32)>` |
 | `src/signature.rs` | `pub fn check_op_revisions(revisions: &BTreeMap<String, (u32, u32)>) -> Result<(), String>` |
 | `src/signature.rs` | `pub fn register_passes(registry: &mut ze_comb::PassRegistry)` |
+| `src/sugar.rs` | `pub struct SugarDoc` |
 <!-- AUTO:END -->
 
 ## 职责

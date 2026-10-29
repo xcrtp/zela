@@ -31,54 +31,10 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
 -- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
-local function f32(v)
-    return RoundF32 { of = v }
-end
-
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
-
-local function ramp2(ax, ay, bx, by, dur)
-    return Mix {
-        a = Vec2Of { x = expr.pure(ax), y = expr.pure(ay) },
-        b = Vec2Of { x = expr.pure(bx), y = expr.pure(by) },
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
-local function orbit2d(radius, speed, initial_angle)
-    local angle = Add {
-        a = Mul(f32(expr.pure(speed)), clock.time()),
-        b = f32(expr.pure(initial_angle)),
-    }
-    return Vec3FromVec2 {
-        v = Vec2Of {
-            x = f32(Mul(f32(expr.pure(radius)), f32(Cos { of = angle }))),
-            y = f32(Mul(f32(expr.pure(radius)), f32(Sin { of = angle }))),
-        },
-        z = expr.pure(0.0),
-    }
-end
 
 -- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
@@ -106,7 +62,7 @@ local function curve_points()
     for i = 0, CURVE_SAMPLES do
         local t = TAU * i / CURVE_SAMPLES
         local x = CURVE_X0 + (CURVE_X1 - CURVE_X0) * i / CURVE_SAMPLES
-        points[#points + 1] = Vec2 { x = q(x), y = q(fourier(t)) }
+        points[#points + 1] = scene.vec2(q(x), q(fourier(t)))
     end
     return points
 end
@@ -135,14 +91,14 @@ end
 scene.spawn({
     Axes2D {
         min_px = 12.0,
-        grid = LineStyle { width = 1.0, color = rgba(48, 48, 62, 255) },
-        axis = LineStyle { width = 2.0, color = rgba(145, 145, 165, 255) },
+        grid = LineStyle { width = 1.0, color = scene.rgba(48, 48, 62, 255) },
+        axis = LineStyle { width = 2.0, color = scene.rgba(145, 145, 165, 255) },
     },
 })
 
 local camera = scene.spawn({
     Camera2D {
-        center = Vec2 { x = 0.5, y = 0.0 },
+        center = scene.vec2(0.5, 0.0),
         scale = 55.0,
     },
 })
@@ -153,12 +109,12 @@ place_text_group("Fourier epicycles: square wave", 0.40, -3.3, 2.75)
 local points = curve_points()
 local curve = scene.spawn({
     Polyline { points = points, closed = false },
-    Stroke { width = 2.0, color = rgba(120, 220, 120, 255) },
+    Stroke { width = 2.0, color = scene.rgba(120, 220, 120, 255) },
     Opacity { value = 0.0 },
 })
 local pulse = scene.spawn({
     Reveal { points = points, closed = false },
-    Stroke { width = 4.0, color = rgba(255, 255, 235, 255) },
+    Stroke { width = 4.0, color = scene.rgba(255, 255, 235, 255) },
     Opacity { value = 0.0 },
 })
 
@@ -171,20 +127,20 @@ local root = scene.spawn({
 -- 黄色相位点：绕根公转（S4 Orbit + S3 Position）。
 local phase_dot = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.06 },
-    Fill { color = rgba(255, 230, 120, 255) },
+    Fill { color = scene.rgba(255, 230, 120, 255) },
     Transform { x = 0.0, y = 0.0 },
     Parent { parent = root },
 })
 
 local arrow_colors = {
-    rgba(0, 210, 210, 255),
-    rgba(255, 190, 70, 255),
-    rgba(230, 100, 200, 255),
-    rgba(130, 230, 130, 255),
-    rgba(255, 255, 255, 255),
+    scene.rgba(0, 210, 210, 255),
+    scene.rgba(255, 190, 70, 255),
+    scene.rgba(230, 100, 200, 255),
+    scene.rgba(130, 230, 130, 255),
+    scene.rgba(255, 255, 255, 255),
 }
 
-local guide = rgba(85, 85, 110, 255)
+local guide = scene.rgba(85, 85, 110, 255)
 local joints = {}
 local arrows = {}
 local radii = {}
@@ -216,8 +172,8 @@ for i = 1, #HARMONICS do
 
     arrows[i] = scene.spawn({
         Arrow {
-            from = Vec2 { x = 0.0, y = 0.0 },
-            to = Vec2 { x = r, y = 0.0 },
+            from = scene.vec2(0.0, 0.0),
+            to = scene.vec2(r, 0.0),
             head_length = 0.08,
             head_width = 0.08,
         },
@@ -230,7 +186,7 @@ end
 -- 末端点：最后一个向量的尖端（局部位置 r_last）。
 scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.06 },
-    Fill { color = rgba(255, 255, 255, 255) },
+    Fill { color = scene.rgba(255, 255, 255, 255) },
     Transform { x = radii[#radii], y = 0.0 },
     Parent { parent = arrows[#arrows] },
 })
@@ -239,21 +195,21 @@ scene.spawn({
 expr.bind {
     object = curve,
     target = Opacity.channel.value,
-    root = ramp(0.0, 1.0, FADE),
+    root = sugar.ramp(0.0, 1.0, FADE),
     clock = clock.shift(0.0),
     predicate = Predicate.Of { expr = clock.range(0.0, FADE) },
 }
 expr.bind {
     object = pulse,
     target = Opacity.channel.value,
-    root = ramp(0.0, 1.0, FADE),
+    root = sugar.ramp(0.0, 1.0, FADE),
     clock = clock.shift(0.0),
     predicate = Predicate.Of { expr = clock.range(0.0, FADE) },
 }
 
 -- ── 4. 主段：所有向量自转（S3 Rotation），相位点公转（S4 Orbit），脉冲书写
 local function rotation_expr(delta)
-    return ramp(0.0, TAU * delta, T)
+    return sugar.ramp(0.0, TAU * delta, T)
 end
 
 expr.bind {
@@ -275,14 +231,14 @@ end
 expr.bind {
     object = phase_dot,
     target = Transform.channel.position,
-    root = orbit2d(0.18, TAU / T, 0.0),
+    root = sugar.orbit2d(0.18, TAU / T, 0.0),
     clock = clock.shift(MAIN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
 expr.bind {
     object = pulse,
     target = Reveal.channel["end"],
-    root = ramp(0.0, 1.0, T),
+    root = sugar.ramp(0.0, 1.0, T),
     clock = clock.shift(MAIN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, T) },
 }
@@ -291,28 +247,28 @@ expr.bind {
 expr.bind {
     object = camera,
     target = Camera2D.channel.scale,
-    root = ramp(55.0, 90.0, ZOOM),
+    root = sugar.ramp(55.0, 90.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.center,
-    root = ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
+    root = sugar.ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_IN_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.scale,
-    root = ramp(90.0, 55.0, ZOOM),
+    root = sugar.ramp(90.0, 55.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }
 expr.bind {
     object = camera,
     target = Camera2D.channel.center,
-    root = ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
+    root = sugar.ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
     clock = clock.shift(ZOOM_OUT_START),
     predicate = Predicate.Of { expr = clock.range(0.0, ZOOM) },
 }

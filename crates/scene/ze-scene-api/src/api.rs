@@ -10,10 +10,10 @@
 // `binding.rs` 按 `TypeSpec` **自动生成**。
 
 use crate::types::{
-    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Cube, CurveWindow, Dash,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
     Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathList,
     PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, Stroke, Surface, Text,
-    Transform, Transform3D,
+    Transform, Transform3D, Vec2, Vec3,
 };
 use ze_pod_core::Handle;
 use ze_pod_macro::capability;
@@ -38,7 +38,7 @@ use ze_pod_macro::capability;
 /// `Reveal.end` / … 同时可用；未知地址在装配期显式失败。
 #[capability(
     namespace = "zela.scene",
-    version = "12",
+    version = "13",
     description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
     bindings
 )]
@@ -132,6 +132,16 @@ pub struct SceneApi<'a> {
 
     /// 构造曲线窗口组件（PE）：单位是曲线索引 + t。
     pub curve_window: fn(&'a dyn Pod, window: CurveWindow) -> Handle,
+
+    // ─── 第 BB 批（阶段 4）：构造糖（值形态，不进 payload）─────────────
+    /// `rgba(r, g, b, a)`：`Color { r, g, b, a }` 的函数形态（各分量 0–255）。
+    pub rgba: fn(&'a dyn Pod, r: f64, g: f64, b: f64, a: f64) -> Color,
+
+    /// `vec2(x, y)`：`Vec2 { x, y }` 的函数形态。
+    pub vec2: fn(&'a dyn Pod, x: f64, y: f64) -> Vec2,
+
+    /// `vec3(x, y, z)`：`Vec3 { x, y, z }` 的函数形态。
+    pub vec3: fn(&'a dyn Pod, x: f64, y: f64, z: f64) -> Vec3,
 }
 
 /// 宿主暴露给脚本的内容编译接口。
@@ -159,9 +169,13 @@ pub struct ContentApi<'a> {
 // 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
 
 /// `zela.scene` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
-pub const SCENE_API_VERSION: &str = "12";
+///
+/// `@12 → @13`（第 BB 批，阶段 4）：新增三个**构造糖** `rgba` / `vec2` / `vec3`。
+/// 它们只返回值、不碰录制状态（展开成与 `Color{…}` / `Vec2{…}` 相同的值），
+/// 因此这个版本号不进产物（ZSB 的 libraries 只记表达式函子库）⇒ payload 不变。
+pub const SCENE_API_VERSION: &str = "13";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 133_947_965_974_789_799;
+pub const SCENE_API_FINGERPRINT: u64 = 12_092_751_274_414_054_408;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

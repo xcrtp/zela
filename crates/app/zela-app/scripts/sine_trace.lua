@@ -29,22 +29,18 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
-
 -- ── 相机：世界 ±5.3 × ±4 落在 640×480 里（scale = 60）────────────────
 scene.spawn({
     Camera2D { scale = 60.0 },
 })
 
 -- ── 坐标轴：水平中轴 + 左侧起点竖线（静态折线，初态可见）──────────────
-local axis_color = rgba(96, 110, 130, 255)
+local axis_color = scene.rgba(96, 110, 130, 255)
 scene.spawn({
     Polyline {
         points = {
-            Vec2 { x = X0 - 0.2, y = BASE_Y },
-            Vec2 { x = X1 + 0.2, y = BASE_Y },
+            scene.vec2(X0 - 0.2, BASE_Y),
+            scene.vec2(X1 + 0.2, BASE_Y),
         },
         closed = false,
     },
@@ -53,8 +49,8 @@ scene.spawn({
 scene.spawn({
     Polyline {
         points = {
-            Vec2 { x = X0, y = BASE_Y - AMP - 0.3 },
-            Vec2 { x = X0, y = BASE_Y + AMP + 0.3 },
+            scene.vec2(X0, BASE_Y - AMP - 0.3),
+            scene.vec2(X0, BASE_Y + AMP + 0.3),
         },
         closed = false,
     },
@@ -67,7 +63,7 @@ for i = 0, SAMPLES do
     local u = i / SAMPLES
     local x = X0 + (X1 - X0) * u
     local y = BASE_Y + AMP * math.sin(PERIODS * TAU * u)
-    curve_points[#curve_points + 1] = Vec2 { x = q(x), y = q(y) }
+    curve_points[#curve_points + 1] = scene.vec2(q(x), q(y))
 end
 local start_x = q(X0)
 local start_y = q(BASE_Y)
@@ -75,7 +71,7 @@ local start_y = q(BASE_Y)
 -- ── 曲线：`Reveal` 初态 start = end = 0（不可见），由 `Reveal.end` 写出来 ──
 local curve = scene.spawn({
     Reveal { points = curve_points, closed = false },
-    Stroke { width = 3.0, color = rgba(120, 220, 255, 255) },
+    Stroke { width = 3.0, color = scene.rgba(120, 220, 255, 255) },
 })
 -- 书写进度：`end = t / T`。`t` 是**显式时钟**的局部时间（不再是隐式游标）。
 -- `t > T` 后 `end` 继续增长，但渲染裁剪与 `Reveal::current_pos` 都会把 `end` 钳到 1
@@ -93,8 +89,8 @@ expr.bind {
 -- 它不是字段，因此不可能被写端选中；`reads` 由方法目录静态声明。
 local ball = scene.spawn({
     Circle { x = start_x, y = start_y, r = 0.16 },
-    Fill { color = rgba(255, 210, 120, 255) },
-    Stroke { width = 1.2, color = rgba(255, 245, 220, 255) },
+    Fill { color = scene.rgba(255, 210, 120, 255) },
+    Stroke { width = 1.2, color = scene.rgba(255, 245, 220, 255) },
 })
 expr.bind {
     object = ball,

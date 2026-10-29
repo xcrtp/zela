@@ -12,17 +12,6 @@
 local T = 3.0
 
 -- `Ramp` 的算子化形态：`mix(from, to, clamp(t / dur, 0, 1))`（显式时钟）。
-local function ramp(from, to, dur)
-    return Mix {
-        a = expr.pure(from),
-        b = expr.pure(to),
-        t = Clamp {
-            x = Scale { k = 1.0 / dur, of = clock.time() },
-            lo = expr.pure(0.0),
-            hi = expr.pure(1.0),
-        },
-    }
-end
 
 -- 半透明红色立方体（双面）。
 local red = scene.spawn({
@@ -34,9 +23,9 @@ local red = scene.spawn({
         transparent = true,
     },
     Transform3D {
-        position = Vec3 { x = -0.6, y = 0.0, z = 0.0 },
+        position = scene.vec3(-0.6, 0.0, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
@@ -50,9 +39,9 @@ local blue = scene.spawn({
         transparent = true,
     },
     Transform3D {
-        position = Vec3 { x = 0.6, y = 0.0, z = 0.0 },
+        position = scene.vec3(0.6, 0.0, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
@@ -63,9 +52,9 @@ scene.spawn({
         color = Color { r = 230, g = 230, b = 230, a = 255 },
     },
     Transform3D {
-        position = Vec3 { x = 0.0, y = -1.8, z = 0.0 },
+        position = scene.vec3(0.0, -1.8, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
@@ -75,14 +64,14 @@ scene.spawn({
 expr.bind {
     object = red,
     target = Transform.channel.rotation,
-    root = ramp(0.0, 6.28318530718, T),
+    root = sugar.ramp(0.0, 6.28318530718, T),
     clock = clock.scale(1.0),
     duration = T,
 }
 expr.bind {
     object = blue,
     target = Transform.channel.rotation,
-    root = ramp(6.28318530718, 0.0, T),
+    root = sugar.ramp(6.28318530718, 0.0, T),
     clock = clock.shift(T),
     predicate = Predicate.Of {
         expr = And {
@@ -96,7 +85,7 @@ expr.bind {
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.3, y = -0.5, z = -0.8 },
+            direction = scene.vec3(0.3, -0.5, -0.8),
         },
         color = Color { r = 255, g = 245, b = 230, a = 255 },
         intensity = 1.1,
@@ -106,8 +95,8 @@ scene.spawn({
 -- 3D 相机。
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 4.5, y = 3.0, z = 6.0 },
-        target = Vec3 { x = 0.0, y = -0.2, z = 0.0 },
+        eye = scene.vec3(4.5, 3.0, 6.0),
+        target = scene.vec3(0.0, -0.2, 0.0),
         fov_y = 1.05,
     },
 })
