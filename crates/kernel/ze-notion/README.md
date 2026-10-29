@@ -8,7 +8,7 @@
 > M1 起本 crate 由 `ze-geometry` 更名而来（四层重构第一刀，见执行计划）：定位从
 > "纯几何数据层"提升为**理念层（数学元语）**。
 >
-> **唯一出口（已收口，2026-10-19）**：本 crate 是全仓唯一的数学元语出口 ——
+> **唯一出口（已定案，2026-10-19）**：本 crate 是全仓唯一的数学元语出口 ——
 > glam 仅在此被包装 / 再导出；依赖 `ze-notion` 的 crate **不得再直接声明 glam**
 > （CI 门禁 `No direct glam outside ze-notion`）。
 >
@@ -35,10 +35,10 @@ zela-scene / zela-render  (场景层 + 渲染抽象 / 队列 / 资源管理)
 zela-render-backends (wgpu / egui / SVG / 文本后端)
 ```
 
-**硬约束**：本 crate 绝不引入 `egui` / `wgpu` / `hecs` 或任何项目内部 crate，
+**强制约束**：本 crate 绝不引入 `egui` / `wgpu` / `hecs` 或任何项目内部 crate，
 保证它可被任何上层工程（WASM、Headless 测试、离线 SVG 录制）安全复用；
 且**只依赖 glam（+ 可选 serde）**—— 本 crate 是全仓**唯一允许**直接依赖 glam 的地方
-（验收口径：`cargo tree -p ze-notion`）。
+（验收方式：`cargo tree -p ze-notion`）。
 
 ---
 

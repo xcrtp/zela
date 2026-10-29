@@ -594,7 +594,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 > - 光照数据化：`cube.wgsl` 的 `LIGHT_DIR` / `AMBIENT` 硬编码已删，改场景级 light
 >   uniform buffer 驱动；`Light` 不带 position（位置走 `Transform` → `WorldTransforms`）。
 > - 点光 / PBR：Point light（range 窗口衰减，超限显式报错）；`ShaderVariant::Pbr`
->   （metallic-roughness，线性空间，法线贴图走屏幕空间 TBN，铁律 4 未改顶点格式）。
+>   （metallic-roughness，线性空间，法线贴图走屏幕空间 TBN，未改顶点格式）。
 > - 脚本层 3D 入口：`camera3d` / `cube` / `parametric_surface` / `material3d` / `light`
 >   参数化构造器（不传顶点数组）⇒ 3D 首入 `--script == --bundle` 对拍网。
 > - pipeline 按需构建（B1-E）：废弃 `(topology, variant)` 笛卡尔积预建，改

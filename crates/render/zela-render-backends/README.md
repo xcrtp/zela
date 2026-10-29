@@ -283,7 +283,7 @@ StandardBackends::new(&RenderContext)          ← 纯构造，零 egui 依赖
   ⇒ 画面**逐位不变**（`scene_callback.rs` 的 `post_blit: Option<PostBlit>`）。
 - **滤镜不是管线维度**：管线仍是 `3 blend × 3 域转换`；滤镜只在 uniform 里
   （`FilterKind::code()` 与 WGSL 常量表一一对应）⇒ **新增滤镜不改管线代码**。
-- **预乘 alpha 硬约束**：中间纹理里是预乘颜色 —— 增益对 `rgb`/`a` 同乘、模糊在
+- **预乘 alpha 强制约束**：中间纹理里是预乘颜色 —— 增益对 `rgb`/`a` 同乘、模糊在
   **预乘空间**做（否则半透明边缘出黑边/halo）。
 - **管线惰性建**（C3）：`ensure_for(&mut self, ..)` 按本帧组合现场建并缓存；
   `new` 不再预建 9 条。它只在 `prepare`（有 `&mut`）里调用 ⇒ `composite_layers`

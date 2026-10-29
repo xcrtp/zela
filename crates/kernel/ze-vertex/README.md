@@ -20,7 +20,7 @@ zela-render-backends::vertex_layout (翻译到 wgpu::VertexBufferLayout)
 wgpu Pipeline
 ```
 
-**硬约束（依赖铁律）**：本 crate **不得引用任何 wgpu 类型** ——
+**强制约束（依赖约定）**：本 crate **不得引用任何 wgpu 类型** ——
 翻译到 `wgpu::VertexBufferLayout` 的代码在 `zela-render-backends::vertex_layout`。
 
 - ❌ `hecs` / `egui` / `wgpu` / 任何 `zela-*` —— 绝对禁止；

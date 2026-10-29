@@ -18,7 +18,7 @@ ze-object          场景对象层  Circle / Camera2D / Axes2D / …（实现 To
 zela-render        渲染管线    三角化（lyon）/ 合批 / DrawQueue
 ```
 
-**硬约束（与理念层同级）**：
+**强制约束（与理念层同级）**：
 
 - ❌ `hecs` / `egui` / `wgpu` / 任何 `zela-*` / `ze-object` —— 禁止；
   验收：`cargo tree -p ze-render-ir | grep -E "zela-|ze-object"` = 0；

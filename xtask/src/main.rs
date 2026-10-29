@@ -1836,13 +1836,16 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
     // P 段（B12）、Q 段（B13）、R 段（B14）、S 段（B15）、T 段（B17）、U 段（B18）、
     // V 段（B19 跨批补记）、W 段（PA 记账收尾）、X 段（PB 参数开启）、Y 段（PC 内容纹理层）、
     // Z 段（PD 能力普查）、AA 段（PE 能力入口）、AB 段（PF 接缝）、AC 段（PG 全开放）、
-    // AD 段（PH 能力缺口归零）、AE 段（PI 渲染层收尾与成本度量）、AL–AU 段（后续批次）
+    // AD 段（PH 能力缺口归零）、AE 段（PI 渲染层收尾与成本度量）、AL–BA 段（后续批次）
     // 都是"编号 | 缺口 | 影响层 | 类别 | 证据"。
+    // AF–AK 段（表达式 / 时钟 / 类型 / 通道 / 算子等批次）此前**漏在表外**（B 批 P2）：
+    // 段小计无人核对，改条目不会红。现在一并纳入。
     for prefix in [
         "## K.", "## L.", "## M.", "## N.", "## O.", "## P.", "## Q.", "## R.", "## S.", "## T.",
         "## U.", "## V.", "## W.", "## X.", "## Y.", "## Z.", "## AA.", "## AB.", "## AC.",
-        "## AD.", "## AE.", "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.", "## AR.",
-        "## AS.", "## AT.", "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.",
+        "## AD.", "## AE.", "## AF.", "## AG.", "## AH.", "## AI.", "## AJ.", "## AK.",
+        "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.", "## AR.", "## AS.", "## AT.",
+        "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.", "## BB.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1881,6 +1884,12 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("X7-")
                     || id.starts_with("X8-")
                     || id.starts_with("AL-")
+                    || id.starts_with("AF-")
+                    || id.starts_with("AG-")
+                    || id.starts_with("AH-")
+                    || id.starts_with("AI-")
+                    || id.starts_with("AJ-")
+                    || id.starts_with("AK-")
                     || id.starts_with("AM-")
                     || id.starts_with("AN-")
                     || id.starts_with("AO-")
@@ -1895,7 +1904,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("AX-")
                     || id.starts_with("AY-")
                     || id.starts_with("AZ-")
-                    || id.starts_with("BA-"));
+                    || id.starts_with("BA-")
+                    || id.starts_with("BB-"));
             if !is_item {
                 continue;
             }
@@ -2138,11 +2148,16 @@ fn abbreviated_crate_paths(text: &str) -> Vec<String> {
     out
 }
 
-/// 仓库内参与文档检查的 `.md`：根目录 + `docs/**`（文档工程升级后，`docs/` 才是主入口）。
+/// 仓库内参与文档检查的 `.md`：根目录 + `docs/**` + 各 crate 的 `README.md`。
+///
+/// crate README 纳入扫描（B 批 P1）：它们是作者最先读到的一层，也曾是禁止词的最后
+/// 一片空白区（33 个 README，20 处命中）。扫描范围写在 `docs/README.md` 的维护约定里，
+/// 不再是只有本函数知道的隐式约定。
 ///
 /// `WASM_PORT_SURVEY.md` **显式排除**：它是历史探测快照，路径漂移是它本来就该保留的信息。
 /// 该文件头部有一行可见声明（"本报告为历史快照，文中路径可能已漂移…"），所以这个排除
-/// 是**响亮**的；静默排除等于又造一个"看起来全绿"的门禁（PA-02）。
+/// 是**响亮**的；静默排除等于又造一个"看起来全绿"的门禁（PA-02）。排除理由同时写在
+/// `docs/README.md` 的维护约定里，与扫描范围同处核对。
 fn repository_markdown_docs(root: &Path) -> Result<Vec<PathBuf>, String> {
     const EXCLUDED: &[&str] = &["WASM_PORT_SURVEY.md"];
     let mut out = Vec::new();
@@ -2167,8 +2182,28 @@ fn repository_markdown_docs(root: &Path) -> Result<Vec<PathBuf>, String> {
     if docs.is_dir() {
         collect_markdown_files(&docs, &mut out)?;
     }
+    let crates = root.join("crates");
+    if crates.is_dir() {
+        collect_crate_readmes(&crates, &mut out)?;
+    }
     out.sort();
     Ok(out)
+}
+
+/// 递归收集 `crates/**/README.md`（其它 `.md` 不在用语门禁范围内）。
+fn collect_crate_readmes(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries =
+        fs::read_dir(dir).map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("遍历 {} 失败：{error}", dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_crate_readmes(&path, out)?;
+        } else if path.file_name().and_then(|name| name.to_str()) == Some("README.md") {
+            out.push(path);
+        }
+    }
+    Ok(())
 }
 
 /// 递归收集目录下的 `.md`。

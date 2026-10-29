@@ -340,7 +340,7 @@ Typst 源码 → ze-prerender::engine（typst [feature] / placeholder）
 - **S1a/S1b 旧 demo**（圆↔方、`x²`↔`x³` 语义形变）**已从 App 移除**（被分镜取代）；
   `formula::compile_morph_pairs` 与其文档保留（`#[allow(dead_code)]`，见该函数 doc）。
 
-> 铁律（路线甲）：`ze-time` 可依赖 `ze-notion`，但**不得**依赖 `ze-content`——
+> 约定（路线甲）：`ze-time` 可依赖 `ze-notion`，但**不得**依赖 `ze-content`——
 > 语义配对留在 `ze-content`，`ze-time` 只提供插值原语。
 >
 > 度量空间：分镜的曲线 / 公式形变 / 网格 / 坐标轴均为 `MeasureSpace::Screen`
@@ -424,7 +424,7 @@ python  = ["dep:ze-pod-py", "ze-pod-py/python"]
 
 > **S0**：本 crate 不依赖 `zela-egui`；GUI 壳在 `zela-gui`。
 
-> **铁律**：`zela-render` 只能依赖轻的 `ze-content`，**不得**依赖 `ze-prerender`
+> **约定**：`zela-render` 只能依赖轻的 `ze-content`，**不得**依赖 `ze-prerender`
 > （否则关掉 feature 也会把 typst 拖进渲染层）。验收：
 > `cargo tree -p zela-render | grep -c typst` 结果为 0。
 

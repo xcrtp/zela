@@ -5,7 +5,7 @@
 ze-node-schema = 节点结构契约（Property / NodeSpec / DynamicObject / NodeRegistry）
 + 对应宏（ze-node-schema-macros）。
 
-## 铁律
+## 约定
 
 1. **禁止依赖 egui** — 本层是纯逻辑/数据契约，不绑定任何 UI 框架。
 2. **禁止依赖任何 `zela-*` crate** — 依赖方向单向：`zela-* → ze-*`，反向禁止。

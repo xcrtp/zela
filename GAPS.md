@@ -138,10 +138,10 @@
 |---|---|---|---|---|
 | B-01 | `cube.wgsl` 硬编码光源（`LIGHT_DIR` / `AMBIENT`）→ 场景级 light uniform buffer 驱动 | 着色器 | **已关闭（B1-A）** | 提交 `5743460`；`Light` 组件不带 position（唯一来源，位置走 `Transform` → `WorldTransforms`） |
 | B-02 | 点光缺失：新增 Point light（`range` 窗口衰减避免 1/d² 爆炸）；数量超编译期上限 ⇒ **显式报错** | 渲染 | 新增能力（B1-B） | 提交 `8efc515`；位置走 `Transform` → `WorldTransforms`（S1 已通） |
-| B-03 | PBR 缺失：新增 `ShaderVariant::Pbr`（metallic-roughness，线性空间）；法线贴图走**屏幕空间 TBN**（Mikkelsen） | 渲染 | 新增能力（B1-C） | 提交 `1970c2d`；铁律 4 未改顶点格式（无 tangent 属性槽） |
+| B-03 | PBR 缺失：新增 `ShaderVariant::Pbr`（metallic-roughness，线性空间）；法线贴图走**屏幕空间 TBN**（Mikkelsen） | 渲染 | 新增能力（B1-C） | 提交 `1970c2d`；未改顶点格式（无 tangent 属性槽） |
 | B-04 | 脚本层无 3D 入口（3D 场景硬编码在 `authored/demo3d.rs`）→ `camera3d` / `cube` / `parametric_surface` / `material3d` / `light` **参数化构造器** | 脚本 → 场景 | **已关闭（B1-D）** | 提交 `6d4a1c9`；不传顶点数组（`MeshGeometry` 无 `Serialize`，撞"图元可序列化"硬限制）⇒ 3D 首入 `--script == --bundle` 对拍网；demo 入册提交 `6c3376e` |
 | B-05 | pipeline `(topology, variant)` **笛卡尔积预建**（3×2=6 条，随 variant 数爆炸）→ `get_or_create_pipeline` **按需构建 + 缓存** | 渲染后端 | **已关闭（B1-E）** | 提交 `797c914`；key 四维定齐 `(topology, variant, cull_mode, blending)` —— B2 只增取值不再动机制；结构判据 `test_b1e_pipelines_built_on_demand`（0→1→1→2→3） |
-| B-06 | pipeline 未命中**自动回退 Lambert**（仅 debug 断言）+ 点列表**无提示丢弃** | 渲染后端 | **已关闭（B1-E/F）** | `797c914` 结构性删除回退（get_or_create 无"漏建"状态）；`7a9299f` 点列表改 `panic!` 显式报错（铁律 2：失败必须显式），`test_b1f_points_topology_panics_explicitly` |
+| B-06 | pipeline 未命中**自动回退 Lambert**（仅 debug 断言）+ 点列表**无提示丢弃** | 渲染后端 | **已关闭（B1-E/F）** | `797c914` 结构性删除回退（get_or_create 无"漏建"状态）；`7a9299f` 点列表改 `panic!` 显式报错（失败必须显式），`test_b1f_points_topology_panics_explicitly` |
 
 **D 段小计**：已关闭 4 · 新增能力 2（不计入缺口类别）。
 
@@ -912,7 +912,7 @@
 
 | AF-09 | **声明文件防腐烂已落地（§7.5 第 1/2/3 条）** | 导出 / 门禁 | **已关闭** | ① `capabilities_json` 顶层加 `schema_version`（`DOCS_SCHEMA_VERSION = 1`，与 capability `version` 分开）；② 新增 `cargo verify --step docs`：用 `export_scene_api` 生成 JSON / LuaLS / `.d.ts` / `.pyi` 到 `target/declarations/{a,b}` **连续两次**并逐字节比对（缺 / 差 / 多都 fail，报错给出重生成命令）—— 生成物**不进仓库**（AG-07 定案）；③ `export_scene_api` 纳入 `MathApi`，声明文件里出现 `Sin` / `Mul` / `Scale` / `Sum` 等表达式构造器。当前共 **9 个文件**（JSON / LuaLS / `.d.ts` + 6 个 `.pyi`），均在 `typst,js` 组合下生成。`.pyi` 生成器是纯 Rust（`ze-pod-py` 的 `export` 模块不依赖 pyo3，作为 dev-dependency 引入）⇒ 文档基线不再需要 Python 解释器；`PythonApi` 也已纳入导出。 |
 
-**AF 段小计**：立约 2（AF-01、AF-02）· 记账 6（AF-03、AF-04、AF-05、AF-06、AF-07、AF-08）· 已关闭 1（AF-09）。
+**AF 段小计**：立约 2（AF-01、AF-02）· 部分关闭 1（AF-06）· 记账 5（AF-03、AF-04、AF-05、AF-07、AF-08）· 已关闭 1（AF-09）。
 
 ---
 
@@ -1069,7 +1069,7 @@
 
 ## AO. 图基础设施收敛批次（遍历器抽象与环检测收敛，2026-10-28）
 
-> 计划《图基础设施收敛执行计划》。顺序铁律：遍历器先于环检测（统一 id 投影是遍历的副产品）。
+> 计划《图基础设施收敛执行计划》。顺序约定：遍历器先于环检测（统一 id 投影是遍历的副产品）。
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
@@ -1101,7 +1101,7 @@
 
 ## AP. 作者侧兑现批次（5b 退役 + 时钟身份化 + 方法/Query/Bounds，2026-10-28）
 
-> 计划《作者侧兑现执行计划_5b退役与时钟身份化》。顺序铁律：先证明等价、后重录基线；
+> 计划《作者侧兑现执行计划_5b退役与时钟身份化》。顺序约定：先证明等价、后重录基线；
 > A（纯减法）先于 B（作者侧兑现）。
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
@@ -1429,20 +1429,37 @@
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| BA-01 | 「铁律 N」编号体系的定义已消失（27 处引用） | docs / 代码注释 / GAPS | **未执行（3）** | 旧版 CONTRIBUTING 的摘要是 5 条**无编号**列表；改名后仍无编号 ⇒ 27 处编号引用没有对应定义。两个选项：① 重建定义（先确认 2 / 3 / 4 / 5 分别是什么，再加一条防漂移检查）；② 去掉编号（27 处逐条改写，成本大但一劳永逸）。本批只改**孤立用法**并收录禁止词表；编号引用按行豁免。触发条件：下一个文档批次的第一次编辑前定案 |
+| BA-01 | 「铁律 N」编号体系的定义已消失（27 处引用） | docs / 代码注释 / GAPS | **已关闭（0）** | 定案：**去掉编号**（选项 ②）。旧版 CONTRIBUTING 的摘要本就是 5 条无编号列表，编号没有任何可指回的定义；重建编号等于把「约定」做成第二张必须维护的表。27 处逐条改写为语义内联：`spec.md` / `tasks.md` 的「铁律 2/3/4/5」→ 四条约定的名字，`GAPS.md` B-03 / B-06、`ARCHITECTURE.md` 的「铁律 4」→「未改顶点格式」。xtask 的「编号引用按行豁免」同步删除（`numbered_rule_reference` 移除）⇒ 任何新出现的「铁律」都直接红，不再有「看起来合法」的编号形态 |
 | BA-02 | 条目正文里的附带义务必须有独立编号 | GAPS / xtask | **已关闭（0）** | AX-02 正文原有的「需重录」不进小计 ⇒ AX-07 补编号并进 AX 小计；纪律写入本文件「统计与维护约定」。读数：`--step demo` 28/28、`--step hashes` 36/36、结构 22 项不变（本批末实测） |
 | BA-03 | 禁止词表不限于清单：近义词会漏网 | docs / xtask | **已关闭（0）** | 本批补入「钉」字根的近义词并逐处改写，按「钉 / 锚 / 锁 / 真」扫过一遍（其余命中按语境处理）；纪律写入 `docs/README.md` 的维护约定（每批收尾扫一次字根） |
 | BA-04 | 白名单现状 | xtask / GAPS | **已关闭（0）** | `FORBIDDEN_TERM_ALLOW` 仅一条：`GAPS.md` 豁免「铁律」（历史记账引用原名，改名会丢失可追溯性）；其余禁止词无豁免 |
 
-**BA 段小计**：已关闭 3（BA-02、BA-03、BA-04）· 部分关闭 0 · 记账 0 · 未执行 1（BA-01）· 已记录 0。
+**BA 段小计**：已关闭 4（BA-01、BA-02、BA-03、BA-04）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 0。
+
+---
+
+## BB. 算子扩充、糖层与能力面批次（2026-10-29）
+
+> 计划《算子扩充糖层与能力面_执行计划》。定位：做作品之前的最后一批地基。
+> 口径：**每阶段可交付可测试**；像素 38 条与结构 22 项逐位不变（阶段 2 的 manifest 除外）；
+> 加算子只 bump 一次 `LIBRARY_VERSION`。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BB-01 | crate README 不在用语门禁范围内（33 个 README 零扫描） | xtask / docs | **已关闭（阶段 0）** | [`repository_markdown_docs`](xtask/src/main.rs) 追加 `crates/**/README.md`；清掉 19 处命中（强制约束 9、约定 8、定案 2；`ze-notion` 的「验收方式」原写作含该串的近义词，一并改写）。可验证：往任一 crate README 插一个禁止词 ⇒ `terms` 红 |
+| BB-02 | AF–AK 六段不在 `check_gaps_subtotals` 的前缀表里 | xtask / GAPS | **已关闭（阶段 0）** | 前缀表补 `AF.`–`AK.`，`is_item` 补 `AF-`–`AK-`（两处缺一即漏账）。纳入后第一次运行即抓到真错：AF 段把小计里的 `AF-06`（实际部分关闭）记成记账 ⇒ 改为 `部分关闭 1 · 记账 5` |
+| BB-03 | 用语门禁的扫描范围只在代码里，`WASM_PORT_SURVEY.md` 的排除理由没有对外说明 | docs | **已关闭（阶段 0）** | [`docs/README.md`](docs/README.md) 的维护约定新增「扫描范围」段：根 `*.md` + `docs/**` + `crates/**/README.md`，唯一排除项 `WASM_PORT_SURVEY.md`（历史快照，文件头有可见声明），并约定范围变更必须同步该段 |
+| BB-04 | BA-01 定案：去编号 | docs / xtask | **已关闭（阶段 0）** | 27 处「铁律 N」逐条语义内联（`spec.md` / `tasks.md` / `GAPS.md` B 段 / `ARCHITECTURE.md`）；xtask 的编号豁免函数 `numbered_rule_reference` 删除 ⇒ 编号形态不再被当成合法写法。BA-01 条目已同步关闭 |
+
+**BB 段小计**：已关闭 4（BB-01、BB-02、BB-03、BB-04）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 0。
 
 ---
 
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BA**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BA 段，含"部分关闭"与"已记录"；AF 段为立约段，编号不进该核对器）。
+> （**D–BB**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BB 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

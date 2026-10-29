@@ -57,3 +57,7 @@ README 的阅读导览只指向这里 —— 同一份定义，不复制第二�
   `cargo run -p xtask -- terms`（也挂在 `--step docs`）。确有合理场合时在
   `FORBIDDEN_TERM_ALLOW` 按「词 + 文件 + 理由」登记
 - 禁止词表不限于清单：每批收尾按字根（钉 / 锚 / 锁 / 真）扫一遍，近义词同样改写（GAPS `BA-03`）
+- **用语门禁的扫描范围**（唯一实现在 `xtask/src/main.rs` 的 `repository_markdown_docs`）：
+  根目录 `*.md` + `docs/**/*.md` + `crates/**/README.md`。改动这个范围时必须同步本段文字，
+  否则范围又回到"只有代码知道"。唯一排除项是 `WASM_PORT_SURVEY.md`：它是历史探测快照，
+  路径漂移本来就是它保留的信息，文件头有一行可见声明说明这一点；新增排除项同样要写在这里

@@ -11,7 +11,7 @@
 >   （弥补 Rust 缺失的 trait upcasting）；
 > - `DynamicObject` — 运行时可扩展的"命名属性包"，允许用户在不重新编译的情况下添加字段。
 >
-> **硬约束**：本 crate 只依赖 `ze-node-core + serde`，**绝不依赖 egui / zela-node-editor / zela-node-egui(-ui)**
+> **强制约束**：本 crate 只依赖 `ze-node-core + serde`，**绝不依赖 egui / zela-node-editor / zela-node-egui(-ui)**
 > 或任何 zela 项目内部 crate——兑现"后端可换 / WASM / headless"的架构承诺。
 
 ```

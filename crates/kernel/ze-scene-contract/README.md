@@ -18,7 +18,7 @@ zela-scene         ECS 实现    Scene trait 的 hecs 实现（WorldView / World
 zela-render        渲染管线    三角化 / 合批 / 队列
 ```
 
-**硬约束（依赖铁律）**：
+**强制约束（依赖约定）**：
 
 - ❌ `hecs` / `egui` / `wgpu` / 任何 `zela-*` / `ze-object` —— 禁止；
   验收：`cargo tree -p ze-scene-contract | grep -E "zela-|ze-object"` = 0；

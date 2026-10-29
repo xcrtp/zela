@@ -238,7 +238,7 @@ derive_more (full) / thiserror / smart-default / derive-new / derive_builder
 hecs = "0.11"
 ```
 
-> **2026-10-19 收口**：`glam` 依赖已从 Cargo.toml 删除；源码 0 处直接引用
+> **2026-10-19 定案**：`glam` 依赖已从 Cargo.toml 删除；源码 0 处直接引用
 > （数学类型一律走 `ze-notion` 或本层的转发模块 [`types`](src/types.rs)），
 > 仅剩 2 行说明性注释（`types.rs` 历史沿革 / `transform.rs` 的 Y 翻转约定）。
 

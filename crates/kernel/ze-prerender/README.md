@@ -21,7 +21,7 @@ ze-prerender（本 crate：引擎抽象 + 缓存 + Typst 接入）
 ```
 
 **依赖方向**：`ze-notion ← ze-content ← ze-prerender`。
-**铁律**：禁止依赖任何 graph / render / ui / app（`ze-*` / `zela-*` 上层）；
+**约定**：禁止依赖任何 graph / render / ui / app（`ze-*` / `zela-*` 上层）；
 重引擎依赖全部 `optional`，未启用 feature 时零重依赖。
 
 ---

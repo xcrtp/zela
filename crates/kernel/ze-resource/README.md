@@ -19,7 +19,7 @@ zela-render  (RenderBackend trait / 队列 / hecs 兼容层)
 zela-render-backends (wgpu / egui 实现)
 ```
 
-**硬约束（依赖铁律）**：本 crate 必须能编译到 `wasm32`，因此
+**强制约束（依赖约定）**：本 crate 必须能编译到 `wasm32`，因此
 
 - ❌ 禁止 `hecs` / `wgpu` / `egui` / 任何 `zela-*` / 任何外部依赖；
 - ✅ 需要 wgpu 类型的后端 trait（`RenderBackend` / `RenderBackend3D`）留在 `zela-render`；
