@@ -523,6 +523,8 @@ impl ChannelRef {
         match self.namespace.as_str() {
             "" if matches!(self.name.as_str(), "time" | "frame") => ChannelClass::Frame,
             "uv" | "zela.vertex" => ChannelClass::Element,
+            // **阶段 2**：着色内建（对象 / 片元属性）——由后端提供，不进 uniform。
+            "zela.shader" => ChannelClass::Element,
             _ => ChannelClass::HostState,
         }
     }

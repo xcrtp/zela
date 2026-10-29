@@ -55,7 +55,7 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `16`：**5b B4** 新增 `query_self` / `bind_each`（装配期展开的批量绑定）。
 /// `17`：**5b B4** 新增 `exists`（集合判空；装配期常量折叠）。
 /// `18`：**阶段 2** 新增 `shader`（表达式 → WGSL，装饰性着色 codegen）。
-pub const LIBRARY_VERSION: &str = "18";
+pub const LIBRARY_VERSION: &str = "19";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -345,6 +345,9 @@ impl ExprPod {
             "()",
             shader,
         );
+        // **阶段 2**：着色内建通道（对象 / 片元属性；不进 uniform）。
+        registry.register_fn0_named("zela.math::center", HANDLE, center_ctor);
+        registry.register_fn0_named("zela.math::size", HANDLE, size_ctor);
         // B4 Query：装配期展开的批量绑定 + `it` 占位读。
         registry.register_fn1_named::<ChannelSpec, Handle>(
             "zela.math::query_self",
@@ -1082,6 +1085,21 @@ impl<'a> ze_comb::ExprVisitor<'a> for CollectChannels<'_> {
         }
         Ok(true)
     }
+}
+
+/// **阶段 2**：`center()` —— 对象在视图里的中心（像素，屏幕坐标）。
+fn center_ctor(pod: &dyn Pod) -> Handle {
+    shader_builtin(pod, "center")
+}
+
+/// **阶段 2**：`size()` —— 对象包围盒的尺寸（像素）。
+fn size_ctor(pod: &dyn Pod) -> Handle {
+    shader_builtin(pod, "size")
+}
+
+fn shader_builtin(pod: &dyn Pod, name: &str) -> Handle {
+    let channel = ChannelRef::new("zela.shader", name).with_type(ChannelType::Vec2);
+    expr_pod(pod).intern(Expr::channel(channel))
 }
 
 fn bind(pod: &dyn Pod, spec: BindSpec) {

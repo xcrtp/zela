@@ -10,8 +10,8 @@
 - 层：`render`（`crates/render`）
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`
-- 被依赖（下游）：`zela-app`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：10 个 · 11542 行
+- 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-playback`、`zela-web`
+- 源文件：10 个 · 11557 行
 
 ### 文件清单
 
@@ -23,10 +23,10 @@
 | `src/lib.rs` | 136 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
 | `src/mesh.rs` | 105 | A mesh prepared for drawing or recording. Geometry is evaluated in its input precision; |
 | `src/occlusion.rs` | 151 | A 3D view's ambient occlusion (`Camera.ambient_occlusion`): how much of the light from all around reaches the |
-| `src/render.rs` | 4099 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
-| `src/scene.rs` | 1062 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
+| `src/render.rs` | 4107 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
+| `src/scene.rs` | 1068 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
-| `src/vector.rs` | 1636 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
+| `src/vector.rs` | 1637 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

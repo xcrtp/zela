@@ -481,7 +481,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "18",
+    version = "19",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -665,6 +665,11 @@ pub struct MathApi<'a> {
     ///
     /// 这里只记录；宿主在脚本结束后把它挂成对象组件（`ShaderPaint`）。
     pub shader: fn(&'a dyn Pod, spec: ShaderSpec) -> (),
+
+    /// **阶段 2**：着色内建通道（对象在视图里的中心 / 尺寸，像素）。
+    pub center: fn(&'a dyn Pod) -> Handle,
+    /// **阶段 2**：`size()` —— 对象包围盒的尺寸（像素）。
+    pub size: fn(&'a dyn Pod) -> Handle,
 }
 
 // ─── G 批（D14）：能力指纹与版本的配对基线 ─────────────────────────────────
@@ -690,9 +695,9 @@ pub struct MathApi<'a> {
 /// **阶段 4 的实测结论（未落地）**：新增一个算子必然改 `signatures()` ⇒ 必须
 /// 递增 version ⇒ `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**。
 /// 即"加算子"与"不重录基线"在本批互斥，故本批只交付注册表机制，不新增算子。
-pub const MATH_API_VERSION: &str = "18";
+pub const MATH_API_VERSION: &str = "19";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 11_581_327_359_153_768_215;
+pub const MATH_API_FINGERPRINT: u64 = 13_665_565_731_265_772_151;
 
 /// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
 ///

@@ -118,6 +118,15 @@ impl WgslBackend for MathWgsl {
         Some((ty, name))
     }
 
+    fn builtin(&self, channel: &ze_comb::ChannelRef) -> Option<(SlotType, String)> {
+        // **阶段 2**：对象级内建（由后端在入口处赋值；不进 uniform）。
+        match (channel.namespace.as_str(), channel.name.as_str()) {
+            ("zela.shader", "center") => Some((SlotType::Vec2, "zela_center".to_string())),
+            ("zela.shader", "size") => Some((SlotType::Vec2, "zela_size".to_string())),
+            _ => None,
+        }
+    }
+
     fn prelude(&self) -> &str {
         PRELUDE
     }

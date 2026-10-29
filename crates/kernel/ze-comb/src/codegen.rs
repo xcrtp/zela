@@ -64,6 +64,14 @@ pub trait WgslBackend {
     /// 返回 `None` ⇒ 该通道不能进 shader（显式失败）。
     fn channel(&self, channel: &crate::expr::ChannelRef) -> Option<(SlotType, String)>;
 
+    /// 后端自带的**内建通道**（对象 / 片元属性：中心、尺寸、像素位置…）。
+    ///
+    /// 与 [`Self::channel`] 的区别：内建**不进 `Params`**（不是 uniform），而是映射到
+    /// 着色器里的一个只读标识符（由后端在入口处赋值）。返回 `None` ⇒ 按普通通道处理。
+    fn builtin(&self, _channel: &crate::expr::ChannelRef) -> Option<(SlotType, String)> {
+        None
+    }
+
     /// 后端自带的前导（辅助函数等）。默认空。
     fn prelude(&self) -> &str {
         ""
@@ -174,18 +182,23 @@ impl Emitter<'_> {
                 if channel.class() == ChannelClass::HostState {
                     return Err(CodegenError::channel(channel));
                 }
-                let (ty, name) = self
-                    .backend
-                    .channel(channel)
-                    .ok_or_else(|| CodegenError::channel(channel))?;
-                self.params.insert(
-                    name.clone(),
-                    WgslParam {
-                        name: name.clone(),
-                        ty,
-                    },
-                );
-                (format!("p.{name}"), ty)
+                // **阶段 2**：内建通道（对象 / 片元属性）→ 着色器标识符，不进 `Params`。
+                if let Some((ty, name)) = self.backend.builtin(channel) {
+                    (name, ty)
+                } else {
+                    let (ty, name) = self
+                        .backend
+                        .channel(channel)
+                        .ok_or_else(|| CodegenError::channel(channel))?;
+                    self.params.insert(
+                        name.clone(),
+                        WgslParam {
+                            name: name.clone(),
+                            ty,
+                        },
+                    );
+                    (format!("p.{name}"), ty)
+                }
             }
             Node::Call { op, args } => {
                 let mut rendered = Vec::with_capacity(args.len());

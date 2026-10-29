@@ -1286,9 +1286,10 @@ impl Vector {
         // **阶段 2**：光栅之前把本组的着色 codegen 颜色写进对象缓冲（只写 r/g/b，alpha 不变）。
         for fill in plan.fills.iter().filter(|fill| fill.group as usize == g) {
             let FillSlot::Object(object) = fill.slot else { continue };
+            let object_word = (object as usize * std::mem::size_of::<Object>() / 4) as u32;
             let word = ((object as usize * std::mem::size_of::<Object>() + OBJECT_FILL_OFFSET) / 4) as u32;
             let program = &plan.programs[fill.program as usize];
-            if let Err(error) = super::Gpu::encode_fill_impl(device, queue, fill_layout, fill_pipelines, encoder, &b.objects.0, word, program) {
+            if let Err(error) = super::Gpu::encode_fill_impl(device, queue, fill_layout, fill_pipelines, encoder, &b.objects.0, word, object_word, 0, program) {
                 fill_error.get_or_insert(error);
             }
         }

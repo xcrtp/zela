@@ -1695,7 +1695,6 @@ mod tests {
             ],
             options: Default::default(),
             param: None,
-            shader: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[line.clone().into()]) {
             Ok(frame) => frame,
@@ -1751,6 +1750,7 @@ mod tests {
             material: None,
             options: Default::default(),
             param: None,
+            shader: None,
         };
         let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[fill.into()]) {
             Ok(frame) => frame,

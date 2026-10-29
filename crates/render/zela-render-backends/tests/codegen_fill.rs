@@ -131,4 +131,46 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
             "GPU 求值与 CPU 参考差超出容差：得到 {got}，期望 {want}（整帧中心 {r},{g},{b}）"
         );
     }
+
+    // ③ **对象级内建**：`zela.shader::center` 由后端在入口处注入（不进 uniform）。
+    // 画布铺满、记录矩形就是整幅 ⇒ 中心像素的颜色应为 `center / canvas`。
+    use ze_comb::{ChannelRef, ChannelType, Expr, OpRef};
+    let math = |name: &str| OpRef::new("zela.math", name);
+    let center_channel = Expr::channel(
+        ChannelRef::new("zela.shader", "center").with_type(ChannelType::Vec2),
+    );
+    let expr = Expr::call(
+        math("vec3"),
+        [
+            Expr::call(
+                math("mul"),
+                [
+                    Expr::call(math("x"), [center_channel.clone()]),
+                    Expr::pure(1.0 / WIDTH as f64),
+                ],
+            ),
+            Expr::call(
+                math("mul"),
+                [Expr::call(math("y"), [center_channel]), Expr::pure(1.0 / HEIGHT as f64)],
+            ),
+            Expr::pure(0.5),
+        ],
+    );
+    let emitted = ze_comb::emit_wgsl(&expr, ze_func::wgsl::backend()).expect("内建可生成");
+    assert!(
+        emitted.params.is_empty(),
+        "内建通道不能进 uniform（params = {:?}）",
+        emitted.params
+    );
+    assert!(emitted.source.contains("zela_center"), "{}", emitted.source);
+    let builtin = ShaderFill {
+        source: emitted.source,
+        params: Vec::new(),
+    };
+    let frame = render(canvas_fill(Some(builtin)));
+    let [cr, cg, _cb, _ca] = center(&frame);
+    assert!(
+        (cr as i32 - 128).abs() <= 6 && (cg as i32 - 128).abs() <= 6,
+        "内建 center 应让整幅填充呈 ~(128,128,128)，得到 ({cr},{cg})"
+    );
 }

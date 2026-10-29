@@ -424,14 +424,30 @@ pub(crate) const INSTANCE_FILL_OFFSET: usize = std::mem::offset_of!(Instance, pa
 ///
 /// 只写 r / g / b 三个字，alpha 保持记录原值 ⇒ 混合口径与"普通填充"完全一致。
 const FILL_TAIL: &str = r#"
-struct ZelaTarget { index: u32, pad0: u32, pad1: u32, pad2: u32 };
+struct ZelaTarget { index: u32, object: u32, kind: u32, pad: u32 };
 @group(0) @binding(0) var<storage, read_write> zela_words: array<u32>;
 @group(0) @binding(1) var<uniform> zela_params: Params;
 @group(0) @binding(2) var<uniform> zela_target: ZelaTarget;
+var<private> zela_center: vec2<f32>;
+var<private> zela_size: vec2<f32>;
 @compute @workgroup_size(1)
 fn zela_fill() {
-    let c: vec3<f32> = eval(zela_params, 0u);
     let base = zela_target.index;
+    // **阶段 2**：对象级内建 —— `Object.rect` 在对象缓冲的第 24..28 个字（xy = 角，zw = 尺寸）。
+    if (zela_target.kind == 0u) {
+        let rect = vec4<f32>(
+            bitcast<f32>(zela_words[zela_target.object + 24u]),
+            bitcast<f32>(zela_words[zela_target.object + 25u]),
+            bitcast<f32>(zela_words[zela_target.object + 26u]),
+            bitcast<f32>(zela_words[zela_target.object + 27u]),
+        );
+        zela_center = rect.xy + 0.5 * rect.zw;
+        zela_size = rect.zw;
+    } else {
+        zela_center = vec2<f32>(0.0, 0.0);
+        zela_size = vec2<f32>(0.0, 0.0);
+    }
+    let c: vec3<f32> = eval(zela_params, 0u);
     zela_words[base] = bitcast<u32>(c.x);
     zela_words[base + 1u] = bitcast<u32>(c.y);
     zela_words[base + 2u] = bitcast<u32>(c.z);
@@ -1783,23 +1799,11 @@ impl Gpu {
     /// **阶段 2**：把一段生成 WGSL 的颜色写进 `words`（对象 / 实例缓冲的 `u32` 视图）
     /// 的 `word_base` 起的三个字（r / g / b；alpha 保持记录原值 → 混合口径不变）。
     pub(crate) fn encode_fill(&mut self, encoder: &mut wgpu::CommandEncoder, words: &wgpu::Buffer, word_base: u32, program: &ShaderFill) -> Result<(), String> {
-        Self::encode_fill_impl(&self.device, &self.queue, &self.fill_layout, &mut self.fill_pipelines, encoder, words, word_base, program)
+        if program.source.contains("zela_center") || program.source.contains("zela_size") {
+            return Err("着色 codegen 的对象级内建只支持解析路径（点云 / 网格没有 rect）".to_string());
+        }
+        Self::encode_fill_impl(&self.device, &self.queue, &self.fill_layout, &mut self.fill_pipelines, encoder, words, word_base, word_base, 1, program)
     }
-    /// 同 [`Self::encode_fill`]，但借用调用方自己的管线缓存（矢量画布与实例缓冲各一份，
-    /// 布局同源 ⇒ `source` 相同的程序在两边各自编译一次，语义一致）。
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn encode_fill_with(
-        &self,
-        layout: &wgpu::BindGroupLayout,
-        pipelines: &mut HashMap<u64, wgpu::ComputePipeline>,
-        encoder: &mut wgpu::CommandEncoder,
-        words: &wgpu::Buffer,
-        word_base: u32,
-        program: &ShaderFill,
-    ) -> Result<(), String> {
-        Self::encode_fill_impl(&self.device, &self.queue, layout, pipelines, encoder, words, word_base, program)
-    }
-
     /// **阶段 2**：装配一段生成 WGSL 的 compute 管线（同 `source` ⇒ 同管线）。
     fn fill_pipeline_impl<'a>(
         device: &wgpu::Device,
@@ -1845,6 +1849,8 @@ impl Gpu {
         encoder: &mut wgpu::CommandEncoder,
         words: &wgpu::Buffer,
         word_base: u32,
+        object_word_base: u32,
+        object_kind: u32,
         program: &ShaderFill,
     ) -> Result<(), String> {
         if program.params.len() % 16 != 0 {
@@ -1871,6 +1877,8 @@ impl Gpu {
         });
         let mut index = [0u8; 16];
         index[..4].copy_from_slice(&word_base.to_le_bytes());
+        index[4..8].copy_from_slice(&object_word_base.to_le_bytes());
+        index[8..12].copy_from_slice(&object_kind.to_le_bytes());
         queue.write_buffer(&target, 0, &index);
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("fill codegen"),
