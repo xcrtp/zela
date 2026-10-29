@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：24 个 · 8638 行
+- 源文件：24 个 · 8662 行
 
 ### 文件清单
 
@@ -29,7 +29,7 @@
 | `src/director_state.rs` | 51 | — |
 | `src/driver.rs` | 420 | Driver pod：**命令驱动**的场景推进器（P4）。 |
 | `src/errors.rs` | 53 | — |
-| `src/expr_binding_tests.rs` | 632 | S3 验收（ECS 侧）：表达式绑定从声明到**真实组件写入**的整条链路。 |
+| `src/expr_binding_tests.rs` | 656 | S3 验收（ECS 侧）：表达式绑定从声明到**真实组件写入**的整条链路。 |
 | `src/expr_mono.rs` | 587 | 表达式求值的**宿主单子 `M`**（S3）。 |
 | `src/fingerprint.rs` | 374 | — |
 | `src/geometry.rs` | 258 | — |

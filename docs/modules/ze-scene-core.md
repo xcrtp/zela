@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：41 个 · 9691 行
+- 源文件：41 个 · 9724 行
 
 ### 文件清单
 
@@ -20,7 +20,7 @@
 | `src/animation/binding.rs` | 293 | — |
 | `src/animation/mod.rs` | 27 | — |
 | `src/animation/predicate.rs` | 729 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
-| `src/animation/target.rs` | 1135 | — |
+| `src/animation/target.rs` | 1154 | — |
 | `src/animation/timeline.rs` | 601 | — |
 | `src/bounds.rs` | 197 | — |
 | `src/camera_input.rs` | 160 | — |
@@ -51,7 +51,7 @@
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
 | `src/registry.rs` | 217 | — |
-| `src/scene_script.rs` | 898 | — |
+| `src/scene_script.rs` | 912 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
@@ -238,6 +238,7 @@ graph LR
 | `src/registry.rs` | `pub fn serialize_component(` |
 | `src/registry.rs` | `pub fn deserialize_component(` |
 | `src/scene_script.rs` | `pub enum ExprBindError` |
+| `src/scene_script.rs` | `pub fn duration_predicate(duration: f64) -> Expr` |
 | `src/scene_script.rs` | `pub struct Handle(pub usize)` |
 | `src/scene_script.rs` | `pub fn is_handle_ref(id: ObjectId) -> bool` |
 | `src/scene_script.rs` | `pub struct SceneEncoder` |
