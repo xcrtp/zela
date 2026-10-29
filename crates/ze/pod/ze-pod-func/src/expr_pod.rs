@@ -29,7 +29,8 @@ use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, Qualifi
 
 use crate::api::{
     AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
-    ComponentSpec, CosSpec, EqSpec, GeSpec, GtSpec, LeSpec, LengthSpec, LtSpec, MixSpec, MulSpec,
+    ComponentSpec, CosSpec, DistanceSpec, EqSpec, FractSpec, GeSpec, GtSpec, LeSpec, LengthSpec,
+    LtSpec, MixSpec, MulSpec, SmoothstepSpec,
     BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
     PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
     ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
@@ -57,7 +58,8 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `18`：**阶段 2** 新增 `shader`（表达式 → WGSL，装饰性着色 codegen）。
 /// `19`：**阶段 2** 新增 `center` / `size`（对象级内建通道）。
 /// `20`：**阶段 3** 新增 `pos2` / `local` / `uv`（逐片元内建通道）。
-pub const LIBRARY_VERSION: &str = "20";
+/// `21`：**阶段 3** 新增 `distance` / `smoothstep` / `fract`（内建 mono）。
+pub const LIBRARY_VERSION: &str = "21";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -254,6 +256,25 @@ impl ExprPod {
             "zela.math.RoundF32",
             HANDLE,
             round_f32_ctor,
+        );
+        // 阶段 3（内建 mono）：shader 里常用、此前只能手拼的几个。
+        registry.register_fn1_named::<DistanceSpec, Handle>(
+            "zela.math::distance",
+            "zela.math.Distance",
+            HANDLE,
+            distance_ctor,
+        );
+        registry.register_fn1_named::<SmoothstepSpec, Handle>(
+            "zela.math::smoothstep",
+            "zela.math.Smoothstep",
+            HANDLE,
+            smoothstep_ctor,
+        );
+        registry.register_fn1_named::<FractSpec, Handle>(
+            "zela.math::fract",
+            "zela.math.Fract",
+            HANDLE,
+            fract_ctor,
         );
         // 比较 / 布尔组合子（predicate 的原料；值语义，Bool 不进 `anim_value`）。
         registry.register_fn1_named::<LtSpec, Handle>("zela.math::lt", "zela.math.Lt", HANDLE, lt_ctor);
@@ -514,6 +535,12 @@ impl Pod for ExprPod {
             "length" => Box::new(length_ctor(self, arg::<LengthSpec>(args, 0)?.clone())),
             "normalize" => Box::new(normalize_ctor(self, arg::<NormalizeSpec>(args, 0)?.clone())),
             "round_f32" => Box::new(round_f32_ctor(self, arg::<RoundF32Spec>(args, 0)?.clone())),
+            "distance" => Box::new(distance_ctor(self, arg::<DistanceSpec>(args, 0)?.clone())),
+            "smoothstep" => Box::new(smoothstep_ctor(
+                self,
+                arg::<SmoothstepSpec>(args, 0)?.clone(),
+            )),
+            "fract" => Box::new(fract_ctor(self, arg::<FractSpec>(args, 0)?.clone())),
             "lt" => Box::new(lt_ctor(self, arg::<LtSpec>(args, 0)?.clone())),
             "gt" => Box::new(gt_ctor(self, arg::<GtSpec>(args, 0)?.clone())),
             "le" => Box::new(le_ctor(self, arg::<LeSpec>(args, 0)?.clone())),
@@ -753,6 +780,18 @@ fn normalize_ctor(pod: &dyn Pod, spec: NormalizeSpec) -> Handle {
 
 fn round_f32_ctor(pod: &dyn Pod, spec: RoundF32Spec) -> Handle {
     call1(pod, "round_f32", spec.of)
+}
+
+fn distance_ctor(pod: &dyn Pod, spec: DistanceSpec) -> Handle {
+    call2(pod, "distance", spec.a, spec.b)
+}
+
+fn smoothstep_ctor(pod: &dyn Pod, spec: SmoothstepSpec) -> Handle {
+    call3(pod, "smoothstep", spec.e0, spec.e1, spec.x)
+}
+
+fn fract_ctor(pod: &dyn Pod, spec: FractSpec) -> Handle {
+    call1(pod, "fract", spec.of)
 }
 
 fn lt_ctor(pod: &dyn Pod, spec: LtSpec) -> Handle {

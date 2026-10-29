@@ -348,6 +348,45 @@ pub fn round_f32(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     Ok(Value::f64(f64::from(number(op, args, 0)? as f32)))
 }
 
+/// `distance(a, b)`：两点距离（`Vector, Vector → F64`；两实参必须同维）。
+pub fn distance(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    if let (Some(a), Some(b)) = (
+        args.first().and_then(Value::as_vec2),
+        args.get(1).and_then(Value::as_vec2),
+    ) {
+        let (dx, dy) = (a[0] - b[0], a[1] - b[1]);
+        return Ok(Value::f64(f64::from((dx * dx + dy * dy).sqrt())));
+    }
+    if let (Some(a), Some(b)) = (
+        args.first().and_then(Value::as_vec3),
+        args.get(1).and_then(Value::as_vec3),
+    ) {
+        let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+        return Ok(Value::f64(f64::from(
+            (dx * dx + dy * dy + dz * dz).sqrt(),
+        )));
+    }
+    Err(EvalError::op(op, "需要两个同维向量（Vec2 或 Vec3）"))
+}
+
+/// `smoothstep(e0, e1, x)`：Hermite 平滑（与 WGSL 内建 `smoothstep` 同式）。
+///
+/// `e0 == e1` 时 `(x - e0) / 0` 是 ±inf / NaN，`clamp` 后得到与 shader 一致的结果
+/// （不做特判：特判会让 CPU 与 GPU 出现两条不同公式）。
+pub fn smoothstep(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    let e0 = number(op, args, 0)? as f32;
+    let e1 = number(op, args, 1)? as f32;
+    let x = number(op, args, 2)? as f32;
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    Ok(Value::f64(f64::from(t * t * (3.0 - 2.0 * t))))
+}
+
+/// `fract(x)`：小数部分（`x - floor(x)`，与 WGSL `fract` 同式）。
+pub fn fract(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    let x = number(op, args, 0)? as f32;
+    Ok(Value::f64(f64::from(x - x.floor())))
+}
+
 /// `lt(a, b)`。
 pub fn lt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     Ok(Value::Bool(
@@ -699,6 +738,70 @@ mod tests {
     fn round_f32_lands_on_the_f32_grid() {
         let value = eval(&math("round_f32"), &[Value::f64(0.1 + 0.2)]).unwrap();
         assert_eq!(value, Value::f64(f64::from((0.1_f64 + 0.2_f64) as f32)));
+    }
+
+    /// 阶段 3 的内建 mono：`distance` / `smoothstep` / `fract`。
+    #[test]
+    fn builtin_monos_work_in_both_dimensions() {
+        // 3-4-5 直角三角形：Vec2 与 Vec3 走同一公式。
+        assert_eq!(
+            eval(
+                &math("distance"),
+                &[Value::vec2([0.0, 0.0]), Value::vec2([3.0, 4.0])]
+            )
+            .unwrap(),
+            Value::f64(5.0)
+        );
+        assert_eq!(
+            eval(
+                &math("distance"),
+                &[Value::vec3([0.0, 0.0, 0.0]), Value::vec3([3.0, 4.0, 0.0])]
+            )
+            .unwrap(),
+            Value::f64(5.0)
+        );
+        assert!(
+            eval(
+                &math("distance"),
+                &[Value::vec2([0.0, 0.0]), Value::vec3([3.0, 4.0, 0.0])]
+            )
+            .is_err(),
+            "两实参必须同维"
+        );
+
+        // smoothstep：端点夹住、中点对称。
+        assert_eq!(
+            eval(
+                &math("smoothstep"),
+                &[Value::f64(0.0), Value::f64(1.0), Value::f64(-1.0)]
+            )
+            .unwrap(),
+            Value::f64(0.0)
+        );
+        assert_eq!(
+            eval(
+                &math("smoothstep"),
+                &[Value::f64(0.0), Value::f64(1.0), Value::f64(2.0)]
+            )
+            .unwrap(),
+            Value::f64(1.0)
+        );
+        let mid = eval(
+            &math("smoothstep"),
+            &[Value::f64(0.0), Value::f64(1.0), Value::f64(0.5)],
+        )
+        .unwrap();
+        assert_eq!(mid, Value::f64(0.5), "中点应是 0.5");
+
+        // fract：负数靠 floor（-0.25 → 0.75），与 WGSL `fract` 同式。
+        assert_eq!(
+            eval(&math("fract"), &[Value::f64(2.25)]).unwrap(),
+            Value::f64(0.25)
+        );
+        assert_eq!(
+            eval(&math("fract"), &[Value::f64(-0.25)]).unwrap(),
+            Value::f64(0.75)
+        );
     }
 
     #[test]

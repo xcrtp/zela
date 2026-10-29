@@ -206,6 +206,36 @@ const ROUND_F32: OpSig = OpSig {
     variadic: false,
 };
 
+/// `distance(a, b)`：两个同维向量 → `F64`。
+const DISTANCE2: OpSig = OpSig {
+    params: &[VEC2, VEC2],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+const DISTANCE3: OpSig = OpSig {
+    params: &[VEC3, VEC3],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `smoothstep(e0, e1, x)`：`(F64, F64, F64) → F64`。
+const SMOOTHSTEP: OpSig = OpSig {
+    params: &[F64, F64, F64],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
+/// `fract(x)`：`F64 → F64`（小数部分，靠 `floor` 定义）。
+const FRACT: OpSig = OpSig {
+    params: &[F64],
+    ret: F64,
+    vars: NO_VARS,
+    variadic: false,
+};
+
 /// 比较：数值 → Bool。
 const CMP_NUM: OpSig = OpSig {
     params: &[F64, F64],
@@ -321,6 +351,9 @@ math_ops! {
     length: "zela.math.Length", [LENGTH], 11, 11;
     normalize: "zela.math.Normalize", [NORMALIZE], 11, 11;
     round_f32: "zela.math.RoundF32", [ROUND_F32], 12, 12;
+    distance: "zela.math.Distance", [DISTANCE2, DISTANCE3], 21, 21;
+    smoothstep: "zela.math.Smoothstep", [SMOOTHSTEP], 21, 21;
+    fract: "zela.math.Fract", [FRACT], 21, 21;
     lt: "zela.math.Lt", [CMP_NUM], 1, 1;
     gt: "zela.math.Gt", [CMP_NUM], 1, 1;
     le: "zela.math.Le", [CMP_NUM], 1, 1;

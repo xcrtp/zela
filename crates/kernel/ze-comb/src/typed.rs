@@ -156,6 +156,9 @@ pub enum TypedOp {
     F64xVec3ToVec3(fn(f64, [f32; 3]) -> [f32; 3]),
     Vec2ToF64(fn([f32; 2]) -> f64),
     Vec3ToF64(fn([f32; 3]) -> f64),
+    /// `distance`：两个同维向量 → 标量。
+    Vec2xVec2ToF64(fn([f32; 2], [f32; 2]) -> f64),
+    Vec3xVec3ToF64(fn([f32; 3], [f32; 3]) -> f64),
     F64xF64ToVec2(fn(f64, f64) -> [f32; 2]),
     F64x3ToVec3(fn(f64, f64, f64) -> [f32; 3]),
     F64ToVec3(fn(f64) -> [f32; 3]),
@@ -267,6 +270,18 @@ impl TypedOp {
             }
             Self::Vec3ToF64(f) => {
                 slots.f64[out.index as usize] = f(slots.vec3[args[0].index as usize]);
+            }
+            Self::Vec2xVec2ToF64(f) => {
+                slots.f64[out.index as usize] = f(
+                    slots.vec2[args[0].index as usize],
+                    slots.vec2[args[1].index as usize],
+                );
+            }
+            Self::Vec3xVec3ToF64(f) => {
+                slots.f64[out.index as usize] = f(
+                    slots.vec3[args[0].index as usize],
+                    slots.vec3[args[1].index as usize],
+                );
             }
             Self::F64xF64ToVec2(f) => {
                 slots.vec2[out.index as usize] =

@@ -112,6 +112,16 @@ fn every_operator_matches_across_evaluators() {
         ("normalize/vec2", call("normalize", vec![v2(0.0, 3.0)])),
         ("normalize/vec3", call("normalize", vec![v3(0.0, 0.0, 0.0)])),
         ("round_f32", call("round_f32", vec![pure(0.1 + 0.2)])),
+        ("distance/vec2", call("distance", vec![v2(0.0, 0.0), v2(3.0, 4.0)])),
+        (
+            "distance/vec3",
+            call("distance", vec![v3(0.0, 0.0, 0.0), v3(3.0, 4.0, 0.0)]),
+        ),
+        (
+            "smoothstep",
+            call("smoothstep", vec![pure(0.0), pure(1.0), pure(0.25)]),
+        ),
+        ("fract", call("fract", vec![pure(-0.25)])),
         ("lt", call("lt", vec![pure(1.0), pure(2.0)])),
         ("gt", call("gt", vec![pure(1.0), pure(2.0)])),
         ("le", call("le", vec![pure(2.0), pure(2.0)])),

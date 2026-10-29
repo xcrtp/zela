@@ -90,6 +90,10 @@ impl WgslBackend for MathWgsl {
             // `round_f32` 是"把 f64 收窄到 f32"，不是"四舍五入到整数"：shader 全域都是
             // f32 ⇒ 它就是恒等（写 `round()` 会把语义改成最近整数，是错的）。
             "round_f32" => format!("({})", args[0]),
+            // `distance`：`length(a - b)`（WGSL 没有内建 distance；与 CPU 公式同序）。
+            "distance" => format!("length({} - {})", args[0], args[1]),
+            "smoothstep" => format!("smoothstep({}, {}, {})", args[0], args[1], args[2]),
+            "fract" => format!("fract({})", args[0]),
             "lt" => format!("({} < {})", args[0], args[1]),
             "gt" => format!("({} > {})", args[0], args[1]),
             "le" => format!("({} <= {})", args[0], args[1]),

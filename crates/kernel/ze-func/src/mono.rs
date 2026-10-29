@@ -98,6 +98,16 @@ impl ze_comb::OpResolver for MathMonomorphizer {
             ("normalize", [Vec2]) => (TypedOp::Vec2ToVec2(instances::normalize_vec2), Vec2),
             ("normalize", [Vec3]) => (TypedOp::Vec3ToVec3(instances::normalize_vec3), Vec3),
             ("round_f32", [F64]) => (TypedOp::F64ToF64(instances::round_f32), F64),
+            ("distance", [Vec2, Vec2]) => {
+                (TypedOp::Vec2xVec2ToF64(instances::distance_vec2), F64)
+            }
+            ("distance", [Vec3, Vec3]) => {
+                (TypedOp::Vec3xVec3ToF64(instances::distance_vec3), F64)
+            }
+            ("smoothstep", [F64, F64, F64]) => {
+                (TypedOp::F64x3ToF64(instances::smoothstep), F64)
+            }
+            ("fract", [F64]) => (TypedOp::F64ToF64(instances::fract), F64),
             ("lt", [F64, F64]) => (TypedOp::F64xF64ToBool(instances::lt), Bool),
             ("gt", [F64, F64]) => (TypedOp::F64xF64ToBool(instances::gt), Bool),
             ("le", [F64, F64]) => (TypedOp::F64xF64ToBool(instances::le), Bool),
@@ -299,6 +309,29 @@ mod instances {
 
     pub fn round_f32(x: f64) -> f64 {
         f64::from(x as f32)
+    }
+
+    /// 与动态 `distance` 同一公式（f32 域相减、平方、开方）。
+    pub fn distance_vec2(a: [f32; 2], b: [f32; 2]) -> f64 {
+        let (dx, dy) = (a[0] - b[0], a[1] - b[1]);
+        f64::from((dx * dx + dy * dy).sqrt())
+    }
+
+    pub fn distance_vec3(a: [f32; 3], b: [f32; 3]) -> f64 {
+        let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+        f64::from((dx * dx + dy * dy + dz * dz).sqrt())
+    }
+
+    /// 与动态 `smoothstep` 同式（含 `e0 == e1` 的 IEEE 结果）。
+    pub fn smoothstep(e0: f64, e1: f64, x: f64) -> f64 {
+        let (e0, e1, x) = (e0 as f32, e1 as f32, x as f32);
+        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+        f64::from(t * t * (3.0 - 2.0 * t))
+    }
+
+    pub fn fract(x: f64) -> f64 {
+        let x = x as f32;
+        f64::from(x - x.floor())
     }
 
     pub fn lt(a: f64, b: f64) -> bool {

@@ -94,6 +94,24 @@ fn expressions() -> Vec<(&'static str, Expr)> {
             "sum(sin t, cos t, 0.25)",
             call("sum", [call("sin", [time()]), call("cos", [time()]), f(0.25)]),
         ),
+        (
+            "distance(vec2(sin t, cos t), vec2(1, 2))",
+            call(
+                "distance",
+                [
+                    call("vec2", [call("sin", [time()]), call("cos", [time()])]),
+                    call("vec2", [f(1.0), f(2.0)]),
+                ],
+            ),
+        ),
+        (
+            "smoothstep(0, 1, fract(t))",
+            call(
+                "smoothstep",
+                [f(0.0), f(1.0), call("fract", [time()])],
+            ),
+        ),
+        ("fract(t * 3)", call("fract", [call("mul", [time(), f(3.0)])])),
     ]
 }
 

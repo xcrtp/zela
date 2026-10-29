@@ -42,7 +42,12 @@ local gradient = scene.spawn({
 expr.shader {
     object = gradient,
     root = Vec3Of {
-        x = expr.x { v = expr.uv() },
+        -- 内建 mono（`smoothstep`）与逐片元内建（`uv`）可以自由组合。
+        x = expr.smoothstep {
+            e0 = expr.pure(0.0),
+            e1 = expr.pure(1.0),
+            x = expr.x { v = expr.uv() },
+        },
         y = expr.y { v = expr.uv() },
         z = expr.pure(0.9),
     },

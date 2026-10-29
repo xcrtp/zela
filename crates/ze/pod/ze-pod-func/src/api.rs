@@ -326,6 +326,32 @@ pub struct RoundF32Spec {
     pub of: Handle,
 }
 
+// ─── 内建 mono（阶段 3）：shader 里常用、但此前只能在表达式里拼出来的几个 ──
+
+/// `distance(a, b)`：两点距离（`Vec2` / `Vec3` → 数）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Distance")]
+pub struct DistanceSpec {
+    pub a: Handle,
+    pub b: Handle,
+}
+
+/// `smoothstep(e0, e1, x)`：Hermite 平滑。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Smoothstep")]
+pub struct SmoothstepSpec {
+    pub e0: Handle,
+    pub e1: Handle,
+    pub x: Handle,
+}
+
+/// `fract(x)`：小数部分。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Fract")]
+pub struct FractSpec {
+    pub of: Handle,
+}
+
 /// `Sum { terms = { ... } }`。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Sum")]
@@ -481,7 +507,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "20",
+    version = "21",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -569,6 +595,15 @@ pub struct MathApi<'a> {
 
     /// `round_f32(x)`：落成 f32 再升回 f64（第 5a 批：旧曲线的逐位等价工具）。
     pub round_f32: fn(&'a dyn Pod, spec: RoundF32Spec) -> Handle,
+
+    /// `distance(a, b)`：两点距离（`Vec2` 或 `Vec3` → 数；两实参同维）。
+    pub distance: fn(&'a dyn Pod, spec: DistanceSpec) -> Handle,
+
+    /// `smoothstep(e0, e1, x)`：Hermite 平滑（0..1；与 WGSL 内建同式）。
+    pub smoothstep: fn(&'a dyn Pod, spec: SmoothstepSpec) -> Handle,
+
+    /// `fract(x)`：小数部分（`x - floor(x)`；与 WGSL 内建同式）。
+    pub fract: fn(&'a dyn Pod, spec: FractSpec) -> Handle,
 
     /// `Lt { a = ..., b = ... }`：`a < b`（数值 → `Bool`）。
     pub lt: fn(&'a dyn Pod, spec: LtSpec) -> Handle,
@@ -700,13 +735,14 @@ pub struct MathApi<'a> {
 /// `@18`（阶段 2）：新增 `shader`（表达式 → WGSL；装饰性着色 codegen）。
 /// `@19`（阶段 2）：新增 `center` / `size`（对象级内建通道）。
 /// `@20`（阶段 3）：新增 `pos2` / `local` / `uv`（逐片元内建通道）。
+/// `@21`（阶段 3）：新增 `distance` / `smoothstep` / `fract`（内建 mono）。
 ///
 /// **阶段 4 的实测结论（未落地）**：新增一个算子必然改 `signatures()` ⇒ 必须
 /// 递增 version ⇒ `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**。
 /// 即"加算子"与"不重录基线"在本批互斥，故本批只交付注册表机制，不新增算子。
-pub const MATH_API_VERSION: &str = "20";
+pub const MATH_API_VERSION: &str = "21";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 2_609_264_944_886_094_439;
+pub const MATH_API_FINGERPRINT: u64 = 1_902_109_117_346_267_160;
 
 /// **方法签名目录**（作者面）：`(方法名, 显式参数个数, 返回类型)`。
 ///
