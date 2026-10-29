@@ -373,6 +373,10 @@ pub struct FrameRun {
     pub vector_resources: zela_render_vector::ResourceTotals,
     /// **B17 Step 0**：逐帧的资源增量（等长于 `timings`；wgpu 帧为 0）。稳态应每帧为 0。
     pub resource_frames: Vec<zela_render_vector::ResourceTotals>,
+    /// **AW-07（E-G3）**：逐帧写进 GPU 的**几何数组字节**（等长于 `timings`）。
+    ///
+    /// 持久前缀生效后，静态 / 只改参数的帧应为 0（只有新形状或原地改的尾巴）。
+    pub store_uploads: Vec<usize>,
     /// **B18 Step 2**：本次运行链表溢出（装不下且已到 device 上限）的最坏一次。
     pub vector_overflow: zela_render_vector::OverflowTotals,
     /// **PB Step 1**：本次运行投影光源超过上限（`shadow::MOST`）的最坏一次。
@@ -502,6 +506,9 @@ pub fn run_frames(
     let mut vector_resources = zela_render_vector::ResourceTotals::default();
     let mut resource_frames: Vec<zela_render_vector::ResourceTotals> =
         Vec::with_capacity(remaining as usize);
+    // AW-07（E-G3）：几何数组上传字节逐帧取增量（本次运行从 0 开始）。
+    let _ = zela_render_vector::take_store_upload_bytes();
+    let mut store_uploads: Vec<usize> = Vec::with_capacity(remaining as usize);
     // B18 Step 2：链表溢出逐帧取增量（0 = 没有片元被丢弃）。
     let _ = zela_render_vector::take_overflow_totals();
     let mut vector_overflow = zela_render_vector::OverflowTotals::default();
@@ -705,6 +712,7 @@ pub fn run_frames(
         let resources = zela_render_vector::take_resource_totals();
         vector_resources = vector_resources.plus(resources);
         resource_frames.push(resources);
+        store_uploads.push(zela_render_vector::take_store_upload_bytes());
         // B18 Step 2：这一帧的链表溢出（取走即清零；wgpu 帧为 0）。
         vector_overflow = vector_overflow.plus(zela_render_vector::take_overflow_totals());
         // PB Step 1：这一帧的投影光源超限（取走即清零；wgpu 帧为 0）。
@@ -723,6 +731,7 @@ pub fn run_frames(
             .saturating_sub(textures_before),
         vector_resources,
         resource_frames,
+        store_uploads,
         vector_overflow,
         vector_shadows,
         structure,

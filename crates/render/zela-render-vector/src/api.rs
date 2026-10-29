@@ -1976,6 +1976,77 @@ mod tests {
         path
     }
 
+    /// **AW-07（E-G3）**：同一帧连渲两次，第二次的几何上传字节为 0（持久前缀生效），
+    /// 且像素逐位相同。
+    ///
+    /// 上传计数是进程级全局的 ⇒ 只在独占运行时有意义：
+    /// `cargo test -p zela-render-vector -- --ignored --test-threads=1`。
+    #[test]
+    #[ignore = "全局上传计数：需 --test-threads=1 独占运行"]
+    fn a_static_path_uploads_its_geometry_once() {
+        let square = FilledPath::polygon(
+            &[
+                [-1.0, -1.0, 0.0],
+                [1.0, -1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [-1.0, 1.0, 0.0],
+            ],
+            [1.0, 0.0, 0.0, 1.0],
+        );
+        let _ = crate::take_store_upload_bytes();
+        let first = render_2d(
+            64,
+            64,
+            1,
+            [0.0, 0.0, 0.0, 1.0],
+            &[PathRecord::from(square.clone())],
+        )
+        .expect("首帧");
+        let uploaded = crate::take_store_upload_bytes();
+        assert!(uploaded > 0, "首帧必须上传几何（实测 {uploaded} B）");
+        let second = render_2d(64, 64, 1, [0.0, 0.0, 0.0, 1.0], &[PathRecord::from(square)])
+            .expect("第二帧");
+        assert_eq!(crate::take_store_upload_bytes(), 0, "第二帧不应再传几何");
+        assert_eq!(first, second, "持久前缀不改像素");
+    }
+
+    /// **AW-07（E-G3）**：静态网格（raster 路径）连渲两次，第二次几何上传为 0。
+    #[test]
+    #[ignore = "全局上传计数：需 --test-threads=1 独占运行"]
+    fn a_static_mesh_uploads_its_geometry_once() {
+        let mesh = MeshRecord {
+            positions: vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]],
+            uvs: None,
+            normals: None,
+            triangles: vec![0, 1, 2],
+            fill: [1.0; 4],
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            material: None,
+            colors: None,
+            second: None,
+            texture: None,
+        };
+        let _ = crate::take_store_upload_bytes();
+        let first = render_2d(
+            64,
+            64,
+            1,
+            [0.0, 0.0, 0.0, 1.0],
+            &[PathRecord::Mesh(mesh.clone())],
+        )
+        .expect("首帧");
+        let uploaded = crate::take_store_upload_bytes();
+        assert!(uploaded > 0, "首帧必须上传几何（实测 {uploaded} B）");
+        let second = render_2d(64, 64, 1, [0.0, 0.0, 0.0, 1.0], &[PathRecord::Mesh(mesh)])
+            .expect("第二帧");
+        assert_eq!(crate::take_store_upload_bytes(), 0, "第二帧不应再传几何");
+        assert_eq!(first, second, "持久前缀不改像素");
+    }
+
     fn lit_view(
         tone: Option<ze_render_ir::ToneCurve>,
         bloom: f32,

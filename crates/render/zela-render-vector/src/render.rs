@@ -54,6 +54,11 @@ static RES_TEXTURES: AtomicUsize = AtomicUsize::new(0);
 static RES_TEXTURE_BYTES: AtomicUsize = AtomicUsize::new(0);
 static RES_BUFFERS: AtomicUsize = AtomicUsize::new(0);
 static RES_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+/// **AW-07 判据（E-G3）**：几何数组（`Store` 的 7 条 statics）写进 GPU 的字节数。
+///
+/// 这是"每帧上传"的直接量：持久前缀生效后，稳态帧应为 **0**（只有新增 / 原地改的字节）。
+/// 与 `ResourceTotals`（创建量）分工不同，故单独计。
+static RES_STORE_UPLOAD_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 /// 矢量后端自进程启动以来创建的 GPU 资源（累计）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -102,6 +107,11 @@ pub fn resource_totals() -> ResourceTotals {
         buffers: RES_BUFFERS.load(Ordering::Relaxed),
         buffer_bytes: RES_BUFFER_BYTES.load(Ordering::Relaxed),
     }
+}
+
+/// **AW-07（E-G3）**：取走"几何数组上传字节"（取走即清零）。
+pub fn take_store_upload_bytes() -> usize {
+    RES_STORE_UPLOAD_BYTES.swap(0, Ordering::Relaxed)
 }
 
 /// 取走累计计数（取走即清零 ⇒ 每次采样拿到"这段区间"的值）。
@@ -740,6 +750,8 @@ pub(crate) struct Store {
     dead: usize, // bytes of evicted shapes still in the arrays
     generation: u64,
     dirty: Vec<(usize, Range<usize>)>, // (array, bytes) written in place since the GPU looked
+    /// **AW-07**：本帧碰过的键（`Player::reset` 据此淘汰上一帧之后不再出现的键，其余跨帧保留）。
+    used: Keyed<()>,
 }
 
 const VERTEX_BYTES: usize = 16 + 16 + 8; // vertex, extra, link
@@ -908,24 +920,17 @@ impl Store {
         }
     }
 
-    /// Forget everything a frame uploaded, keeping the arrays' capacity (B17：逐帧复用 Player 的复位口）。
-    ///
-    /// 与 [`Self::evict`] 不同：它**不保留**逻辑键，也不依赖多帧在飞；`generation` 加一让 GPU
-    /// 把数组当成全新的一份（`Buffers.sent` 归零 ⇒ 内容逐字节重传，不继承上一帧的偏移）。
-    fn clear(&mut self) {
-        self.points.clear();
-        self.ctrl.clear();
-        self.ranges.clear();
-        self.vertices.clear();
-        self.extras.clear();
-        self.links.clear();
-        self.indices.clear();
-        self.rows.clear();
-        self.shapes.clear();
-        self.brushes.clear();
-        self.dead = 0;
-        self.dirty.clear();
-        self.generation = self.generation.wrapping_add(1);
+    /// **AW-07**：这一帧结束后保留用过的键，其余淘汰（几何数组本身跨帧保留）。
+    fn retire(&mut self) {
+        let used = std::mem::take(&mut self.used);
+        let dead: Vec<u64> = self
+            .shapes
+            .keys()
+            .chain(self.brushes.keys())
+            .copied()
+            .filter(|key| !used.contains_key(key))
+            .collect();
+        self.evict(&dead);
     }
 
     /// Pack the living once most of the arrays is dead, or a binding needs the space now.
@@ -981,6 +986,20 @@ impl Store {
     /// A path: its control points (four per curve) and subpaths (its own curve ranges: first, end,
     /// closed), and (centroid, Newell area vector) of its control points.
     fn add_path(&mut self, key: u64, points: &[[f64; 3]], ranges: &[[u32; 4]], centroid: [f32; 3], area: [f32; 3]) {
+        self.used.insert(key, ());
+        // **AW-07**：跨帧持久前缀 —— 同一键、内容逐位相同时复用已有曲线：不重新 append、
+        // 不产生 dead，GPU 侧 `sent` 游标不动 ⇒ 稳态帧的几何上传为 0。
+        // （含 NaN 的几何永远不会"相等" ⇒ 走 append，结果仍正确。）
+        if let Some(s) = self.shapes.get(&key) {
+            if s.kind == Kind::Path {
+                let c = s.curves;
+                let (a, b) = (4 * c.first as usize, 4 * (c.first + c.count) as usize);
+                let (ra, rb) = (c.first_subpath as usize, (c.first_subpath + c.subpaths) as usize);
+                if b - a == points.len() && rb - ra == ranges.len() && self.points[a..b] == *points && self.ranges[ra..rb] == *ranges {
+                    return;
+                }
+            }
+        }
         let count = (points.len() / 4) as u32;
         let first = self.push_curves(points, count as usize);
         let first_subpath = self.ranges.len() as u32;
@@ -989,13 +1008,18 @@ impl Store {
         let curves = Curves { first, count, room: count, first_subpath, subpaths: ranges.len() as u32, flatness, miter: miter(points, ranges) };
         let (lo, hi) = points.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| ([0, 1, 2].map(|i| lo[i].min(p[i] as f32)), [0, 1, 2].map(|i| hi[i].max(p[i] as f32))));
         let (plane, planar) = plane(points);
-        self.shapes.insert(key, Shape { kind: Kind::Path, curves, base: 0, count: 0, raster: Raster::default(), centroid, area, lo, hi, middle: middle((lo, hi)), plane, planar });
+        let shape = Shape { kind: Kind::Path, curves, base: 0, count: 0, raster: Raster::default(), centroid, area, lo, hi, middle: middle((lo, hi)), plane, planar };
+        // **AW-07**：同键换内容 ⇒ 旧字节记入 dead（否则持久前缀只增不减）。
+        if let Some(old) = self.shapes.insert(key, shape) {
+            self.dead += Self::held(&old);
+        }
     }
 
     /// Append curves to a path's last subpath (`closed`: whether it now ends where it begins),
     /// where it is when it has room, else after moving it to the end with room to grow. Older frames
     /// still draw their prefix: nothing written before changes.
     fn grow_path(&mut self, key: u64, tail: &[[f64; 3]], closed: bool) -> Result<(), String> {
+        self.used.insert(key, ());
         let s = self.shapes.get(&key).ok_or_else(|| format!("unknown shape {key}"))?;
         if s.kind != Kind::Path || s.curves.subpaths == 0 {
             return Err("only a path grows".into());
@@ -1032,6 +1056,16 @@ impl Store {
     }
 
     fn add_points(&mut self, key: u64, vertices: &[[f32; 4]]) {
+        self.used.insert(key, ());
+        // **AW-07**：同一键、同一顶点的点云跨帧复用（与 `add_path` 同一口径）。
+        if let Some(s) = self.shapes.get(&key) {
+            if s.kind == Kind::Points && s.count as usize == vertices.len() {
+                let (a, b) = (s.base as usize, s.base as usize + vertices.len());
+                if self.vertices[a..b] == *vertices {
+                    return;
+                }
+            }
+        }
         let base = self.push_vertices(vertices, None);
         let start = self.indices.len() as u32;
         self.indices.extend((0..vertices.len() as u32).flat_map(|i| (0..6).map(move |corner| ((base + i) << 3) | corner)));
@@ -1045,6 +1079,18 @@ impl Store {
     /// are the faces' own, face after face.
     #[allow(clippy::too_many_arguments)]
     fn add_mesh(&mut self, key: u64, vertices: &[[f32; 4]], extras: &[[f32; 4]], triangles: &[u32], outline: u32, block: u32) {
+        self.used.insert(key, ());
+        // **AW-07**：同一键、同一顶点 / 法线 / 三角形（且描边结构一致）⇒ 跨帧复用。
+        if let Some(s) = self.shapes.get(&key) {
+            if s.kind == Kind::Mesh && s.count as usize == vertices.len() && (s.raster.stroke.end == s.raster.stroke.start) == (outline <= 2) {
+                let (a, b) = (s.base as usize, s.base as usize + vertices.len());
+                let (sa, sb) = (s.raster.fill.start as usize, s.raster.fill.end as usize);
+                let same = self.vertices.get(a..b) == Some(vertices) && self.extras.get(a..b) == Some(extras) && sb - sa == triangles.len() && self.indices[sa..sb].iter().copied().eq(triangles.iter().map(|&i| i + s.base));
+                if same {
+                    return;
+                }
+            }
+        }
         let base = self.push_vertices(vertices, Some(extras));
         let start = self.indices.len() as u32;
         self.indices.extend(triangles.iter().map(|&i| i + base));
@@ -1064,17 +1110,24 @@ impl Store {
     /// A point cloud or mesh, its vertices stored from `base` and its index codes `raster` (a
     /// vertex without neighbours links nowhere).
     fn add_raster(&mut self, key: u64, kind: Kind, vertices: &[[f32; 4]], base: u32, raster: Raster) {
+        self.used.insert(key, ());
         self.links.resize(self.vertices.len(), [0, 0]);
         let (lo, hi) = bounds(vertices);
         let n = vertices.len().max(1) as f32;
         let centroid = [0, 1, 2].map(|k| vertices.iter().map(|v| v[k]).sum::<f32>() / n);
-        self.shapes.insert(key, Shape { kind, curves: Curves::default(), base, count: vertices.len() as u32, raster, centroid, area: [0.0; 3], lo, hi, middle: middle((lo, hi)), plane: [[0.0; 3]; 3], planar: true });
+        let shape = Shape { kind, curves: Curves::default(), base, count: vertices.len() as u32, raster, centroid, area: [0.0; 3], lo, hi, middle: middle((lo, hi)), plane: [[0.0; 3]; 3], planar: true };
+        if let Some(old) = self.shapes.insert(key, shape) {
+            self.dead += Self::held(&old);
+        }
     }
 
     fn add_rows(&mut self, key: u64, rows: &[[f32; 4]]) {
+        self.used.insert(key, ());
         let offset = self.rows.len() as u32;
         self.rows.extend_from_slice(rows);
-        self.brushes.insert(key, Brush { offset, count: rows.len() as u32, see_through: rows.iter().any(|r| r[3] < 1.0) });
+        if let Some(old) = self.brushes.insert(key, Brush { offset, count: rows.len() as u32, see_through: rows.iter().any(|r| r[3] < 1.0) }) {
+            self.dead += old.count as usize * 16;
+        }
     }
 }
 
@@ -2950,6 +3003,7 @@ impl Player {
         for (k, range) in &dirty {
             if range.end <= buffers.sent[*k] && !range.is_empty() {
                 gpu.queue.write_buffer(&buffers.statics[*k], range.start as u64, &arrays[*k][range.clone()]);
+                RES_STORE_UPLOAD_BYTES.fetch_add(range.len(), Ordering::Relaxed);
             }
         }
         for (k, bytes) in arrays.iter().enumerate() {
@@ -2961,6 +3015,7 @@ impl Player {
             }
             if buffers.sent[k] < bytes.len() {
                 gpu.queue.write_buffer(&buffers.statics[k], buffers.sent[k] as u64, &bytes[buffers.sent[k]..]);
+                RES_STORE_UPLOAD_BYTES.fetch_add(bytes.len() - buffers.sent[k] as usize, Ordering::Relaxed);
                 buffers.sent[k] = bytes.len();
             }
         }
@@ -3896,14 +3951,16 @@ impl Player {
         }
     }
 
-    /// **B17**：逐帧复用前的复位（清空逻辑内容、保留 GPU 纹理与数组容量）。
+    /// **B17 / AW-07**：逐帧复用前的复位（保留 GPU 纹理、数组容量与**几何前缀**）。
     ///
-    /// 保留的是 `canvases` / `image_groups` / `environments` / `lists` / `targets` / `buffers`
-    /// ——这些正是每帧重建整套资源的开销来源；清掉的是上一帧的几何、笔刷与待上传图像。
-    /// `store.clear` 会推进 `generation`，下一帧把数组当成全新一份逐字节重传（位置从 0 开始，
-    /// 不继承上一帧偏移）。键从 1 重新分配，因此不会残留上一帧的图形。
+    /// 保留的是 `canvases` / `image_groups` / `environments` / `lists` / `targets` / `buffers`，
+    /// 以及 `store` 里上一帧用到的键（AW-07：同一键同一内容不再重传 ⇒ 稳态帧的几何上传为 0）。
+    /// 上一帧之后不再出现的键在这里淘汰（`Store::retire`），字节在 `pack_if_worthwhile` 回收。
+    ///
+    /// 键仍是"记录下标 + 基址"（`api.rs::prepare_view`）：同一帧的同一位置 ⇒ 同一个键，
+    /// 因此顺序稳定时命中；顺序变了就按新内容 append，结果仍正确（旧字节成为 dead）。
     pub(crate) fn reset(&mut self) {
-        self.store.clear();
+        self.store.retire();
         self.images.clear();
         self.opaque_images.clear();
         // 着色 codegen 是"这一帧的"，不跨帧残留（否则上一帧的程序会套到下一帧的记录上）。
@@ -4119,6 +4176,57 @@ mod buffer_contract {
                 }
             }
         }
+    }
+
+    /// **AW-07**：同一键、同一内容 ⇒ 几何前缀复用（不重复 append、不产生 dead）；
+    /// 内容改变 ⇒ 新偏移，旧字节记入 dead（打包时回收）。
+    #[test]
+    fn a_persistent_prefix_is_appended_once() {
+        let mut store = Store::default();
+        let points: Vec<[f64; 3]> = (0..8).map(|i| [i as f64, 0.0, 0.0]).collect();
+        let ranges = [[0u32, 2, 1, 0]];
+        store.add_path(1, &points, &ranges, [0.0; 3], [0.0, 0.0, 1.0]);
+        let (curves, bytes, first) = (store.ctrl.len(), store.bytes(), store.shapes[&1].curves.first);
+        store.add_path(1, &points, &ranges, [0.0; 3], [0.0, 0.0, 1.0]);
+        assert_eq!(store.ctrl.len(), curves, "同一键同一内容不应再追加曲线");
+        assert_eq!(store.bytes(), bytes, "也不应产生 dead 字节");
+        assert_eq!(store.shapes[&1].curves.first, first, "偏移应原地复用");
+
+        let moved: Vec<[f64; 3]> = points.iter().map(|p| [p[0] + 1.0, p[1], p[2]]).collect();
+        store.add_path(1, &moved, &ranges, [0.0; 3], [0.0, 0.0, 1.0]);
+        assert!(store.ctrl.len() > curves, "内容变了 ⇒ 新偏移");
+        assert!(store.dead >= 2 * CURVE_BYTES, "旧字节应记入 dead（打包时回收）");
+        assert_eq!(store.shapes[&1].curves.count, 2);
+    }
+
+    /// **AW-07**：同一键、同一网格 ⇒ 复用（不追加顶点 / 索引）。
+    #[test]
+    fn a_persistent_mesh_is_appended_once() {
+        let mut store = Store::default();
+        let (v, e) = (vec![[1.0f32; 4]; 3], vec![[0.5f32; 4]; 3]);
+        store.add_mesh(1, &v, &e, &[0, 1, 2], 0, 0);
+        let (vertices, indices, links) = (store.vertices.len(), store.indices.len(), store.links.len());
+        store.add_mesh(1, &v, &e, &[0, 1, 2], 0, 0);
+        assert_eq!(store.vertices.len(), vertices, "顶点不应重复追加");
+        assert_eq!(store.indices.len(), indices, "索引不应重复追加");
+        assert_eq!(store.links.len(), links, "邻接不应重复追加");
+        assert_eq!(store.shapes[&1].count, 3, "raster 的 count 是顶点数");
+    }
+
+    /// **AW-07**：复位只淘汰上一帧没再用到的键；用过的键连同偏移一起留下。
+    #[test]
+    fn retiring_keeps_the_keys_the_frame_used() {
+        let mut player = Player::new(1, 1, 1);
+        player.store.add_points(1, &[[0.0; 4]; 8]);
+        player.store.add_points(2, &[[1.0; 4]; 8]);
+        let kept = player.store.shapes[&2].base;
+        // 上一帧只用到了键 2（`add_*` 每帧都会刷新 `used`）。
+        player.store.used.clear();
+        player.store.used.insert(2, ());
+        player.reset();
+        assert!(!player.store.shapes.contains_key(&1), "没再用到的键应淘汰");
+        assert_eq!(player.store.shapes[&2].base, kept, "用到的键保留原偏移");
+        assert!(player.store.used.is_empty(), "复位后开始记下一帧的键");
     }
 
     #[test]

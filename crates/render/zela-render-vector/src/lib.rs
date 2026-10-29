@@ -57,6 +57,8 @@ pub use render::init_gpu;
 pub use render::ShaderFill;
 // B17 Step 0：矢量后端的资源创建计数（纹理 / 缓冲；取走即清零）。
 pub use render::{ResourceTotals, resource_totals, take_resource_totals};
+// AW-07（E-G3）：几何数组上传字节（持久前缀生效后，稳态帧应为 0）。
+pub use render::take_store_upload_bytes;
 // B18：MSAA 能力查询（adapter 自述）、判别实验的采样覆盖、链表溢出的显式记录。
 pub use render::{OverflowTotals, ShadowTotals, msaa_samples, set_sample_override, take_overflow_totals, take_shadow_totals};
 /// **PI-04（PC-05）**：把宿主的阴影开关登记进 player 缓存键（状态变化 ⇒ 换 player）。

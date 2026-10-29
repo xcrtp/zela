@@ -371,6 +371,14 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
     let peak = |f: fn(&zela_render_vector::ResourceTotals) -> usize| {
         run.resource_frames.iter().map(f).max().unwrap_or(0)
     };
+    // **AW-07（E-G3）**：几何数组逐帧上传字节（首帧 / 稳态总和 / 峰值）。
+    let upload_first = run.store_uploads.first().copied().unwrap_or(0);
+    let upload_steady: usize = run.store_uploads.iter().skip(1).sum();
+    let upload_max = run.store_uploads.iter().copied().max().unwrap_or(0);
+    let upload = format!(
+        "{{\"frames\":{},\"first\":{upload_first},\"steady\":{upload_steady},\"max\":{upload_max}}}",
+        run.store_uploads.len()
+    );
     let all_body = summary_body(&all, "all", all_n);
     let window_body = summary_body(&window, &format!("1..{window_n}"), window_n);
     let gpu = run.gpu_json();
@@ -383,6 +391,7 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
              \"cache\":{cache},\"textures_created\":{},\"textures_created_scope\":\"wgpu-only\",\
              \"vector_resources\":{},\"vector_resource_curve\":{{\"frames\":{},\"first\":{},\"last\":{},\
              \"max_textures\":{},\"max_texture_bytes\":{},\"max_buffers\":{},\"max_buffer_bytes\":{}}},\
+             \"geometry_upload\":{upload},\
              \"vector_overflow\":{},\"vector_shadows\":{},\
              \"verify_note\":\"verify_ms 未启用（GPU 校验 pass 未实现，B12 Step 1.3）\",\
              \"decisions\":[{}]}}",
@@ -409,6 +418,7 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
         let data = format!(
             "{{\"timings\":{{\"all\":{all_body},\"window\":{window_body}}},\"gpu\":{gpu},\
              \"cache\":{cache},\"textures_created\":{},\"vector_resources\":{},\
+             \"geometry_upload\":{upload},\
              \"vector_overflow\":{},\"vector_shadows\":{},\"decisions\":[{}]}}",
             run.textures_created,
             run.vector_resources.json(),
