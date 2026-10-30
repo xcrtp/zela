@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-commands`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`zela-app`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`
-- 源文件：18 个 · 3953 行
+- 源文件：18 个 · 4057 行
 
 ### 文件清单
 
@@ -20,7 +20,7 @@
 | `src/bin/zela-compile-batch.rs` | 132 | `zela-compile-batch`：一次进程编完一组脚本（门禁 demo 步骤与批量出片共用的壳）。 |
 | `src/bin/zela-verify.rs` | 264 | `zela-verify`：批量对拍的**命令行壳**（参数解析 + GPU 上下文 + 退出码）。 |
 | `src/commands/api.rs` | 141 | `api`：导出 domain 能力的机器可读文档（JSON 唯一来源 + LuaLS + TypeScript + `.pyi`）。 |
-| `src/commands/batch.rs` | 720 | `batch`：**批量渲染 + 对拍**（门禁用；也是批量出片的一等能力）。 |
+| `src/commands/batch.rs` | 824 | `batch`：**批量渲染 + 对拍**（门禁用；也是批量出片的一等能力）。 |
 | `src/commands/check.rs` | 56 | `check`：只做装配期检查、不渲染。 |
 | `src/commands/compile.rs` | 256 | `compile`：脚本 → ZSB 装配产物（不渲染、不需要 GPU）。 |
 | `src/commands/doctor.rs` | 141 | `doctor`：环境自检（本批最值钱的发现之一）。 |
