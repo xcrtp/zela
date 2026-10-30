@@ -240,7 +240,7 @@ impl EnabledWhen {
 }
 
 /// 一个 pass 的声明。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PassDecl {
     /// 唯一名字（运行时 recording 必须按这个名字报数）。
     pub name: &'static str,
@@ -634,6 +634,7 @@ pub struct PassSchedule {
     cursor: usize,
     recorded: Vec<&'static str>,
     skipped: Vec<&'static str>,
+    raw_recorded: Vec<&'static str>,
 }
 
 impl PassSchedule {
@@ -644,12 +645,18 @@ impl PassSchedule {
             cursor: 0,
             recorded: Vec::new(),
             skipped: Vec::new(),
+            raw_recorded: Vec::new(),
         }
     }
 
     /// 已记录的数量（诊断用）。
     pub fn recorded(&self) -> &[&'static str] {
         &self.recorded
+    }
+
+    /// 通过逃生舱手写记录的 pass（诊断用；见 [`Self::raw`]）。
+    pub fn raw_recorded(&self) -> &[&'static str] {
+        &self.raw_recorded
     }
 
     /// 因**数据**缺席而显式跳过的 pass（诊断用）。
@@ -734,6 +741,31 @@ impl PassSchedule {
         } else {
             self.skipped.push(name);
         }
+        Ok(())
+    }
+
+    /// **逃生舱**：声明序照常推进，但这一步由手写 wgpu 记录。
+    ///
+    /// 用于声明式表达不了的东西（SDF 的 dispatch 计算、精细的 MRT 配置）。
+    /// 与 `step(name, true)` 的区别只在记账：进 `raw_recorded`，与"声明式记录"
+    /// 分开统计 —— 这样能看出有多少 pass 已经脱离声明，而不至于把逃生舱当成常态。
+    pub fn raw(&mut self, name: &'static str) -> Result<(), ScheduleError> {
+        if self.disabled(name) {
+            return Err(ScheduleError::Disabled { name });
+        }
+        let expected = match self.advance() {
+            Ok(decl) => decl,
+            Err(_) => return Err(ScheduleError::Undeclared { name }),
+        };
+        if expected.name != name {
+            return Err(ScheduleError::OutOfOrder {
+                expected: expected.name,
+                recorded: name,
+                index: self.cursor,
+            });
+        }
+        self.cursor += 1;
+        self.raw_recorded.push(name);
         Ok(())
     }
 
@@ -1177,6 +1209,60 @@ mod tests {
                 again: 1
             }
         );
+    }
+
+    /// 逃生舱：手写记录的 pass 仍占声明序，但单独记账（`raw_recorded`）。
+    #[test]
+    fn raw_pass_keeps_declaration_order() {
+        let mut schedule = PassSchedule::new(VECTOR_PLAN, 0);
+        schedule.raw("atlas raster").expect("手写记录照常推进声明序");
+        schedule.step("vector composite", true).unwrap();
+        assert_eq!(schedule.recorded(), &["vector composite"]);
+        assert_eq!(schedule.raw_recorded(), &["atlas raster"]);
+        schedule.finish().expect("手写记录也算兑现了那一项");
+    }
+
+    /// 逃生舱不能跳过顺序：手写也必须按声明序推进。
+    #[test]
+    fn raw_pass_cannot_reorder() {
+        let mut schedule = PassSchedule::new(VECTOR_PLAN, 0);
+        let error = schedule.raw("vector composite").unwrap_err();
+        assert!(matches!(error, ScheduleError::OutOfOrder { .. }));
+    }
+
+    // ── 可扩展性终检（BN-6 的机械版） ────────────────────────────────────
+
+    /// **新增一个 pass 不动已有声明**：追加即可，前缀逐字段不变，且新计划仍可调度。
+    ///
+    /// 这是"加 pass 的 diff 里不出现已有 pass 的修改"的可判定形态：
+    /// 顺序来自声明表，新项只追加在末尾，已有项一个字段都不用碰。
+    #[test]
+    fn adding_a_pass_does_not_touch_existing_ones() {
+        let before: Vec<PassDecl> = VECTOR_PLAN.to_vec();
+        let mut extended = before.clone();
+        extended.push(PassDecl {
+            name: "noop",
+            kind: PassStage::Compute,
+            inputs: &[],
+            outputs: &[],
+            entry: "noop",
+            dispatch: Dispatch::Full,
+            enabled_when: EnabledWhen::ALWAYS,
+        });
+        assert_eq!(
+            &extended[..before.len()],
+            &before[..],
+            "已有 pass 的声明必须逐字段不变"
+        );
+
+        let plan: PassPlan = Box::leak(extended.into_boxed_slice());
+        validate(plan).expect("追加后的计划仍合法");
+
+        let mut schedule = PassSchedule::new(plan, 0);
+        schedule.step("atlas raster", true).unwrap();
+        schedule.step("vector composite", true).unwrap();
+        schedule.step("noop", true).unwrap();
+        schedule.finish().expect("新 pass 追加在末尾，已有顺序不变");
     }
 
     // ── Pod 协商（BN-4 纯数据） ──────────────────────────────────────────
