@@ -29,6 +29,8 @@ struct Args {
     tmp: PathBuf,
     fps: f64,
     works: Vec<Work>,
+    /// 并行 worker 数（作品级）。缺省 = 本机可用并行度；`1` = 串行。
+    workers: usize,
     /// B7 Step 0.3：把 V3-12（挂/不挂 HashSink 的像素一致性）并入本进程。
     sink_bypass: bool,
 }
@@ -38,8 +40,9 @@ impl Args {
     fn parse_from(raw: &[String]) -> Result<Self, String> {
         if raw.is_empty() || raw.iter().any(|a| a == "--help" || a == "-h") {
             return Err(
-                "用法：zela-verify --scripts DIR --tmp DIR --work name=WxH[:vector] [--work ...]\n\
-                 　　：zela-verify --scripts DIR --tmp DIR --sink-bypass（V3-12 检查）"
+                "用法：zela-verify --scripts DIR --tmp DIR --work name=WxH[:vector] [--work ...]\n    \
+                 zela-verify --scripts DIR --tmp DIR --sink-bypass（V3-12 检查）\n    \
+                 --workers N 并行 worker 数（缺省 = 本机可用并行度；1 = 串行）"
                     .to_string(),
             );
         }
@@ -47,6 +50,7 @@ impl Args {
         let mut tmp: Option<PathBuf> = None;
         let mut fps = 30.0f64;
         let mut works = Vec::new();
+        let mut workers = default_workers();
         let mut sink_bypass = false;
         let mut i = 0;
         while i < raw.len() {
@@ -69,6 +73,17 @@ impl Args {
                         .parse()
                         .map_err(|_| "--fps 必须是数字".to_string())?;
                 }
+                "--workers" => {
+                    i += 1;
+                    workers = raw
+                        .get(i)
+                        .ok_or("--workers 需要一个正整数")?
+                        .parse()
+                        .map_err(|_| "--workers 必须是正整数".to_string())?;
+                    if workers == 0 {
+                        return Err("--workers 至少是 1（0 不是「自动」，自动是缺省值）".to_string());
+                    }
+                }
                 "--work" => {
                     i += 1;
                     works.push(parse_work(raw.get(i).ok_or("--work 需要 name=WxH[:vector]")?)?);
@@ -83,9 +98,17 @@ impl Args {
             tmp: tmp.ok_or("缺少 --tmp")?,
             fps,
             works,
+            workers,
             sink_bypass,
         })
     }
+}
+
+/// 缺省 worker 数 = 本机可用并行度（取不到 ⇒ 1）。
+fn default_workers() -> usize {
+    std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(1)
 }
 
 /// `fourier=640x480` / `vector_paths=640x480:vector`。
@@ -162,6 +185,7 @@ fn run() -> Result<(), String> {
             tmp: args.tmp,
             fps: args.fps,
             works: args.works,
+            workers: args.workers,
         },
     )?;
     Ok(())
@@ -220,5 +244,21 @@ mod defaults_snapshot {
     fn help_is_an_error_with_usage() {
         let error = Args::parse_from(&args(&["--help"])).expect_err("--help 走用法分支");
         assert!(error.contains("用法：zela-verify"));
+    }
+
+    #[test]
+    fn workers_default_to_available_parallelism_and_reject_zero() {
+        let parsed = Args::parse_from(&base(&["--work", "fourier=640x480"])).expect("可解析");
+        assert_eq!(parsed.workers, default_workers(), "缺省 = 本机可用并行度");
+        assert!(parsed.workers >= 1, "缺省不得是 0");
+
+        let parsed = Args::parse_from(&base(&["--work", "a=1x1", "--workers", "1"])).expect("可解析");
+        assert_eq!(parsed.workers, 1, "--workers 1 = 串行");
+
+        let error = Args::parse_from(&base(&["--work", "a=1x1", "--workers", "0"]))
+            .expect_err("0 不是「自动」");
+        assert!(error.contains("至少是 1"));
+        assert!(Args::parse_from(&base(&["--work", "a=1x1", "--workers"])).is_err());
+        assert!(Args::parse_from(&base(&["--work", "a=1x1", "--workers", "x"])).is_err());
     }
 }

@@ -63,6 +63,8 @@ pub struct BatchOptions {
     pub tmp: PathBuf,
     pub fps: f64,
     pub works: Vec<Work>,
+    /// 并行 worker 数（`0` / `1` = 串行）。按 `available_parallelism` 取的默认值由 CLI 给。
+    pub workers: usize,
 }
 
 /// 一件作品的产出（结构化；CLI 只负责格式化）。
@@ -77,19 +79,102 @@ pub struct WorkOutcome {
     pub payload_hash: String,
 }
 
-/// 批量渲染（串行版）：逐作品编译 → script 路径 → bundle 路径 → 结构等式比对。
+/// 批量渲染：逐作品编译 → script 路径 → bundle 路径 → 结构等式比对。
+///
+/// # 并行粒度是**作品**（不是帧）
+///
+/// 帧之间有状态依赖（`advance → 构图 → 渲染 → end_frame`，顺序即语义），
+/// 作品之间没有共享可变状态 ⇒ 一个 worker 认领一个作品，它内部的 script / bundle
+/// 两条路径仍在**同一 worker 内顺序**跑（结构等式比对要同时拿到两者）。
+///
+/// 共享一个 `RenderContext`（device / queue 是 Arc 语义），各 worker 自持 runtime 与后端。
+///
+/// # 失败语义
+///
+/// 单件失败**不影响其余作品**：全部跑完后统一汇总，错误里逐件指出名字与原因。
 pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<WorkOutcome>, String> {
     std::fs::create_dir_all(&options.tmp)
         .map_err(|e| format!("创建目录 {} 失败：{e}", options.tmp.display()))?;
     let env = zela_app::frame_loop::environment_json(ctx.adapter());
-    let mut outcomes = Vec::with_capacity(options.works.len());
-    for work in &options.works {
-        outcomes.push(run_work(ctx, options, work, &env)?);
+    let env = env.as_str();
+    let total = options.works.len();
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+    let workers = options.workers.clamp(1, total);
+
+    // 索引队列：worker 抢下一个作品（作品级并行，帧级串行）。
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let (tx, rx) = std::sync::mpsc::channel::<(usize, Result<WorkOutcome, String>)>();
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let tx = tx.clone();
+            let next = &next;
+            scope.spawn(move || {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(work) = options.works.get(index) else {
+                        break;
+                    };
+                    let result = run_work(ctx, options, work, env);
+                    if tx.send((index, result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+    });
+
+    // 汇总：按输入顺序输出 `[verify]`（xtask 按顺序解析），失败逐件汇总。
+    let mut slots: Vec<Option<Result<WorkOutcome, String>>> = (0..total).map(|_| None).collect();
+    for (index, result) in rx {
+        if let Some(slot) = slots.get_mut(index) {
+            *slot = Some(result);
+        }
+    }
+    let mut outcomes = Vec::with_capacity(total);
+    let mut failures = Vec::new();
+    for (index, slot) in slots.into_iter().enumerate() {
+        let name = &options.works[index].name;
+        match slot {
+            Some(Ok(outcome)) => {
+                println!("{}", outcome.verify_line());
+                outcomes.push(outcome);
+            }
+            Some(Err(error)) => failures.push(format!("{name}（{index}）：{error}")),
+            None => failures.push(format!("{name}（{index}）：worker 没有回报结果")),
+        }
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "{} / {} 件失败（其余作品的产出已打印，可先行排查）：\n  {}",
+            failures.len(),
+            total,
+            failures.join("\n  ")
+        ));
     }
     Ok(outcomes)
 }
 
-/// 单件作品：编译 → 两条路径 → 结构比对 → 打印 `[verify]` 行。
+impl WorkOutcome {
+    /// `[verify]` 行（xtask 的解析契约，**格式不得改**）。
+    pub fn verify_line(&self) -> String {
+        format!(
+            "[verify] {{\"work\":\"{}\",\"size\":\"{}x{}\",\"frames\":{},\"script\":\"{}\",\
+             \"bundle\":\"{}\",\"payload\":\"{}\"}}",
+            self.name,
+            self.width,
+            self.height,
+            self.frames,
+            self.script_hash,
+            self.bundle_hash,
+            self.payload_hash,
+        )
+    }
+}
+
+/// 单件作品：编译 → 两条路径 → 结构比对（`[verify]` 行由 [`run_batch`] 按序输出）。
 fn run_work(
     ctx: &RenderContext,
     options: &BatchOptions,
@@ -100,13 +185,13 @@ fn run_work(
     let source = std::fs::read_to_string(&script_path)
         .map_err(|e| format!("[{}] 读取脚本 {} 失败：{e}", work.name, script_path.display()))?;
 
+    // 同一作品可能以两个后端各跑一遍 ⇒ 中间文件名带后端，避免并行时互相覆盖。
+    let zsb = options
+        .tmp
+        .join(format!("{}-{}.zsb", work.name, backend_tag(work.backend)));
+
     // ── 编译（也在同一进程里，避免逐作品 `zela compile` 的启动开销）──
-    let payload = compile_and_write(
-        &work.name,
-        &source,
-        language,
-        &options.tmp.join(format!("{}.zsb", work.name)),
-    )?;
+    let payload = compile_and_write(&work.name, &source, language, &zsb)?;
 
     // ── 路径 1：脚本 ──
     let mut runtime = build_script_runtime(ctx.clone(), source, language)
@@ -115,8 +200,8 @@ fn run_work(
     drop(runtime);
 
     // ── 路径 2：同一份 ZSB ──
-    let bytes = std::fs::read(options.tmp.join(format!("{}.zsb", work.name)))
-        .map_err(|e| format!("[{}] 读取 ZSB 失败：{e}", work.name))?;
+    let bytes =
+        std::fs::read(&zsb).map_err(|e| format!("[{}] 读取 ZSB 失败：{e}", work.name))?;
     let bundle =
         Bundle::from_bytes(&bytes).map_err(|e| format!("[{}] ZSB 解析失败：{e}", work.name))?;
     let mut runtime = build_bundle_runtime(ctx.clone(), &bundle)
@@ -126,21 +211,25 @@ fn run_work(
     // 阶段 1：脚本 / bundle 两条路径的**结构**必须逐位相同（不只像素）。
     assert_structure_matches(&work.name, &script_hash.1, &bundle_hash.1)?;
 
-    let frames = frames_for(&runtime, options.fps);
-    println!(
-        "[verify] {{\"work\":\"{}\",\"size\":\"{}x{}\",\"frames\":{},\"script\":\"{}\",\
-         \"bundle\":\"{}\",\"payload\":\"{}\"}}",
-        work.name, work.width, work.height, frames, script_hash.0, bundle_hash.0, payload,
-    );
     Ok(WorkOutcome {
         name: work.name.clone(),
         width: work.width,
         height: work.height,
-        frames,
+        frames: frames_for(&runtime, options.fps),
         script_hash: script_hash.0,
         bundle_hash: bundle_hash.0,
         payload_hash: payload,
     })
+}
+
+/// 后端短名（中间产物文件名用）。
+fn backend_tag(backend: LoopBackend) -> &'static str {
+    match backend {
+        LoopBackend::Wgpu => "wgpu",
+        LoopBackend::Vector => "vector",
+        LoopBackend::Auto => "auto",
+        LoopBackend::AutoFrame => "auto-frame",
+    }
 }
 
 /// 脚本 → ZSB（与 `zela-compile` 同一装配路径），返回 payload hash。
