@@ -1358,11 +1358,9 @@ fn step_test(root: &Path, plan: &FeaturePlan, full: bool) -> Result<(), String> 
     }
 
     if let TestScope::Affected { packages, .. } = &scope {
-        return run_selected(root, plan, packages);
-    }
-
-    if plan.pyo3_available() {
-        return cargo(
+        run_selected(root, plan, packages)?;
+    } else if plan.pyo3_available() {
+        cargo(
             root,
             &strings(&[
                 "test",
@@ -1372,35 +1370,51 @@ fn step_test(root: &Path, plan: &FeaturePlan, full: bool) -> Result<(), String> 
                 "--",
                 "--test-threads=1",
             ]),
-        );
+        )?;
+    } else {
+        cargo(
+            root,
+            &strings(&[
+                "test",
+                "--workspace",
+                "-j",
+                "2",
+                "--exclude",
+                "zela-app",
+                "--exclude",
+                "zela-gui",
+                "--",
+                "--test-threads=1",
+            ]),
+        )?;
+        cargo(
+            root,
+            &[
+                strings(&["test", "-p", "zela-app", "-j", "2"]),
+                plan.app_args(),
+                strings(&["--", "--test-threads=1"]),
+            ]
+            .concat(),
+        )?;
+        println!("[xtask] 跳过 zela-gui：无 Python 时其依赖边无法排除 pyo3");
     }
 
+    // **xtask 自身测试**（独立 workspace 的覆盖边界）：它不在根 `members` 里 ⇒
+    // 上面那条 `cargo test --workspace` 永远不包括它，1054 行测试此前从未进过门禁。
+    // 放在两条分支之后：影响集模式下也必须跑（xtask 不进依赖图，永远不在影响集里）。
+    xtask_self_tests(root)
+}
+
+/// xtask 自身测试。
+///
+/// 不新加 `--step`：那要同步改 `--fast` 的 step 列表与 CI 的 job 配置，而放在
+/// `step_test` 里本机与 CI 自动同时生效 —— 这正是要修的那条边界。
+fn xtask_self_tests(root: &Path) -> Result<(), String> {
+    println!("[xtask] xtask 自身测试（独立 workspace，`--workspace` 覆盖不到）");
     cargo(
         root,
-        &strings(&[
-            "test",
-            "--workspace",
-            "-j",
-            "2",
-            "--exclude",
-            "zela-app",
-            "--exclude",
-            "zela-gui",
-            "--",
-            "--test-threads=1",
-        ]),
-    )?;
-    cargo(
-        root,
-        &[
-            strings(&["test", "-p", "zela-app", "-j", "2"]),
-            plan.app_args(),
-            strings(&["--", "--test-threads=1"]),
-        ]
-        .concat(),
-    )?;
-    println!("[xtask] 跳过 zela-gui：无 Python 时其依赖边无法排除 pyo3");
-    Ok(())
+        &strings(&["test", "--manifest-path", "xtask/Cargo.toml"]),
+    )
 }
 
 /// 只跑影响集里的包（`zela-app` 单独一次：它要 feature 参数）。
