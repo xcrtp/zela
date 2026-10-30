@@ -1388,103 +1388,42 @@ fn step_test(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
 // ─── step: wasm ─────────────────────────────────────────────────────────────
 
 fn step_wasm(root: &Path) -> Result<(), String> {
-    for name in KERNEL_CRATES {
-        println!("[xtask] == {name} (wasm32-unknown-unknown) ==");
-        cargo(
-            root,
-            &strings(&["check", "-p", name, "--target", "wasm32-unknown-unknown"]),
-        )?;
-    }
+    // 同一组 flag 合并成一次调用：逐 crate 起 cargo 时，启动与解析是纯开销
+    // （27 次 ≈ 27s，实际编译量没变）。
+    //
+    // 分组按 **flag 集**而不是"图个方便"：同一次调用内 feature 会跨包统一，
+    // 把 `--no-default-features` / `--features wgpu` 的 crate 混进普通组，
+    // 等于换了编译口径（门禁要么假过、要么假红）。
+    let plain: Vec<&str> = KERNEL_CRATES
+        .iter()
+        .chain(FACADE_CRATES)
+        .chain(OPTIONAL_WASM_CRATES)
+        .copied()
+        .chain(["zela-scene-bundle", "zela-schedule", "zela-render", "zela-web"])
+        .collect();
+    wasm_check(root, &plain, &[])?;
 
-    // 门面必须保持 wasm32 能力：不能吞 lua / py / UI。
-    for name in FACADE_CRATES {
-        println!("[xtask] == {name} facade (wasm32-unknown-unknown) ==");
-        cargo(
-            root,
-            &strings(&["check", "-p", name, "--target", "wasm32-unknown-unknown"]),
-        )?;
-    }
-
-    // 可选 wasm 能力：只有"同引擎覆盖 native+wasm"的适配器才在这里。
-    for name in OPTIONAL_WASM_CRATES {
-        println!("[xtask] == {name} optional-wasm (wasm32-unknown-unknown) ==");
-        cargo(
-            root,
-            &strings(&["check", "-p", name, "--target", "wasm32-unknown-unknown"]),
-        )?;
-    }
-
-    println!("[xtask] == zela-scene-bundle (wasm32-unknown-unknown) ==");
-    cargo(
+    // 矢量 / wgpu 后端：显式 `wgpu`，不要默认 features（默认含 blocking）。
+    wasm_check(
         root,
-        &strings(&[
-            "check",
-            "-p",
-            "zela-scene-bundle",
-            "--target",
-            "wasm32-unknown-unknown",
-        ]),
+        &["zela-render-backends"],
+        &["--no-default-features", "--features", "wgpu"],
     )?;
 
-    println!("[xtask] == zela-render-backends (wgpu, no blocking) ==");
-    cargo(
-        root,
-        &strings(&[
-            "check",
-            "-p",
-            "zela-render-backends",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--no-default-features",
-            "--features",
-            "wgpu",
-        ]),
-    )?;
-
-    println!("[xtask] == zela-schedule (default features) ==");
-    cargo(
-        root,
-        &strings(&[
-            "check",
-            "-p",
-            "zela-schedule",
-            "--target",
-            "wasm32-unknown-unknown",
-        ]),
-    )?;
-
-    println!("[xtask] == zela-render (wasm32-unknown-unknown) ==");
-    cargo(
-        root,
-        &strings(&[
-            "check",
-            "-p",
-            "zela-render",
-            "--target",
-            "wasm32-unknown-unknown",
-        ]),
-    )?;
-
-    println!("[xtask] == zela-playback (web config) ==");
-    cargo(
-        root,
-        &strings(&[
-            "check",
-            "-p",
-            "zela-playback",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--no-default-features",
-        ]),
-    )?;
-
-    println!("[xtask] == zela-web ==");
-    cargo(
-        root,
-        &strings(&["check", "-p", "zela-web", "--target", "wasm32-unknown-unknown"]),
-    )?;
+    wasm_check(root, &["zela-playback"], &["--no-default-features"])?;
 
     Ok(())
+}
+
+/// wasm32 编译门禁的一次调用（包名单 + 额外 flag）。
+fn wasm_check(root: &Path, packages: &[&str], extra: &[&str]) -> Result<(), String> {
+    println!("[xtask] == wasm32（{} 个 crate）：{} ==", packages.len(), packages.join(", "));
+    let mut args = strings(&["check", "--target", "wasm32-unknown-unknown"]);
+    for name in packages {
+        args.extend(strings(&["-p", name]));
+    }
+    args.extend(strings(extra));
+    cargo(root, &args)
 }
 
 // ─── step: structure ────────────────────────────────────────────────────────
@@ -2669,9 +2608,12 @@ fn jq_filter(metadata: &str, program: &str) -> Result<String, String> {
 /// （删占位相机、改动画）会静默改掉 ZSB payload，直到 push 之后才在 CI 红掉。
 /// 这类失败已经发生过两次（PF 的 demo3d、PG 的 pbr_materials）。
 ///
-/// 口径与 `build.ps1` 逐字一致：同一条 `zela-compile`、同一个 `ZELA_TYPST_FONT_DIR`
-/// （由 [`cargo_command`] 注入）、同一条 `payload hash = …` 行；`-` 跳过、
-/// `windows:…,linux:…` 只断言本机平台。
+/// 口径与 `build.ps1` 一致：同一条装配路径（`compile_script` → `Bundle::encode`）、同一个
+/// `ZELA_TYPST_FONT_DIR`（由 [`cargo_command`] 注入）、同一个 `payload_hash_hex`；
+/// `-` 跳过、`windows:…,linux:…` 只断言本机平台。
+///
+/// 一件一个进程曾占本步全部耗时（34 次 `cargo run` ≈ 115s）⇒ 现在一次进程编完，
+/// 判据不变：**34 件逐个 payload 与 manifest 逐位相同**。
 fn step_demo(root: &Path) -> Result<(), String> {
     let manifest = root.join("crates/app/zela-app/scripts/demo/manifest.txt");
     let text = fs::read_to_string(&manifest)
@@ -2689,6 +2631,7 @@ fn step_demo(root: &Path) -> Result<(), String> {
     };
 
     let mut checked = 0usize;
+    let mut entries: Vec<(String, String, String)> = Vec::new();
     for (index, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -2728,42 +2671,57 @@ fn step_demo(root: &Path) -> Result<(), String> {
                 script_path.display()
             ));
         }
-        let out = out_dir.join(format!("{id}.zsb"));
-        // 阶段 3（仓库门面批次）：`zela-compile` crate 已删除，编译改走 `zela compile`。
-        let args = [
-            run_args("zela-cli", Some("zela")),
-            strings(&[
-                "compile",
-                &script_path.to_string_lossy(),
-                "--out",
-                &out.to_string_lossy(),
-            ]),
-        ]
-        .concat();
-        println!("[xtask] $ cargo {}", args.join(" "));
-        let output = cargo_command(root)?
-            .args(&args)
-            .output()
-            .map_err(|error| format!("启动 cargo 失败：{error}"))?;
-        let log = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        if !output.status.success() {
-            eprint!("{log}");
-            return Err(format!("demo {id}：zela compile 失败（{}）", output.status));
-        }
-        let Some(actual) = log
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("payload hash = "))
-            .map(|hash| hash.split_whitespace().next().unwrap_or_default().to_string())
-        else {
-            return Err(format!("demo {id}：编译输出里没有 `payload hash = …`"));
+        entries.push((id.to_string(), script_path.display().to_string(), want));
+    }
+    if entries.is_empty() {
+        println!("[xtask] demo：清单里没有需要断言的条目");
+        return Ok(());
+    }
+
+    // 一个进程编完（此前是逐件 `cargo run -p zela-cli`，34 件 ≈ 115s，全是启动开销）。
+    let mut args = run_args("zela-commands", Some("zela-compile-batch"));
+    args.extend(strings(&[
+        "--out-dir",
+        &out_dir.display().to_string(),
+    ]));
+    for (id, script, _) in &entries {
+        args.extend(strings(&["--job", &format!("{id}={script}")]));
+    }
+    println!("[xtask] $ cargo {}", args.join(" "));
+    let output = cargo_command(root)?
+        .args(&args)
+        .output()
+        .map_err(|error| format!("启动 cargo 失败：{error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.status.success() {
+        eprint!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
+        return Err(format!(
+            "demo：批量编译失败（{}；上面的错误逐件指出了 id 与脚本）",
+            output.status
+        ));
+    }
+    let mut actual: BTreeMap<&str, &str> = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some(rest) = line.strip_prefix("[payload] ") else {
+            continue;
         };
-        if actual != want {
+        let Some(id) = json_field(rest, "id") else {
+            return Err(format!("demo：无法解析 `[payload]` 行的 id：{line}"));
+        };
+        let Some(hash) = json_field(rest, "payload") else {
+            return Err(format!("demo：无法解析 `[payload]` 行的 payload：{line}"));
+        };
+        actual.insert(id, hash);
+    }
+    for (id, _, want) in &entries {
+        let Some(hash) = actual.get(id.as_str()) else {
             return Err(format!(
-                "demo {id}：payload hash 不符（{platform}）\n  实测 = {actual}\n  期望 = {want}\n  \
+                "demo {id}：批量编译的输出里没有这一件（`[payload]` 行缺失）"
+            ));
+        };
+        if *hash != want.as_str() {
+            return Err(format!(
+                "demo {id}：payload hash 不符（{platform}）\n  实测 = {hash}\n  期望 = {want}\n  \
                  ⇒ 脚本 / 场景装配改了 ZSB 内容：同步更新 `crates/app/zela-app/scripts/demo/manifest.txt`\n     \
                  （只允许在设置 ZELA_TYPST_FONT_DIR 时取新值；本步骤已自动注入）"
             ));

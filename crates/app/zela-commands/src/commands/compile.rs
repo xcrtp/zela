@@ -89,6 +89,74 @@ pub fn read_script(script: &std::path::Path) -> Result<(String, ScriptLanguage),
     Ok((source, language))
 }
 
+/// 批量编译的一件任务。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileJob {
+    /// 输出名（写 `<out_dir>/<id>.zsb`），也是 `[payload]` 行的键。
+    pub id: String,
+    pub script: PathBuf,
+}
+
+/// **批量编译**：一个进程编完一组脚本（门禁 demo 步骤与批量出片共用）。
+///
+/// # 省的是什么
+///
+/// 编译本身是 CPU 绑定、单件 0.2–0.5s；一件一个 `cargo run` 时，每件还要付
+/// cargo 解析 + 进程启动 + 装配期字体探测。34 件在一处编完，这笔开销只付一次。
+/// 因此这里是**串行**：并行的收益远小于多进程编译时的内存与诊断串行化代价。
+///
+/// # 输出（机器可读，一行一件）
+///
+/// ```text
+/// [payload] {"id":"fourier","payload":"<64 hex>"}
+/// ```
+///
+/// # 失败语义
+///
+/// 与 [`crate::commands::batch::run_batch`] 一致：单件失败不影响其余，全部跑完后
+/// 汇总，错误逐件指出 id 与脚本路径。
+pub fn run_many(out_dir: &std::path::Path, jobs: &[CompileJob]) -> Result<Vec<(String, String)>, String> {
+    let _ = crate::commands::fonts::ensure_font_dir();
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| format!("创建目录 {} 失败：{e}", out_dir.display()))?;
+    let mut done = Vec::with_capacity(jobs.len());
+    let mut failures = Vec::new();
+    for job in jobs {
+        let out = out_dir.join(format!("{}.zsb", job.id));
+        match compile_one(&job.script, &out) {
+            Ok(hash) => {
+                println!("[payload] {{\"id\":\"{}\",\"payload\":\"{hash}\"}}", job.id);
+                done.push((job.id.clone(), hash));
+            }
+            Err(error) => failures.push(format!("{}（{}）：{error}", job.id, job.script.display())),
+        }
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "{} / {} 件编译失败（其余作品的产出已打印，可先行排查）：\n  {}",
+            failures.len(),
+            jobs.len(),
+            failures.join("\n  ")
+        ));
+    }
+    Ok(done)
+}
+
+/// 单件：读脚本 → 装配 → 写 ZSB，返回 payload hash。
+fn compile_one(script: &std::path::Path, out: &std::path::Path) -> Result<String, String> {
+    let (source, language) = read_script(script)?;
+    let compiled = compile(&source, language)?;
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录 {} 失败：{e}", parent.display()))?;
+        }
+    }
+    std::fs::write(out, compiled.bundle.to_bytes())
+        .map_err(|e| format!("写 {} 失败：{e}", out.display()))?;
+    Ok(compiled.bundle.payload_hash_hex().to_string())
+}
+
 /// 执行编译并写盘。
 pub fn run(host: &dyn CommandHost, options: &CompileOptions) -> Result<Response, String> {
     // 装配期可能用到 Typst（content.text）⇒ 先保证确定字体，避免静默回退。
@@ -110,7 +178,8 @@ pub fn run(host: &dyn CommandHost, options: &CompileOptions) -> Result<Response,
     }
 
     let meta = compiled.bundle.meta();
-    // 兼容行：xtask 的 demo 门禁按 `payload hash = …` 解析（格式保持不变）。
+    // 逐件编译的既有输出（`build.ps1` 与手工调用按这一行看结果）；门禁的 demo 步骤改走
+    // [`run_many`] 的 `[payload]` 行，两者都由同一个 `payload_hash_hex` 产出。
     host.diagnostic(
         Level::Info,
         &format!("payload hash = {}", compiled.bundle.payload_hash_hex()),
