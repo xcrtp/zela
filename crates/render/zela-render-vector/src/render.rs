@@ -4294,6 +4294,17 @@ pub(crate) fn count(bytes: &[u8]) -> u64 {
 mod buffer_contract {
     use super::*;
 
+    /// **BQ-01 编译探针**：native 的 `Gpu` 必须 `Send`（它装在 `static OnceLock<Mutex<Gpu>>` 里，
+    /// 批量渲染还要跨 worker 线程共享同一个设备）；同时证明「含 `GpuHandle` 的 `ResourceCache`
+    /// 可以放进 `Gpu`」这条 BP-07 的阻塞已解除。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn gpu_and_a_handle_cache_are_send_on_native() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Gpu>();
+        assert_send::<ze_resource::ResourceCache<()>>();
+    }
+
     #[test]
     fn msaa_is_picked_from_format_flags_without_a_feature_gate() {
         use wgpu::TextureFormatFeatureFlags as F;

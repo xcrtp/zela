@@ -47,3 +47,8 @@ export = []
 # B15（甲）：浏览器的异步回读用它接住 `map_async` 的回调（native 无此依赖）。
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-channel = "0.3"
+
+[dev-dependencies]
+# BQ-01 的编译探针：证明「含 GpuHandle 的 ResourceCache 可以放进 Gpu」（BP-07 的阻塞已解除）。
+# 只用于测试断言，不进生产依赖图。
+ze-resource = { path = "../../kernel/ze-resource" }

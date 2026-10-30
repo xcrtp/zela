@@ -70,17 +70,30 @@ impl std::error::Error for AccessError {}
 
 // ─── GpuHandle ────────────────────────────────────────────────────────────
 
+/// 句柄内的装箱类型（BQ-01：按平台拆分）。
+///
+/// - **native**：`Box<dyn Any + Send>` —— 后端的 `Gpu` 要跨 worker 线程共享一个设备
+///   （`zela-commands` 的批量渲染走 `thread::scope`），`Mutex<Gpu>: Sync` 要求 `Gpu: Send`；
+///   而 native 的 wgpu 资源本身全 `Send + Sync`，加 `+ Send` 不需要任何 unsafe。
+/// - **wasm**：`Box<dyn Any>` —— 浏览器资源含 `Rc<RefCell<…>>`，只能在创建线程使用；
+///   单线程架构下也不需要 `Send`（红线 3 的原文理由只针对 wasm，这条语义零变化）。
+#[cfg(not(target_arch = "wasm32"))]
+pub type AnyBox = Box<dyn Any + Send>;
+#[cfg(target_arch = "wasm32")]
+pub type AnyBox = Box<dyn Any>;
+
 /// 类型擦除的 GPU 资源句柄（buffer / texture / pipeline 等）。
 ///
 /// 附带一个 [`GpuResourceId`]：创建时默认为哨兵值，
 /// 由 `ResourceCache` 在插入条目时通过 `assign_id` 赋予实际 id。
 ///
-/// **不施加 `Send` / `Sync` 约束**：wasm 上 wgpu 资源内部含 `Rc<RefCell<…>>`，
-/// 浏览器资源只能在创建它的线程使用；本项目的渲染架构是单线程、主线程唯一，
-/// GPU 资源本就不需要跨线程。`Any` 仍然保留（`downcast_ref` 需要它）。
+/// **wasm 上不施加 `Send` / `Sync`**：浏览器资源内部含 `Rc<RefCell<…>>`，
+/// 只能在创建它的线程使用；本项目的渲染架构是单线程、主线程唯一。
+/// native 上句柄可 `Send`（见 [`AnyBox`] 的说明）—— 这是批量渲染跨线程共享设备的前提。
+/// `Any` 仍然保留（`downcast_ref` 需要它）。
 pub struct GpuHandle {
     id: GpuResourceId,
-    inner: Box<dyn Any>,
+    inner: AnyBox,
 }
 
 impl std::fmt::Debug for GpuHandle {
@@ -102,6 +115,17 @@ impl PartialEq for GpuHandle {
 impl Eq for GpuHandle {}
 
 impl GpuHandle {
+    /// 包一个资源（native 要求载荷 `Send`，wasm 不要求）。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new<T: Any + Send>(value: T) -> Self {
+        Self {
+            id: GpuResourceId::SENTINEL,
+            inner: Box::new(value),
+        }
+    }
+
+    /// 包一个资源（wasm：载荷不需要 `Send`，见 [`AnyBox`]）。
+    #[cfg(target_arch = "wasm32")]
     pub fn new<T: Any>(value: T) -> Self {
         Self {
             id: GpuResourceId::SENTINEL,
@@ -119,7 +143,7 @@ impl GpuHandle {
     }
 
     /// 剥离所有权：延迟销毁器/缓存需要移动内部资源而不立刻 drop 它时使用。
-    pub fn take(self) -> Box<dyn Any> {
+    pub fn take(self) -> AnyBox {
         self.inner
     }
 
@@ -177,5 +201,23 @@ mod tests {
             index: 0,
             generation: 1
         });
+    }
+
+    /// **BQ-01**：native 上句柄可跨线程（批量渲染共享同一个设备的前提）。
+    ///
+    /// 判据是编译事实 + 一次真实移动：句柄被 `move` 进线程后 `downcast_ref` 仍命中。
+    /// wasm 没有 `Send`，这条用例按 cfg 排除（红线 3 的语义零变化）。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn gpu_handle_is_send_on_native() {
+        fn assert_send<T: Send>() {}
+        assert_send::<GpuHandle>();
+        assert_send::<crate::ResourceCache<()>>();
+
+        let handle = GpuHandle::new(7_u32);
+        let moved = std::thread::spawn(move || *handle.downcast_ref::<u32>().expect("u32"))
+            .join()
+            .expect("the thread");
+        assert_eq!(moved, 7);
     }
 }

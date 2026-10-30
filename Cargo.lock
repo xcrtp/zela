@@ -7166,6 +7166,7 @@ dependencies = [
  "ze-graph-core",
  "ze-notion",
  "ze-render-ir",
+ "ze-resource",
 ]
 
 [[package]]
