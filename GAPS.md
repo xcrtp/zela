@@ -1599,11 +1599,30 @@
 
 ---
 
+## BJ. 动画层补全 · 阶段 6（能力 Demo 与记账收尾，2026-10-30）
+
+> 计划 §阶段 6 的表格逐条兑现：每个新增能力都有作品级证据，或明确记账。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BJ-01 | `Plot` → 作品 | Demo | **已关闭** | `cap_plot.lua`（阶段 1）：手写折线对照 + `expr.plot` 两条曲线；payload 由 manifest 断言 |
+| BJ-02 | 路径跟随 → 作品 | Demo | **已关闭** | `cap_path_follow.lua`（阶段 2）：`orient` 两种 + 方法取点/切线；组件与通道由覆盖门禁指出 |
+| BJ-03 | 文字排版糖 → 复用即证据 | Demo | **已关闭** | fourier / storyboard / surface_matrix / vector_paths 四件改用 `scene.text` 后 payload 未变（BG-02）；另有 `cap_text_group.lua` 演示组级淡出 / 缩放 |
+| BJ-04 | `sequence` → 作品 | Demo | **已关闭** | `cap_sequence.lua`（阶段 4）：顺序 / 并行 / 空档三种段形态；`spring.lua` 用糖重写后 payload 未变（BH-02） |
+| BJ-05 | `Fill.color` / 组可见性 → Demo | 表达式 / 渲染 | **记账** | 沿用 BD-03 / BD-04：`Fill.color` 缺可写根表达式（无 `Vec4Of` / `Vec4` 字面量），组可见性是全局 Resource 而非对象组件 ⇒ 两者都不产生"新能力缺作品"的覆盖义务，不重复立约 |
+| BJ-06 | 本批总账 | 产物 / 基线 | **已关闭** | 版本：`zela.scene` @14、`zela.math` @24（`LIBRARY_VERSION` 24）；demo 34 条 payload 全绿；结构 22 件不变；像素 36 项 ok 36 / DIFF 0；覆盖 72/72（豁免 0） |
+| BJ-07 | 遗留：新作品的像素基线 | 基线 / 设备 | **记账** | 本批 5 件新作品（`cap_plot` / `cap_path_follow` / `cap_text_group` / `cap_sequence` 及阶段 0 的 `cap_stroke_width`-类条目）只有 payload 断言，像素基线待**录制设备批次**统一补（各自在 `dispositions.txt` 里 `exempt` 并注明理由） |
+
+**BJ 段小计**：已关闭 5 · 记账 2。
+> 本段读数（`cargo verify` 全量）：demo 34/34 · 覆盖 72/72（豁免 0）· 结构 22 件一致 · 像素 36 项 ok 36 / DIFF 0。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BI**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BI 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BJ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BJ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
