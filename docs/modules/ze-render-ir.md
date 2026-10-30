@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-render-ir`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-pod-core`、`ze-vertex`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-web`
-- 源文件：13 个 · 2867 行
+- 源文件：13 个 · 2980 行
 
 ### 文件清单
 
@@ -21,11 +21,11 @@
 | `src/degrade.rs` | 40 | — |
 | `src/draw.rs` | 111 | — |
 | `src/layer.rs` | 30 | — |
-| `src/lib.rs` | 74 | — |
+| `src/lib.rs` | 75 | — |
 | `src/mesh.rs` | 64 | — |
 | `src/paint.rs` | 314 | — |
 | `src/params.rs` | 417 | — |
-| `src/pipeline.rs` | 259 | — |
+| `src/pipeline.rs` | 371 | — |
 | `src/shape.rs` | 400 | — |
 | `src/style.rs` | 344 | — |
 | `src/target.rs` | 114 | — |
@@ -89,6 +89,10 @@ graph LR
 | `src/params.rs` | `pub enum RenderParamError` |
 | `src/pipeline.rs` | `pub enum CullMode` |
 | `src/pipeline.rs` | `pub struct PipelineDesc` |
+| `src/pipeline.rs` | `pub struct ShaderRequirements` |
+| `src/pipeline.rs` | `pub fn vs_requirements(entry: &str) -> Option<ShaderRequirements>` |
+| `src/pipeline.rs` | `pub fn vs_entry_for(topology: PrimitiveTopology) -> &'static str` |
+| `src/pipeline.rs` | `pub fn vs_requirements_for(topology: PrimitiveTopology) -> ShaderRequirements` |
 | `src/pipeline.rs` | `pub enum PassDepth` |
 | `src/pipeline.rs` | `pub struct PassDesc` |
 | `src/pipeline.rs` | `pub enum ColorFormat` |

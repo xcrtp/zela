@@ -31,6 +31,8 @@ pub enum CullMode {
 ///   `BlendState`（`Opaque → REPLACE` / `Alpha → 预乘 over` / `Additive → One,One`）。
 /// - `vertex_layout`：顶点布局契约（D23，ze-vertex）。同布局 + 同其余维度才共享
 ///   pipeline；队列合并后两套 Layout 共存，故布局是 key 的必要维度（D15）。
+/// - `requirements`：该管线的顶点入口要求哪些语义（见 [`ShaderRequirements`]）。
+///   与 `vertex_layout` 一起构成"shader 要什么 × mesh 给什么"的两侧输入。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PipelineDesc {
     pub topology: PrimitiveTopology,
@@ -39,6 +41,64 @@ pub struct PipelineDesc {
     pub double_sided: bool,
     pub blend: LayerBlend,
     pub vertex_layout: ze_vertex::VertexLayout,
+    /// 顶点入口的语义要求（顺序 = shader location 顺序）。
+    pub requirements: ShaderRequirements,
+}
+
+// ─── 顶点语义需求（顶点入口 × 语义） ───────────────────────────────────────
+
+/// 一个顶点入口对顶点语义的要求。
+///
+/// `semantics` 的**顺序即 shader `@location` 的顺序**（下标 0,1,2…）。
+///
+/// # 为什么需求放在 IR
+///
+/// 需求是"管线意图"的一部分，与 [`PipelineDesc`] 同层；而它的**事实来源**是 shader
+/// 源码（`cube.wgsl` 的 `fn vs_*` 参数表）。两份表达必须由门禁对齐：
+/// `zela-render-backends/tests/wgsl_requirements.rs` 解析源码里的 `@location(n)`，
+/// 与本表的条目逐项比对，不一致即红。
+///
+/// 需求表不能放后端 crate：生产端（`zela-render`）需要它来补齐顶点，
+/// 而依赖方向是 `zela-render-backends → zela-render`，反向拿不到。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShaderRequirements {
+    pub semantics: Vec<ze_vertex::Semantic>,
+}
+
+/// 顶点入口：三角形（读位置 / UV / 着色法线）。
+pub const VS_MAIN: &str = "vs_main";
+
+/// 顶点入口名 → 语义需求。未知入口返回 `None`（调用方显式报错，**不猜**）。
+pub fn vs_requirements(entry: &str) -> Option<ShaderRequirements> {
+    use ze_vertex::Semantic;
+    let semantics = match entry {
+        VS_MAIN => vec![Semantic::Position, Semantic::Uv, Semantic::ShadingNormal],
+        _ => return None,
+    };
+    Some(ShaderRequirements { semantics })
+}
+
+/// 图元拓扑 → 顶点入口名。
+///
+/// 现状：三种拓扑共用 `vs_main`（`cube.wgsl` 只有一个顶点入口）。拓扑改用独立
+/// 入口时（如线段读位置即可）只改这张表 —— 入口名是 shader 的事实，集中在这里
+/// 才有一处可查。
+pub fn vs_entry_for(topology: PrimitiveTopology) -> &'static str {
+    match topology {
+        PrimitiveTopology::Triangles | PrimitiveTopology::Lines | PrimitiveTopology::Points => {
+            VS_MAIN
+        }
+    }
+}
+
+/// 拓扑 → 语义需求（[`vs_entry_for`] + [`vs_requirements`] 的组合）。
+///
+/// 入口未登记时 panic 并命名（不静默返回空需求）。
+pub fn vs_requirements_for(topology: PrimitiveTopology) -> ShaderRequirements {
+    let entry = vs_entry_for(topology);
+    vs_requirements(entry).unwrap_or_else(|| {
+        panic!("顶点入口 {entry:?} 没有登记语义需求（ShaderRequirements 表缺项）")
+    })
 }
 
 /// 渲染通道的深度处理意图。
@@ -179,6 +239,7 @@ mod tests {
             double_sided: false,
             blend: LayerBlend::Opaque,
             vertex_layout: VertexLayout::standard_3d(),
+            requirements: vs_requirements(VS_MAIN).expect("vs_main 必须登记需求"),
         }
     }
 
@@ -217,6 +278,57 @@ mod tests {
         let mut m = desc();
         m.vertex_layout = VertexLayout::standard(AaModel::None, CacheStrategy::Static);
         assert_ne!(h(&m), h(&desc()));
+
+        // 需求是 key 的必要维度（两套入口读不同语义时必须落到不同 pipeline）
+        let mut m = desc();
+        m.requirements = ShaderRequirements {
+            semantics: vec![ze_vertex::Semantic::Position],
+        };
+        assert_ne!(h(&m), h(&desc()));
+    }
+
+    // ── 顶点语义需求 ────────────────────────────────────────────────────
+
+    /// `vs_main` 的需求与 3D 标准布局逐项对齐（顺序 = shader location 顺序）。
+    ///
+    /// 这条断言把"布局声明"和"需求声明"两侧扣在一起：任何一侧调换顺序或增删槽，
+    /// 这里立刻红。shader 侧的位置数量由 `wgsl_requirements.rs` 门禁核对。
+    #[test]
+    fn vs_main_requirements_match_standard_3d_layout() {
+        let requirements = vs_requirements(VS_MAIN).expect("vs_main 必须登记");
+        let layout = VertexLayout::standard_3d();
+        let layout_semantics: Vec<ze_vertex::Semantic> = layout
+            .attribs
+            .iter()
+            .map(|a| ze_vertex::Semantic::of(a.semantic).expect("布局语义必须在词汇表内"))
+            .collect();
+        assert_eq!(
+            requirements.semantics, layout_semantics,
+            "vs_main 的需求顺序必须等于 standard_3d() 的属性顺序"
+        );
+    }
+
+    /// 未登记的入口 ⇒ `None`（调用方显式报错，不猜需求）。
+    #[test]
+    fn unknown_entry_has_no_requirements() {
+        assert_eq!(vs_requirements("vs_nonexistent"), None);
+        assert_eq!(vs_requirements(""), None);
+    }
+
+    /// 三种拓扑当前都走 `vs_main`（与 `cube.wgsl` 只有一个顶点入口一致）。
+    #[test]
+    fn all_topologies_use_vs_main_for_now() {
+        for topology in [
+            PrimitiveTopology::Triangles,
+            PrimitiveTopology::Lines,
+            PrimitiveTopology::Points,
+        ] {
+            assert_eq!(vs_entry_for(topology), VS_MAIN);
+            assert_eq!(
+                vs_requirements_for(topology),
+                vs_requirements(VS_MAIN).unwrap()
+            );
+        }
     }
 
     #[test]
