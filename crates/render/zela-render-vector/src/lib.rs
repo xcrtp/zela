@@ -36,6 +36,8 @@ mod mesh;
 mod render;
 /// BN 批：pass 声明、资源槽位与调度校验（纯数据 + 纯函数）。
 pub mod passes;
+/// BO 批：`workgroup_size` 的单一来源与 dispatch 形状。
+pub mod dispatch;
 
 pub mod api;
 pub use api::{

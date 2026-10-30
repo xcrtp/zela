@@ -20,8 +20,9 @@ use bytemuck::{Pod, Zeroable};
 use super::{Camera, Kind, Mat34, NONE, Paint, ROUND, Record, SQUARE, Shape, Store, compose};
 // BN-1：组 1 的 binding 编号由声明序给出（`passes::IMAGE_SLOTS`），不再手写 0..23。
 use crate::passes::{IMAGE_SLOTS, ImageKind};
+// BO-1：tile 常量只在 `dispatch` 里定义一份（`vector.wgsl` 的同名常量由门禁比对）。
+use crate::dispatch::TILE;
 
-const TILE: u32 = 16;
 const ATLAS_WIDTH: u32 = 4096;
 
 /// One object as the shader reads it (432 bytes; see `vector.wgsl`).

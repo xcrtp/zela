@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-notion`、`ze-render-ir`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：11 个 · 13382 行
+- 源文件：12 个 · 13898 行
 
 ### 文件清单
 
@@ -19,24 +19,28 @@
 |---|---|---|
 | `src/api.rs` | 3311 | 宿主适配层：`FilledPath` → 上游 `Upload::path` + `Record::filled` → 离屏一帧。 |
 | `src/bloom.rs` | 128 | A 3D view's bloom (`Camera.bloom`): the glow a lens and a sensor spread around the light they take in, which keeps |
+| `src/dispatch.rs` | 452 | `workgroup_size` 的单一来源，以及 dispatch 形状的描述。 |
 | `src/environment.rs` | 784 | Environments: light from all around a 3D view, a picture of its surroundings (an equirectangular Radiance image, |
-| `src/lib.rs` | 140 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
+| `src/lib.rs` | 142 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
 | `src/mesh.rs` | 105 | A mesh prepared for drawing or recording. Geometry is evaluated in its input precision; |
 | `src/occlusion.rs` | 151 | A 3D view's ambient occlusion (`Camera.ambient_occlusion`): how much of the light from all around reaches the |
-| `src/passes.rs` | 1333 | pass 声明化与资源槽位（BN 批）。 |
+| `src/passes.rs` | 1394 | pass 声明化与资源槽位（BN 批）。 |
 | `src/render.rs` | 4442 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
 | `src/scene.rs` | 1069 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
-| `src/vector.rs` | 1718 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
+| `src/vector.rs` | 1719 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
 ```mermaid
 graph LR
     f0["src/api.rs"]
+    f3["src/dispatch.rs"]
     f1["src/scene.rs"]
+    f2["src/vector.rs"]
     f0 --> f1
     f1 --> f0
+    f2 --> f3
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -62,6 +66,11 @@ graph LR
 | `src/api.rs` | `pub fn render_2d_with(` |
 | `src/api.rs` | `pub fn render_2d_to_texture(` |
 | `src/api.rs` | `pub fn render_3d_to_texture(` |
+| `src/dispatch.rs` | `pub fn workgroup(entry: &str) -> (u32, u32, u32)` |
+| `src/dispatch.rs` | `pub enum GroupSize` |
+| `src/dispatch.rs` | `pub struct Extent` |
+| `src/dispatch.rs` | `pub enum Dispatch` |
+| `src/dispatch.rs` | `pub fn groups_for(shape: Dispatch, extent: Extent) -> [u32; 3]` |
 | `src/environment.rs` | `pub fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String>` |
 | `src/lib.rs` | `pub fn forget_player_targets()` |
 | `src/lib.rs` | `pub fn digest<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> u64` |
@@ -72,7 +81,6 @@ graph LR
 | `src/passes.rs` | `pub enum PassStage` |
 | `src/passes.rs` | `pub struct EnabledWhen(pub u32)` |
 | `src/passes.rs` | `pub struct PassDecl` |
-| `src/passes.rs` | `pub enum Dispatch` |
 | `src/passes.rs` | `pub enum PlanError` |
 | `src/passes.rs` | `pub fn validate(plan: PassPlan) -> Result<(), PlanError>` |
 | `src/passes.rs` | `pub enum ScheduleError` |

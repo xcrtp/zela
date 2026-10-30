@@ -256,18 +256,9 @@ pub struct PassDecl {
     pub enabled_when: EnabledWhen,
 }
 
-/// dispatch 形状（声明用；本批不据此推导任何东西）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dispatch {
-    /// 由顶点数 / 索引决定。
-    Draw,
-    /// 按像素铺满（`ceil(size / 64)` 类）。
-    Pixels,
-    /// 按视图像素一半（泛光的粗级）。
-    HalfPixels,
-    /// 按固定尺寸（全屏一次性）。
-    Full,
-}
+/// dispatch 形状（声明用）。BO 批起由 [`crate::dispatch`] 定义 —— 除数跟随
+/// `@workgroup_size`，形状只描述被除数怎么算。
+pub use crate::dispatch::{Dispatch, GroupSize};
 
 /// 一帧的 pass 序列声明（顺序 = 执行顺序）。
 pub type PassPlan = &'static [PassDecl];
@@ -298,7 +289,9 @@ pub const RASTER_PLAN: PassPlan = &[
         inputs: &["occlusion_depth"],
         outputs: &["occlusion"],
         entry: "occlusion",
-        dispatch: Dispatch::Pixels,
+        dispatch: Dispatch::Tiles {
+            group: GroupSize::Entry("sao"),
+        },
         enabled_when: EnabledWhen(crate::render::SKIP_AO),
     },
     PassDecl {
@@ -316,7 +309,9 @@ pub const RASTER_PLAN: PassPlan = &[
         inputs: &["base_samples", "base_sample_depths"],
         outputs: &["base_depth"],
         entry: "nearest_of_samples",
-        dispatch: Dispatch::Pixels,
+        dispatch: Dispatch::Tiles {
+            group: GroupSize::Entry("nearest_of_samples"),
+        },
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
@@ -325,7 +320,17 @@ pub const RASTER_PLAN: PassPlan = &[
         inputs: &["ctrl", "subs", "objects", "base", "atlas", "base_depth", "crossings"],
         outputs: &["view", "crossings"],
         entry: "flatten + composite",
-        dispatch: Dispatch::Pixels,
+        dispatch: Dispatch::Sequence(&[
+            Dispatch::Linear {
+                group: GroupSize::Entry("flatten_fill"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("composite"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("keep"),
+            },
+        ]),
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
@@ -334,7 +339,20 @@ pub const RASTER_PLAN: PassPlan = &[
         inputs: &["view", "view_light"],
         outputs: &["bloom", "view"],
         entry: "bloom",
-        dispatch: Dispatch::HalfPixels,
+        dispatch: Dispatch::Sequence(&[
+            Dispatch::Tiles {
+                group: GroupSize::Entry("spread"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("down"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("up"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("show"),
+            },
+        ]),
         enabled_when: EnabledWhen(crate::render::SKIP_BLOOM),
     },
 ];
@@ -365,7 +383,9 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
         inputs: &["occlusion_depth"],
         outputs: &["occlusion"],
         entry: "occlusion",
-        dispatch: Dispatch::Pixels,
+        dispatch: Dispatch::Tiles {
+            group: GroupSize::Entry("sao"),
+        },
         enabled_when: EnabledWhen(crate::render::SKIP_AO),
     },
     PassDecl {
@@ -410,7 +430,9 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
         inputs: &["base_samples", "base_sample_depths"],
         outputs: &["base_depth"],
         entry: "nearest_of_samples",
-        dispatch: Dispatch::Pixels,
+        dispatch: Dispatch::Tiles {
+            group: GroupSize::Entry("nearest_of_samples"),
+        },
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
@@ -419,7 +441,17 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
         inputs: &["ctrl", "subs", "objects", "layers", "atlas", "base_depth", "crossings"],
         outputs: &["view", "crossings"],
         entry: "flatten + composite",
-        dispatch: Dispatch::Pixels,
+        dispatch: Dispatch::Sequence(&[
+            Dispatch::Linear {
+                group: GroupSize::Entry("flatten_fill"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("composite"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("keep"),
+            },
+        ]),
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
@@ -428,7 +460,20 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
         inputs: &["view", "view_light"],
         outputs: &["bloom", "view"],
         entry: "bloom",
-        dispatch: Dispatch::HalfPixels,
+        dispatch: Dispatch::Sequence(&[
+            Dispatch::Tiles {
+                group: GroupSize::Entry("spread"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("down"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("up"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("show"),
+            },
+        ]),
         enabled_when: EnabledWhen(crate::render::SKIP_BLOOM),
     },
 ];
@@ -450,7 +495,17 @@ pub const VECTOR_PLAN: PassPlan = &[
         inputs: &["ctrl", "subs", "objects", "atlas", "crossings"],
         outputs: &["view", "crossings"],
         entry: "flatten + composite",
-        dispatch: Dispatch::Pixels,
+        dispatch: Dispatch::Sequence(&[
+            Dispatch::Linear {
+                group: GroupSize::Entry("flatten_fill"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("composite"),
+            },
+            Dispatch::Tiles {
+                group: GroupSize::Entry("keep"),
+            },
+        ]),
         enabled_when: EnabledWhen::ALWAYS,
     },
 ];
@@ -462,7 +517,10 @@ pub const ENVIRONMENT_PLAN: PassPlan = &[PassDecl {
     inputs: &["environment"],
     outputs: &["environment"],
     entry: "environment",
-    dispatch: Dispatch::Full,
+    dispatch: Dispatch::Cube {
+        group: GroupSize::Entry("to_cube"),
+        faces: 6,
+    },
     enabled_when: EnabledWhen(crate::render::SKIP_ENVIRONMENT),
 }];
 
@@ -474,7 +532,7 @@ pub const CODEGEN_PLAN: PassPlan = &[
         inputs: &["instances", "shader_programs"],
         outputs: &["instances"],
         entry: "fill codegen",
-        dispatch: Dispatch::Full,
+        dispatch: Dispatch::Fixed,
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
@@ -483,7 +541,10 @@ pub const CODEGEN_PLAN: PassPlan = &[
         inputs: &["instances", "shader_programs", "shader_colors"],
         outputs: &["shader_colors"],
         entry: "frag codegen",
-        dispatch: Dispatch::Pixels,
+        // 生成着色器：`@workgroup_size` 由 codegen 拼进源码，不在 WORKGROUP 表里 ⇒ 字面量。
+        dispatch: Dispatch::Tiles {
+            group: GroupSize::Literal(8),
+        },
         enabled_when: EnabledWhen::ALWAYS,
     },
 ];
@@ -970,7 +1031,7 @@ mod tests {
                 inputs: &[],
                 outputs: &["x"],
                 entry: "b",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
             PassDecl {
@@ -979,7 +1040,7 @@ mod tests {
                 inputs: &[],
                 outputs: &["y"],
                 entry: "a",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
         ];
@@ -1127,7 +1188,7 @@ mod tests {
                 inputs: &["x"],
                 outputs: &[],
                 entry: "c",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
             PassDecl {
@@ -1136,7 +1197,7 @@ mod tests {
                 inputs: &[],
                 outputs: &["x"],
                 entry: "p",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
         ];
@@ -1159,7 +1220,7 @@ mod tests {
                 inputs: &["y"],
                 outputs: &["x"],
                 entry: "a",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
             PassDecl {
@@ -1168,7 +1229,7 @@ mod tests {
                 inputs: &["x"],
                 outputs: &["y"],
                 entry: "b",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
         ];
@@ -1188,7 +1249,7 @@ mod tests {
                 inputs: &[],
                 outputs: &["x"],
                 entry: "a",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
             PassDecl {
@@ -1197,7 +1258,7 @@ mod tests {
                 inputs: &[],
                 outputs: &["y"],
                 entry: "b",
-                dispatch: Dispatch::Full,
+                dispatch: Dispatch::Fixed,
                 enabled_when: EnabledWhen::ALWAYS,
             },
         ];
@@ -1246,7 +1307,7 @@ mod tests {
             inputs: &[],
             outputs: &[],
             entry: "noop",
-            dispatch: Dispatch::Full,
+            dispatch: Dispatch::Fixed,
             enabled_when: EnabledWhen::ALWAYS,
         });
         assert_eq!(
