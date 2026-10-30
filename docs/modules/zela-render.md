@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-vertex`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`
-- 源文件：17 个 · 7296 行
+- 源文件：17 个 · 7459 行
 
 ### 文件清单
 
@@ -31,7 +31,7 @@
 | `src/shape_to_mesh.rs` | 328 | — |
 | `src/surface_route.rs` | 342 | — |
 | `src/tessellate.rs` | 1654 | — |
-| `src/vertex_record.rs` | 344 | — |
+| `src/vertex_record.rs` | 507 | — |
 | `src/view_rect.rs` | 7 | — |
 | `src/viewport.rs` | 67 | — |
 
@@ -129,8 +129,6 @@ graph LR
 | `src/vertex_record.rs` | `pub fn tessellate_reveal_to_buffer(` |
 | `src/vertex_record.rs` | `pub struct MorphEndpointBuffers` |
 | `src/vertex_record.rs` | `pub fn morph_endpoint_buffers(` |
-| `src/vertex_record.rs` | `pub fn layout_3d() -> VertexLayout` |
-| `src/vertex_record.rs` | `pub fn interleaved_pos_uv_normal(` |
 | `src/vertex_record.rs` | `pub fn fallback_uvs(positions: &[Vec3], projection: UvProjection) -> Vec<Vec2>` |
 | `src/vertex_record.rs` | `pub fn mesh_vertex_buffer(` |
 | `src/vertex_record.rs` | `pub fn line_vertex_buffer(start: Vec3, end: Vec3) -> Result<VertexBufferData, VertexRecordError>` |

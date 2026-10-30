@@ -15,12 +15,17 @@
 //
 // # 唯一来源
 // - 2D：顶点格式由 `tessellate` 产出的 `VertexLayout` 声明（stride 24）；
-// - 3D：`VertexLayout::standard_3d()`（stride 32）；
+// - 3D：布局由**调和**决定 —— shader 需求（`ze_render_ir::vs_requirements_for`）
+//   × 几何实际提供的槽经 `ze_vertex::reconcile` 对账，缺槽按默认值表补齐；
+//   三角形拓扑下等价于 `VertexLayout::standard_3d()`（stride 32）；
 // - 打包后的字节必须满足 `VertexBufferData::validate()`（长度 / 索引范围）。
 
 use ze_notion::{Path2D, Transform2D, Vec2, Vec3};
-use ze_render_ir::{Shape2D, Style2D, UvProjection};
-use ze_vertex::{bytes_of, VertexBufferData, VertexBufferError, VertexLayout};
+use ze_render_ir::{PrimitiveTopology, Shape2D, Style2D, UvProjection};
+use ze_vertex::{
+    ReconcilePlan, Semantic, VertexAttrib, VertexBufferData, VertexBufferError, VertexLayout,
+    bytes_of, reconcile,
+};
 use ze_scene_core::components::MeshGeometry;
 
 use crate::tessellate::{TessKind, Tessellation2D, TessellateError, tessellate, tessellate_reveal};
@@ -166,31 +171,97 @@ fn collapsed_like(template: &Tessellation2D, zero_path: &Path2D) -> Tessellation
     out
 }
 
-// ─── 3D 生产（B3-0b）────────────────────────────────────────────────────────
+// ─── 3D 生产（B3-0b / 顶点契约扩展）────────────────────────────────────────
 
-/// 3D 顶点格式：`[pos.xyz, uv.xy, normal.xyz]`（8 个 f32 = 32 字节）。
-pub const VERTEX_3D_FLOATS: usize = 8;
-
-/// 3D 标准布局（stride 32）—— 唯一来源是 `ze-vertex`。
-pub fn layout_3d() -> VertexLayout {
-    VertexLayout::standard_3d()
+/// 提供方布局：几何**实际给了**哪些 3D 槽。
+///
+/// 位置与 UV 恒在（UV 要么几何自带、要么由 [`fallback_uvs`] 生成），法线可选 ——
+/// 这正是"mesh 给什么"的口径，交给 [`reconcile`] 与 shader 的需求对账。
+fn provided_3d(has_normals: bool) -> VertexLayout {
+    let mut attribs = vec![
+        VertexAttrib {
+            semantic: Semantic::Position.as_str(),
+            ty: Semantic::Position.padding_type(),
+            offset: 0,
+        },
+        VertexAttrib {
+            semantic: Semantic::Uv.as_str(),
+            ty: Semantic::Uv.padding_type(),
+            offset: 0,
+        },
+    ];
+    if has_normals {
+        attribs.push(VertexAttrib {
+            semantic: Semantic::ShadingNormal.as_str(),
+            ty: Semantic::ShadingNormal.padding_type(),
+            offset: 0,
+        });
+    }
+    let stride = VertexLayout::compute_layout(&mut attribs);
+    VertexLayout {
+        attribs,
+        stride,
+        // 缓存策略 / 步进模式 / AA 模型沿用 3D 标准布局的声明。
+        ..VertexLayout::standard_3d()
+    }
 }
 
-/// **交错顶点数据**：每顶点 `[pos.xyz, uv.xy, normal.xyz]`。
+/// 3D 顶点调和：shader 需求（按拓扑选入口）× mesh 提供 → 采纳布局 + 补齐清单。
 ///
-/// `uvs` 必须与 `positions` 等长（几何自带或 [`fallback_uvs`] 兜底）——不等长时
-/// 对缺失 UV 以 (0, 0) 补齐。`normals` 为 `None`（如线框立方体）或长度不足时，
-/// 对应顶点以 `(0, 0, 1)` 补齐：配合默认头顶光照（`L = (0, 0, 1)`）得 `lit = 1`。
-pub fn interleaved_pos_uv_normal(
+/// 调和失败**显式报错**（缺位置等没有默认值的槽）：猜一个值出来会让像素静默变化。
+fn reconcile_3d(topology: PrimitiveTopology, has_normals: bool) -> ReconcilePlan {
+    let requirements = ze_render_ir::vs_requirements_for(topology);
+    reconcile(&requirements.semantics, &provided_3d(has_normals))
+        .unwrap_or_else(|error| panic!("不静默：3D 顶点调和失败：{error}"))
+}
+
+/// 某个语义的补齐常量：先看采纳布局的补齐清单，再看默认值表。
+fn padding_value(plan: &ReconcilePlan, semantic: Semantic) -> Option<[f32; 4]> {
+    plan.padding
+        .iter()
+        .find(|p| p.semantic == semantic)
+        .map(|p| p.value)
+        .or_else(|| semantic.default_value())
+}
+
+/// 按采纳布局交错打包：每顶点逐属性取值。
+///
+/// - 顺序 = `plan.layout.attribs` 的顺序（= shader location 顺序）；
+/// - 某顶点缺该属性（数组短于位置数）时用补齐常量 —— 与补齐落表同源；
+/// - 采纳布局里出现本函数不认识的语义 ⇒ 显式 panic（不静默写错字节）。
+fn interleave(
+    plan: &ReconcilePlan,
     positions: &[Vec3],
     uvs: &[Vec2],
     normals: Option<&[Vec3]>,
 ) -> Vec<f32> {
-    let mut out = Vec::with_capacity(positions.len() * VERTEX_3D_FLOATS);
-    for (i, p) in positions.iter().enumerate() {
-        let uv = uvs.get(i).copied().unwrap_or(Vec2::ZERO);
-        let n = normals.and_then(|ns| ns.get(i).copied()).unwrap_or(Vec3::Z);
-        out.extend_from_slice(&[p.x, p.y, p.z, uv.x, uv.y, n.x, n.y, n.z]);
+    let floats_per_vertex = plan.layout.stride as usize / 4;
+    let mut out = Vec::with_capacity(positions.len() * floats_per_vertex);
+    for (index, position) in positions.iter().enumerate() {
+        for attrib in &plan.layout.attribs {
+            let semantic = Semantic::of(attrib.semantic).unwrap_or_else(|| {
+                panic!(
+                    "不静默：3D 采纳布局里出现非契约语义 {:?}",
+                    attrib.semantic
+                )
+            });
+            let components = attrib.ty.size() as usize / 4;
+            let value = match semantic {
+                Semantic::Position => [position.x, position.y, position.z, 0.0],
+                Semantic::Uv => uvs
+                    .get(index)
+                    .map(|uv| [uv.x, uv.y, 0.0, 0.0])
+                    .or_else(|| padding_value(plan, semantic))
+                    .expect("Uv 必须有默认值"),
+                Semantic::ShadingNormal => normals
+                    .and_then(|items| items.get(index))
+                    .map(|normal| [normal.x, normal.y, normal.z, 0.0])
+                    .or_else(|| padding_value(plan, semantic))
+                    .expect("ShadingNormal 必须有默认值"),
+                other => panic!("不静默：3D 采纳布局含暂无数据来源的语义 {other:?}"),
+            };
+            out.extend_from_slice(&value[..components]);
+        }
     }
     out
 }
@@ -204,6 +275,9 @@ pub fn interleaved_pos_uv_normal(
 /// - [`UvProjection::Triplanar`]：按相对中心偏移最大的分量选主轴投影。
 ///
 /// 退化包围盒（任一轴跨度为 0）按 1e-6 处理，避免除零。
+///
+/// 注意：本函数是**生成策略**（依赖包围盒与投影方式），不是默认值表里的标量常量，
+/// 因此不并入 `Semantic::default_value`。
 pub fn fallback_uvs(positions: &[Vec3], projection: UvProjection) -> Vec<Vec2> {
     if positions.is_empty() {
         return Vec::new();
@@ -243,31 +317,43 @@ pub fn fallback_uvs(positions: &[Vec3], projection: UvProjection) -> Vec<Vec2> {
         .collect()
 }
 
-/// 几何 → 顶点缓冲（UV 选择 + 法线补齐 + 交错打包，全部在生产端完成）。
+/// 几何 → 顶点缓冲（UV 选择 + 调和补齐 + 交错打包，全部在生产端完成）。
+///
+/// 补齐不再走本函数里的 `unwrap_or`：缺槽由 [`reconcile`] 按
+/// [`Semantic::default_value`] 的默认值表决定，本函数只负责按采纳布局写字节。
 pub fn mesh_vertex_buffer(
     geometry: &MeshGeometry,
     projection: UvProjection,
 ) -> Result<VertexBufferData, VertexRecordError> {
+    let plan = reconcile_3d(geometry.topology, geometry.normals.is_some());
     let uvs = match &geometry.uvs {
         Some(uvs) => uvs.clone(),
         None => fallback_uvs(&geometry.positions, projection),
     };
-    let floats = interleaved_pos_uv_normal(&geometry.positions, &uvs, geometry.normals.as_deref());
+    let floats = interleave(
+        &plan,
+        &geometry.positions,
+        &uvs,
+        geometry.normals.as_deref(),
+    );
     let indices = geometry.indices.clone().unwrap_or_default();
-    Ok(VertexBufferData::new(layout_3d(), bytes_of(&floats).to_vec(), indices)?)
+    Ok(VertexBufferData::new(
+        plan.layout,
+        bytes_of(&floats).to_vec(),
+        indices,
+    )?)
 }
 
 /// 3D 线段（两点）→ 顶点缓冲。
 ///
-/// line 无材质纹理 ⇒ UV 恒 0；法线 `(0,0,1)`（配合默认头顶光 `lit = 1`，
-/// 颜色不受光照影响）。**不再内联**（B7：内联是第二个来源）。
+/// 线段只提供位置（无几何 UV / 法线）：缺的槽由调和按默认值表补齐 —— 与 mesh 路径
+/// 同一张表、同一份机制，不再是本函数里的字面常量。line 无材质纹理 ⇒ UV 取什么
+/// 都不参与着色；法线 `(0,0,1)` 配合默认头顶光得 `lit = 1`（颜色不受光照影响）。
 pub fn line_vertex_buffer(start: Vec3, end: Vec3) -> Result<VertexBufferData, VertexRecordError> {
-    let floats: [f32; VERTEX_3D_FLOATS * 2] = [
-        start.x, start.y, start.z, 0.0, 0.0, 0.0, 0.0, 1.0, end.x, end.y, end.z, 0.0, 0.0, 0.0,
-        0.0, 1.0,
-    ];
+    let plan = reconcile_3d(PrimitiveTopology::Lines, false);
+    let floats = interleave(&plan, &[start, end], &[], None);
     Ok(VertexBufferData::new(
-        layout_3d(),
+        plan.layout,
         bytes_of(&floats).to_vec(),
         Vec::new(),
     )?)
@@ -318,6 +404,83 @@ mod tests {
             .collect();
         assert_eq!(&words[5..8], &[0.0, 0.0, 1.0]);
         assert_eq!(&words[13..16], &[0.0, 0.0, 1.0]);
+    }
+
+    // ── 字节级判据：把手工兜底换成查表补齐后，输出必须**逐位不变** ──────────
+
+    /// 顶点字节 → f32 序列（逐位比对用）。
+    fn words_of(data: &VertexBufferData) -> Vec<f32> {
+        data.vertices
+            .chunks_exact(4)
+            .map(|chunk| f32::from_ne_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
+    /// mesh（无几何法线）：每顶点尾部补 `(0,0,1)`，字节序 `[pos, uv, normal]`。
+    #[test]
+    fn mesh_bytes_pad_missing_normal_with_plus_z() {
+        let positions = vec![Vec3::new(1.0, 2.0, 3.0), Vec3::new(-1.0, -2.0, -3.0)];
+        let mut geometry =
+            MeshGeometry::new(positions, Some(vec![0, 1]), PrimitiveTopology::Triangles);
+        geometry.uvs = Some(vec![Vec2::new(0.25, 0.75), Vec2::new(0.5, 0.5)]);
+
+        let data = mesh_vertex_buffer(&geometry, UvProjection::Planar).unwrap();
+        assert_eq!(data.layout.stride, 32);
+        assert_eq!(
+            words_of(&data),
+            vec![
+                1.0, 2.0, 3.0, 0.25, 0.75, 0.0, 0.0, 1.0, //
+                -1.0, -2.0, -3.0, 0.5, 0.5, 0.0, 0.0, 1.0,
+            ]
+        );
+    }
+
+    /// mesh（几何自带法线）：法线原样透传，不被补齐覆盖。
+    #[test]
+    fn mesh_bytes_keep_provided_normals() {
+        let positions = vec![Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+        let mut geometry =
+            MeshGeometry::new(positions, Some(vec![0, 1]), PrimitiveTopology::Triangles);
+        geometry.uvs = Some(vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0)]);
+        geometry.normals = Some(vec![Vec3::X, Vec3::Y]);
+
+        let data = mesh_vertex_buffer(&geometry, UvProjection::Planar).unwrap();
+        assert_eq!(
+            words_of(&data),
+            vec![
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0,
+            ]
+        );
+    }
+
+    /// mesh（几何法线数组短于位置数）：缺的那几个顶点按默认值表补，已有的不动。
+    #[test]
+    fn mesh_bytes_pad_only_missing_normal_entries() {
+        let positions = vec![Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+        let mut geometry =
+            MeshGeometry::new(positions, Some(vec![0, 1]), PrimitiveTopology::Triangles);
+        geometry.uvs = Some(vec![Vec2::ZERO, Vec2::ZERO]);
+        geometry.normals = Some(vec![Vec3::X]);
+
+        let data = mesh_vertex_buffer(&geometry, UvProjection::Planar).unwrap();
+        let words = words_of(&data);
+        assert_eq!(&words[5..8], &[1.0, 0.0, 0.0], "第一个顶点的法线由几何提供");
+        assert_eq!(&words[13..16], &[0.0, 0.0, 1.0], "第二个顶点补 (0,0,1)");
+    }
+
+    /// line 顶点缓冲的完整字节：位置 + `(0,0)` UV + `(0,0,1)` 法线。
+    #[test]
+    fn line_bytes_are_pinned() {
+        let data = line_vertex_buffer(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)).unwrap();
+        assert_eq!(data.layout.stride, 32, "本阶段 line 仍与 mesh 同布局");
+        assert_eq!(
+            words_of(&data),
+            vec![
+                1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, //
+                0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+            ]
+        );
     }
 
     /// 2D 生产：矩形填充 → stride 24、validate 通过（格式未变，D1）。
