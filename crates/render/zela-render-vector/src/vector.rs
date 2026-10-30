@@ -22,6 +22,8 @@ use super::{Camera, Kind, Mat34, NONE, Paint, ROUND, Record, SQUARE, Shape, Stor
 use crate::passes::{IMAGE_SLOTS, ImageKind};
 // BO-1：tile 常量只在 `dispatch` 里定义一份（`vector.wgsl` 的同名常量由门禁比对）。
 use crate::dispatch::TILE;
+// BO-2：compute 的 dispatch 参数统一由 `dispatch` 按 entry 查表求出。
+use crate::dispatch::{Dispatch, Extent, GroupSize, groups_for};
 
 const ATLAS_WIDTH: u32 = 4096;
 
@@ -833,7 +835,7 @@ impl Vector {
             flatten: [None, None],
             composite: Default::default(),
             crossing: Default::default(),
-            crossings: (buffer(device, "crossings", 16, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST), buffer(device, "crossing groups", 16, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT), 3),
+            crossings: (buffer(device, "crossings", 16, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST), buffer(device, "crossing groups", 16, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST), 3),
             groups_layout: layout("crossing groups", &[entry(0, compute, rw)]),
             records: None,
             depth_layouts,
@@ -1156,7 +1158,10 @@ impl Vector {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("base depth"), timestamp_writes: None });
         pass.set_pipeline(&depth_resolve[k]);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(size[0].div_ceil(16), size[1].div_ceil(16), 1);
+        // BO-2：两个深度解析 entry 都是 16×16；除数按实际使用的那一个查表。
+        let entry = if samples > 1 { "nearest_of_samples" } else { "single_sample" };
+        let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry(entry) }, Extent::px(size[0], size[1]));
+        pass.dispatch_workgroups(x, y, 1);
     }
 
     /// Where a 3D view's raster passes put its base (their colour), for its composite to read as it writes the canvas.
@@ -1278,7 +1283,8 @@ impl Vector {
         let group = &plan.groups[g];
         self.prepare_flatten(device, [group.fills, group.strokes]);
         let [w, h] = plan.size;
-        let [tiles_x, tiles_y] = [w.div_ceil(TILE), h.div_ceil(TILE)];
+        // BO-2：tile 数由 `composite` 的 `@workgroup_size` 查表给出（除数不再写字面量）。
+        let [tiles_x, tiles_y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry("composite") }, Extent::px(w, h));
         let (base, light, listed, glowing, slabs) = match &out {
             Out::Color { base, light, listed, light_out, slabs, .. } => (*base, *light, *listed, *light_out, slabs.filter(|_| g == 0)),
             Out::Bounds { listed, .. } => (None, None, *listed, None, None),
@@ -1458,14 +1464,15 @@ impl Vector {
         };
         let write = bind(&self.write_layout, &[(0, fill_records.as_entire_binding()), (1, stroke_records.as_entire_binding())]);
         let read = bind(&self.read_layout, &[(0, fill_records.as_entire_binding()), (1, stroke_records.as_entire_binding()), (2, depths.as_entire_binding())]);
-        for (pipeline, count) in self.flatten.iter().zip([group.fills, group.strokes]) {
-            let slots = count.div_ceil(64); // workgroups: a thread per slot
-            if slots == 0 { continue; }
+        for ((pipeline, count), entry) in self.flatten.iter().zip([group.fills, group.strokes]).zip(["flatten_fill", "flatten_stroke"]) {
+            // BO-2：一个线程一个槽位，除数由 `@workgroup_size(64)` 查表；溢出折到第二维由框架处理。
+            let [x, y, _] = groups_for(Dispatch::Linear { group: GroupSize::Entry(entry) }, Extent::len(count));
+            if x == 0 { continue; }
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("flatten"), timestamp_writes: None });
             pass.set_pipeline(pipeline.as_ref().expect("the required record producer"));
             pass.set_bind_group(0, &scene, &[]);
             pass.set_bind_group(2, &write, &[]);
-            pass.dispatch_workgroups(slots.min(65535), slots.div_ceil(65535), 1);
+            pass.dispatch_workgroups(x, y, 1);
         }
         if n > 0 {
             accumulate(encoder, &read);
@@ -1476,7 +1483,7 @@ impl Vector {
                 // a 3D view's list of the pixels where depths cross: room for every pixel, emptied
                 let pixels = w as u64 * h as u64;
                 if plan.crossings && self.crossings.2 < pixels {
-                    self.crossings = (buffer(device, "crossings", 4 + 4 * pixels, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST), buffer(device, "crossing groups", 16, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT), pixels);
+                    self.crossings = (buffer(device, "crossings", 4 + 4 * pixels, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST), buffer(device, "crossing groups", 16, wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST), pixels);
                 }
                 encoder.clear_buffer(&self.crossings.0, 0, Some(4));
                 let (heads, nodes) = listed.map_or((&self.nothing, &self.nothing), |l| (l.heads, l.nodes));
@@ -1502,14 +1509,20 @@ impl Vector {
                 pass.set_bind_group(1, &images, &[]);
                 pass.dispatch_workgroups(tiles_x, tiles_y, 1);
                 pass.set_pipeline(keep);
-                pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+                // BO-2：`keep` 与 `composite` 同 tile 尺寸，但除数仍按自己的 entry 查（改其中一个即可发现）。
+                let [keep_x, keep_y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry("keep") }, Extent::px(w, h));
+                pass.dispatch_workgroups(keep_x, keep_y, 1);
                 // then (a 3D view's) the pixels where depths cross, as many workgroups as the count says
                 if plan.crossings {
                     let [count, settle] = self.crossing[key].as_ref().expect("the crossing passes");
                     pass.set_pipeline(count);
                     pass.set_bind_group(2, &bind(&self.groups_layout, &[(0, self.crossings.1.as_entire_binding())]), &[]);
-                    pass.dispatch_workgroups(1, 1, 1);
+                    // `count_crossings` 的 `@workgroup_size(1)`：恰好一个工作组。
+                    let [x, y, z] = groups_for(Dispatch::Fixed, Extent::len(0));
+                    pass.dispatch_workgroups(x, y, z);
                     pass.set_pipeline(settle);
+                    // 决策 3：这一处**不改**走声明 —— 组数由 GPU 写入的 indirect buffer 决定。
+                    // 声明侧用 `Dispatch::Indirect { source: "crossing groups" }` 描述它。
                     pass.dispatch_workgroups_indirect(&self.crossings.1, 0);
                 }
             }
@@ -1523,7 +1536,9 @@ impl Vector {
                 pass.set_bind_group(0, &scene, &[]);
                 pass.set_bind_group(1, &read, &[]);
                 pass.set_bind_group(2, &written, &[]);
-                pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+                // BO-2：`bound_slabs` 的除数按自己的 entry 查表（与 composite 同为 16）。
+                let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry("bound_slabs") }, Extent::px(w, h));
+                pass.dispatch_workgroups(x, y, 1);
             }
             Out::Depth(map) => nearest(encoder, map, false, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))]),
             Out::Opaque(map) => nearest(encoder, map, true, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))]),
@@ -1704,7 +1719,14 @@ mod area_contract {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &bindings, &[]);
-                pass.dispatch_workgroups((areas.len() as u32).div_ceil(64), 1, 1);
+                // BO-2：测试内联着色器的 `@workgroup_size(64)` 不在 WORKGROUP 表里 ⇒ 字面量。
+                let [x, y, z] = groups_for(
+                    Dispatch::Linear {
+                        group: GroupSize::Literal(64),
+                    },
+                    Extent::len(areas.len() as u32),
+                );
+                pass.dispatch_workgroups(x, y, z);
             }
             encoder.copy_buffer_to_buffer(&output, 0, &read, 0, size);
             gpu.queue.submit([encoder.finish()]);

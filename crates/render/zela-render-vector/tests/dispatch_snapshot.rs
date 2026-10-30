@@ -73,3 +73,85 @@ fn cube_snapshot() {
     assert_eq!(old_cube(128), [16, 16, 6]);
     assert_eq!(old_cube(64), [8, 8, 6]);
 }
+
+// ─── BO-2：产品实现 vs 上面复刻的旧算法（双跑等价） ────────────────────────
+//
+// 像素判据抓不到 dispatch 算错（多派的工作组被 shader 的边界检查吃掉，只是变慢），
+// 所以这一组断言是本批唯一能证明"参数没变"的判据。
+
+use zela_render_vector::dispatch::{Dispatch, Extent, GroupSize, groups_for};
+
+/// 旧算法没有截断/折叠的上限问题；这里对"上限之内"的输入逐个比对。
+#[test]
+fn tiles_match_the_old_algorithm() {
+    let sizes = [(1920, 1080), (1280, 720), (256, 256), (1, 1), (7, 9), (0, 0), (4096, 2160)];
+    let entries = [("spread", 8), ("down", 8), ("up", 8), ("show", 16), ("composite", 16), ("keep", 16), ("bound_slabs", 16), ("nearest_of_samples", 16), ("sao", 8)];
+    for (width, height) in sizes {
+        for (entry, tile) in entries {
+            let shape = Dispatch::Tiles {
+                group: GroupSize::Entry(entry),
+            };
+            assert_eq!(
+                groups_for(shape, Extent::px(width, height)),
+                old_tiles(width, height, tile),
+                "{entry} 在 {width}x{height} 上与旧算法不一致"
+            );
+        }
+    }
+}
+
+#[test]
+fn frag_tiles_match_the_old_algorithm() {
+    for (width, height) in [(1920, 1080), (8, 8), (17, 3)] {
+        let shape = Dispatch::Tiles {
+            group: GroupSize::Literal(8),
+        };
+        assert_eq!(
+            groups_for(shape, Extent::px(width, height)),
+            old_frag_tiles(width, height),
+            "frag codegen 在 {width}x{height} 上与旧算法不一致"
+        );
+    }
+}
+
+#[test]
+fn linear_matches_the_old_algorithm() {
+    let shape = Dispatch::Linear {
+        group: GroupSize::Entry("flatten_fill"),
+    };
+    for count in [0, 1, 63, 64, 65, 4096, 65535 * 64, 65536 * 64] {
+        assert_eq!(
+            groups_for(shape, Extent::len(count)),
+            old_linear(count),
+            "flatten 在 {count} 个槽位上与旧算法不一致"
+        );
+    }
+}
+
+#[test]
+fn cube_matches_the_old_algorithm() {
+    let shape = Dispatch::Cube {
+        group: GroupSize::Entry("to_cube"),
+        faces: 6,
+    };
+    for side in [16, 64, 128, 512] {
+        assert_eq!(
+            groups_for(shape, Extent::square(side)),
+            old_cube(side),
+            "environment 在边长 {side} 上与旧算法不一致"
+        );
+    }
+}
+
+/// 唯一一处**行为变化**（只在上限之外）：旧写法是两维各自截断（会少派工作组），
+/// 新写法把溢出折到第二维。这里把它写成断言，避免"悄悄改了"。
+#[test]
+fn folding_differs_from_clamping_only_beyond_the_limit() {
+    let width = 65535u32 * 8 + 8; // 超过 65535 个工作组
+    let shape = Dispatch::Tiles {
+        group: GroupSize::Literal(8),
+    };
+    let [x, y, _] = groups_for(shape, Extent::px(width, 8));
+    assert_eq!([x, y], [65535, 2], "折到第二维");
+    assert_eq!(old_frag_tiles(width, 8), [65535, 1, 1], "旧写法会少派一层");
+}

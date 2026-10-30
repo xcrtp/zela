@@ -9,6 +9,8 @@
 //! the picture), its specular light a cube of the picture prefiltered by the GGX lobe a roughness a level (on the GPU,
 //! when a view first shows it: `environment.wgsl`), read by the split sum (`light.wgsl`).
 
+use crate::dispatch::{Dispatch, Extent, GroupSize, groups_for};
+
 #[cfg(feature = "render")]
 /// A cube's side, in texels (about a fifth of a degree a texel).
 pub(crate) const SIDE: u32 = 512;
@@ -461,7 +463,16 @@ impl Prefilter {
         let sources: Vec<wgpu::TextureView> = (0..mips).map(|mip| level(&source, mip)).collect();
         let outs: Vec<wgpu::TextureView> = (0..LEVELS).map(|l| level(&out, l)).collect();
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("environment"), timestamp_writes: None });
-        let groups = |side: u32| side.div_ceil(8);
+        // BO-2：每个 entry 的除数由 `@workgroup_size` 查表给出（三个 entry 都是 8×8×1，六面）。
+        let cube = |side: u32, entry: &'static str| {
+            groups_for(
+                Dispatch::Cube {
+                    group: GroupSize::Entry(entry),
+                    faces: 6,
+                },
+                Extent::square(side),
+            )
+        };
         // the source: level 0 from the picture, then each mip the average of the one before
         let uniform = |params: [f32; 8]| {
             let buffer = crate::render::counted_buffer(device, &wgpu::BufferDescriptor { label: Some("prefilter"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
@@ -471,11 +482,13 @@ impl Prefilter {
         let scale = uniform([0.0, 0.0, 0.0, 0.0, 1.0 / env.unit, 0.0, 0.0, 0.0]);
         pass.set_pipeline(&self.to_cube.1);
         pass.set_bind_group(0, &bind(&self.to_cube.0, &[(0, view(&picture_view)), (1, view(&sources[0])), (3, scale.as_entire_binding())]), &[]);
-        pass.dispatch_workgroups(groups(SIDE), groups(SIDE), 6);
+        let [x, y, z] = cube(SIDE, "to_cube");
+        pass.dispatch_workgroups(x, y, z);
         for mip in 1..mips {
             pass.set_pipeline(&self.halve.1);
             pass.set_bind_group(0, &bind(&self.halve.0, &[(4, view(&sources[mip as usize - 1])), (1, view(&sources[mip as usize]))]), &[]);
-            pass.dispatch_workgroups(groups(SIDE >> mip), groups(SIDE >> mip), 6);
+            let [x, y, z] = cube(SIDE >> mip, "halve");
+            pass.dispatch_workgroups(x, y, z);
         }
         // the levels: the GGX lobe's average of the source
         let source_cube = source.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
@@ -486,7 +499,8 @@ impl Prefilter {
             let buffer = uniform([perceptual * perceptual, samples as f32, (SIDE * SIDE) as f32, (SIDE / COARSEST).ilog2() as f32, 1.0, 0.0, 0.0, 0.0]);
             pass.set_pipeline(&self.prefilter.1);
             pass.set_bind_group(0, &bind(&self.prefilter.0, &[(5, view(&source_cube)), (1, view(&outs[l as usize])), (2, wgpu::BindingResource::Sampler(&self.sampler)), (3, buffer.as_entire_binding())]), &[]);
-            pass.dispatch_workgroups(groups(SIDE >> l), groups(SIDE >> l), 6);
+            let [x, y, z] = cube(SIDE >> l, "prefilter");
+            pass.dispatch_workgroups(x, y, z);
         }
         drop(pass);
         out.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() })

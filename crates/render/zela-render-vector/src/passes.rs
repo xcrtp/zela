@@ -560,6 +560,11 @@ pub enum PlanError {
     Unproduced { pass: &'static str, input: &'static str },
     /// 资源依赖成环（附参与链，按声明下标）。
     Cycle { chain: Vec<usize> },
+    /// 声明了 `Indirect`，但它的参数来源在前面没有任何生产者（会照着上一帧的垃圾值派发）。
+    IndirectUnproduced {
+        pass: &'static str,
+        source: &'static str,
+    },
 }
 
 impl std::fmt::Display for PlanError {
@@ -574,6 +579,11 @@ impl std::fmt::Display for PlanError {
                 "pass {pass:?} 读的资源 {input:?} 在前面没有任何生产者（声明序即执行序）"
             ),
             Self::Cycle { chain } => write!(f, "pass 资源依赖成环（下标链）：{chain:?}"),
+            Self::IndirectUnproduced { pass, source } => write!(
+                f,
+                "pass {pass:?} 用 indirect 参数 {source:?} 派发，但前面没有任何 pass 生产它\
+                 （会照着上一帧留下的值派发）"
+            ),
         }
     }
 }
@@ -631,6 +641,23 @@ pub fn validate(plan: PassPlan) -> Result<(), PlanError> {
                 return Err(PlanError::Unproduced {
                     pass: decl.name,
                     input,
+                });
+            }
+        }
+    }
+    // ④ Indirect：其参数来源必须由**更早**的 pass 生产。
+    // 现状唯一一处 indirect（`settle_crossings`）由 `count_crossings` 无条件先写，所以安全；
+    // 这条校验是为"铺开时"准备的：消费者跑在生产者之前，会照着上一帧留下的值派发。
+    for (index, decl) in plan.iter().enumerate() {
+        if let Dispatch::Indirect { source } = decl.dispatch {
+            let produced_before = plan
+                .iter()
+                .enumerate()
+                .any(|(earlier, d)| earlier < index && d.outputs.contains(&source));
+            if !produced_before {
+                return Err(PlanError::IndirectUnproduced {
+                    pass: decl.name,
+                    source,
                 });
             }
         }
@@ -1324,6 +1351,49 @@ mod tests {
         schedule.step("vector composite", true).unwrap();
         schedule.step("noop", true).unwrap();
         schedule.finish().expect("新 pass 追加在末尾，已有顺序不变");
+    }
+
+    // ── Indirect（BO-2） ─────────────────────────────────────────────────
+
+    const COUNT: PassDecl = PassDecl {
+        name: "count",
+        kind: PassStage::Compute,
+        inputs: &[],
+        outputs: &["crossing groups"],
+        entry: "count_crossings",
+        dispatch: Dispatch::Fixed,
+        enabled_when: EnabledWhen::ALWAYS,
+    };
+    const SETTLE: PassDecl = PassDecl {
+        name: "settle",
+        kind: PassStage::Compute,
+        inputs: &[],
+        outputs: &[],
+        entry: "settle_crossings",
+        dispatch: Dispatch::Indirect {
+            source: "crossing groups",
+        },
+        enabled_when: EnabledWhen::ALWAYS,
+    };
+
+    /// 消费者跑在生产者之前 ⇒ `IndirectUnproduced`（会照着上一帧的值派发）。
+    #[test]
+    fn indirect_before_its_producer_is_reported() {
+        let plan: PassPlan = &[SETTLE, COUNT];
+        assert_eq!(
+            validate(plan).unwrap_err(),
+            PlanError::IndirectUnproduced {
+                pass: "settle",
+                source: "crossing groups"
+            }
+        );
+    }
+
+    /// 生产者在前 ⇒ 合法（这正是现状：`count_crossings` 无条件先写）。
+    #[test]
+    fn indirect_after_its_producer_is_valid() {
+        let plan: PassPlan = &[COUNT, SETTLE];
+        validate(plan).expect("生产者在前，indirect 的参数有来源");
     }
 
     // ── Pod 协商（BN-4 纯数据） ──────────────────────────────────────────

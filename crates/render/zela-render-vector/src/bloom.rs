@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: MIT
 // Ported by Zela from manimgx @ dcfe01a932118263c238a50563d1bb6fab09e08e
 // (B4 Step 5). Modified by Zela.
+// Modified by Zela: BO-2 起 dispatch 的除数改由 `crate::dispatch` 按 entry 查表给出。
 
 //! A 3D view's bloom (`Camera.bloom`): the glow a lens and a sensor spread around the light they take in, which keeps
 //! the light (`bloom.wgsl`): a share of the light the view shows is spread over levels of half the size each and added
 //! back up, the rest stays where it is, and each pixel is shown with the glow over it. The view's composite leaves its
 //! pixels' paint and light for it (`vector::Out::Color`'s `light_out`) instead of showing them; a view without lit
 //! content, or without bloom, shows its pixels as it did.
+
+use crate::dispatch::{Dispatch, Extent, GroupSize, groups_for};
 
 /// The levels: the view halved, then halved again while a level keeps this many texels across its narrower side (a
 /// 1920x1080 view's: 960x540 down to 15x9, seven, the coarsest level's texel an eighth of the view's height; half the
@@ -112,17 +115,19 @@ impl Bloom {
         let params: [u32; 4] = [glow.strength.to_bits(), (glow.strength / levels as f32).to_bits(), tone, glow.threshold.to_bits()];
         queue.write_buffer(&b.params, 0, bytemuck::cast_slice(&params));
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("bloom"), timestamp_writes: None });
-        let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], tile: u32| {
+        let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], entry: &'static str| {
             pass.set_pipeline(&self.passes[k]);
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(w.div_ceil(tile), h.div_ceil(tile), 1);
+            // BO-2：除数跟随该 entry 的 `@workgroup_size`（`dispatch` 门禁保证表与 shader 一致）。
+            let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry(entry) }, Extent::px(w, h));
+            pass.dispatch_workgroups(x, y, 1);
         };
         for l in 0..levels {
-            dispatch(if l == 0 { 0 } else { 1 }, &b.groups[l], b.sizes[l], 8);
+            dispatch(if l == 0 { 0 } else { 1 }, &b.groups[l], b.sizes[l], if l == 0 { "spread" } else { "down" });
         }
         for (k, l) in (0..levels - 1).rev().enumerate() {
-            dispatch(2, &b.groups[levels + k], b.sizes[l], 8);
+            dispatch(2, &b.groups[levels + k], b.sizes[l], "up");
         }
-        dispatch(3, &b.groups[2 * levels - 1], b.sizes[levels], 16);
+        dispatch(3, &b.groups[2 * levels - 1], b.sizes[levels], "show");
     }
 }

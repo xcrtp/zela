@@ -31,6 +31,8 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::{CameraFrame, check_key, environment, mesh::Mesh, read};
+// BO-2：compute 的 dispatch 参数统一由 `dispatch` 按 entry 查表求出。
+use crate::dispatch::{Dispatch, Extent, GroupSize, groups_for};
 
 // Modified by Zela: 去掉 `dxc` / `lavapipe` 两个平台相关模块（未移植；DXC 由 wgpu 后端处理）。
 #[path = "bloom.rs"]
@@ -2020,7 +2022,9 @@ impl Gpu {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("fill codegen"), timestamp_writes: None });
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(1, 1, 1);
+        // BO-2：`Fixed` = 一个工作组；生成着色器的形状由 codegen 决定，不看被除数。
+        let [x, y, z] = groups_for(Dispatch::Fixed, Extent::len(0));
+        pass.dispatch_workgroups(x, y, z);
         Ok(())
     }
 
@@ -2118,11 +2122,18 @@ impl Gpu {
                 wgpu::BindGroupEntry { binding: 2, resource: target.as_entire_binding() },
             ],
         });
-        let groups = (((x1 - x0) as u32).div_ceil(8), ((y1 - y0) as u32).div_ceil(8));
+        // BO-2：除数跟随生成着色器的 `@workgroup_size(8, 8, 1)`（生成源码不在 WORKGROUP 表里，
+        // 故用 `Literal`）。溢出会折到第二维，不再各自截断。
+        let [x, y, z] = groups_for(
+            Dispatch::Tiles {
+                group: GroupSize::Literal(8),
+            },
+            Extent::px((x1 - x0) as u32, (y1 - y0) as u32),
+        );
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("frag codegen"), timestamp_writes: None });
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
-        pass.dispatch_workgroups(groups.0.min(65535), groups.1.min(65535), 1);
+        pass.dispatch_workgroups(x, y, z);
         Ok(())
     }
 

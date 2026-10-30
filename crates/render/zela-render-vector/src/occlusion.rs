@@ -12,6 +12,8 @@
 
 use std::f32::consts::TAU;
 
+use crate::dispatch::{Dispatch, Extent, GroupSize, groups_for};
+
 /// The taps a pixel's occlusion is sought with, and the turns of their spiral (its start interleaved 4 x 4:
 /// `occlusion.wgsl`'s `start`).
 const SAMPLES: f32 = 16.0;
@@ -134,18 +136,20 @@ impl Occlusion {
         ];
         queue.write_buffer(&o.params, 0, bytemuck::cast_slice(&params));
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("occlusion"), timestamp_writes: None });
-        let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], tile: u32| {
+        let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], entry: &'static str| {
             pass.set_pipeline(&self.passes[k]);
             pass.set_bind_group(0, group, &[]);
-            pass.dispatch_workgroups(w.div_ceil(tile), h.div_ceil(tile), 1);
+            // BO-2：除数跟随该 entry 的 `@workgroup_size`（同文件内 8×8 与 16×16 混用，正是易漂移处）。
+            let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry(entry) }, Extent::px(w, h));
+            pass.dispatch_workgroups(x, y, 1);
         };
         let n = o.groups.len();
-        dispatch(0, &o.groups[0], [width, height], 8);
+        dispatch(0, &o.groups[0], [width, height], "linearize");
         for (l, size) in o.sizes.iter().enumerate().skip(1) {
-            dispatch(1, &o.groups[l], *size, 8);
+            dispatch(1, &o.groups[l], *size, "depth_mip");
         }
-        dispatch(2, &o.groups[n - 3], [width, height], 8);
-        dispatch(3, &o.groups[n - 2], [width, height], 16);
-        dispatch(4, &o.groups[n - 1], [width, height], 16);
+        dispatch(2, &o.groups[n - 3], [width, height], "sao");
+        dispatch(3, &o.groups[n - 2], [width, height], "blur_h");
+        dispatch(4, &o.groups[n - 1], [width, height], "blur_v");
     }
 }
