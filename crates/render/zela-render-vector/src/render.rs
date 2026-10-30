@@ -307,6 +307,29 @@ fn skipping() -> u32 {
     SKIP.load(Ordering::Relaxed)
 }
 
+/// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
+///
+/// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
+/// encoder 半途丢弃，错误也更难归因。
+///
+/// `present == false` 表示本帧这一步没有内容（没有阴影投射者、没有遮蔽源…）——
+/// 走 `step` 的**显式跳过**分支，既不静默、也不会在帧末被误报成缺失。
+fn note_pass(schedule: &mut crate::passes::PassSchedule, slot: &mut Option<crate::passes::ScheduleError>, name: &'static str, present: bool) {
+    if slot.is_none() {
+        if let Err(error) = schedule.step(name, present) {
+            *slot = Some(error);
+        }
+    }
+}
+
+/// BN-3：一帧结束时核对"计划里的 pass 都被记录过"。
+fn finish_schedule(schedule: crate::passes::PassSchedule, slot: Option<crate::passes::ScheduleError>) -> Result<(), String> {
+    if let Some(error) = slot {
+        return Err(format!("pass 调度与声明不一致：{error}"));
+    }
+    schedule.finish().map_err(|error| format!("pass 调度与声明不一致：{error}"))
+}
+
 /// 一张纹理的字节数（块大小 × 宽 × 高 × 层 × mip 级 × 采样数；mip 按整层估算，偏大但可比）。
 fn texture_bytes(desc: &wgpu::TextureDescriptor<'_>) -> usize {
     let block = desc.format.block_copy_size(None).unwrap_or(0) as usize;
@@ -3545,6 +3568,14 @@ impl Player {
                 Drawing::Raster { offset, draws, listed, sprites, lists: listing, slabs, light, glow, plan, shadows, cast } => {
                     // B18 排查：`skip=lit` 强制无光管线（单目标，无 MRT 的 light）。
                     let light = *light && skipping() & SKIP_LIGHT == 0;
+                    // BN-3：本帧走哪张计划由数据决定（有无链表 / slabs）；**顺序**由声明给出。
+                    let mut schedule = crate::passes::PassSchedule::new(
+                        if *listing || *slabs { crate::passes::RASTER_LAYERED_PLAN } else { crate::passes::RASTER_PLAN },
+                        skipping(),
+                    );
+                    let mut schedule_error: Option<crate::passes::ScheduleError> = None;
+                    // 阴影是**一个**逻辑 pass（层数由数据决定，0 层也记录 —— 顺序位置固定）。
+                    note_pass(&mut schedule, &mut schedule_error, "shadow", true);
                     // its lights' shadow maps first: its meshes' depth seen from each, then its paths' where nearer
                     for (layer, s) in shadows.iter().enumerate() {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3575,6 +3606,9 @@ impl Player {
                     // its ambient occlusion: its opaque depth (its opaque meshes', then its opaque paths' where nearer),
                     // then how much of the light from all around reaches each pixel's surface; its lit passes read it
                     let occluded = if skipping() & SKIP_AO != 0 { None } else { canvas.occluded.as_ref().zip(occlusion_of(&f.view)) };
+                    // BN-3：遮蔽的两个 pass 是数据驱动的（没有遮蔽源就没有内容）。
+                    note_pass(&mut schedule, &mut schedule_error, "occlusion depth", occluded.is_some());
+                    note_pass(&mut schedule, &mut schedule_error, "occlusion", occluded.is_some());
                     let own_lighting = occluded.map(|(o, (amount, radius))| {
                         let occlusion = gpu.occlusion.as_ref().expect("the occlusion's passes");
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -3625,8 +3659,14 @@ impl Player {
                     // listed fragments; then, where it glows, its glow spread from the light it leaves, and its pixels
                     // shown with it
                     let bloomed = if skipping() & SKIP_BLOOM != 0 { None } else { canvas.bloomed.as_ref().zip(*glow) };
-                    let layered = |encoder: &mut wgpu::CommandEncoder, vector: &mut vector::Vector, listed: Option<&vector::Listed>, slabs: Option<&Slabs>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>| {
-                        let Some(plan) = plan else { return };
+                    let layered = |encoder: &mut wgpu::CommandEncoder, vector: &mut vector::Vector, listed: Option<&vector::Listed>, slabs: Option<&Slabs>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>, schedule: &mut crate::passes::PassSchedule, schedule_error: &mut Option<crate::passes::ScheduleError>| {
+                        let Some(plan) = plan else {
+                            // 没有路径计划 ⇒ 合成与泛光两步都没有内容（显式跳过）。
+                            note_pass(schedule, schedule_error, "vector composite", false);
+                            note_pass(schedule, schedule_error, "bloom", false);
+                            return;
+                        };
+                        note_pass(schedule, schedule_error, "vector composite", true);
                         let statics = buffers.vector_statics();
                         let (target, light_out) = bloomed.map_or((&canvas.color, None), |(b, _)| (&b.paint, Some(&b.light)));
                         for g in 0..plan.groups.len() {
@@ -3636,12 +3676,17 @@ impl Player {
                             vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out, fill_layout, fill_pipelines, fill_error);
                         }
                         if let Some((b, glow)) = bloomed {
+                            note_pass(schedule, schedule_error, "bloom", true);
                             let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
                             gpu.bloom.as_ref().expect("the bloom's passes").encode(&gpu.queue, encoder, b, glow, tone);
+                        } else {
+                            note_pass(schedule, schedule_error, "bloom", false);
                         }
                     };
                     if !(*listing || *slabs) {
-                        if rasterized || plan.is_none() {
+                        let has_base = rasterized || plan.is_none();
+                        note_pass(&mut schedule, &mut schedule_error, "base", has_base);
+                        if has_base {
                             let mut pass = canvas.pass(&mut encoder, Some((cleared, true)), if plan.is_some() { Depth::Kept } else { Depth::Fresh }, base.as_ref(), base_light.as_ref());
                             pass.set_bind_group(0, buffers.group.as_ref(), &slot);
                             pass.set_bind_group(3, lighting_group, &[]);
@@ -3654,15 +3699,18 @@ impl Player {
                                 self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Overlay);
                             }
                         }
+                        note_pass(&mut schedule, &mut schedule_error, "base depth", base.is_some());
                         if base.is_some() {
                             let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
                             gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
                         }
-                        layered(&mut encoder, &mut gpu.vector, None, None, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
+                        layered(&mut encoder, &mut gpu.vector, None, None, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
+                        finish_schedule(schedule, schedule_error)?;
                         continue;
                     }
                     let appends = &pipelines.appends;
                     // the opaque layers, their samples and depth kept
+                    note_pass(&mut schedule, &mut schedule_error, "opaque", true);
                     {
                         let mut pass = canvas.pass(&mut encoder, Some((cleared, false)), Depth::Kept, base.as_ref(), base_light.as_ref());
                         pass.set_bind_group(0, buffers.group.as_ref(), &slot);
@@ -3674,6 +3722,7 @@ impl Player {
                     let [_, y, _, h] = *listed;
                     let listed = lists.filter(|_| *listing).map(|l| vector::Listed { heads: &l.heads, nodes: &l.nodes, rows: [y, y + h], samples, colors, depths: &attached.depth_only, lights: attached.msaa_light.as_ref().or(base_light.as_ref()) });
                     // the listed see-through layers appended to the lists (only in their rows are heads cleared and read)
+                    note_pass(&mut schedule, &mut schedule_error, "append", listed.is_some());
                     if let Some(l) = &listed {
                         let row = canvas.width as u64 * 4;
                         if h > 0 {
@@ -3689,6 +3738,7 @@ impl Player {
                     // the sprites among its other see-through layers: the depths of each pixel's nearest found (its
                     // paths' and its listed fragments'), then each sprite blended into the slab between them it lies in
                     let slabs = attached.slabs.as_ref().filter(|_| *slabs);
+                    note_pass(&mut schedule, &mut schedule_error, "slabs", slabs.is_some());
                     if let Some(s) = slabs {
                         let plan = plan.as_ref().expect("a plan: its paths', or its lists'");
                         let statics = buffers.vector_statics();
@@ -3702,6 +3752,7 @@ impl Player {
                     // the sprites behind no other see-through layer blended into the base, depth tested against the
                     // opaque depth kept for them (and kept again, with the samples, for the composite), and what is
                     // fixed in the frame drawn over them; then the composite
+                    note_pass(&mut schedule, &mut schedule_error, "composite sprites", true);
                     let mut pass = canvas.pass(&mut encoder, Some((wgpu::LoadOp::Load, true)), Depth::Shared, base.as_ref(), base_light.as_ref());
                     pass.set_bind_group(0, buffers.group.as_ref(), &slot);
                     pass.set_bind_group(3, lighting_group, &[]);
@@ -3715,11 +3766,18 @@ impl Player {
                     }
                     self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Overlay);
                     drop(pass);
+                    // 这条分支里深度解析是无条件的（与上面的 `if base.is_some()` 不同）。
+                    note_pass(&mut schedule, &mut schedule_error, "base depth", true);
                     gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
-                    layered(&mut encoder, &mut gpu.vector, listed.as_ref(), slabs, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
+                    layered(&mut encoder, &mut gpu.vector, listed.as_ref(), slabs, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
+                    finish_schedule(schedule, schedule_error)?;
                 }
                 Drawing::Vector(plan, groups) => {
                     grouped |= f.key == 0 && plan.groups.len() > 1;
+                    // BN-3：纯矢量视图的计划；两个逻辑 pass（atlas 栅格 / 矢量合成）各由数据决定有无。
+                    let mut schedule = crate::passes::PassSchedule::new(crate::passes::VECTOR_PLAN, skipping());
+                    let mut schedule_error: Option<crate::passes::ScheduleError> = None;
+                    note_pass(&mut schedule, &mut schedule_error, "atlas raster", groups.iter().any(|(_, draws)| !draws.is_empty()));
                     for (g, (offset, draws)) in groups.iter().enumerate() {
                         let atlas = self.rasters.as_ref().filter(|_| !draws.is_empty());
                         if let Some(atlas) = atlas {
@@ -3738,6 +3796,8 @@ impl Player {
                         let out = vector::Out::Color { rasters: atlas.map(|a| &a.color), target: &canvas.color, base: None, light: None, listed: None, slabs: None, lighting, light_out: None };
                         gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, out, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                     }
+                    note_pass(&mut schedule, &mut schedule_error, "vector composite", !groups.is_empty());
+                    finish_schedule(schedule, schedule_error)?;
                 }
             }
         }

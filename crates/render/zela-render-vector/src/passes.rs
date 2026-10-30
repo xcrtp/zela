@@ -141,7 +141,7 @@ pub fn image_slot(name: &str) -> u32 {
 
 /// 一帧内被写入的纹理目标。名字用于声明与校验，**不承担分配职责**。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Target {
+pub enum RenderTargetId {
     /// 视图颜色（离屏 target / 画布）。
     View,
     /// 视图灯光。
@@ -178,7 +178,7 @@ pub enum Target {
     StrokeDepths,
 }
 
-impl Target {
+impl RenderTargetId {
     /// 名字（错误信息与声明表用）。
     pub const fn name(self) -> &'static str {
         match self {
@@ -207,14 +207,14 @@ impl Target {
 
 /// pass 的记录方式（决定框架怎么起 pass）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PassKind {
+pub enum PassStage {
     /// 渲染 pass（有颜色 / 深度附件）。
     Render,
     /// 计算 pass。
     Compute,
 }
 
-impl PassKind {
+impl PassStage {
     const fn label(self) -> &'static str {
         match self {
             Self::Render => "render",
@@ -244,10 +244,10 @@ impl EnabledWhen {
 pub struct PassDecl {
     /// 唯一名字（运行时 recording 必须按这个名字报数）。
     pub name: &'static str,
-    pub kind: PassKind,
+    pub kind: PassStage,
     /// 读哪些逻辑资源（组 1 的槽位名，或上一 pass 的输出）。
     pub inputs: &'static [&'static str],
-    /// 写哪些目标（`Target::name()`）。
+    /// 写哪些目标（`RenderTargetId::name()`）。
     pub outputs: &'static [&'static str],
     /// 顶点 / 片段 / 计算入口名（纯记录：入口是 shader 的事实，不在这里推导）。
     pub entry: &'static str,
@@ -276,7 +276,7 @@ pub type PassPlan = &'static [PassDecl];
 pub const RASTER_PLAN: PassPlan = &[
     PassDecl {
         name: "shadow",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "ctrl", "subs", "objects", "rows", "tiles"],
         outputs: &["shadow_layer"],
         entry: "shadow",
@@ -285,7 +285,7 @@ pub const RASTER_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "occlusion depth",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "ctrl", "subs", "objects", "rows", "tiles"],
         outputs: &["occlusion_depth"],
         entry: "occlusion depth",
@@ -294,7 +294,7 @@ pub const RASTER_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "occlusion",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["occlusion_depth"],
         outputs: &["occlusion"],
         entry: "occlusion",
@@ -303,7 +303,7 @@ pub const RASTER_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "base",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "rows", "sprites"],
         outputs: &["view", "atlas_depth"],
         entry: "vs_stroke",
@@ -312,7 +312,7 @@ pub const RASTER_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "base depth",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["base_samples", "base_sample_depths"],
         outputs: &["base_depth"],
         entry: "nearest_of_samples",
@@ -320,26 +320,17 @@ pub const RASTER_PLAN: PassPlan = &[
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
-        name: "flatten",
-        kind: PassKind::Compute,
-        inputs: &["ctrl", "subs", "objects", "base", "atlas", "base_depth"],
-        outputs: &["crossings"],
-        entry: "flatten",
-        dispatch: Dispatch::Pixels,
-        enabled_when: EnabledWhen::ALWAYS,
-    },
-    PassDecl {
-        name: "composite",
-        kind: PassKind::Compute,
-        inputs: &["crossings", "atlas", "layers", "base"],
-        outputs: &["view"],
-        entry: "composite",
+        name: "vector composite",
+        kind: PassStage::Compute,
+        inputs: &["ctrl", "subs", "objects", "base", "atlas", "base_depth", "crossings"],
+        outputs: &["view", "crossings"],
+        entry: "flatten + composite",
         dispatch: Dispatch::Pixels,
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
         name: "bloom",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["view", "view_light"],
         outputs: &["bloom", "view"],
         entry: "bloom",
@@ -352,7 +343,7 @@ pub const RASTER_PLAN: PassPlan = &[
 pub const RASTER_LAYERED_PLAN: PassPlan = &[
     PassDecl {
         name: "shadow",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "ctrl", "subs", "objects", "rows", "tiles"],
         outputs: &["shadow_layer"],
         entry: "shadow",
@@ -361,7 +352,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "occlusion depth",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "ctrl", "subs", "objects", "rows", "tiles"],
         outputs: &["occlusion_depth"],
         entry: "occlusion depth",
@@ -370,7 +361,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "occlusion",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["occlusion_depth"],
         outputs: &["occlusion"],
         entry: "occlusion",
@@ -379,7 +370,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "opaque",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "rows", "sprites"],
         outputs: &["view", "layers"],
         entry: "vs_stroke",
@@ -388,7 +379,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "append",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "list_heads", "list_nodes", "list_appended", "layers"],
         outputs: &["list_heads", "list_nodes"],
         entry: "vs_stroke",
@@ -397,7 +388,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "slabs",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["slab_bounds", "instances", "sprites"],
         outputs: &["layers"],
         entry: "vs_stroke",
@@ -406,7 +397,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "composite sprites",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "rows", "sprites", "base"],
         outputs: &["view"],
         entry: "vs_stroke",
@@ -415,7 +406,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "base depth",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["base_samples", "base_sample_depths"],
         outputs: &["base_depth"],
         entry: "nearest_of_samples",
@@ -423,26 +414,17 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
-        name: "flatten",
-        kind: PassKind::Compute,
-        inputs: &["ctrl", "subs", "objects", "base", "atlas", "base_depth"],
-        outputs: &["crossings"],
-        entry: "flatten",
-        dispatch: Dispatch::Pixels,
-        enabled_when: EnabledWhen::ALWAYS,
-    },
-    PassDecl {
-        name: "composite",
-        kind: PassKind::Compute,
-        inputs: &["crossings", "atlas", "layers", "base"],
-        outputs: &["view"],
-        entry: "composite",
+        name: "vector composite",
+        kind: PassStage::Compute,
+        inputs: &["ctrl", "subs", "objects", "layers", "atlas", "base_depth", "crossings"],
+        outputs: &["view", "crossings"],
+        entry: "flatten + composite",
         dispatch: Dispatch::Pixels,
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
         name: "bloom",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["view", "view_light"],
         outputs: &["bloom", "view"],
         entry: "bloom",
@@ -455,7 +437,7 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
 pub const VECTOR_PLAN: PassPlan = &[
     PassDecl {
         name: "atlas raster",
-        kind: PassKind::Render,
+        kind: PassStage::Render,
         inputs: &["instances", "rows"],
         outputs: &["atlas"],
         entry: "vs_stroke",
@@ -463,20 +445,11 @@ pub const VECTOR_PLAN: PassPlan = &[
         enabled_when: EnabledWhen::ALWAYS,
     },
     PassDecl {
-        name: "flatten",
-        kind: PassKind::Compute,
-        inputs: &["ctrl", "subs", "objects", "atlas"],
-        outputs: &["crossings"],
-        entry: "flatten",
-        dispatch: Dispatch::Pixels,
-        enabled_when: EnabledWhen::ALWAYS,
-    },
-    PassDecl {
-        name: "composite",
-        kind: PassKind::Compute,
-        inputs: &["crossings", "atlas"],
-        outputs: &["view"],
-        entry: "composite",
+        name: "vector composite",
+        kind: PassStage::Compute,
+        inputs: &["ctrl", "subs", "objects", "atlas", "crossings"],
+        outputs: &["view", "crossings"],
+        entry: "flatten + composite",
         dispatch: Dispatch::Pixels,
         enabled_when: EnabledWhen::ALWAYS,
     },
@@ -485,7 +458,7 @@ pub const VECTOR_PLAN: PassPlan = &[
 /// 环境预滤波（每帧最多一次，按需）。
 pub const ENVIRONMENT_PLAN: PassPlan = &[PassDecl {
     name: "environment",
-    kind: PassKind::Compute,
+    kind: PassStage::Compute,
     inputs: &["environment"],
     outputs: &["environment"],
     entry: "environment",
@@ -497,7 +470,7 @@ pub const ENVIRONMENT_PLAN: PassPlan = &[PassDecl {
 pub const CODEGEN_PLAN: PassPlan = &[
     PassDecl {
         name: "fill codegen",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["instances", "shader_programs"],
         outputs: &["instances"],
         entry: "fill codegen",
@@ -506,7 +479,7 @@ pub const CODEGEN_PLAN: PassPlan = &[
     },
     PassDecl {
         name: "frag codegen",
-        kind: PassKind::Compute,
+        kind: PassStage::Compute,
         inputs: &["instances", "shader_programs", "shader_colors"],
         outputs: &["shader_colors"],
         entry: "frag codegen",
@@ -660,6 +633,7 @@ pub struct PassSchedule {
     skip: u32,
     cursor: usize,
     recorded: Vec<&'static str>,
+    skipped: Vec<&'static str>,
 }
 
 impl PassSchedule {
@@ -669,12 +643,18 @@ impl PassSchedule {
             skip,
             cursor: 0,
             recorded: Vec::new(),
+            skipped: Vec::new(),
         }
     }
 
     /// 已记录的数量（诊断用）。
     pub fn recorded(&self) -> &[&'static str] {
         &self.recorded
+    }
+
+    /// 因**数据**缺席而显式跳过的 pass（诊断用）。
+    pub fn skipped(&self) -> &[&'static str] {
+        &self.skipped
     }
 
     /// 该 pass 声明的启用状态。
@@ -685,23 +665,35 @@ impl PassSchedule {
             .is_some_and(|decl| decl.enabled_when.is_enabled(self.skip))
     }
 
-    /// 记录一个 pass：必须正好是声明序里下一个**启用**的 pass。
-    pub fn begin(&mut self, name: &'static str) -> Result<(), ScheduleError> {
-        // 跳过被 enabled_when 关掉的声明（它们不会被记录）。
+    /// 推进到声明序里的**下一个启用项**，返回它。
+    fn advance(&mut self) -> Result<&'static PassDecl, ScheduleError> {
         while self.cursor < self.plan.len()
             && !self.plan[self.cursor].enabled_when.is_enabled(self.skip)
         {
             self.cursor += 1;
         }
-        let Some(expected) = self.plan.get(self.cursor) else {
-            return Err(ScheduleError::Undeclared { name });
+        self.plan
+            .get(self.cursor)
+            .ok_or(ScheduleError::Undeclared { name: "" })
+    }
+
+    /// 归因：名字在计划里、但被 `enabled_when` 关掉。
+    fn disabled(&self, name: &str) -> bool {
+        self.plan
+            .iter()
+            .find(|decl| decl.name == name)
+            .is_some_and(|decl| !decl.enabled_when.is_enabled(self.skip))
+    }
+
+    /// 记录一个 pass：必须正好是声明序里下一个**启用**的 pass。
+    pub fn begin(&mut self, name: &'static str) -> Result<(), ScheduleError> {
+        let expected = match self.advance() {
+            Ok(decl) => decl,
+            Err(_) => return Err(ScheduleError::Undeclared { name }),
         };
         if expected.name != name {
-            // 更精确的归因：名字在计划里、但本轮已因 enabled_when 关掉。
-            if let Some(decl) = self.plan.iter().find(|decl| decl.name == name) {
-                if !decl.enabled_when.is_enabled(self.skip) {
-                    return Err(ScheduleError::Disabled { name });
-                }
+            if self.disabled(name) {
+                return Err(ScheduleError::Disabled { name });
             }
             return Err(ScheduleError::OutOfOrder {
                 expected: expected.name,
@@ -714,7 +706,38 @@ impl PassSchedule {
         Ok(())
     }
 
-    /// 帧末核对：所有启用项都被记录过。
+    /// **数据驱动**地推进：`present` 为假表示这一步本帧没有内容（例如没有阴影投射者）。
+    ///
+    /// - 该 pass 被 `enabled_when` 关掉 ⇒ 不参与本帧，直接 `Ok(())`（不是错误）；
+    /// - 否则必须正好是下一个启用项：`present` 决定"记录"还是"显式跳过"。
+    ///
+    /// 显式跳过与静默跳过的区别：跳过会被记进 `skipped`，`finish` 不会报 `Missing`；
+    /// 而一个既没记录、也没显式跳过的启用项会被 `finish` 抓住。
+    pub fn step(&mut self, name: &'static str, present: bool) -> Result<(), ScheduleError> {
+        if self.disabled(name) {
+            return Ok(());
+        }
+        let expected = match self.advance() {
+            Ok(decl) => decl,
+            Err(_) => return Err(ScheduleError::Undeclared { name }),
+        };
+        if expected.name != name {
+            return Err(ScheduleError::OutOfOrder {
+                expected: expected.name,
+                recorded: name,
+                index: self.cursor,
+            });
+        }
+        self.cursor += 1;
+        if present {
+            self.recorded.push(name);
+        } else {
+            self.skipped.push(name);
+        }
+        Ok(())
+    }
+
+    /// 帧末核对：所有启用项都被记录或被显式跳过。
     pub fn finish(mut self) -> Result<(), ScheduleError> {
         while self.cursor < self.plan.len() {
             let decl = &self.plan[self.cursor];
@@ -911,7 +934,7 @@ mod tests {
         let plan: PassPlan = &[
             PassDecl {
                 name: "b",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &[],
                 outputs: &["x"],
                 entry: "b",
@@ -920,7 +943,7 @@ mod tests {
             },
             PassDecl {
                 name: "a",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &[],
                 outputs: &["y"],
                 entry: "a",
@@ -959,12 +982,36 @@ mod tests {
         assert_eq!(
             error,
             ScheduleError::Missing {
-                name: "flatten"
+                name: "vector composite"
             }
         );
     }
 
     // ── enabled_when（BN-0 第四项） ──────────────────────────────────────
+
+    /// 数据驱动的显式跳过：`step(name, false)` 计入 `skipped`，`finish` 不报 `Missing`。
+    ///
+    /// 这是"没有阴影投射者"这类情形的唯一合法路径 —— 既不静默，也不误报。
+    #[test]
+    fn step_without_content_is_explicit_skip() {
+        let mut schedule = PassSchedule::new(VECTOR_PLAN, 0);
+        schedule.step("atlas raster", false).unwrap();
+        schedule.step("vector composite", true).unwrap();
+        assert_eq!(schedule.recorded(), &["vector composite"]);
+        assert_eq!(schedule.skipped(), &["atlas raster"]);
+        schedule.finish().expect("显式跳过不算缺失");
+    }
+
+    /// 关闭的 pass 用 `step` 前进不算错误（数据驱动路径容忍 enabled_when）。
+    #[test]
+    fn step_tolerates_disabled_pass() {
+        let mut schedule = PassSchedule::new(RASTER_PLAN, crate::render::SKIP_AO);
+        schedule.step("shadow", true).unwrap();
+        schedule.step("occlusion depth", false).unwrap();
+        schedule.step("base", true).unwrap();
+        assert_eq!(schedule.recorded(), &["shadow", "base"]);
+        assert!(!schedule.skipped().contains(&"occlusion depth"));
+    }
 
     /// 各 `SKIP_*` 位下被跳过的 pass 集合与声明一致（逐组合穷举）。
     #[test]
@@ -1044,7 +1091,7 @@ mod tests {
         let plan: PassPlan = &[
             PassDecl {
                 name: "consumer",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &["x"],
                 outputs: &[],
                 entry: "c",
@@ -1053,7 +1100,7 @@ mod tests {
             },
             PassDecl {
                 name: "producer",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &[],
                 outputs: &["x"],
                 entry: "p",
@@ -1076,7 +1123,7 @@ mod tests {
         let plan: PassPlan = &[
             PassDecl {
                 name: "a",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &["y"],
                 outputs: &["x"],
                 entry: "a",
@@ -1085,7 +1132,7 @@ mod tests {
             },
             PassDecl {
                 name: "b",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &["x"],
                 outputs: &["y"],
                 entry: "b",
@@ -1105,7 +1152,7 @@ mod tests {
         let plan: PassPlan = &[
             PassDecl {
                 name: "same",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &[],
                 outputs: &["x"],
                 entry: "a",
@@ -1114,7 +1161,7 @@ mod tests {
             },
             PassDecl {
                 name: "same",
-                kind: PassKind::Compute,
+                kind: PassStage::Compute,
                 inputs: &[],
                 outputs: &["y"],
                 entry: "b",
