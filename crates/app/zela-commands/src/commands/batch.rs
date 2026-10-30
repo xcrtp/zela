@@ -105,7 +105,10 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
 
     // 索引队列：worker 抢下一个作品（作品级并行，帧级串行）。
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let (tx, rx) = std::sync::mpsc::channel::<(usize, Result<WorkOutcome, String>)>();
+    // 通道带回 `(下标, 观测行, 结果)`：观测行由 worker 收集、主线程按输入序落盘
+    // （见 [`write_reports`]；失败也要带回来，否则第 N 件坏掉时前面那些行会丢）。
+    type Reply = (usize, ReportLines, Result<WorkOutcome, String>);
+    let (tx, rx) = std::sync::mpsc::channel::<Reply>();
     std::thread::scope(|scope| {
         for _ in 0..workers {
             let tx = tx.clone();
@@ -116,8 +119,9 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
                     let Some(work) = options.works.get(index) else {
                         break;
                     };
-                    let result = run_work(ctx, options, work, env);
-                    if tx.send((index, result)).is_err() {
+                    let mut lines = ReportLines::new();
+                    let result = run_work(ctx, options, work, env, &mut lines);
+                    if tx.send((index, lines, result)).is_err() {
                         break;
                     }
                 }
@@ -127,25 +131,33 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
     });
 
     // 汇总：按输入顺序输出 `[verify]`（xtask 按顺序解析），失败逐件汇总。
-    let mut slots: Vec<Option<Result<WorkOutcome, String>>> = (0..total).map(|_| None).collect();
-    for (index, result) in rx {
+    let mut slots: Vec<Option<(ReportLines, Result<WorkOutcome, String>)>> =
+        (0..total).map(|_| None).collect();
+    for (index, lines, result) in rx {
         if let Some(slot) = slots.get_mut(index) {
-            *slot = Some(result);
+            *slot = Some((lines, result));
         }
     }
     let mut outcomes = Vec::with_capacity(total);
     let mut failures = Vec::new();
+    // 单写者：所有 worker 已结束，按输入序统一落盘 ⇒ `--workers 1` 与 N 逐字节相同。
+    let mut reports = ReportLines::new();
     for (index, slot) in slots.into_iter().enumerate() {
         let name = &options.works[index].name;
         match slot {
-            Some(Ok(outcome)) => {
+            Some((lines, Ok(outcome))) => {
+                reports.extend(lines);
                 println!("{}", outcome.verify_line());
                 outcomes.push(outcome);
             }
-            Some(Err(error)) => failures.push(format!("{name}（{index}）：{error}")),
+            Some((lines, Err(error))) => {
+                reports.extend(lines);
+                failures.push(format!("{name}（{index}）：{error}"));
+            }
             None => failures.push(format!("{name}（{index}）：worker 没有回报结果")),
         }
     }
+    write_reports(&reports);
     if !failures.is_empty() {
         return Err(format!(
             "{} / {} 件失败（其余作品的产出已打印，可先行排查）：\n  {}",
@@ -175,11 +187,15 @@ impl WorkOutcome {
 }
 
 /// 单件作品：编译 → 两条路径 → 结构比对（`[verify]` 行由 [`run_batch`] 按序输出）。
+///
+/// 观测行不在这里落盘：追加进 `reports`，由调用方（主线程）统一写 —— 见
+/// [`write_reports`]。失败路径也一样带上已产生的行。
 fn run_work(
     ctx: &RenderContext,
     options: &BatchOptions,
     work: &Work,
     env: &str,
+    reports: &mut ReportLines,
 ) -> Result<WorkOutcome, String> {
     let (script_path, language) = locate_script(&options.scripts, &work.name)?;
     let source = std::fs::read_to_string(&script_path)
@@ -196,7 +212,9 @@ fn run_work(
     // ── 路径 1：脚本 ──
     let mut runtime = build_script_runtime(ctx.clone(), source, language)
         .map_err(|e| format!("[{}] 脚本装配失败：{e}", work.name))?;
-    let script_hash = render_hash(ctx, &mut runtime, work, options.fps, "script", env)?;
+    let (script_hash, script_structure, lines) =
+        render_hash(ctx, &mut runtime, work, options.fps, "script", env)?;
+    reports.extend(lines);
     drop(runtime);
 
     // ── 路径 2：同一份 ZSB ──
@@ -206,18 +224,20 @@ fn run_work(
         Bundle::from_bytes(&bytes).map_err(|e| format!("[{}] ZSB 解析失败：{e}", work.name))?;
     let mut runtime = build_bundle_runtime(ctx.clone(), &bundle)
         .map_err(|e| format!("[{}] bundle 装配失败：{e}", work.name))?;
-    let bundle_hash = render_hash(ctx, &mut runtime, work, options.fps, "bundle", env)?;
+    let (bundle_hash, bundle_structure, lines) =
+        render_hash(ctx, &mut runtime, work, options.fps, "bundle", env)?;
+    reports.extend(lines);
 
     // 阶段 1：脚本 / bundle 两条路径的**结构**必须逐位相同（不只像素）。
-    assert_structure_matches(&work.name, &script_hash.1, &bundle_hash.1)?;
+    assert_structure_matches(&work.name, &script_structure, &bundle_structure)?;
 
     Ok(WorkOutcome {
         name: work.name.clone(),
         width: work.width,
         height: work.height,
         frames: frames_for(&runtime, options.fps),
-        script_hash: script_hash.0,
-        bundle_hash: bundle_hash.0,
+        script_hash,
+        bundle_hash,
         payload_hash: payload,
     })
 }
@@ -360,11 +380,15 @@ fn report_decisions(work: &str, pass: &str, decisions: &[RoutingDecision]) {
 ///
 /// **执行计划阶段 3**：`ZELA_OBSERVE=<path>` 时同一份数据再写一行**统一观测产物**
 /// （`schema = zela.observation/1`，`kind = frame`）。旧格式保持不变（已有工具在读）。
-fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) {
+///
+/// 返回**要写的行**（不直接落盘）：批量模式下多个 worker 并发跑，写盘统一由
+/// [`write_reports`] 在主线程按输入序完成。
+fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) -> ReportLines {
     let frame_path = report_path("ZELA_FRAME_REPORT");
     let observe_path = report_path("ZELA_OBSERVE");
+    let mut out = ReportLines::new();
     if frame_path.is_none() && observe_path.is_none() {
-        return;
+        return out;
     }
     let (all, all_n) = accumulate(&run.timings, false, None);
     let (window, window_n) = accumulate(&run.timings, true, Some(TIMING_WINDOW));
@@ -394,7 +418,7 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
     let gpu = run.gpu_json();
     let cache = run.cache.json();
 
-    if let Some(path) = &frame_path {
+    if frame_path.is_some() {
         let line = format!(
             "{{\"work\":\"{}\",\"pass\":\"{pass}\",\"size\":\"{}x{}\",\"frames\":{frames},\
              \"env\":{env},\"timings\":{{\"all\":{all_body},\"window\":{window_body}}},\"gpu\":{gpu},\
@@ -421,10 +445,10 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
             run.vector_shadows.json(),
             decisions.join(","),
         );
-        append_jsonl(path, &line);
+        out.push((ReportTarget::Frame, line));
     }
 
-    if let Some(path) = &observe_path {
+    if observe_path.is_some() {
         let data = format!(
             "{{\"timings\":{{\"all\":{all_body},\"window\":{window_body}}},\"gpu\":{gpu},\
              \"cache\":{cache},\"textures_created\":{},\"vector_resources\":{},\
@@ -436,20 +460,22 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
             run.vector_shadows.json(),
             decisions.join(","),
         );
-        append_jsonl(
-            path,
-            &observation_line("frame", work, pass, env, &data),
-        );
+        out.push((
+            ReportTarget::Observe,
+            observation_line("frame", work, pass, env, &data),
+        ));
     }
+    out
 }
 
 /// **结构指纹报告**（执行计划阶段 1）：门禁 stdout 一行 + 可选统一产物一行。
 ///
 /// stdout 行是**等式比对器**的输入（xtask 解析后与 `structures.txt` 比对）；
 /// 摘要按「逐帧摘要再摘要」汇总，帧仍可反推（`ZELA_OBSERVE` 里带逐帧值）。
-fn report_structure(work: &Work, pass: &str, env: &str, run: &FrameRun) {
+fn report_structure(work: &Work, pass: &str, env: &str, run: &FrameRun) -> ReportLines {
+    let mut out = ReportLines::new();
     let Some(last) = run.structure.last() else {
-        return;
+        return out;
     };
     let digest = zela_scene_ecs::sequence_digest(&run.structure);
     let backend = match work.backend {
@@ -468,9 +494,9 @@ fn report_structure(work: &Work, pass: &str, env: &str, run: &FrameRun) {
         last.fields,
         last.derived_excluded,
     );
-    let Some(path) = report_path("ZELA_OBSERVE") else {
-        return;
-    };
+    if report_path("ZELA_OBSERVE").is_none() {
+        return out;
+    }
     let frames = run
         .structure
         .iter()
@@ -482,7 +508,11 @@ fn report_structure(work: &Work, pass: &str, env: &str, run: &FrameRun) {
          \"frames\":[{frames}]}}",
         last.objects, last.fields, last.derived_excluded,
     );
-    append_jsonl(&path, &observation_line("structure", work, pass, env, &data));
+    out.push((
+        ReportTarget::Observe,
+        observation_line("structure", work, pass, env, &data),
+    ));
+    out
 }
 
 /// 统一观测产物的**信封**（阶段 3）：`schema / kind / work / pass / size / frames / env / data`。
@@ -501,19 +531,51 @@ fn report_path(name: &str) -> Option<String> {
         .filter(|path| !path.trim().is_empty())
 }
 
-fn append_jsonl(path: &str, line: &str) {
-    match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        Ok(mut file) => {
+/// 观测产物的落点（两个环境变量各一份）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReportTarget {
+    /// `ZELA_FRAME_REPORT`：逐作品逐遍的计时 / 决策。
+    Frame,
+    /// `ZELA_OBSERVE`：统一观测产物（`schema = zela.observation/1`）。
+    Observe,
+}
+
+/// worker 收集到的待写行：`(落点, 一行 JSON)`，**顺序即写盘顺序**。
+type ReportLines = Vec<(ReportTarget, String)>;
+
+/// **单写者落盘**：调用方保证行序已是输入序（所有 worker 结束后由主线程调用）。
+///
+/// 为什么不是 `Mutex`：锁只消除交错，不决定顺序 —— 持锁顺序仍由线程调度决定，
+/// 产物内容就依赖调度。这里把写入点收成一个，顺序由 `--work` 的输入序决定，
+/// 于是 `--workers 1` 与按核数跑出的文件**逐字节相同**。
+///
+/// 打不开 / 写失败只报告，不中断批量：观测产物是**旁路**，不该拖垮门禁主流程。
+fn write_reports(lines: &[(ReportTarget, String)]) {
+    if lines.is_empty() {
+        return;
+    }
+    for (target, path) in [
+        (ReportTarget::Frame, report_path("ZELA_FRAME_REPORT")),
+        (ReportTarget::Observe, report_path("ZELA_OBSERVE")),
+    ] {
+        let Some(path) = path else { continue };
+        let mut file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(file) => file,
+            Err(error) => {
+                eprintln!("[report] 打开 {path} 失败：{error}");
+                continue;
+            }
+        };
+        for (_, line) in lines.iter().filter(|(kind, _)| *kind == target) {
             use std::io::Write;
             if let Err(error) = writeln!(file, "{line}") {
                 eprintln!("[report] 写 {path} 失败：{error}");
             }
         }
-        Err(error) => eprintln!("[report] 打开 {path} 失败：{error}"),
     }
 }
 
@@ -595,12 +657,13 @@ fn render_png(
     .map_err(|e| format!("[{}] 渲染失败：{e}", work.name))?;
     report_decisions(&work.name, "png", &run.decisions);
     report_timings(&work.name, "png", &run.timings)?;
-    report_work(work, "png", frames, env, &run);
-    report_structure(work, "png", env, &run);
+    // 单线程路径（V3-12）：行就地落盘，不经过批量汇总。
+    write_reports(&report_work(work, "png", frames, env, &run));
+    write_reports(&report_structure(work, "png", env, &run));
     Ok(first)
 }
 
-/// 一个作品的一遍渲染 → `(序列哈希, 逐帧结构摘要)`。
+/// 一个作品的一遍渲染 → `(序列哈希, 逐帧结构摘要, 待写观测行)`。
 ///
 /// **每个作品新建 `StandardBackends`**（§4.2 的安全取舍）：`wgpu_3d` 的离屏 / 深度目标
 /// 按 `LayerId` 索引，复用后端可能让残留目标串味。GPU 初始化（大头）已在外面摊平。
@@ -611,7 +674,7 @@ fn render_hash(
     fps: f64,
     path: &str,
     env: &str,
-) -> Result<(String, Vec<u64>), String> {
+) -> Result<(String, Vec<u64>, ReportLines), String> {
     let mut backends = StandardBackends::new(ctx);
     let mut target = HeadlessTarget::new();
     let mut hash = FrameSequenceHash::new(work.width, work.height);
@@ -641,11 +704,12 @@ fn render_hash(
     .map_err(|e| format!("[{}] {path} 渲染失败：{e}", work.name))?;
     report_decisions(&work.name, path, &run.decisions);
     report_timings(&work.name, path, &run.timings)?;
-    report_work(work, path, frames, env, &run);
-    report_structure(work, path, env, &run);
+    let mut lines = report_work(work, path, frames, env, &run);
+    lines.extend(report_structure(work, path, env, &run));
     Ok((
         hash.hex(),
         run.structure.iter().map(|frame| frame.digest).collect(),
+        lines,
     ))
 }
 
