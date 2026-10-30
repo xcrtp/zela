@@ -1628,8 +1628,8 @@
 | BK-01 | 验证各步耗时看不见 | 门禁 | **已关闭** | `xtask` 每步打印 `[xtask] step <name>: <s>`，多步时再打降序明细；此后所有提速读数都来自它 |
 | BK-02 | nextest 是否值得引入 | 门禁 | **已关闭** | 实测：nextest 123s + 单独 doctest 62s = 187.6s，`cargo test --test-threads=1` 为 132.1s ⇒ **净慢 55s**（它不跑 doctest，而补跑那次按 dev 口径重建 rlib）。结论写在 `xtask::step_test` 的注释里，避免重复试验 |
 | BK-03 | 批量渲染只是一段门禁内循环 | 渲染 / 命令层 | **已关闭** | `zela_commands::commands::batch::run_batch`（`--workers`，作品级并行）：`--workers 1` 与按核数两次跑出的 36 条 `[verify]` 逐字节相同；单件失败不影响其余且逐件指出 |
-| BK-04 | demo 一件一进程 | 门禁 | **已关闭** | `zela-compile-batch` 一次编完 34 件：115.5s → 14.6s，**34 条 payload 逐位不变** |
-| BK-05 | wasm 逐 crate 起 cargo | 门禁 | **已关闭** | 同 flag 合并为 3 次调用（25 + 1 + 1；分组按 flag 集，feature 不跨组统一）：26.8s → 4.4s |
+| BK-04 | demo 一件一进程 | 门禁 | **已关闭** | `zela-compile-batch` 一次编完 34 件：115.5s → **3.7s**（两次实测取值，暖缓存），**34 条 payload 逐位不变** |
+| BK-05 | wasm 逐 crate 起 cargo | 门禁 | **已关闭** | 同 flag 合并为 3 次调用（25 + 1 + 1；分组按 flag 集，feature 不跨组统一）：26.8s → **5.1s**（两次实测取值，暖缓存） |
 | BK-06 | 测试构建带全量调试信息 | 门禁 / 链接 | **已关闭** | `[profile.test] debug = "line-tables-only"`：132.1s → 120.1s；PDB 写放大是 `LNK1140/LNK1318` 的成因，那是门禁假失败 |
 | BK-07 | 每次都跑全部 86 个测试二进制 | 门禁 | **已关闭** | `xtask::test_scope`（`ze_graph_core::dirty_downstream` + `cargo metadata --no-deps` 的内部边，含 dev 边）；影响集显式打印、非 crate 源文件变更全量、CI 与 `--full` 全量；实测改 `zela-commands` ⇒ `zela-cli, zela-commands`（跳过 49 个） |
 | BK-08 | 记账：CI 侧的提速读数 | 门禁 | **记账** | 本批读数全部来自本机暖缓存；CI 走全量且缓存冷，收益需在流水线跑过一次后另记（本机 `CI=true` 由 IDE 设置，判据改为具体提供方变量，见 BK-07） |
