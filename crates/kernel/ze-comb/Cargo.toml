@@ -6,7 +6,7 @@ license.workspace = true
 
 description = "Combinator expression kernel: structural nodes, stable tags, no host state"
 
-# 依赖铁律：ze-comb 在 kernel 层，只做「表达」，不做「取数」
+# 依赖约定：ze-comb 在 kernel 层，只做「表达」，不做「取数」
 #   ✅ serde — 表达式必须**整体可序列化**（节点图拓扑可序列化而节点内容不可，是本 crate 要补的不对称）
 #   ✅ thiserror — 装配期错误（悬空 Ref / 环 / 重名 id）
 #   ❌ glam / ze-notion — 数学入口在 ze-notion；本 crate 不解释数值，也不依赖任何向量类型

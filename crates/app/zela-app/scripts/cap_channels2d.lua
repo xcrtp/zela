@@ -23,7 +23,7 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
--- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位。
 
 -- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
 

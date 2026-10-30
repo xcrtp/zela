@@ -7,7 +7,7 @@
 //   （唯一来源：`Light` 组件本身不带位置）+ 颜色 + 强度 + range。
 //
 // `LightQueue` 是 `SceneRecord3DSystem` 的写集资源；后端每帧按它上传
-// **场景级** light uniform buffer（所有 draw 共享一份，铁律 3）。
+// **场景级** light uniform buffer（所有 draw 共享一份）。
 
 use ze_notion::{Color32, Vec3};
 

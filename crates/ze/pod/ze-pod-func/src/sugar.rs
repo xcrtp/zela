@@ -44,23 +44,23 @@ pub const SUGAR: &[SugarDoc] = &[
     SugarDoc {
         name: "orbit2d",
         core: "Vec3FromVec2 { v = Vec2Of { \
-                 x = round_f32(Mul { a = round_f32(expr.pure(radius)), \
-                                     b = round_f32(Cos { of = angle }) }), \
-                 y = round_f32(Mul { a = round_f32(expr.pure(radius)), \
-                                     b = round_f32(Sin { of = angle }) }) }, \
-               z = expr.pure(0.0) }  （angle = speed·t + phase，逐步 round_f32）",
+                 x = narrow_f32(Mul { a = narrow_f32(expr.pure(radius)), \
+                                     b = narrow_f32(Cos { of = angle }) }), \
+                 y = narrow_f32(Mul { a = narrow_f32(expr.pure(radius)), \
+                                     b = narrow_f32(Sin { of = angle }) }) }, \
+               z = expr.pure(0.0) }  （angle = speed·t + phase，逐步 narrow_f32）",
     },
     SugarDoc {
         name: "wave",
-        core: "round_f32(Add { a = round_f32(expr.pure(base)), \
-                 b = round_f32(Mul { a = round_f32(expr.pure(amp)), \
-                                     b = round_f32(Sin { of = round_f32(Mul { \
-                                         a = round_f32(expr.pure(omega)), \
+        core: "narrow_f32(Add { a = narrow_f32(expr.pure(base)), \
+                 b = narrow_f32(Mul { a = narrow_f32(expr.pure(amp)), \
+                                     b = narrow_f32(Sin { of = narrow_f32(Mul { \
+                                         a = narrow_f32(expr.pure(omega)), \
                                          b = clock.time() }) }) }) })",
     },
     SugarDoc {
         name: "f32",
-        core: "RoundF32 { of = x }",
+        core: "NarrowF32 { of = x }",
     },
 ];
 

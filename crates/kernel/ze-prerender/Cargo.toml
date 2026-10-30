@@ -6,7 +6,7 @@ license.workspace = true
 
 # kernel 层重 crate：内容排版引擎实现（Typst / LaTeX 等）。
 # 注意：所有重型引擎依赖必须放在 feature 后；未启用 feature 时应零重依赖。
-# kernel 铁律：禁止依赖 graph / render / ui / app（ze-* / zela-* 上层）。
+# kernel 约定：禁止依赖 graph / render / ui / app（ze-* / zela-* 上层）。
 
 [dependencies]
 ze-notion = { path = "../ze-notion" }

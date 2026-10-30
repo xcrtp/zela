@@ -7,7 +7,7 @@ repository.workspace = true
 
 description = "Pod 统一抽象：不透明状态机 + capability 协商 + 函数集合（零依赖 Pod 层核心 crate）"
 
-# 依赖铁律：ze-pod-core 在 `crates/ze/pod/` 的**核心组**
+# 依赖约定：ze-pod-core 在 `crates/ze/pod/` 的**核心组**
 #   ❌ hecs / egui / wgpu / 任何 zela-* / 任何外部依赖 —— 绝对禁止（纯 std，必须能编译到 wasm32）。
 #   ✅ ze-type / ze-reflect —— 同仓 kernel 层；类型代数与句柄机制只允许一处定义。
 #      两者都是纯 std（ze-type 是 no_std + alloc），不引入宿主依赖。

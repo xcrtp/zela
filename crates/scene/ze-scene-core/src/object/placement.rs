@@ -49,7 +49,7 @@ impl Transform {
 
     /// **3D 仿射**（S1）：折算为理念层 [`Transform3D`] —— 完整 4×4，
     /// 与 [`Transform::matrix`] **逐位一致**（`Transform3D::from_matrix` 原样包装）。
-    /// 2D 消费方从它投影（[`Transform3D::to_affine2d`]），世界变换唯一来源（铁律 4）。
+    /// 2D 消费方从它投影（[`Transform3D::to_affine2d`]），世界变换唯一来源。
     pub fn to_affine3d(&self) -> Transform3D {
         Transform3D::from_matrix(self.matrix())
     }

@@ -31,7 +31,7 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
--- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位
 -- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
 
 -- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。

@@ -7,7 +7,7 @@ repository.workspace = true
 
 description = "纯代数类型层：TypeSpec / Layout / unify / 单态化上界 / 冲突诊断（零运行时状态，可 no_std）"
 
-# 依赖铁律：ze-type 是**代数层**，只描述类型，不持有任何运行时状态。
+# 依赖约定：ze-type 是**代数层**，只描述类型，不持有任何运行时状态。
 #   ✅ serde — Layout / Record 等需要可序列化描述（no_std + alloc）
 #   ❌ 任何 arena / 注册表 / 句柄表 — 那些属于 ze-reflect
 #   ❌ 任何 zela-* / pod / 宿主 crate — 它必须能被 build script 与 wasm 复用

@@ -1778,7 +1778,7 @@ mod tests {
     }
 
     /// 🔴 B3-0d：三角化失败**不再 `eprintln + continue`**，而是显式 panic
-    /// （错误路径可达、有测试；铁律 2「不静默」）。
+    /// （错误路径可达、有测试；不静默）。
     #[test]
     #[should_panic(expected = "不静默：2D 顶点生产失败")]
     fn gpu_unregistered_custom_shape_panics_explicitly() {

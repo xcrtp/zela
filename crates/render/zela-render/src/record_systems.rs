@@ -303,7 +303,7 @@ impl System for SceneRecord3DSystem {
         let worlds = ctx.get::<WorldTransforms>().cloned();
         // 光源：清空并录制。方向光的 `direction` 声明在组件内；点光（B1-B）的
         // **位置**由 `Transform` → `WorldTransforms` 解析 —— `Light` 组件本身
-        // 不带 position（唯一来源，铁律 3）。
+        // 不带 position（唯一来源）。
         ctx.with_world_and_resource_mut::<LightQueue, _>(|world, lights| {
             lights.clear();
             let scene = WorldView::new(world);

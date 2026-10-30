@@ -267,7 +267,7 @@ impl Literal {
 /// 通道承载的值类型（**kernel 侧最小封闭集**）。
 ///
 /// 与 `ze_pod_core::TypeSpec` 同构但**不依赖它**：`ze-comb` 是 kernel 层，
-/// 不能反向依赖 pod 机制（分层铁律）。装配期由 pod 把这里翻译成 `TypeSpec` 做合一。
+/// 不能反向依赖 pod 机制（分层约定）。装配期由 pod 把这里翻译成 `TypeSpec` 做合一。
 ///
 /// 它是**元数据**：通道引用的该字段 `#[serde(skip)]` ⇒ 不进 payload
 /// （既有产物逐位不变），解码后回到 `Unknown`（类型只在装配期推导，运行期不需要）。

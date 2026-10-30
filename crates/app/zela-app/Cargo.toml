@@ -37,7 +37,7 @@ zela-render = { path = "../../render/zela-render" }
 zela-render-backends = { path = "../../render/zela-render-backends", features = ["egui-wgpu"] }
 ze-macro = { path = "../../kernel/ze-macro" }
 # 内容管线接线：ze-content（IR 类型）+ ze-prerender（Typst/占位引擎）。
-# 铁律：zela-render 只能依赖轻的 ze-content，不得依赖 ze-prerender——
+# 约定：zela-render 只能依赖轻的 ze-content，不得依赖 ze-prerender——
 # 这里是 app 层，可以直连两者。
 ze-content = { path = "../../kernel/ze-content" }
 ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }

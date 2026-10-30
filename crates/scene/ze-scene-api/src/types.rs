@@ -175,7 +175,7 @@ pub enum LightKind {
     /// 方向光：`direction` 是光传播方向（世界空间，从光源指向场景）。
     Directional { direction: Vec3 },
     /// 点光：`range` 是有效半径（世界单位）。**不带 position** —— 位置由
-    /// 同一对象的 `Transform` 提供（B1 铁律 3：唯一来源）。
+    /// 同一对象的 `Transform` 提供（唯一来源）。
     Point { range: f32 },
 }
 

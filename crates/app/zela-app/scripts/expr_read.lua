@@ -18,7 +18,7 @@ scene.spawn({
     Camera2D { center = scene.vec2(0.0, 1.2), scale = 80.0 },
 })
 
--- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位。
 
 -- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
 

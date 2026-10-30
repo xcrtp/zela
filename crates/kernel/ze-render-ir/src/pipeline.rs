@@ -2,7 +2,7 @@
 //
 // 为什么在 IR：管线状态是**意图层声明**（拓扑 / 着色变体 / 是否双面 / 混合语义 /
 // 顶点布局），不是 GPU 命令。后端负责把它翻译成 `wgpu::RenderPipelineDescriptor`
-// （铁律 5：作者与 IR 都不暴露 `cull_mode` / `blend` / `sample_count` / `format`）。
+// （作者与 IR 都不暴露 `cull_mode` / `blend` / `sample_count` / `format`）。
 //
 // 🔴 本文件**不得出现任何 wgpu 类型**（计划 #1 的直接修正、D19 的核心）。
 
@@ -126,7 +126,7 @@ impl PostCaps {
 /// 后端声明的**能力**（不是命令）：target 相关的采样数 / 格式。
 ///
 /// 消费者（如 B2-5 的 AA 统一）先查询，再决定请求值；**不支持 ⇒ 显式报错**
-/// （铁律 2），不得静默降级。
+/// （不支持就显式报错），不得静默降级。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Capabilities {
     /// 目标颜色格式支持的最大 MSAA 采样数（1 = 无 MSAA）。
@@ -153,7 +153,7 @@ impl Capabilities {
     }
 }
 
-/// 能力不满足时的显式错误（铁律 2：不支持就命名报错，不静默降级）。
+/// 能力不满足时的显式错误（不支持就命名报错，不静默降级）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CapabilityError {
     #[error("采样数 {requested} 非法（必须为 2 的幂且 ≥ 1）")]

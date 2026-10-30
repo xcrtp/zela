@@ -21,7 +21,7 @@ compile_error!(
     "feature `host-js` 只能在 wasm32 目标上启用：native 目标请用默认的 boa 引擎（B3-P J3）"
 );
 
-// B3-Pe 未接线：显式失败，不静默忽略（铁律 3）。
+// B3-Pe 未接线：显式失败，不静默忽略。
 #[cfg(all(feature = "host-js", target_arch = "wasm32"))]
 compile_error!(
     "feature `host-js` 在本批次尚未接线（浏览器原生引擎 + CSP 回退未实现）；请使用默认的 boa 引擎"

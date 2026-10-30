@@ -1484,11 +1484,30 @@
 
 ---
 
+## BD. 动画层补全 · 阶段 0（收尾与值类型核查，2026-10-30）
+
+> 计划《动画层补全_执行计划》阶段 0。定位：把上一批的遗留项收干净，并核查
+> `Fill.color` / 组可见性两个"看起来只差一行"的值类型缺口。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BD-01 | 代码 / Cargo / 脚本里仍有「铁律 N」编号引用（BA-01 只清理了文档） | 全仓代码注释 | **已关闭** | 逐处改为语义内联（"不静默" / "唯一来源" / "依赖约定" / "不得改顶点格式" / "不暴露后端细节"），共 53 处：Rust 注释、14 个 `Cargo.toml` 依赖段、4 个脚本注释、`zela-web/build.ps1`、`.github/workflows/pages.yml`。`rg 铁律 crates` 无结果；GAPS 历史记账里的原名保留（可追溯性） |
+| BD-02 | `narrow_f32` 零使用（脚本与糖仍走旧名 `round_f32`） | 表达式 / 糖 / 脚本 | **已关闭** | `sugar_narrow` 改调 `narrow_f32`；`sugar.rs` 的 core 文档同步为新名；9 个脚本的说明注释同步。只换算子身份、不换实现（`round_f32` 仍委托 `narrow_f32`）⇒ 像素不变；受影响的 10 件作品（fourier / orbit / pendulum / pbr_materials / pbr_lights / pbr_scene / capability_gaps / cap_channels2d / cap_stroke_width / expr_read）payload 随算子 revision 重录 |
+| BD-03 | `Fill.color` 通道 | 表达式 / 动画 | **记账** | 值映射可做（`AnimValue::Color` ↔ `Value::vec4`），但**没有可写的根表达式**：`ze_comb::Literal` 到 `Vec3` 为止，`expr.pure` 只收 f64，表达式层也没有 `Vec4Of` 算子 ⇒ 通道常量即使挂上也写不出值。触发条件：加 `Vec4Of` / `Vec4` 字面量（会改 `zela.math` 签名，需 bump 与全量重录）时同批暴露 |
+| BD-04 | 组可见性开关（bool） | 动画 / 渲染 | **记账** | 两个前提都不成立：`AnimValue` 没有 `Bool`；`GroupVisibility` 是**全局 Resource**（`hidden: HashSet<GroupId>`），不是对象组件，而 `Target` 只能按 `ObjectId` 写组件字段。要做成可动画需要新增"组开关组件 + 折叠进 Resource 的 System"，属独立机制。触发条件：文字组 / 组级淡出需要驱动整组开关时单独立项；对象级淡出继续用 `Opacity` |
+| BD-05 | `cap_codegen` payload 未变，确认是否真的走 codegen | 渲染 / Demo | **已关闭** | 作品用 `expr.shader { object, root }` 提交 `ShaderPaint`；`zela_render::draw::paint_of` 把它放进 `style.paint.shader`，后端在光栅前用 compute pass 写填充槽（`emit_wgsl` 生成 `eval`）。payload 未变是因为该作品不含本批改名的 `narrow_f32` / `round_f32`，不是"没走 codegen" |
+| BD-06 | BB-11 的结构基线申报只提 atlas | 记账 / 基线 | **已关闭** | BB-11 原文按"只有 atlas 有 Stroke"申报不准确：结构指纹遍历 `TARGETS`，任何含 `StrokeSolid` 的作品都会变。BC 已用 `ZELA_STRUCTURE_RECORD=1` 全量重录（22 件），本批再确认结构基线未变 |
+| BD-07 | Parent 产出复核 | 契约 / 派生 / 通道 | **已关闭** | 六个 `Parent.*` 在 `TARGETS` 且被 `cap_parent_inherit.lua` 使用；覆盖门禁 70/70；现有 26 个脚本源码零改动；`--step hashes` 像素 36/36 不变（BC 批实测） |
+
+**BD 段小计**：已关闭 5 · 记账 2。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BC**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BC 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BD**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BD 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

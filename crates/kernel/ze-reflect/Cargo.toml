@@ -7,7 +7,7 @@ repository.workspace = true
 
 description = "运行时反射：generation 感知句柄机制 / 符号表 / 慢路径 Codec / 单态化缓存"
 
-# 依赖铁律：ze-reflect 是**运行时**层（arena / 符号表 / 句柄表都在这里）。
+# 依赖约定：ze-reflect 是**运行时**层（arena / 符号表 / 句柄表都在这里）。
 #   ✅ ze-type — 类型描述与诊断
 #   ❌ 任何 zela-* / pod / 宿主 crate — 句柄机制不认具体领域类型；
 #      各领域类型在自己的 crate 里实现 `HandleCore`。

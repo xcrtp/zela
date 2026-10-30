@@ -6,7 +6,7 @@ license.workspace = true
 
 description = "Expression functor pod (zela.math namespace): leaf operators as a capability"
 
-# 依赖铁律（与 `crates/ze/pod` 其余成员一致）：
+# 依赖约定（与 `crates/ze/pod` 其余成员一致）：
 #   ✅ ze-pod-core / ze-pod-macro — Pod / capability 机制
 #   ✅ ze-comb — 组合子表达式内核（kernel 层，不含宿主状态）
 #   ✅ ze-func — 基础函子库（算子语义 + OpDef 元数据）；本 crate 只剩接线 + infer

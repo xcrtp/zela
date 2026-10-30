@@ -92,10 +92,10 @@ const UNIFORM_MIN_BINDING_SIZE: NonZeroU64 = match NonZeroU64::new(UNIFORM_SIZE)
 /// 与 `cube.wgsl` 的 `Lights` 结构逐字段对应（全部 `vec4<f32>`，无对齐陷阱）。
 pub const LIGHT_UNIFORM_SIZE: u64 = 288;
 
-/// 方向光数量上限（**编译期常量**，超限显式报错 —— 铁律 2：不静默丢弃）。
+/// 方向光数量上限（**编译期常量**，超限显式报错，不静默丢弃）。
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
 
-/// 点光数量上限（B1-B，**编译期常量**，超限显式报错 —— 铁律 2）。
+/// 点光数量上限（B1-B，**编译期常量**，超限显式报错）。
 pub const MAX_POINT_LIGHTS: usize = 4;
 
 /// `LIGHT_UNIFORM_SIZE` 的常量形式（同 `UNIFORM_MIN_BINDING_SIZE`）。
@@ -113,7 +113,7 @@ pub const DYNAMIC_OFFSET_ALIGNMENT: u64 = 256;
 /// B2-0a：3D 顶点布局由 kernel 层契约声明
 /// [`ze_vertex::VertexLayout::standard_3d`]（pos3@0 + uv2@12 + shading_normal3@20，stride 32），
 /// 后端只做「契约 → wgpu 类型」翻译。原硬编码 `VERTEX_ATTRIBUTES` / `VERTEX_LAYOUT`
-/// 已删除（铁律 4：产物字节格式逐位不变，只是声明来源换成契约）。
+/// 已删除（产物字节格式逐位不变，只是声明来源换成契约）。
 fn to_wgpu_format(ty: AttribType) -> wgpu::VertexFormat {
     match ty {
         AttribType::F32 => wgpu::VertexFormat::Float32,
@@ -463,7 +463,7 @@ impl WgpuBackend3D {
     ///
     /// 调用方应先用 [`Self::capabilities`] 查询 `max_sample_count`，再用
     /// `Capabilities::require_sample_count` 校验后传入；不支持的取值 ⇒ **显式 panic**
-    /// （铁律 2，不静默降级）。支持 1（关闭）与 4（与 2D 对齐）。
+    /// （不静默降级）。支持 1（关闭）与 4（与 2D 对齐）。
     pub fn new_with_samples(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -977,7 +977,7 @@ impl WgpuBackend3D {
         let lines: Vec<&LineDraw> = lines.into_iter().collect();
         // B1-A/B/C：每帧覆写场景级光源 uniform。**空灯光 = 默认光照**（单方向光
         // (0,0,1) + ambient 0.2，与硬编码时代逐位一致）；超限**显式报错**
-        // （铁律 2：不静默丢弃）。`camera_pos` 一并写入（PBR 视线向量用）。
+        // （不静默丢弃）。`camera_pos` 一并写入（PBR 视线向量用）。
         let bytes = if lights.is_empty() && point_lights.is_empty() {
             default_light_bytes(camera_pos)
         } else {
@@ -1334,7 +1334,7 @@ impl WgpuBackend3D {
     /// B1-E/B2-2：按需构建 + 缓存 pipeline（key 五维：topology / variant / cull / blend / layout）。
     ///
     /// 命中直接返回缓存克隆；未命中则创建并缓存。**无回退路径** —— 与预建时代
-    /// 「查表落空回退 Lambert」不同，这里不存在"漏建"状态（不静默，铁律 2）。
+    /// 「查表落空回退 Lambert」不同，这里不存在"漏建"状态（不静默）。
     /// wgpu 30 的 `create_render_pipeline` 不可失败（内部校验失败即 panic，且携带
     /// key 化的 label），故创建路径本身就是显式报错。
     fn get_or_create_pipeline(&self, key: PipelineKey) -> wgpu::RenderPipeline {
@@ -1410,7 +1410,7 @@ impl WgpuBackend3D {
     /// B2-0c（D22）：**能力查询** —— target 决定的最大 MSAA 采样数与格式。
     ///
     /// `sample_count` / 颜色格式 / 深度格式是"能力"不是"命令"：消费者（B2-5 的
-    /// AA 统一）先查后请求；不支持 ⇒ [`CapabilityError`]（铁律 2，不静默降级）。
+    /// AA 统一）先查后请求；不支持 ⇒ [`CapabilityError`]（不静默降级）。
     ///
     /// 需要 `adapter`：wgpu 30 的 `get_texture_format_features` 是 `Adapter` 方法
     /// （`Device` 上没有）。调用方必须持有 adapter（B2-5 接线时补进装配层）。
@@ -1719,7 +1719,7 @@ mod tests {
     // ── B1-A：光源 uniform 打包（纯 CPU，无需 GPU） ─────────────────────
 
     /// B2-0a：3D 顶点布局契约 → wgpu 翻译产物与旧硬编码布局**逐位相同**
-    /// （铁律 4：只换声明来源，不改顶点格式；因此像素不变）。
+    /// （只换声明来源，不改顶点格式；因此像素不变）。
     #[test]
     fn test_vertex_layout_translation_matches_legacy_format() {
         let layout = ze_vertex::VertexLayout::standard_3d();
@@ -2856,7 +2856,7 @@ mod tests {
     }
 
     /// **B1-F 验收（真实设备）**：点列表拓扑 ⇒ **必须显式报错**，不得静默跳过
-    /// （铁律 2「不静默」：丢弃一个 draw 而不报错，会让"画面少东西"无从查起）。
+    /// （不静默：丢弃一个 draw 而不报错，会让"画面少东西"无从查起）。
     ///
     /// 证伪：若恢复「静默 continue」，本 `should_panic` 测试变红。
     #[test]
@@ -3067,8 +3067,8 @@ mod tests {
         );
     }
 
-    /// **B1-A 验收（真实设备）**：方向光数量超上限 ⇒ **显式报错**（铁律 2：
-    /// 不静默丢弃）。空灯光为默认光照；`MAX_DIRECTIONAL_LIGHTS + 1` 个光必须 panic。
+    /// **B1-A 验收（真实设备）**：方向光数量超上限 ⇒ **显式报错**
+    /// （不静默丢弃）。空灯光为默认光照；`MAX_DIRECTIONAL_LIGHTS + 1` 个光必须 panic。
     #[test]
     #[should_panic(expected = "超过上限")]
     fn test_directional_light_over_limit_panics() {
@@ -3106,8 +3106,8 @@ mod tests {
         pixels.chunks_exact(4).filter(|p| p[3] > 0).count()
     }
 
-    /// **B1-B 验收（真实设备）**：点光数量超上限 ⇒ **显式报错**（铁律 2：
-    /// 不静默丢弃）。`MAX_POINT_LIGHTS + 1` 个点光必须 panic。
+    /// **B1-B 验收（真实设备）**：点光数量超上限 ⇒ **显式报错**
+    /// （不静默丢弃）。`MAX_POINT_LIGHTS + 1` 个点光必须 panic。
     #[test]
     #[should_panic(expected = "超过上限")]
     fn test_point_light_over_limit_panics() {

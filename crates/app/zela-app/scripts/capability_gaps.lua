@@ -23,7 +23,7 @@ local T = 3.0 -- 唯一动画段时长（秒）
 
 -- 旧 `Step::Play` 区间 `[0, T)`（显式时钟；段外由 Hold 钳到两端）。
 
--- 动画值域是 f32，而表达式层是 f64：`round_f32` 在旧曲线的同一位置落位。
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位。
 
 -- `Phase { omega }`：`omega × t`（`t` 是时钟局部时间；与旧曲线的 f32 口径一致）。
 local function phase(omega)

@@ -8,7 +8,7 @@ name: Pages
 # （当前放行 main、pages）。若缺少，GitHub 会在**启动任何 job 之前**整单取消该
 # run（表现为 run cancelled、0 个 job、无 deployment），而不是把 deploy job 标为 skipped。
 #
-# 铁律：本地与 CI 跑**同一个** `crates/web/zela-web/build.ps1`
+# 约定：本地与 CI 跑**同一个** `crates/web/zela-web/build.ps1`
 # （ubuntu runner 预装 pwsh，不另写 bash 版，避免两套命令定义漂移）。
 # build.ps1 内部读 `scripts/demo/manifest.txt`，逐条编译并断言 payload hash。
 

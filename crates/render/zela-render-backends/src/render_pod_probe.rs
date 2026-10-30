@@ -8,7 +8,7 @@
 // 本模块用一个**真实实现**（真 wgpu 后端、真像素回读）回答：
 // 这四条签名够不够用、哪里缺语义、要不要改。
 //
-// # 边界（铁律）
+// # 边界（约定）
 //
 // - **不改生产路径**：`StandardBackends` / `SceneCompositorCallback` / `assemble_runtime`
 //   一律不碰；本模块整体 `#[cfg(test)]`，只存在于测试构建。
@@ -196,7 +196,7 @@ impl RenderProbePod {
         desc.validate()
             .map_err(|e| PodError::CallFailed(format!("create_target：{e}")))?;
         // **显式收窄**：后端离屏格式 / 采样数是常量，契约却允许任意值。
-        // 静默忽略会让调用方以为"格式生效了"，故这里直接拒绝（铁律 3）。
+        // 静默忽略会让调用方以为"格式生效了"，故这里直接拒绝。
         if desc.format != ColorFormat::Rgba8Unorm {
             return Err(PodError::CallFailed(format!(
                 "create_target：2D 离屏格式固定为 Rgba8Unorm（OFFSCREEN_FORMAT），\

@@ -17,7 +17,7 @@
 # 否则会弹“同步浏览数据”首启提示。**不要**加 `--disable-gpu-sandbox` /
 # `--enable-unsafe-webgpu`：会触发“不受支持的命令行标记”警告条（当前 Edge 默认已开 WebGPU）。
 #
-# 铁律：**不得另写 bash 版**。ubuntu runner 预装 pwsh，CI 直接
+# 约定：**不得另写 bash 版**。ubuntu runner 预装 pwsh，CI 直接
 # `pwsh crates/web/zela-web/build.ps1` —— 与本地跑同一份定义。
 
 # -FontsOnly：只做「下载 + 校验确定字体」这一步就退出。

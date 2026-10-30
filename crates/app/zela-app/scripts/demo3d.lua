@@ -6,7 +6,7 @@
 -- 覆盖：相机、方向光 + 点光、实体立方体（PBR + 旋转缩放）、线框立方体，
 --       以及 3D 摆放动画（Rotation / Position 并行 + Scale 缩放）。
 --
--- 铁律 3（单一真源）：点光**不带 position** —— 位置由同一对象的 `Transform` 提供。
+-- 唯一来源：点光**不带 position** —— 位置由同一对象的 `Transform` 提供。
 
 local T = 2.0
 

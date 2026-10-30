@@ -844,12 +844,12 @@ fn sugar_ramp2(pod: &dyn Pod, ax: f64, ay: f64, bx: f64, by: f64, dur: f64) -> H
     call_args(pod, "mix", &[a, b, sugar_progress(pod, dur)])
 }
 
-/// `f32(x)`：落到 f32 精度（= `RoundF32 { of = x }`）。
+/// `f32(x)`：落到 f32 精度（= `NarrowF32 { of = x }`）。
 ///
-/// 展开用**旧算子名** `round_f32`（与脚本现有写法逐字节相同）；新名字
-/// `narrow_f32` 是同一算子的别名（见 GAPS `BB-08`）。
+/// 第 BD 批：展开改用新名 `narrow_f32`（旧名 `round_f32` 仍保留给老 payload）。
+/// 只换算子身份、不换实现 ⇒ 像素不变，payload 随算子 revision 重录。
 fn sugar_narrow(pod: &dyn Pod, of: Handle) -> Handle {
-    call_args(pod, "round_f32", &[of])
+    call_args(pod, "narrow_f32", &[of])
 }
 
 /// `wave(base, amp, omega)`：`base + amp · sin(omega · t)`（每步落 f32）。

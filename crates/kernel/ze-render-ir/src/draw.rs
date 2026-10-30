@@ -16,7 +16,7 @@ use crate::shape::{Shape2D, Style2D};
 /// 没有层序概念（#11），B2-1 起由它承担，B2-4 的 epsilon 也由它派生（R-C）。
 ///
 /// 与场景对象层的 `ze_scene_core::ZOrder` 是**同一个类型**（后者 re-export 本类型），
-/// 保证"排序概念只有一份"（铁律 3）。
+/// 保证"排序概念只有一份"。
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]

@@ -28,7 +28,7 @@ use ze_scene_core::components::{Material3D, MeshGeometry, PrimitiveTopology};
 
 use crate::tessellate::{tessellate_with, tolerance_for_scale, TessKind};
 
-/// 2D → 3D 派生失败的原因（显式错误，铁律 2）。
+/// 2D → 3D 派生失败的原因（显式错误）。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ShapeMeshError {
     #[error("2D 图元 {kind} 暂不支持派生为 3D 网格（Direct 路径未声明；不静默丢弃）")]
@@ -57,7 +57,7 @@ pub fn derive_mesh(
     shape: &Shape2D,
     style: &Style2D,
 ) -> Result<Vec<DerivedMesh>, ShapeMeshError> {
-    // Direct 路径未声明支持的两类：显式拒绝（铁律 1）。
+    // Direct 路径未声明支持的两类：显式拒绝。
     match shape {
         Shape2D::Polyline { .. } => {
             return Err(ShapeMeshError::Unsupported { kind: "Polyline" })
