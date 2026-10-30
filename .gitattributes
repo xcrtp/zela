@@ -1,1 +1,11 @@
-* text=auto
+# 行尾统一为 LF（检出也写 LF，不随本机 `core.autocrlf` 漂移）。
+#
+# 为什么必须钉在仓库侧：`docs/modules/<crate>.md` 的自动区由
+# `cargo run -p xtask -- docs-gen` 生成（写 LF），而门禁 `cargo verify --step docs`
+# 是**逐字节**比对。若检出被 `core.autocrlf=true` 转成 CRLF：
+#   - 新 clone / `git checkout` 之后 `--step docs` 立刻假红（内容其实一样）；
+#   - 工作区长期显示"已修改"但 `git diff` 为空，藏住真正的改动。
+# 只在 Windows 上出现、且 CI（Linux）不会暴露 ⇒ 必须在仓库侧统一，而不是各机器配置。
+#
+# `text=auto` 仍然生效：Git 按内容判二进制，图片 / 编译产物不受影响。
+* text=auto eol=lf
