@@ -1706,11 +1706,35 @@
 
 ---
 
+## BO. Dispatch 通用化与 `workgroup_size` 单一来源（2026-10-31）
+
+> 计划《Dispatch 通用化与 workgroup_size 单一来源_执行计划》。
+> 目标：compute 的除数与派发形状各只有一份定义，让"加特效"不再需要同时改 shader 与 Rust。
+> 强制约束沿用：像素 36 条逐位不变、结构 22 件不变、不改 wgsl 算法、只做 vector 侧。
+> 本段按阶段记账；**未兑现项写触发条件，不写成「已关闭」**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BO-01 | 21 个 compute entry 的 `@workgroup_size` 与 Rust 侧各自一份 | zela-render-vector / 5 个 wgsl | **已关闭** | `zela_render_vector::dispatch::WORKGROUP` 立成一张 21 条的表（entry → 三元组，缺维补 1）；新建门禁解析五个 shader 的 `@compute @workgroup_size(…)` 与其后的 `fn` 名，与本表**双向**比对：shader 多一个 entry / 少一个 entry / 任一侧改一个数，三种都红（各有一条自证用例）。同文件内异 size（`bloom` 的 8×8 与 `show` 的 16×16、`occlusion` 的两个模糊）正是这层要防的漂移。 |
+| BO-02 | `TILE` 在 Rust 与 `vector.wgsl` 各写一次 | zela-render-vector / vector.wgsl | **已关闭** | 只留 `zela_render_vector::dispatch::TILE` 一份，`vector.rs` 从它引入；门禁用一条用例解析 `vector.wgsl` 的 `const TILE: u32 = 16u;` 并比对，两侧任一改动即红。 |
+| BO-03 | 15 处 `dispatch_workgroups` 把除数写成字面量 | zela-render-vector | **已关闭** | 全部改为 `groups_for(形状, 被除数)` 查表：bloom 的 4 次调用（含只有 `show` 是 16 的那一次）、occlusion 的 5 次、environment 的 3 次、深度解析、flatten（fill/stroke 两个 entry 分开查）、composite / keep / bound_slabs、frag codegen（生成着色器 ⇒ `Literal(8)`）、fill codegen（`Fixed`）。`grep dispatch_workgroups` 只剩变量实参 + 那一处 indirect。 |
+| BO-04 | `65535` 上限只有 2 处处理 | zela-render-vector | **已关闭** | 展开收进 `fold_x`：`Tiles` / `Linear` / `Cube` 共用，超限时把溢出的层数搬到第二维。**唯一的行为变化在上限之外**：旧写法是两维各自截断（会少派工作组），新写法折叠；这一点写成专门断言 `folding_differs_from_clamping_only_beyond_the_limit`，没有悄悄改。 |
+| BO-05 | `Indirect` 只预留，未铺开 | zela-render-vector | **已关闭（按决策 3 的范围）** | 加了 `Dispatch::Indirect { source }` 变体；`validate` 新增「`source` 必须由**更早**的 pass 生产」，两条用例（生产者在前合法 / 在后报错）；`crossings.1` 补 `COPY_DST` 使 CPU 侧显式清零成为可能。现有那一处 `dispatch_workgroups_indirect` 保持不变（它由 `count_crossings` 无条件先写，当前安全）。 |
+| BO-06 | 生成着色器的 `@workgroup_size` 不在门禁覆盖内 | zela-render-vector / codegen | **记账** | `fill codegen` / `frag codegen` 的 WGSL 由 codegen 在运行期拼出，不落盘 ⇒ 静态门禁抓不到，只能由调用点用 `GroupSize::Literal(8)` 写死（与生成器里的字符串是两份）。触发条件：`ze-comb` 的 codegen 能为 pass 声明 `@workgroup_size`（与 BN-07 的"完整 pass 生成"同源）时，改为从生成器的形状表取值。 |
+
+**BO 段小计**：已关闭 5 · 记账 1。
+> 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过。
+> 判据说明：像素抓不到 dispatch 算错（多派的工作组被 shader 的边界检查吃掉，只是变慢），
+> 因此本批的核心判据是 `tests/dispatch_snapshot.rs` 的 9 条**新旧等价**断言
+> （复刻的旧算法 vs `groups_for`，逐形状逐输入比对）。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BN**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BN 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BO**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BO 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
