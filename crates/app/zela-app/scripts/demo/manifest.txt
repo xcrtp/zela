@@ -73,4 +73,6 @@ cap_plot        函数图像            cap_plot.lua         0756afa3bb29271fd3b
 cap_path_follow 路径跟随            cap_path_follow.lua  f9dcae8fe6e65101b1b131efbb28a95b2c41e8efeb66e742e212d5d25fd82c10
 # 动画层阶段 3 验收作品：文字排版糖 `scene.text` + 组级淡出 / 缩放（只动容器一个字段）。
 cap_text_group  文字组              cap_text_group.lua   e9934807e967c913f2f7ecdff4a408b029400c0d931d0fc6eac1fe132d3f57c9
+# 动画层阶段 4 验收作品：时序糖 `scene.sequence`（顺序 / 并行 / 空档三种段形态）。
+cap_sequence    时序                 cap_sequence.lua     d7ad9c3180afe95e5f3a550e28d1df94f154e944fb6aef33364720584fcdb3ec
 

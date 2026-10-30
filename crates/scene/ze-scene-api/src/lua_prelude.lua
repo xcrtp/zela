@@ -89,3 +89,47 @@ function scene.text(source, opts)
     end
     return root
 end
+
+--- 把一串「段」展开成现有的 `expr.bind` + `clock.shift(起点)` + `duration`。
+--
+-- **纯展开**：每一步产出的绑定与手写 `expr.bind { clock = clock.shift(…), duration = … }`
+-- 完全相同（AST 逐字节一致 ⇒ payload 不变）。不引入隐式全局游标：游标是本函数的
+-- 局部量，需要跨调用接续时用返回值或 `start`。
+--
+-- @param steps table 段数组，每项字段：
+--   object / target / root   与 `expr.bind` 同义（必填）
+--   duration                 段时长（秒；缺省 0）
+--   at                       显式起点（秒）。给定 ⇒ 用 `clock.shift(at)` 且**不推进游标**
+--                            （同一段里的并行绑定靠它共享起点）；缺省 ⇒ 用当前游标并推进
+--   wait                     只推进游标、不产生绑定（`duration` 忽略）
+-- @param opts table|nil `start`：起始游标（缺省 0）
+-- @return 结束游标（秒），供调用方接续（例如错峰动画的间隔）
+function scene.sequence(steps, opts)
+    local cursor = 0.0
+    if opts ~= nil and opts.start ~= nil then
+        cursor = opts.start
+    end
+    for i = 1, #steps do
+        local step = steps[i]
+        if step.wait ~= nil then
+            cursor = cursor + step.wait
+        else
+            local at = step.at
+            if at == nil then
+                at = cursor
+            end
+            local duration = step.duration or 0.0
+            expr.bind {
+                object = step.object,
+                target = step.target,
+                root = step.root,
+                clock = clock.shift(at),
+                duration = duration,
+            }
+            if step.at == nil then
+                cursor = cursor + duration
+            end
+        end
+    end
+    return cursor
+end

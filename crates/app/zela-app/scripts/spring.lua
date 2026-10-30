@@ -55,7 +55,10 @@ local camera = scene.spawn({
 })
 
 -- 一只小球的完整弹跳：下落（挤压）→ 弹起（拉伸）→ 回落归一。
--- 旧 `scene.animate` 是顺序追加的段 ⇒ 这里显式维护同一个游标。
+-- 时序糖 `scene.sequence`（前置块）把这 6 个段收成一张表：
+-- 每段产出的仍是 `expr.bind { clock = clock.shift(起点), duration = … }`，
+-- 与手写版 AST 逐字节相同（本作品 payload 即对拍基准）。
+-- 同一段里的并行绑定靠显式 `at` 共享起点（`at` 不推进游标）。
 local cursor = 0.0
 
 local function hop(x, color)
@@ -70,52 +73,52 @@ local function hop(x, color)
     local up = down + DOWN
     local settle = up + UP
 
-    -- 下落 + 落地挤压 + 淡入（同一段 [down, down+DOWN)）。
-    expr.bind {
-        object = b,
-        target = Transform.channel.position,
-        root = move2(x, q(HOP_HI), x, q(FLOOR_Y), DOWN),
-        clock = clock.shift(down),
-        duration = DOWN,
-    }
-    expr.bind {
-        object = b,
-        target = Transform.channel.scale,
-        root = sugar.ramp(1.0, 0.7, DOWN),
-        clock = clock.shift(down),
-        duration = DOWN,
-    }
-    expr.bind {
-        object = b,
-        target = Opacity.channel.value,
-        root = sugar.ramp(0.0, 1.0, 0.3),
-        clock = clock.shift(down),
-        duration = DOWN,
-    }
-
-    -- 弹起 + 离地拉伸（同一段 [up, up+UP)）。
-    expr.bind {
-        object = b,
-        target = Transform.channel.position,
-        root = move2(x, q(FLOOR_Y), x, q(HOP_HI), UP),
-        clock = clock.shift(up),
-        duration = UP,
-    }
-    expr.bind {
-        object = b,
-        target = Transform.channel.scale,
-        root = sugar.ramp(0.7, 1.15, UP),
-        clock = clock.shift(up),
-        duration = UP,
-    }
-
-    -- 回落归一（只动 Scale，Position 不再写）。
-    expr.bind {
-        object = b,
-        target = Transform.channel.scale,
-        root = sugar.ramp(1.15, 1.0, SETTLE),
-        clock = clock.shift(settle),
-        duration = SETTLE,
+    scene.sequence {
+        -- 下落 + 落地挤压 + 淡入（同一段 [down, down+DOWN)）。
+        {
+            object = b,
+            target = Transform.channel.position,
+            root = move2(x, q(HOP_HI), x, q(FLOOR_Y), DOWN),
+            duration = DOWN,
+            at = down,
+        },
+        {
+            object = b,
+            target = Transform.channel.scale,
+            root = sugar.ramp(1.0, 0.7, DOWN),
+            duration = DOWN,
+            at = down,
+        },
+        {
+            object = b,
+            target = Opacity.channel.value,
+            root = sugar.ramp(0.0, 1.0, 0.3),
+            duration = DOWN,
+            at = down,
+        },
+        -- 弹起 + 离地拉伸（同一段 [up, up+UP)）。
+        {
+            object = b,
+            target = Transform.channel.position,
+            root = move2(x, q(FLOOR_Y), x, q(HOP_HI), UP),
+            duration = UP,
+            at = up,
+        },
+        {
+            object = b,
+            target = Transform.channel.scale,
+            root = sugar.ramp(0.7, 1.15, UP),
+            duration = UP,
+            at = up,
+        },
+        -- 回落归一（只动 Scale，Position 不再写）。
+        {
+            object = b,
+            target = Transform.channel.scale,
+            root = sugar.ramp(1.15, 1.0, SETTLE),
+            duration = SETTLE,
+            at = settle,
+        },
     }
 
     cursor = settle + SETTLE
@@ -129,10 +132,11 @@ cursor = cursor + 0.4
 hop(1.2, scene.rgba(140, 170, 255, 255))
 
 -- 收尾推近（最后一段）。
-expr.bind {
-    object = camera,
-    target = Camera2D.channel.scale,
-    root = sugar.ramp(55.0, 74.0, 1.3),
-    clock = clock.shift(cursor),
-    duration = 1.3,
-}
+scene.sequence({
+    {
+        object = camera,
+        target = Camera2D.channel.scale,
+        root = sugar.ramp(55.0, 74.0, 1.3),
+        duration = 1.3,
+    },
+}, { start = cursor })

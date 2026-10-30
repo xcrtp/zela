@@ -82,6 +82,7 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_plot", "函数图像", "cap_plot.lua"),
     lua!("cap_path_follow", "路径跟随", "cap_path_follow.lua"),
     lua!("cap_text_group", "文字组", "cap_text_group.lua"),
+    lua!("cap_sequence", "时序", "cap_sequence.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。
