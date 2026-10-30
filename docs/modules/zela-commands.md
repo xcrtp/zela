@@ -9,15 +9,17 @@
 
 - 层：`app`（`crates/app`）
 - 路径：`crates/app/zela-commands`
-- 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`zela-app`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`
+- 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`zela-app`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`
-- 源文件：15 个 · 2767 行
+- 源文件：17 个 · 3623 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
+| `src/bin/zela-verify.rs` | 224 | `zela-verify`：批量对拍的**命令行壳**（参数解析 + GPU 上下文 + 退出码）。 |
 | `src/commands/api.rs` | 141 | `api`：导出 domain 能力的机器可读文档（JSON 唯一来源 + LuaLS + TypeScript + `.pyi`）。 |
+| `src/commands/batch.rs` | 631 | `batch`：**批量渲染 + 对拍**（门禁用；也是批量出片的一等能力）。 |
 | `src/commands/check.rs` | 56 | `check`：只做装配期检查、不渲染。 |
 | `src/commands/compile.rs` | 187 | `compile`：脚本 → ZSB 装配产物（不渲染、不需要 GPU）。 |
 | `src/commands/doctor.rs` | 141 | `doctor`：环境自检（本批最值钱的发现之一）。 |
@@ -26,7 +28,7 @@
 | `src/commands/frames.rs` | 76 | `frames`：PNG 序列帧导出（`render --frames` 的一等入口）。 |
 | `src/commands/inspect.rs` | 92 | `inspect`：读取 `.zsb` 的 Meta（container 版本 / payload 格式 / 能力 / 降级 / 来源）。 |
 | `src/commands/list.rs` | 54 | `list`：内置作品清单（GUI 下拉与 CLI 共用同一份定义）。 |
-| `src/commands/mod.rs` | 15 | 命令帧体（每条命令一个模块）。 |
+| `src/commands/mod.rs` | 16 | 命令帧体（每条命令一个模块）。 |
 | `src/commands/render.rs` | 565 | `render`：脚本 / ZSB → 帧（唯一帧体）。 |
 | `src/host.rs` | 134 | 宿主接缝：进度 / 取消 / 诊断 + 帧 sink。 |
 | `src/lib.rs` | 30 | `zela-commands`：**命令帧体（唯一实现）**。 |
@@ -38,30 +40,32 @@
 ```mermaid
 graph LR
     f0["src/commands/api.rs"]
-    f2["src/commands/check.rs"]
-    f3["src/commands/compile.rs"]
-    f4["src/commands/doctor.rs"]
-    f6["src/commands/fingerprint.rs"]
-    f7["src/commands/fonts.rs"]
-    f8["src/commands/frames.rs"]
-    f10["src/commands/list.rs"]
+    f2["src/commands/batch.rs"]
+    f3["src/commands/check.rs"]
+    f4["src/commands/compile.rs"]
+    f5["src/commands/doctor.rs"]
+    f7["src/commands/fingerprint.rs"]
+    f8["src/commands/fonts.rs"]
+    f9["src/commands/frames.rs"]
+    f11["src/commands/list.rs"]
     f1["src/commands/mod.rs"]
-    f12["src/commands/render.rs"]
-    f11["src/host.rs"]
-    f9["src/response.rs"]
-    f5["src/spec.rs"]
+    f13["src/commands/render.rs"]
+    f12["src/host.rs"]
+    f10["src/response.rs"]
+    f6["src/spec.rs"]
     f0 --> f1
-    f2 --> f3
-    f3 --> f1
-    f4 --> f5
-    f6 --> f1
-    f7 --> f5
-    f8 --> f9
-    f10 --> f1
-    f10 --> f11
-    f10 --> f5
-    f12 --> f1
-    f12 --> f5
+    f2 --> f1
+    f3 --> f4
+    f4 --> f1
+    f5 --> f6
+    f7 --> f1
+    f8 --> f6
+    f9 --> f10
+    f11 --> f1
+    f11 --> f12
+    f11 --> f6
+    f13 --> f1
+    f13 --> f6
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -71,6 +75,11 @@ graph LR
 | `src/commands/api.rs` | `pub fn output_dir(args: &CommandArgs) -> PathBuf` |
 | `src/commands/api.rs` | `pub fn default_dir() -> PathBuf` |
 | `src/commands/api.rs` | `pub fn run(host: &dyn CommandHost, dir: &std::path::Path) -> Result<Response, String>` |
+| `src/commands/batch.rs` | `pub struct Work` |
+| `src/commands/batch.rs` | `pub struct BatchOptions` |
+| `src/commands/batch.rs` | `pub struct WorkOutcome` |
+| `src/commands/batch.rs` | `pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<WorkOutcome>, String>` |
+| `src/commands/batch.rs` | `pub fn run_sink_bypass(` |
 | `src/commands/check.rs` | `pub fn script_from_args(args: &CommandArgs) -> Result<PathBuf, String>` |
 | `src/commands/check.rs` | `pub fn run(host: &dyn CommandHost, script: &std::path::Path) -> Result<Response, String>` |
 | `src/commands/compile.rs` | `pub struct CompileOptions` |

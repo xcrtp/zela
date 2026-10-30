@@ -3342,7 +3342,8 @@ fn batch_hashes(root: &Path) -> Result<BatchHashes, String> {
     // 执行计划阶段 3：统一观测产物（每次运行重写，不追加旧跑次）。
     let observe = tmp.join("observe.jsonl");
     let _ = fs::remove_file(&observe);
-    let mut args = strings(&["run", "-q", "--profile", "verify", "-p", "zela-app"]);
+    // 帧体在 `zela-commands::commands::batch`（宿主无关），这里只调它的壳。
+    let mut args = strings(&["run", "-q", "--profile", "verify", "-p", "zela-commands"]);
     args.extend(hashes_app_args());
     args.extend(strings(&["--bin", "zela-verify", "--"]));
     args.extend(strings(&[
@@ -3451,7 +3452,7 @@ fn assert_sink_bypass(root: &Path) -> Result<(), String> {
     prepare_hashes_dir(root)?;
     let scripts = scripts_dir(root);
     let tmp = root.join("target").join("xtask").join("hashes");
-    let mut args = strings(&["run", "-q", "--profile", "verify", "-p", "zela-app"]);
+    let mut args = strings(&["run", "-q", "--profile", "verify", "-p", "zela-commands"]);
     args.extend(hashes_app_args());
     args.extend(strings(&["--bin", "zela-verify", "--"]));
     args.extend(strings(&[

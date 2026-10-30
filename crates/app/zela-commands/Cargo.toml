@@ -14,6 +14,8 @@ zela-scene-bundle = { path = "../../scene/zela-scene-bundle" }
 zela-scene-ecs = { path = "../../scene/zela-scene-ecs" }
 zela-render-backends = { path = "../../render/zela-render-backends", default-features = false, features = ["wgpu"] }
 zela-render-vector = { path = "../../render/zela-render-vector" }
+# `zela-verify` 壳的 tracing 订阅器（帧体与 `zela-render` 同一条遥测链）。
+zela-schedule = { path = "../../schedule/zela-schedule" }
 # `api` 命令（声明文件导出）与 `fingerprint compare`（PNG 解码）。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 ze-pod-binding = { path = "../../ze/pod/ze-pod-binding" }

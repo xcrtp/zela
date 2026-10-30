@@ -10,7 +10,7 @@
 - 层：`schedule`（`crates/schedule`）
 - 路径：`crates/schedule/zela-schedule`
 - 生产依赖（上游，dev-deps 不计）：（无）
-- 被依赖（下游）：`zela-app`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-render`、`zela-scene-ecs`
+- 被依赖（下游）：`zela-app`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-render`、`zela-scene-ecs`
 - 源文件：11 个 · 2353 行
 
 ### 文件清单

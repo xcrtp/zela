@@ -4,6 +4,7 @@
 //! 其余命令在阶段 2 迁入，CLI 侧只留适配。
 
 pub mod api;
+pub mod batch;
 pub mod check;
 pub mod compile;
 pub mod doctor;

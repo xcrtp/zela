@@ -1,19 +1,26 @@
-//! `zela-verify`：**批量**对拍入口（B9 Step 3）。
+//! `batch`：**批量渲染 + 对拍**（门禁用；也是批量出片的一等能力）。
 //!
 //! ```text
-//! zela-verify --scripts DIR --tmp DIR --work name=WxH[:vector] [--work ...]
+//! 输入  一组 (作品脚本, 尺寸, 后端, fps)
+//! 输出  每组的 { payload hash, 像素序列 hash, 结构摘要 } + 可选观测产物
 //! ```
 //!
-//! # 为什么需要它
+//! # 为什么在这一层
 //!
-//! `cargo verify --step hashes` 原先每个作品要付两次进程启动（每次 ~0.5s GPU 初始化
-//! + ~0.7s 运行时构帧准备）。19 次进程调用 ≈ 46s，与"渲染本身"同量级。
-//! 本二进制把 GPU 初始化压成**一次**，每个作品只重建自己的 Runtime（新 World 是必须的）。
+//! 它同时服务两件事：门禁对拍（`zela-verify`）与**批量出片**（未来的
+//! `zela render --batch` / 编辑器）。所以帧体放在 `zela-commands`（宿主无关），
+//! 二进制只剩参数解析与退出码。
+//!
+//! # 一次 GPU 初始化
+//!
+//! `RenderContext` 只建一次并复用到所有作品；每件作品各自新建 runtime 与后端
+//! （新 World 是必须的）。逐作品的进程启动开销（~0.5s GPU 初始化 + ~0.7s 构帧准备）
+//! 因此被摊平。
 //!
 //! # 与单进程路径的关系（不得漂移）
 //!
 //! 帧循环**只此一份**（[`zela_app::frame_loop`]），与 `zela-render` 共用；
-//! 本二进制只是"同一循环 + 一个哈希回调"，不重写渲染代码。
+//! 本模块只是"同一循环 + 一个哈希回调"，不重写渲染代码。
 //! `xtask` 保留 `--independent` 开关走旧的独立进程路径 —— 两者必须逐位相同（B9 §4.3）。
 //!
 //! # 输出（机器可读，一行一个作品）
@@ -23,15 +30,13 @@
 //! [verify] {"work":"fourier","size":"640x480","frames":216,"script":"<64 hex>","bundle":"<64 hex>","payload":"<64 hex>"}
 //! ```
 //!
-//! `[decision]` 是 B12 Step 2 的决策日志：B13 对拍出现差异时，第一现场就是它。
-//!
-//! 失败时**点名**作品与路径（`work · script|bundle`），不报"批量失败"。
+//! 失败时**指出**作品与路径（`work · script|bundle`），不报"批量失败"。
 
 use std::path::{Path, PathBuf};
 
 use zela_app::frame_loop::{
     FrameLoopOptions, FrameRun, FrameStats, FrameTiming, LoopBackend, TIMING_WINDOW, accumulate,
-    environment_json, frames_for, run_frames, summary_body, timing_json,
+    frames_for, run_frames, summary_body, timing_json,
 };
 use zela_app::{
     ScriptLanguage, build_bundle_runtime, build_script_runtime, compile_script, language_from_path,
@@ -40,190 +45,102 @@ use zela_render_backends::{HeadlessTarget, RenderContext, RoutingDecision, Stand
 use zela_scene_bundle::frame_hash::FrameSequenceHash;
 use zela_scene_bundle::{Bundle, MetaInput};
 
-/// 一个待对拍的作品。
-#[derive(Debug)]
-struct Work {
-    name: String,
-    width: u32,
-    height: u32,
-    backend: LoopBackend,
+/// 一个待渲染 / 待对拍的作品。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Work {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub backend: LoopBackend,
 }
 
-#[derive(Debug)]
-struct Args {
-    scripts: PathBuf,
-    tmp: PathBuf,
-    fps: f64,
-    works: Vec<Work>,
-    /// B7 Step 0.3：把 V3-12（挂/不挂 HashSink 的像素一致性）并入本进程。
-    sink_bypass: bool,
+/// 一次批量渲染的输入。
+#[derive(Debug, Clone)]
+pub struct BatchOptions {
+    /// 作品脚本目录（`--scripts`）。
+    pub scripts: PathBuf,
+    /// 中间产物目录（ZSB 与 sink-bypass 的 PNG）。
+    pub tmp: PathBuf,
+    pub fps: f64,
+    pub works: Vec<Work>,
 }
 
-impl Args {
-    /// 纯解析入口（默认值快照的被测点）。
-    fn parse_from(raw: &[String]) -> Result<Self, String> {
-        if raw.is_empty() || raw.iter().any(|a| a == "--help" || a == "-h") {
-            return Err(
-                "用法：zela-verify --scripts DIR --tmp DIR --work name=WxH[:vector] [--work ...]\n\
-                 　　：zela-verify --scripts DIR --tmp DIR --sink-bypass（V3-12 检查）"
-                    .to_string(),
-            );
-        }
-        let mut scripts: Option<PathBuf> = None;
-        let mut tmp: Option<PathBuf> = None;
-        let mut fps = 30.0f64;
-        let mut works = Vec::new();
-        let mut sink_bypass = false;
-        let mut i = 0;
-        while i < raw.len() {
-            match raw[i].as_str() {
-                "--scripts" => {
-                    i += 1;
-                    scripts = Some(PathBuf::from(
-                        raw.get(i).ok_or("--scripts 需要一个目录参数")?,
-                    ));
-                }
-                "--tmp" => {
-                    i += 1;
-                    tmp = Some(PathBuf::from(raw.get(i).ok_or("--tmp 需要一个目录参数")?));
-                }
-                "--fps" => {
-                    i += 1;
-                    fps = raw
-                        .get(i)
-                        .ok_or("--fps 需要一个数字参数")?
-                        .parse()
-                        .map_err(|_| "--fps 必须是数字".to_string())?;
-                }
-                "--work" => {
-                    i += 1;
-                    works.push(parse_work(raw.get(i).ok_or("--work 需要 name=WxH[:vector]")?)?);
-                }
-                "--sink-bypass" => sink_bypass = true,
-                other => return Err(format!("未知参数：{other}")),
-            }
-            i += 1;
-        }
-        Ok(Self {
-            scripts: scripts.ok_or("缺少 --scripts")?,
-            tmp: tmp.ok_or("缺少 --tmp")?,
-            fps,
-            works,
-            sink_bypass,
-        })
+/// 一件作品的产出（结构化；CLI 只负责格式化）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkOutcome {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub frames: u32,
+    pub script_hash: String,
+    pub bundle_hash: String,
+    pub payload_hash: String,
+}
+
+/// 批量渲染（串行版）：逐作品编译 → script 路径 → bundle 路径 → 结构等式比对。
+pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<WorkOutcome>, String> {
+    std::fs::create_dir_all(&options.tmp)
+        .map_err(|e| format!("创建目录 {} 失败：{e}", options.tmp.display()))?;
+    let env = zela_app::frame_loop::environment_json(ctx.adapter());
+    let mut outcomes = Vec::with_capacity(options.works.len());
+    for work in &options.works {
+        outcomes.push(run_work(ctx, options, work, &env)?);
     }
+    Ok(outcomes)
 }
 
-/// `fourier=640x480` / `vector_paths=640x480:vector`。
-fn parse_work(spec: &str) -> Result<Work, String> {
-    let (name, rest) = spec
-        .split_once('=')
-        .ok_or_else(|| format!("--work 需要一个 name=WxH[:backend]：{spec}"))?;
-    let (size, backend) = match rest.split_once(':') {
-        Some((size, "vector")) => (size, LoopBackend::Vector),
-        Some((size, "wgpu")) => (size, LoopBackend::Wgpu),
-        Some((_, other)) => return Err(format!("--work 的后端只接受 wgpu|vector：{other}")),
-        None => (rest, LoopBackend::Wgpu),
-    };
-    let (w, h) = size
-        .split_once('x')
-        .ok_or_else(|| format!("--work 的尺寸必须是 WxH：{size}"))?;
-    Ok(Work {
-        name: name.to_string(),
-        width: w.parse().map_err(|_| format!("宽度不是数字：{w}"))?,
-        height: h.parse().map_err(|_| format!("高度不是数字：{h}"))?,
-        backend,
+/// 单件作品：编译 → 两条路径 → 结构比对 → 打印 `[verify]` 行。
+fn run_work(
+    ctx: &RenderContext,
+    options: &BatchOptions,
+    work: &Work,
+    env: &str,
+) -> Result<WorkOutcome, String> {
+    let (script_path, language) = locate_script(&options.scripts, &work.name)?;
+    let source = std::fs::read_to_string(&script_path)
+        .map_err(|e| format!("[{}] 读取脚本 {} 失败：{e}", work.name, script_path.display()))?;
+
+    // ── 编译（也在同一进程里，避免逐作品 `zela compile` 的启动开销）──
+    let payload = compile_and_write(
+        &work.name,
+        &source,
+        language,
+        &options.tmp.join(format!("{}.zsb", work.name)),
+    )?;
+
+    // ── 路径 1：脚本 ──
+    let mut runtime = build_script_runtime(ctx.clone(), source, language)
+        .map_err(|e| format!("[{}] 脚本装配失败：{e}", work.name))?;
+    let script_hash = render_hash(ctx, &mut runtime, work, options.fps, "script", env)?;
+    drop(runtime);
+
+    // ── 路径 2：同一份 ZSB ──
+    let bytes = std::fs::read(options.tmp.join(format!("{}.zsb", work.name)))
+        .map_err(|e| format!("[{}] 读取 ZSB 失败：{e}", work.name))?;
+    let bundle =
+        Bundle::from_bytes(&bytes).map_err(|e| format!("[{}] ZSB 解析失败：{e}", work.name))?;
+    let mut runtime = build_bundle_runtime(ctx.clone(), &bundle)
+        .map_err(|e| format!("[{}] bundle 装配失败：{e}", work.name))?;
+    let bundle_hash = render_hash(ctx, &mut runtime, work, options.fps, "bundle", env)?;
+
+    // 阶段 1：脚本 / bundle 两条路径的**结构**必须逐位相同（不只像素）。
+    assert_structure_matches(&work.name, &script_hash.1, &bundle_hash.1)?;
+
+    let frames = frames_for(&runtime, options.fps);
+    println!(
+        "[verify] {{\"work\":\"{}\",\"size\":\"{}x{}\",\"frames\":{},\"script\":\"{}\",\
+         \"bundle\":\"{}\",\"payload\":\"{}\"}}",
+        work.name, work.width, work.height, frames, script_hash.0, bundle_hash.0, payload,
+    );
+    Ok(WorkOutcome {
+        name: work.name.clone(),
+        width: work.width,
+        height: work.height,
+        frames,
+        script_hash: script_hash.0,
+        bundle_hash: bundle_hash.0,
+        payload_hash: payload,
     })
-}
-
-fn main() {
-    // B12 Step 1.1：门禁路径也接上订阅器（此前默认采集、默认丢弃）。
-    zela_schedule::telemetry::init_tracing_headless();
-    if let Err(message) = run() {
-        eprintln!("zela-verify: {message}");
-        std::process::exit(1);
-    }
-}
-
-fn run() -> Result<(), String> {
-    let raw: Vec<String> = std::env::args().skip(1).collect();
-    let args = Args::parse_from(&raw)?;
-    std::fs::create_dir_all(&args.tmp)
-        .map_err(|e| format!("创建目录 {} 失败：{e}", args.tmp.display()))?;
-
-    // **一次** GPU 初始化：19 次进程调用的固定开销在这里被摊平。
-    //
-    // B12 Step 4：只有显式开启 GPU 计时才请求 `TIMESTAMP_QUERY`（默认空集，B11 C2）。
-    // 请求失败 ⇒ 退回不请求，让 `run_frames` 把状态标成 `unsupported` 并带理由。
-    let want_gpu_timing = std::env::var("ZELA_GPU_TIMING").is_ok_and(|value| value != "0");
-    let ctx = if want_gpu_timing {
-        match RenderContext::headless_with_format_and_features(
-            zela_render_backends::DEFAULT_TARGET_FORMAT,
-            zela_render_backends::gpu_timing::TIMING_FEATURE,
-        ) {
-            Ok(ctx) => ctx,
-            Err(error) => {
-                eprintln!(
-                    "[gpu-timing] 无法请求 TIMESTAMP_QUERY：{error}（退回不测，**不填 0**）"
-                );
-                RenderContext::headless()
-                    .map_err(|e| format!("无法创建 headless GPU 上下文：{e}"))?
-            }
-        }
-    } else {
-        RenderContext::headless().map_err(|e| format!("无法创建 headless GPU 上下文：{e}"))?
-    };
-    // B12 Step 3：环境指纹**必填**（GPU / API / os / arch / debug 断言），报告里逐条带上。
-    let env = environment_json(ctx.adapter());
-
-    if args.sink_bypass {
-        return run_sink_bypass(&ctx, &args, &env);
-    }
-
-    for work in &args.works {
-        let (script_path, language) = locate_script(&args.scripts, &work.name)?;
-        let source = std::fs::read_to_string(&script_path)
-            .map_err(|e| format!("[{}] 读取脚本 {} 失败：{e}", work.name, script_path.display()))?;
-
-        // ── 编译（§4.5：也在同一进程里，避免 7 次 `zela-compile` 的启动开销）──
-        let payload = compile_and_write(
-            &work.name,
-            &source,
-            language,
-            &args.tmp.join(format!("{}.zsb", work.name)),
-        )?;
-
-        // ── 路径 1：脚本 ──
-        let mut runtime = build_script_runtime(ctx.clone(), source, language)
-            .map_err(|e| format!("[{}] 脚本装配失败：{e}", work.name))?;
-        let script_hash = render_hash(&ctx, &mut runtime, work, args.fps, "script", &env)?;
-        drop(runtime);
-
-        // ── 路径 2：同一份 ZSB ──
-        let bytes = std::fs::read(args.tmp.join(format!("{}.zsb", work.name)))
-            .map_err(|e| format!("[{}] 读取 ZSB 失败：{e}", work.name))?;
-        let bundle = Bundle::from_bytes(&bytes)
-            .map_err(|e| format!("[{}] ZSB 解析失败：{e}", work.name))?;
-        let mut runtime = build_bundle_runtime(ctx.clone(), &bundle)
-            .map_err(|e| format!("[{}] bundle 装配失败：{e}", work.name))?;
-        let bundle_hash = render_hash(&ctx, &mut runtime, work, args.fps, "bundle", &env)?;
-
-        // 阶段 1：脚本 / bundle 两条路径的**结构**必须逐位相同（不只像素）。
-        assert_structure_matches(&work.name, &script_hash.1, &bundle_hash.1)?;
-
-        println!(
-            "[verify] {{\"work\":\"{}\",\"size\":\"{}x{}\",\"frames\":{},\"script\":\"{}\",\
-             \"bundle\":\"{}\",\"payload\":\"{}\"}}",
-            work.name,
-            work.width,
-            work.height,
-            frames_for(&runtime, args.fps),
-            script_hash.0,
-            bundle_hash.0,
-            payload,
-        );
-    }
-    Ok(())
 }
 
 /// 脚本 → ZSB（与 `zela-compile` 同一装配路径），返回 payload hash。
@@ -293,23 +210,27 @@ fn locate_script(dir: &Path, name: &str) -> Result<(PathBuf, ScriptLanguage), St
 /// **V3-12 检查**（并入本进程，B7 Step 0.3）：挂 / 不挂哈希时的像素产出必须逐位相同。
 ///
 /// 比 PNG **字节**而不是序列哈希 —— 不挂哈希时本来就没有哈希值可拿，比它是自证。
-fn run_sink_bypass(ctx: &RenderContext, args: &Args, env: &str) -> Result<(), String> {
+pub fn run_sink_bypass(
+    ctx: &RenderContext,
+    scripts: &Path,
+    tmp: &Path,
+    fps: f64,
+    env: &str,
+) -> Result<(), String> {
     let work = Work {
         name: "vector_paths".to_string(),
         width: 640,
         height: 480,
         backend: LoopBackend::Vector,
     };
-    let (script_path, language) = locate_script(&args.scripts, &work.name)?;
+    let (script_path, language) = locate_script(scripts, &work.name)?;
     let source = std::fs::read_to_string(&script_path)
         .map_err(|e| format!("读取脚本 {} 失败：{e}", script_path.display()))?;
-    let root = args.tmp.join("sink-bypass");
+    let root = tmp.join("sink-bypass");
     let mut sizes = Vec::new();
     for (name, hash) in [("with-hash", true), ("no-hash", false)] {
         let dir = root.join(name);
-        sizes.push(
-            render_png(ctx, &source, language, &work, args.fps, &dir, hash, env)?.len(),
-        );
+        sizes.push(render_png(ctx, &source, language, &work, fps, &dir, hash, env)?.len());
     }
     if sizes[0] != sizes[1] {
         return Err(format!(
@@ -662,58 +583,49 @@ fn assert_structure_matches(work: &str, script: &[u64], bundle: &[u64]) -> Resul
     Ok(())
 }
 
-/// **阶段 0：默认值快照**（仓库门面批次 §阶段 0）。
+/// **能力自测**（不依赖 GPU / 不依赖门禁主流程）：脚本定位的三种语义。
 ///
-/// `zela-verify` 的默认值（fps、`--work` 的尺寸切分与后端缺省）直接决定 36 条像素
-/// 基线与结构指纹的口径 ⇒ 迁移到 `zela-commands` 后必须逐条复现。
+/// 定位错 ⇒ 找错作品或静默跳过，是批量渲染最危险的一类错误，所以单独守。
 #[cfg(test)]
-mod defaults_snapshot {
+mod tests {
     use super::*;
 
-    fn args(raw: &[&str]) -> Vec<String> {
-        raw.iter().map(|value| value.to_string()).collect()
-    }
-
-    fn base(raw: &[&str]) -> Vec<String> {
-        let mut out = args(&["--scripts", "scripts", "--tmp", "tmp"]);
-        out.extend(args(raw));
-        out
-    }
-
-    #[test]
-    fn fps_defaults_to_30_and_sink_bypass_is_off() {
-        let parsed = Args::parse_from(&base(&["--work", "fourier=640x480"])).expect("可解析");
-        assert_eq!(parsed.fps, 30.0, "默认 30 fps");
-        assert!(!parsed.sink_bypass, "--sink-bypass 默认关");
-        assert_eq!(parsed.works.len(), 1);
-        assert_eq!(parsed.works[0].name, "fourier");
-        assert_eq!((parsed.works[0].width, parsed.works[0].height), (640, 480));
-        assert_eq!(
-            parsed.works[0].backend,
-            LoopBackend::Wgpu,
-            "--work 未写后端 ⇒ wgpu（批量对拍基线口径）"
-        );
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "zela-batch-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("创建临时目录");
+        dir
     }
 
     #[test]
-    fn work_backend_suffix_is_parsed() {
-        let parsed = Args::parse_from(&base(&["--work", "vector_paths=640x480:vector"]))
-            .expect("可解析");
-        assert_eq!(parsed.works[0].backend, LoopBackend::Vector);
-        assert!(parse_work("x=640x480:metal").is_err(), "未知后端必须失败");
-        assert!(parse_work("x=640").is_err(), "缺高度必须失败");
-        assert!(parse_work("x").is_err(), "缺尺寸必须失败");
+    fn locate_script_prefers_explicit_extension() {
+        let dir = temp_dir("explicit");
+        std::fs::write(dir.join("surface_matrix.lua"), "-- lua\n").unwrap();
+        std::fs::write(dir.join("surface_matrix.js"), "// js\n").unwrap();
+
+        // 名字自带扩展名 ⇒ 按显式文件名取（不再按 .lua/.py/.js 顺序探测）。
+        let (path, language) = locate_script(&dir, "surface_matrix.js").expect("显式扩展名");
+        assert!(path.ends_with("surface_matrix.js"));
+        assert_eq!(language, ScriptLanguage::JavaScript);
+
+        let (path, language) = locate_script(&dir, "surface_matrix").expect("按顺序探测");
+        assert!(path.ends_with("surface_matrix.lua"), "探测顺序仍以 .lua 优先");
+        assert_eq!(language, ScriptLanguage::Lua);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn required_directories_fail_explicitly() {
-        assert!(Args::parse_from(&args(&["--tmp", "tmp", "--work", "a=1x1"])).is_err());
-        assert!(Args::parse_from(&args(&["--scripts", "s", "--work", "a=1x1"])).is_err());
-    }
-
-    #[test]
-    fn help_is_an_error_with_usage() {
-        let error = Args::parse_from(&args(&["--help"])).expect_err("--help 走用法分支");
-        assert!(error.contains("用法：zela-verify"));
+    fn locate_script_fails_explicitly_when_missing() {
+        let dir = temp_dir("missing");
+        let error = locate_script(&dir, "nope").expect_err("缺失必须报错");
+        assert!(error.contains("找不到脚本"), "错误必须说明找不到：{error}");
+        assert!(error.contains("lua"), "错误必须列出试过的扩展名：{error}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
