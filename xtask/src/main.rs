@@ -3438,6 +3438,13 @@ fn json_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     Some(&rest[..end])
 }
 
+/// 批量对拍的 worker 数 = 本机可用并行度（显式写进命令行，不靠被测程序的默认值）。
+fn batch_workers() -> usize {
+    std::thread::available_parallelism()
+        .map(|value| value.get())
+        .unwrap_or(1)
+}
+
 /// 批量对拍的结果：像素序列哈希 + 结构指纹观测。
 struct BatchHashes {
     /// `(label, 序列哈希)`，顺序与 [`HASHES_WORKS`] 一致。
@@ -3468,6 +3475,11 @@ fn batch_hashes(root: &Path) -> Result<BatchHashes, String> {
         &tmp.display().to_string(),
         "--fps",
         "30",
+        // **显式**给 worker 数（BK 批收尾）：以前靠 `zela-verify` 自己取默认值，
+        // 并发度在命令行上看不见，跨机器跑出的数值也无法复述。串行对照不是靠这里，
+        // 而是 `--independent`（一件一个进程，天然 = 1）。
+        "--workers",
+        &batch_workers().to_string(),
     ]));
     for (work, backend) in HASHES_WORKS {
         let spec = match backend {

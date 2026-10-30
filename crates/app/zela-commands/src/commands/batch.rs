@@ -131,17 +131,17 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
     });
 
     // 汇总：按输入顺序输出 `[verify]`（xtask 按顺序解析），失败逐件汇总。
-    let mut slots: Vec<Option<(ReportLines, Result<WorkOutcome, String>)>> =
-        (0..total).map(|_| None).collect();
-    for (index, lines, result) in rx {
-        if let Some(slot) = slots.get_mut(index) {
-            *slot = Some((lines, result));
-        }
-    }
+    //
+    // 「按输入序」是契约（`HASHES_WORKS` 按 `--work` 出现顺序配对）：worker 回报的
+    // 次序取决于调度，所以先把它们摆回输入序，再统一打印与落盘。
     let mut outcomes = Vec::with_capacity(total);
     let mut failures = Vec::new();
     // 单写者：所有 worker 已结束，按输入序统一落盘 ⇒ `--workers 1` 与 N 逐字节相同。
     let mut reports = ReportLines::new();
+    let slots = place_in_input_order(
+        total,
+        rx.into_iter().map(|(index, lines, result)| (index, (lines, result))),
+    );
     for (index, slot) in slots.into_iter().enumerate() {
         let name = &options.works[index].name;
         match slot {
@@ -167,6 +167,24 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
         ));
     }
     Ok(outcomes)
+}
+
+/// 把乱序到达的回报摆回**输入序**（缺的位留 `None`）。
+///
+/// 契约来源：xtask 的 `HASHES_WORKS` 按 `--work` 的出现顺序逐行配对（名字不符即报错），
+/// 而 worker 的回报次序由调度决定 ⇒ 这一步是"[verify] 顺序稳定"的唯一保证。
+/// 抽成纯函数是为了能脱离 GPU 单测（见本模块 `tests`）。
+fn place_in_input_order<T>(
+    total: usize,
+    replies: impl IntoIterator<Item = (usize, T)>,
+) -> Vec<Option<T>> {
+    let mut slots: Vec<Option<T>> = (0..total).map(|_| None).collect();
+    for (index, reply) in replies {
+        if let Some(slot) = slots.get_mut(index) {
+            *slot = Some(reply);
+        }
+    }
+    slots
 }
 
 impl WorkOutcome {
@@ -742,6 +760,28 @@ fn assert_structure_matches(work: &str, script: &[u64], bundle: &[u64]) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replies_land_in_input_order_whatever_the_arrival_order() {
+        // BK 批的最强判据「`--workers 1` 与按核数，36 条 [verify] 逐字节相同」此前
+        // 只是一次性人工观察。worker 回报次序由调度决定 ⇒ 这条用例把"按输入序"
+        // 从观察变成断言：打乱 arrival 次序，汇总结果必须仍是 0..total。
+        let arrival = vec![(3usize, "d"), (0, "a"), (2, "c"), (1, "b")];
+        let slots = place_in_input_order(4, arrival);
+        assert_eq!(
+            slots,
+            vec![Some("a"), Some("b"), Some("c"), Some("d")],
+            "汇总必须按输入序，与到达次序无关"
+        );
+    }
+
+    #[test]
+    fn missing_replies_stay_none_and_out_of_range_are_dropped() {
+        // worker 没回报（线程 panic / 提前退出）⇒ 该位是 None，由调用方记成失败；
+        // 越界的下标只可能是内部 bug，不得 panic，也不能写入别的作品的位置。
+        let slots = place_in_input_order(3, vec![(1usize, "b"), (9, "x")]);
+        assert_eq!(slots, vec![None, Some("b"), None]);
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
