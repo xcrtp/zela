@@ -3600,6 +3600,7 @@ impl Player {
                         });
                         pass.set_pipeline(&gpu.shadow_passes[&s.light]);
                         pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                        schedule.note_bind("shadow", "scene");
                         pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                         for (k, draw) in draws.iter().enumerate() {
                             if draw.kind == Kind::Mesh && !draw.overlay && !draw.fill.is_empty() {
@@ -3633,6 +3634,7 @@ impl Player {
                         });
                         pass.set_pipeline(&occlusion.depth);
                         pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                        schedule.note_bind("occlusion depth", "scene");
                         pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                         for (k, draw) in draws.iter().enumerate() {
                             if draw.kind == Kind::Mesh && !draw.overlay && !draw.see_through[0] && !draw.fill.is_empty() {
@@ -3701,10 +3703,9 @@ impl Player {
                         if has_base {
                             let mut pass = canvas.pass(&mut encoder, Some((cleared, true)), if plan.is_some() { Depth::Kept } else { Depth::Fresh }, base.as_ref(), base_light.as_ref());
                             pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                            schedule.note_bind("base", "scene");
                             pass.set_bind_group(3, lighting_group, &[]);
-                            // BP-2：绑定即记账 —— `base` 是第一个接入的 pass（其余在 BP-3 铺开）。
-                            schedule.note_bind("scene");
-                            schedule.note_bind("lighting");
+                            schedule.note_bind("base", "lighting");
                             if sprites.is_empty() {
                                 self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::All);
                             } else {
@@ -3729,7 +3730,9 @@ impl Player {
                     {
                         let mut pass = canvas.pass(&mut encoder, Some((cleared, false)), Depth::Kept, base.as_ref(), base_light.as_ref());
                         pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                        schedule.note_bind("opaque", "scene");
                         pass.set_bind_group(3, lighting_group, &[]);
+                        schedule.note_bind("opaque", "lighting");
                         self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Opaque);
                     }
                     let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
@@ -3746,8 +3749,11 @@ impl Player {
                         let append = &attached.append.as_ref().expect("the appends' group").1;
                         let mut pass = canvas.pass(&mut encoder, None, Depth::Read, None, None);
                         pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                        schedule.note_bind("append", "scene");
                         pass.set_bind_group(3, lighting_group, &[]);
+                        schedule.note_bind("append", "lighting");
                         pass.set_bind_group(2, append, &[]);
+                        schedule.note_bind("append", "list");
                         self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::SeeThrough);
                     }
                     // the sprites among its other see-through layers: the depths of each pixel's nearest found (its
@@ -3761,6 +3767,7 @@ impl Player {
                         let targets: Vec<_> = s.layers.iter().map(|view| Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })).collect();
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("slabs"), color_attachments: &targets, depth_stencil_attachment: None, occlusion_query_set: None, timestamp_writes: None, multiview_mask: None });
                         pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                        schedule.note_bind("slabs", "scene");
                         pass.set_bind_group(2, &s.groups[1], &[]);
                         draw_sprites(&mut pass, &appends.slabs, sprites);
                     }
@@ -3770,8 +3777,11 @@ impl Player {
                     note_pass(&mut schedule, &mut schedule_error, "composite sprites", true);
                     let mut pass = canvas.pass(&mut encoder, Some((wgpu::LoadOp::Load, true)), Depth::Shared, base.as_ref(), base_light.as_ref());
                     pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                    schedule.note_bind("composite sprites", "scene");
                     pass.set_bind_group(3, lighting_group, &[]);
+                    schedule.note_bind("composite sprites", "lighting");
                     pass.set_bind_group(1, &self.image_groups[&0], &[]);
+                    schedule.note_bind("composite sprites", "images");
                     match slabs {
                         Some(s) => {
                             pass.set_bind_group(2, &s.groups[0], &[]);
@@ -3790,7 +3800,13 @@ impl Player {
                 Drawing::Vector(plan, groups) => {
                     grouped |= f.key == 0 && plan.groups.len() > 1;
                     // BN-3：纯矢量视图的计划；两个逻辑 pass（atlas 栅格 / 矢量合成）各由数据决定有无。
-                    let mut schedule = crate::passes::PassSchedule::new(crate::passes::VECTOR_PLAN, skipping());
+                    // BP-3：`atlas raster` 绑的是光栅组的 scene / lighting，所以这里用同一张光栅组表；
+                    // 合成侧的 `vector scene` / `images` 组还没接入（BP-4 记账），故不参与比对。
+                    let mut schedule = crate::passes::PassSchedule::with_groups(
+                        crate::passes::VECTOR_PLAN,
+                        skipping(),
+                        crate::passes::RASTER_GROUPS,
+                    );
                     let mut schedule_error: Option<crate::passes::ScheduleError> = None;
                     note_pass(&mut schedule, &mut schedule_error, "atlas raster", groups.iter().any(|(_, draws)| !draws.is_empty()));
                     for (g, (offset, draws)) in groups.iter().enumerate() {
@@ -3799,7 +3815,9 @@ impl Player {
                             let mut pass = atlas.pass(&mut encoder, Some((clear([0.0; 4]), true)), Depth::Fresh, None, None);
                             pass.set_viewport(0.0, 0.0, plan.raster_size[0] as f32, plan.raster_size[1] as f32, 0.0, 1.0);
                             pass.set_bind_group(0, buffers.group.as_ref(), &slot);
+                            schedule.note_bind("atlas raster", "scene");
                             pass.set_bind_group(3, &buffers.shadow_maps.group, &[]);
+                            schedule.note_bind("atlas raster", "lighting");
                             for (j, raster) in plan.groups[g].rasters.iter().enumerate() {
                                 let [x, y, w, h] = raster.rect;
                                 pass.set_scissor_rect(x, y, w, h);

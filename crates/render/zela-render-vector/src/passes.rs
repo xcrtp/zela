@@ -143,16 +143,15 @@ pub fn image_slot(name: &str) -> u32 {
 
 /// `PassDecl.inputs` 里会用到的组 1（images）名字。
 ///
-/// 每个都必须是 `IMAGE_SLOTS` 的槽位（用例 [`tests::groups_only_name_registered_slots`] 逐项比对），
-/// 不是新造的词；这里只列"声明会引用"的那些，不是 layout 的副本。
-const IMAGE_NAMES: [&str; 13] = [
+/// 每个都必须是 `IMAGE_SLOTS` 的槽位（用例 [`tests::real_group_tables_are_valid`] 逐项比对），
+/// 不是新造的词；这里只列**确实通过组 1 绑定**的那些：
+/// `layers` / `slab_bounds` / `slabs` 在声明里是渲染附件或由尚未接入记账的合成 pass 绑定，
+/// 列进来会让对应的渲染 pass 误报"少绑"（BP-4 接入 `vector.rs` 时再补）。
+const IMAGE_NAMES: [&str; 10] = [
     "atlas",
-    "layers",
     "base",
     "base_depth",
     "crossings",
-    "slab_bounds",
-    "slabs",
     "occlusion",
     "environment",
     "shadow_maps",
@@ -173,6 +172,11 @@ pub const RASTER_GROUPS: BindSymbols = BindSymbols::new(&[
         group: 0,
         name: "scene",
         resources: &["instances", "rows", "sprites"],
+    },
+    GroupSymbol {
+        group: 1,
+        name: "images",
+        resources: &IMAGE_NAMES,
     },
     GroupSymbol {
         group: 2,
@@ -831,10 +835,8 @@ pub struct PassSchedule {
     groups: BindSymbols,
     /// 实际绑定的记录：`(pass, 组名)`，由 [`Self::note_bind`] 在绑定处自动产生。
     bound: Vec<(&'static str, &'static str)>,
-    /// 在任何 pass 之外记下的组名（`finish` 报错）。
+    /// 记在一个没被记录过的 pass 名下的组（`finish` 报错）。
     stray: Vec<&'static str>,
-    /// 当前正在记录的 pass（`note_bind` 归到它名下）。
-    current: Option<&'static str>,
 }
 
 impl PassSchedule {
@@ -858,7 +860,6 @@ impl PassSchedule {
             groups,
             bound: Vec::new(),
             stray: Vec::new(),
-            current: None,
         }
     }
 
@@ -896,14 +897,19 @@ impl PassSchedule {
             .count()
     }
 
-    /// **记一笔绑定**（BP-2）：在 `set_bind_group` 的同一处调用，归到当前 pass 名下。
+    /// **记一笔绑定**（BP-2）：写在 `set_bind_group` 的**下一行**，归属的 pass 名由调用点给出。
     ///
     /// 它不执行绑定（渲染 pass 与计算 pass 的 `set_bind_group` 没有共同 trait），
-    /// 但**紧接着**那次调用 —— 一致性数据由行为产生，调用方不申报期望值。
-    pub fn note_bind(&mut self, group: &'static str) {
-        match self.current {
-            Some(pass) => self.bound.push((pass, group)),
-            None => self.stray.push(group),
+    /// 但紧挨着那次调用 —— 一致性数据由行为产生，调用方不申报期望值。
+    ///
+    /// pass 名必须已经通过 [`Self::begin`] / [`Self::step`] / [`Self::raw`] 记录过：
+    /// 一个闭包里先后记录了两个声明 pass 时（如 `occlusion depth` 与 `occlusion`），
+    /// 归属由调用点写明，而不是猜"当前"是哪个。
+    pub fn note_bind(&mut self, pass: &'static str, group: &'static str) {
+        if self.recorded.contains(&pass) || self.raw_recorded.contains(&pass) {
+            self.bound.push((pass, group));
+        } else {
+            self.stray.push(group);
         }
     }
 
@@ -953,7 +959,6 @@ impl PassSchedule {
         }
         self.cursor += 1;
         self.recorded.push(name);
-        self.current = Some(name);
         Ok(())
     }
 
@@ -982,10 +987,8 @@ impl PassSchedule {
         self.cursor += 1;
         if present {
             self.recorded.push(name);
-            self.current = Some(name);
         } else {
             self.skipped.push(name);
-            self.current = None;
         }
         Ok(())
     }
@@ -1012,7 +1015,6 @@ impl PassSchedule {
         }
         self.cursor += 1;
         self.raw_recorded.push(name);
-        self.current = Some(name);
         Ok(())
     }
 
@@ -1720,11 +1722,11 @@ mod tests {
     fn bindings_match_the_declaration() {
         let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
         schedule.step("draw", true).unwrap();
-        schedule.note_bind("scene");
-        schedule.note_bind("lighting");
+        schedule.note_bind("draw", "scene");
+        schedule.note_bind("draw", "lighting");
         schedule.step("composite", true).unwrap();
-        schedule.note_bind("scene");
-        schedule.note_bind("images");
+        schedule.note_bind("composite", "scene");
+        schedule.note_bind("composite", "images");
         assert_eq!(schedule.bound_passes(), 2);
         assert!(schedule.unbound_passes().is_empty());
         schedule.finish().expect("声明与绑定一致");
@@ -1735,9 +1737,9 @@ mod tests {
     fn a_declared_group_that_is_not_bound_is_red() {
         let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
         schedule.step("draw", true).unwrap();
-        schedule.note_bind("scene");
+        schedule.note_bind("draw", "scene");
         schedule.step("composite", true).unwrap();
-        schedule.note_bind("scene");
+        schedule.note_bind("composite", "scene");
         assert_eq!(
             schedule.finish().unwrap_err(),
             ScheduleError::Unbound {
@@ -1752,11 +1754,11 @@ mod tests {
     fn a_bound_group_that_is_not_declared_is_red() {
         let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
         schedule.step("draw", true).unwrap();
-        schedule.note_bind("scene");
-        schedule.note_bind("images");
+        schedule.note_bind("draw", "scene");
+        schedule.note_bind("draw", "images");
         schedule.step("composite", true).unwrap();
-        schedule.note_bind("scene");
-        schedule.note_bind("images");
+        schedule.note_bind("composite", "scene");
+        schedule.note_bind("composite", "images");
         assert_eq!(
             schedule.finish().unwrap_err(),
             ScheduleError::Surplus {
@@ -1792,10 +1794,10 @@ mod tests {
         ];
         let mut schedule = PassSchedule::with_groups(BROKEN, 0, BOUND_GROUPS);
         schedule.step("draw", true).unwrap();
-        schedule.note_bind("scene");
+        schedule.note_bind("draw", "scene");
         schedule.step("composite", true).unwrap();
-        schedule.note_bind("scene");
-        schedule.note_bind("images");
+        schedule.note_bind("composite", "scene");
+        schedule.note_bind("composite", "images");
         assert_eq!(
             schedule.finish().unwrap_err(),
             ScheduleError::Unbound {
@@ -1810,23 +1812,22 @@ mod tests {
     fn unbound_passes_are_listed_not_checked() {
         let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
         schedule.step("draw", true).unwrap();
-        schedule.note_bind("scene");
+        schedule.note_bind("draw", "scene");
         schedule.step("composite", true).unwrap();
         assert_eq!(schedule.unbound_passes(), vec!["composite"]);
         schedule.finish().expect("未接入的 pass 不产生绑定错误");
     }
 
-    /// 绑定记录写在任何 pass 之外 ⇒ `BindOutsidePass`（记账位置错了）。
+    /// 绑定记录写在一个没被记录过的 pass 名下 ⇒ `BindOutsidePass`（记账位置错了）。
     #[test]
     fn binds_outside_a_pass_are_red() {
         let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
-        // 还没记录任何 pass 就先记账。
-        schedule.note_bind("scene");
+        schedule.note_bind("no_such_pass", "scene");
         schedule.step("draw", true).unwrap();
-        schedule.note_bind("scene");
+        schedule.note_bind("draw", "scene");
         schedule.step("composite", true).unwrap();
-        schedule.note_bind("scene");
-        schedule.note_bind("images");
+        schedule.note_bind("composite", "scene");
+        schedule.note_bind("composite", "images");
         assert_eq!(
             schedule.finish().unwrap_err(),
             ScheduleError::BindOutsidePass { group: "scene" }
