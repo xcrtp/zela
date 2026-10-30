@@ -1746,9 +1746,9 @@
 | BP-04 | 20 处 escape 没有账；`image_groups: Keyed<BindGroup>` 是同一事实的第二份表达 | zela-render-vector | **已关闭** | `docs/research/BP_绑定点普查.md` 按「现场构造 11 / 参数传递 4 / per-iteration 4 / per-draw 1」逐条写明触发条件与为什么不能名字化；运行时名单由 `unbound_passes()` 给出。`image_groups` 收成具名封装 `ImageGroups`（白图按名字取、纹理与相机视图按 key 取，插入 / 移除只此一处）；`binding_snapshot` 的 7 处 escape 计数固定住，防止顺手接入。判据：像素 36 项 ok 36 / DIFF 0。 |
 | BP-05 | `vector.rs` 的 11 处帧级固定绑定未接入记账 | zela-render-vector | **记账** | 这些绑定发生在 `Vector::encode` 内（`&scene` 5 / `read` 1 / `images` 2 / `write` 1 / `bounds` 2），而 `&mut PassSchedule` 不在作用域；要接入必须改 `encode` 的签名（5 个调用点）并重新核对 `slabs` / `occlusion depth` 这类"一个闭包覆盖两个声明 pass"的归属。触发条件：下一次改 `Vector::encode` 的形状时（或需要校验 `vector composite` 的 `atlas` / `base_depth` 时）一并接。注：`VECTOR_GROUPS` 已备好，接入时不需要再造名字。 |
 | BP-06 | 自动绑定（BN-03 本体）仍未做 | zela-render-vector | **记账** | 本批建立的是「按名字取 + 一致性校验」；`PassDecl` 仍不携带 `binds`，`set_bind_group` 仍逐处写。理由是：声明里写 `binds` 需要注册表先能回答"这个 pass 需要哪些组、组从哪来"，而"组从哪来"今天是分支决定的（`own_lighting` 的遮蔽组 vs `shadow_maps.group`；白图 vs 逐纹理组）。触发条件：BP-05 接入后，`groups_for` 式的查表能覆盖"组来源"（同一 pass 的两个候选来源各有名字与失效条件）。 |
-| BP-07 | 后端持有的 `BindGroup` 无法交给 kernel 的 `ResourceCache` | zela-render-vector / ze-resource | **记账** | `GpuHandle = Box<dyn Any>` 故意不施加 `Send`/`Sync`（红线 3），而 native 的 `Gpu` 在 `static OnceLock<Mutex<Gpu>>` 里 ⇒ `Mutex<T>: Sync` 要求 `T: Send`，组一旦以 `GpuHandle` 形式存进 `Gpu` 就编译不过（BP-4 实测）。因此 `ImageGroups` 停在类型化封装，生命周期交回 wgpu 的引用计数。触发条件：需要把组交给 kernel 缓存的后端必须是"不把缓存放进全局 static"的形状（`wgpu_2d` 即如此），或 kernel 引入 `Send` 版本句柄（会与红线 3 冲突，需先改红线）。 |
+| BP-07 | 后端持有的 `BindGroup` 无法交给 kernel 的 `ResourceCache` | zela-render-vector / ze-resource | **已关闭** | 阻塞是 `GpuHandle = Box<dyn Any>` 不 `Send`（native 的 `Gpu` 在 `static OnceLock<Mutex<Gpu>>` 里 ⇒ 需要 `Gpu: Send`）。BQ-01 按平台拆分句柄（native `Box<dyn Any + Send>`）后，编译探针 `render::buffer_contract::gpu_and_a_handle_cache_are_send_on_native` 证明「含 `GpuHandle` 的 `ResourceCache` 可以放进 `Gpu`」。wasm 侧语义不变（仍是 `Box<dyn Any>`），`ImageGroups` 的类型化封装保留（换成 `ResourceCache` 属于另一件事，未在本批做）。 |
 
-**BP 段小计**：已关闭 4 · 记账 3。
+**BP 段小计**：已关闭 5 · 记账 2。
 > 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过。
 > 判据说明：像素抓不到"绑了另一个内容相同的组"，因此 BP-3 的判据是
 > `tests/binding_snapshot.rs` 的实参快照 + 记账名映射回同一组号，而不是只比像素。
@@ -1757,11 +1757,33 @@
 
 ---
 
+## BQ. Gpu 注入与 Send 解禁（2026-10-31）
+
+> 计划《Gpu注入与Send解禁_执行计划》，同时是 BR 批的阶段 1。
+> 目标：把矢量后端的 `Gpu` 从进程级静态单例变成**可注入的句柄**，并解除 BP-07。
+> 立约：像素 36 条逐位不变 · 结构 22 件不变 · `--workers 1` 与 `--workers N` 逐字节相同 · 不改红线 3 在 wasm 上的语义。
+> 本段按阶段记账；**未兑现项写触发条件，不写成「已关闭」**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BQ-01 | `GpuHandle` 不 `Send` ⇒ 含句柄的缓存进不了 `Gpu`（BP-07） | ze-resource | **已关闭** | `GpuHandle` 的装箱类型按平台拆分：native `Box<dyn Any + Send>`、wasm `Box<dyn Any>`（红线 3 的原文理由只针对 wasm，那里语义零变化）；`new::<T>` 只在 native 多要求 `Send`，其余方法共用。用例 `gpu_handle_is_send_on_native`：编译期断言 + 句柄 `move` 进线程后 `downcast_ref` 仍命中；`render::buffer_contract::gpu_and_a_handle_cache_are_send_on_native` 证明 `Gpu` 与 `ResourceCache<()>` 同 `Send`。判据：native 与 wasm32 两个 target 都编译通过（`--step wasm`）。 |
+| BQ-02 | 入口函数只认静态单例，宿主没有注入形态 | zela-render-vector | **已关闭** | `Gpu` 升为 `pub`（字段仍 `pub(crate)`）；新增 `Gpu::take()` 租约（native 是 `static GPU` 的 `MutexGuard`，与 `with_gpu` 同一把锁 ⇒ 其它线程等待而不是失败；wasm 是 `GpuSlot` 取走 + 归还）。10 个碰 GPU 的入口各有一份 `*_on(gpu, …)`（2D/3D × 读回/写纹理 × 同步/异步），原函数保留为环境默认包装 ⇒ **22 个外部调用点一行不改**。用例 `injected_entry_point_matches_the_default_path`：同一条记录下默认路径与注入路径逐位相同。判据：像素 36 项 ok 36 / DIFF 0。 |
+| BQ-03 | 5 个生产宿主（parity / render / commands / gui / web）未改成"持有句柄" | 宿主 | **记账** | 它们的渲染都经 `zela-playback`（`VectorFrame::take` → `render_2d` 环境默认路径），而不是直接调后端；要让宿主把 `&mut Gpu` 传下去，必须让 playback 的入口接受句柄 —— 那正是 BQ-04 记的 (b)。且 `zela-commands` 的批量渲染用 `thread::scope` 让 N 个 worker 共用同一个设备，把句柄"取出来"由某一方独占会让 worker 拿不到（与 BK-03 的并行判据冲突）。触发条件：playback 接受 `&mut Gpu`（BQ-04 的 (b)）时一并迁移；注入面已就位，不需要再改后端。 |
+| BQ-04 | `VectorFrame` 是逐帧结构，没有跨帧的 GPU 持有者 | zela-playback | **记账** | 现状按本批选定的 (a)：继续走环境默认路径（`with_gpu` 惰性建设备），行为零变化。两个替代方案仍记账：(b) 给 `Runtime` 加 `Gpu` 字段（需改 Runtime 形状 + `init_gpu` 的调用时序）；(c) 让 `VectorFrame` 持 `Arc<Mutex<Gpu>>`（等于把 static 换个位置，未治本）。触发条件：playback 需要每帧零锁开销，或 BQ-03 的宿主迁移需要它。 |
+| BQ-05 | "环境默认"路径（static + `with_gpu`）仍在 | zela-render-vector | **记账** | 本批只保证 `*_on` 全部就位，默认路径保留（全部外部调用方仍用它）。移除它需要所有调用方迁移完毕（BQ-03/BQ-04）。触发条件：`grep "with_gpu"` 的生产调用点为 0 时删除静态单例。 |
+
+**BQ 段小计**：已关闭 2 · 记账 3。
+> 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过 · `--step smoke`（`--workers 1` vs 并行）通过。
+> 判据说明：VG-1 的判据是**编译事实**（两个 target）加一条运行期移动用例，不是"看着没问题"；
+> 注入路径用"同一条记录逐位相同"固定，而不是只跑 demo。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BP**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BP 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BQ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BQ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
