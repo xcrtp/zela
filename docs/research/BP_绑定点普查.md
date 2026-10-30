@@ -119,4 +119,53 @@
 - 组 0 的资源名与 `PassDecl.inputs` 同词 ⇒ 注册表可以按「组名 → 资源名集合」登记，
   实际绑定集合由 **`bind(pass, name)` 的调用行为**产生，不另写一张表；
 - `lighting` 与白图这两处有多个候选来源，注册表要允许**同名多值**（按帧内 generation 失效）；
-- 21 处 escape 必须在 BP-4 逐条记账（触发条件 + 为什么不能名字化）。
+- 20 处 escape 已在 BP-4 逐条记账（触发条件 + 为什么不能名字化）。
+
+## 6. BP-4 · escape 记账（20 处）
+
+记账口径：**不接入** `PassSchedule::note_bind` 的绑定点；它们照常通过顺序与完整性校验，
+但不参与"声明 vs 实际"比对。名单由 `PassSchedule::unbound_passes()` 在运行时给出。
+
+### 6.1 现场构造（11 处）
+
+| 位置 | 触发条件 | 为什么不能名字化 |
+|---|---|---|
+| `render.rs` fill / frag codegen（`&group` ×2） | 每个着色程序现建组 | layout 是 codegen 自己的（`words/params/target`、`params/out/target`），没有稳定的组名 |
+| `vector.rs:1160` base depth | 每次深度解析现建 | 一个组只含三项（samples / sample depths / base depth），且随 `samples` 选 layout |
+| `vector.rs:1474` / `1537` / `1538` / `1509` | `write` / `read` / `written` / `images` | 四套 layout 都在 `encode` 内现建；`images` 一个表达式里装 24 个槽位 |
+| `vector.rs:1519` crossings | 交叉计数的组 | 组随 crossings 缓冲重建而重建 |
+| `environment.rs:484/489/501` | 逐 mip / 逐级现建 | 立方体源、半分辨率链、预滤波各一套 layout |
+
+### 6.2 参数传递（4 处）
+
+| 位置 | 触发条件 | 为什么不能名字化 |
+|---|---|---|
+| `vector.rs:1417` / `1448` | 闭包入参（`read` / `images`） | 调用点不知道组是谁：`Out::Depth` / `Out::Opaque` / `Out::Bounds` 各传一套 |
+| `render.rs:3933` / `3981`（`white`） | `draw()` 内部 | 每画一段前恢复白图；`draw` 还没有 `schedule` 参数 |
+
+### 6.3 per-iteration（4 处）
+
+| 位置 | 触发条件 | 为什么不能名字化 |
+|---|---|---|
+| `render.rs:3826` / `3842`（`s.groups[*]`） | 每个视图的 slab 层数 | `Slabs::groups` 每帧现建，层数是数据 |
+| `bloom.rs:120` / `occlusion.rs:141` | 逐级 / 逐 mip | 两个子模块自己的 layout 序列，不经过帧级调度 |
+
+### 6.4 per-draw 动态（1 处）
+
+| 位置 | 触发条件 | 为什么不能名字化 |
+|---|---|---|
+| `render.rs:3971`（`image_groups.get(draw.texture)`） | 每条网格记录 | 名字是纹理 key，随数据每帧变化 |
+
+### 6.5 `image_groups` 收敛的边界（D3）
+
+`image_groups` 已从散落的 `HashMap` 用法收成一个**具名封装** `ImageGroups`
+（白图按名字取、纹理/相机视图按 key 取，插入/移除都走它），但**没有**换成
+`ze_resource::ResourceCache`：
+
+- `GpuHandle = Box<dyn Any>` **故意不施加 `Send`/`Sync`**（BP 红线 3）；
+- native 的 `Gpu` 放在 `static OnceLock<Mutex<Gpu>>`（`with_gpu`），`Mutex<T>: Sync` 要求 `T: Send`；
+- 组一旦以 `GpuHandle` 形式存进 `Gpu`，`Gpu` 就不再 `Send` ⇒ 编译期直接拒绝。
+
+⇒ 收敛停在类型化封装；kernel 的名字寻址（BP-1 的 `ResourceKey::Named`）留给
+`wgpu_2d` 这类**不把缓存放进全局 static** 的后端。这条限制已写在 `ImageGroups` 的文档注释里。
+

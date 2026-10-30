@@ -405,6 +405,58 @@ impl Hasher for Identity {
 
 type Keyed<V> = HashMap<u64, V, BuildHasherDefault<Identity>>;
 
+// ─── BP-4：采样组收敛成一个具名注册表 ─────────────────────────────────────
+
+/// 纹理 / 相机视图的采样组：key → `BindGroup`（key 0 是白图）。
+///
+/// # 为什么不是 `ze_resource::ResourceCache`
+///
+/// kernel 的缓存用 `GpuHandle = Box<dyn Any>`，**故意不施加 `Send`/`Sync`**（红线 3）。
+/// 而 native 的 `Gpu` 放在 `static OnceLock<Mutex<Gpu>>` 里（`with_gpu`），
+/// `Mutex<T>: Sync` 要求 `T: Send` ⇒ 组一旦以 `GpuHandle` 形式存进来，`Gpu` 就不再 `Send`。
+/// 所以本批的收敛停在**类型化封装**：白图按名字取（[`Self::white`]）、纹理按 key 取，
+/// 原来散在各处的 `image_groups[&0]` / `.get(&key)` / `.insert` / `.remove` 全部走这里。
+///
+/// 生命周期仍由 wgpu 自己的引用计数保证（`BindGroup` 被提交中的命令缓冲引用时不会释放）。
+struct ImageGroups {
+    groups: Keyed<wgpu::BindGroup>,
+}
+
+impl ImageGroups {
+    fn new() -> Self {
+        Self {
+            groups: Keyed::default(),
+        }
+    }
+
+    /// 白图（key 0，每帧都要有）。
+    fn white(&self) -> Option<&wgpu::BindGroup> {
+        self.groups.get(&0)
+    }
+
+    /// 建一次白图（已存在则不替换）。
+    fn insert_white(&mut self, group: wgpu::BindGroup) {
+        self.groups.entry(0).or_insert(group);
+    }
+
+    /// 纹理或相机视图的组（同 key 重建即替换）。
+    fn insert(&mut self, key: u64, group: wgpu::BindGroup) {
+        self.groups.insert(key, group);
+    }
+
+    fn get(&self, key: u64) -> Option<&wgpu::BindGroup> {
+        self.groups.get(&key)
+    }
+
+    fn contains(&self, key: u64) -> bool {
+        self.groups.contains_key(&key)
+    }
+
+    fn remove(&mut self, key: u64) {
+        self.groups.remove(&key);
+    }
+}
+
 /// One object as the shader reads it (368 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -2747,7 +2799,7 @@ pub(crate) struct Player {
     images: Keyed<(u32, u32, Vec<u8>)>,
     opaque_images: Keyed<()>, // images with no pixel less than opaque
     environments: HashMap<u32, environment::Environment>, // by the id its views' lights give it (`add_environment`)
-    image_groups: Keyed<wgpu::BindGroup>,
+    image_groups: ImageGroups,
     canvases: Keyed<Canvas>,
     rasters: Option<Canvas>, // the raster atlas (see `vector`)
     buffers: Option<Buffers>,
@@ -3014,7 +3066,10 @@ impl Player {
         for (key, (w, h, rgba)) in self.images.drain() {
             self.image_groups.insert(key, gpu.image_group(w, h, &rgba));
         }
-        self.image_groups.entry(0).or_insert_with(|| gpu.image_group(1, 1, &[255, 255, 255, 255]));
+        if self.image_groups.white().is_none() {
+            let white = gpu.image_group(1, 1, &[255, 255, 255, 255]);
+            self.image_groups.insert_white(white);
+        }
         let rooms = self.store.rooms(&limits)?;
         let capacity = buffer_room(count as u64, size_of::<Instance>() as u64, 1024, store_limit(&limits, 0), "instances")? as usize;
         let room = buffer_room(sprites as u64, size_of::<[u32; 2]>() as u64, 1024, store_limit(&limits, 0), "sprites")? as usize;
@@ -3324,7 +3379,7 @@ impl Player {
                 return Err("the frame (key 0) is the last view, and only it".into());
             }
             let earlier = |key: u64| frames[..i].iter().any(|g| g.key == key);
-            if let Some(r) = f.records.iter().find(|r| r.texture != 0 && !earlier(r.texture) && !self.image_groups.contains_key(&r.texture) && !self.images.contains_key(&r.texture)) {
+            if let Some(r) = f.records.iter().find(|r| r.texture != 0 && !earlier(r.texture) && !self.image_groups.contains(r.texture) && !self.images.contains_key(&r.texture)) {
                 return Err(format!("unknown texture {}", r.texture));
             }
             let camera = Camera::new(&f.view);
@@ -3780,7 +3835,7 @@ impl Player {
                     schedule.note_bind("composite sprites", "scene");
                     pass.set_bind_group(3, lighting_group, &[]);
                     schedule.note_bind("composite sprites", "lighting");
-                    pass.set_bind_group(1, &self.image_groups[&0], &[]);
+                    pass.set_bind_group(1, self.image_groups.white().expect("the white image group"), &[]);
                     schedule.note_bind("composite sprites", "images");
                     match slabs {
                         Some(s) => {
@@ -3874,7 +3929,7 @@ impl Player {
     }
 
     fn draw(&self, pass: &mut wgpu::RenderPass, pipelines: &Pipelines, indices: &wgpu::Buffer, draws: &[Draw], offset: u32, phase: Phase) {
-        let white = &self.image_groups[&0];
+        let white = self.image_groups.white().expect("the white image group");
         pass.set_bind_group(1, white, &[]);
         pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
         pass.set_stencil_reference(0);
@@ -3913,7 +3968,7 @@ impl Player {
                 Kind::Mesh => {
                     if drawn(0) {
                         if draw.texture != 0 { // (the white image is bound for everything else)
-                            pass.set_bind_group(1, self.image_groups.get(&draw.texture).unwrap_or(white), &[]);
+                            pass.set_bind_group(1, self.image_groups.get(draw.texture).unwrap_or(white), &[]);
                         }
                         if draw.lit {
                             pass.set_blend_constant(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }); // (its light: `Base`)
@@ -4041,7 +4096,7 @@ impl Player {
             images: Keyed::default(),
             opaque_images: Keyed::default(),
             environments: HashMap::new(),
-            image_groups: Keyed::default(),
+            image_groups: ImageGroups::new(),
             canvases: Keyed::default(),
             rasters: None,
             buffers: None,

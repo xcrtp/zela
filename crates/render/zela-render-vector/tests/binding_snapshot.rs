@@ -28,14 +28,18 @@ fn set_bind_group_arguments_are_pinned() {
         ("set_bind_group(3, lighting_group, &[])", 4),
         ("set_bind_group(3, &buffers.shadow_maps.group, &[])", 1),
         ("set_bind_group(2, append, &[])", 1),
-        ("set_bind_group(1, &self.image_groups[&0], &[])", 1),
+        // BP-4：白图改为从收敛后的 `ImageGroups` 取（名字寻址），不再是 `Keyed` 的下标
+        (
+            "set_bind_group(1, self.image_groups.white().expect(\"the white image group\"), &[])",
+            1,
+        ),
         // escape：per-iteration / 现场构造 / 参数传递 / per-draw
         ("set_bind_group(2, &s.groups[1], &[])", 1),
         ("set_bind_group(2, &s.groups[0], &[])", 1),
         ("set_bind_group(0, &group, &[])", 2),
         ("set_bind_group(1, white, &[])", 2),
         (
-            "set_bind_group(1, self.image_groups.get(&draw.texture).unwrap_or(white), &[])",
+            "set_bind_group(1, self.image_groups.get(draw.texture).unwrap_or(white), &[])",
             1,
         ),
     ];
@@ -96,7 +100,7 @@ fn frame_level_binds_are_ledgered_next_line() {
         // escape：实参随循环变量 / 现场构造 / 闭包入参 / per-draw 变化
         let escape = line.contains("&s.groups[")
             || line.contains("(0, &group,")
-            || line.contains("white")
+            || line.contains("(1, white,")
             || line.contains("image_groups.get");
         let next = lines.get(index + 1).copied().unwrap_or("");
         if escape {

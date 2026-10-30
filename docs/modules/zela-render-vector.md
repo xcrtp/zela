@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-notion`、`ze-render-ir`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：12 个 · 14451 行
+- 源文件：12 个 · 14506 行
 
 ### 文件清单
 
@@ -25,7 +25,7 @@
 | `src/mesh.rs` | 105 | A mesh prepared for drawing or recording. Geometry is evaluated in its input precision; |
 | `src/occlusion.rs` | 155 | A 3D view's ambient occlusion (`Camera.ambient_occlusion`): how much of the light from all around reaches the |
 | `src/passes.rs` | 1869 | pass 声明化与资源槽位（BN 批）。 |
-| `src/render.rs` | 4475 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
+| `src/render.rs` | 4530 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
 | `src/scene.rs` | 1069 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
 | `src/vector.rs` | 1741 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
