@@ -26,9 +26,9 @@ use std::process::{Command, Output, Stdio};
 use std::time::Instant;
 
 use xtask::{
-    ArchLayer, Baselines, ModuleDocFacts, Options, Step, apply_record, architecture_layers,
-    assert_attributed, check_handwritten_sections, compare_architecture, load_baselines,
-    merge_module_doc, parse_json, rebind_dirty,
+    ArchLayer, Baselines, ModuleDocFacts, Options, Step, TestScope, apply_record,
+    architecture_layers, assert_attributed, check_handwritten_sections, compare_architecture,
+    load_baselines, merge_module_doc, parse_json, rebind_dirty,
 };
 
 /// wasm gate 的 kernel 组（与 CI 名单逐字一致）。
@@ -299,7 +299,7 @@ fn run(options: &Options) -> Result<(), String> {
         let started = Instant::now();
         match step {
             Step::Check => step_check(&root, &plan)?,
-            Step::Test => step_test(&root, &plan)?,
+            Step::Test => step_test(&root, &plan, options.full)?,
             Step::Wasm => step_wasm(&root)?,
             Step::Structure => step_structure(&root)?,
             Step::Docs => step_docs(&root)?,
@@ -1340,7 +1340,7 @@ fn step_check(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
 
 // ─── step: test ─────────────────────────────────────────────────────────────
 
-fn step_test(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
+fn step_test(root: &Path, plan: &FeaturePlan, full: bool) -> Result<(), String> {
     // 本机页面文件有限：编译并行度压到 2，避免 rustc mmap 失败（os error 1455）；
     // 测试线程仍按仓库既有做法单线程。
     //
@@ -1348,6 +1348,19 @@ fn step_test(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
     // CPU 组并行"，但它不跑 doctest ⇒ 必须另起一次 `cargo test --doc`，而那次调用
     // 会按 dev 口径重建 rlib（首跑 +5 min，稳态 +62s）；GPU 那 44 次 headless
     // 初始化本来就要串行，CPU 侧只省 ~10s。两相抵消是**净慢 55s**，所以不采用。
+    let scope = test_scope_now(root, full)?;
+    match &scope {
+        TestScope::Full(reason) => println!("[xtask] 测试范围：全量（{reason}）"),
+        TestScope::Affected { packages, skipped } => println!(
+            "[xtask] 影响集：{}（跳过 {skipped} 个 crate；`--full` 强制全量）",
+            packages.join(", ")
+        ),
+    }
+
+    if let TestScope::Affected { packages, .. } = &scope {
+        return run_selected(root, plan, packages);
+    }
+
     if plan.pyo3_available() {
         return cargo(
             root,
@@ -1388,6 +1401,129 @@ fn step_test(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
     )?;
     println!("[xtask] 跳过 zela-gui：无 Python 时其依赖边无法排除 pyo3");
     Ok(())
+}
+
+/// 只跑影响集里的包（`zela-app` 单独一次：它要 feature 参数）。
+fn run_selected(root: &Path, plan: &FeaturePlan, packages: &[String]) -> Result<(), String> {
+    let include_app = packages.iter().any(|name| name == "zela-app");
+    let mut rest: Vec<&str> = packages
+        .iter()
+        .map(String::as_str)
+        .filter(|name| *name != "zela-app")
+        .collect();
+    if !plan.pyo3_available() {
+        let before = rest.len();
+        rest.retain(|name| *name != "zela-gui");
+        if rest.len() != before {
+            println!("[xtask] 影响集里的 zela-gui 跳过：无 Python 时其依赖边无法排除 pyo3");
+        }
+    }
+    if !rest.is_empty() {
+        let mut args = strings(&["test", "-j", "2"]);
+        for name in &rest {
+            args.extend(strings(&["-p", name]));
+        }
+        args.extend(strings(&["--", "--test-threads=1"]));
+        cargo(root, &args)?;
+    }
+    if include_app {
+        println!("[xtask] zela-app 单独一次调用（feature 参数）");
+        cargo(
+            root,
+            &[
+                strings(&["test", "-p", "zela-app", "-j", "2"]),
+                plan.app_args(),
+                strings(&["--", "--test-threads=1"]),
+            ]
+            .concat(),
+        )?;
+    }
+    Ok(())
+}
+
+/// 阶段 5：算这次的测试范围。全量的三条出口（`--full` / CI / 读不到变更）都带原因。
+fn test_scope_now(root: &Path, full: bool) -> Result<xtask::TestScope, String> {
+    if full {
+        return Ok(xtask::TestScope::Full("--full".to_string()));
+    }
+    // CI 永远全量：那里的"上一次结果"不成立（全新工作区、共享缓存）。
+    if let Some(provider) = ci_provider() {
+        return Ok(xtask::TestScope::Full(format!(
+            "CI（{provider}）⇒ 全量"
+        )));
+    }
+    let changed = match changed_paths(root) {
+        Ok(paths) => paths,
+        Err(error) => {
+            return Ok(xtask::TestScope::Full(format!(
+                "读不到 git 变更（{error}）"
+            )));
+        }
+    };
+    let output = cargo_capture(
+        root,
+        &strings(&["metadata", "--format-version", "1", "--no-deps"]),
+    )?;
+    if !output.status.success() {
+        return Ok(xtask::TestScope::Full(format!(
+            "cargo metadata 失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let metadata = String::from_utf8_lossy(&output.stdout).into_owned();
+    xtask::test_scope(&metadata, &root.to_string_lossy(), &changed)
+}
+
+/// 识别"真 CI"：按**具体提供方**的环境变量判断，不看通用 `CI`。
+///
+/// 通用 `CI=true` 在 IDE 里也会被设置（本机 Trae 就是），拿它当判据会让
+/// 「按依赖选测试」在本机永不生效 —— 而本机正是要加速的地方。
+fn ci_provider() -> Option<&'static str> {
+    for (name, provider) in [
+        ("GITHUB_ACTIONS", "GitHub Actions"),
+        ("TF_BUILD", "Azure Pipelines"),
+        ("GITLAB_CI", "GitLab CI"),
+        ("BUILDKITE", "Buildkite"),
+        ("JENKINS_URL", "Jenkins"),
+        ("CIRCLECI", "CircleCI"),
+        ("APPVEYOR", "AppVeyor"),
+        ("TEAMCITY_VERSION", "TeamCity"),
+    ] {
+        if env::var_os(name).is_some_and(|value| !value.is_empty()) {
+            return Some(provider);
+        }
+    }
+    None
+}
+
+/// 工作区相对 HEAD 的变更（含未跟踪文件）；重命名取新路径。
+fn changed_paths(root: &Path) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("启动 git 失败：{error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git status 失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut paths = Vec::new();
+    for line in text.lines() {
+        if line.len() < 4 {
+            continue;
+        }
+        let rest = &line[3..];
+        // 重命名/复制：`R  old -> new`，取新路径。
+        let path = match rest.split_once(" -> ") {
+            Some((_, new)) => new,
+            None => rest,
+        };
+        paths.push(path.trim_matches('"').replace("\\\\", "\\"));
+    }
+    Ok(paths)
 }
 
 // ─── step: wasm ─────────────────────────────────────────────────────────────

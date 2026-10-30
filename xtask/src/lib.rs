@@ -23,6 +23,7 @@ pub const USAGE: &str = "\
                              # 录制设备重录基线（基线策略 §九）：强制 reason、自动回填
                              # 上一槽 commit、轮换 slotA/slotB、写 device 行
   cargo verify --rebind      # 把 `@ <sha>+dirty` 归因到当前 HEAD（提交后立刻跑）
+  cargo verify --full        # 强制全量测试（关掉「按依赖选测试」，CI 口径）
 
 文档（写盘，不走 --step）：
   docs-gen                   # 刷新 docs/modules/<crate>.md 的自动区（手写区不动）；
@@ -118,6 +119,11 @@ pub struct Options {
     /// ⇒ 那段代码长期没被编译过（`PyCFunction::new_closure` 签名错误直到手动
     /// 打开默认 features 才暴露）。要降级必须显式说。
     pub allow_no_python: bool,
+    /// 阶段 5：强制全量测试（关掉"按依赖选测试"）。
+    ///
+    /// 缺省时只有"工作区相对 HEAD 的变更全部落在 crate 源文件里"才缩小测试范围，
+    /// 其余一律全量；CI 由环境变量 `CI` 直接全量。这个开关给"我就是要全跑一遍"用。
+    pub full: bool,
     pub reason: Option<String>,
 }
 
@@ -130,6 +136,7 @@ impl Options {
         let mut rebind = false;
         let mut independent = false;
         let mut allow_no_python = false;
+        let mut full = false;
         let mut reason = None;
         let mut index = 0;
         while index < raw.len() {
@@ -141,6 +148,7 @@ impl Options {
                 "--rebind" => rebind = true,
                 "--independent" => independent = true,
                 "--allow-no-python" => allow_no_python = true,
+                "--full" => full = true,
                 "--reason" => {
                     index += 1;
                     let value = raw
@@ -203,6 +211,7 @@ impl Options {
             rebind,
             independent,
             allow_no_python,
+            full,
             reason,
         })
     }
@@ -2536,5 +2545,188 @@ pub fn check_decision(text: &str, file: &str) -> Vec<String> {
         }
     }
     problems
+}
+
+// ─── 阶段 5：按依赖选测试 ───────────────────────────────────────────────────
+//
+// 三条硬约束（缺一条就是削弱门禁）：
+//   1. 影响集**必须显式打印**，不许静默跳过；
+//   2. **非 crate 输入变更 ⇒ 全量**：`scripts/*.lua`、`*.wgsl`（`include_str!`）、
+//      `Cargo.toml`（features）、基线文件、xtask 自身 —— 它们不进依赖图；
+//   3. CI 永远全量，且提供 `--full` 覆盖。
+//
+// 依赖边只取 workspace 成员之间的边（含 dev-dependencies：测试正是靠它们拉起
+// 被测 crate）。传播复用 `ze_graph_core::dirty_downstream`，不另写一套。
+
+/// 变更路径是否属于「crate 内 Rust 源文件」（只有这类能映射到依赖图）。
+pub fn is_crate_source(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    path.starts_with("crates/") && path.ends_with(".rs")
+}
+
+/// 测试范围（由 [`test_scope`] 给出）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestScope {
+    /// 全量；附原因（调用方必须打印，不许静默）。
+    Full(String),
+    /// 只跑这些包；`skipped` = 被跳过的 workspace 包数。
+    Affected { packages: Vec<String>, skipped: usize },
+}
+
+/// 从 `cargo metadata --no-deps` 取 workspace 成员：`(包名, 包目录)`，按名排序。
+pub fn workspace_packages(metadata: &str) -> Result<Vec<(String, String)>, String> {
+    let root = parse_json(metadata)?;
+    let members: BTreeSet<String> = root
+        .get("workspace_members")
+        .and_then(Json::as_array)
+        .ok_or("cargo metadata 缺少 workspace_members")?
+        .iter()
+        .filter_map(Json::as_str)
+        .map(str::to_string)
+        .collect();
+    let packages = root
+        .get("packages")
+        .and_then(Json::as_array)
+        .ok_or("cargo metadata 缺少 packages")?;
+    let mut out = Vec::new();
+    for package in packages {
+        let Some(id) = package.get("id").and_then(Json::as_str) else {
+            continue;
+        };
+        if !members.contains(id) {
+            continue;
+        }
+        let name = package
+            .get("name")
+            .and_then(Json::as_str)
+            .ok_or("package 缺少 name")?;
+        let manifest = package
+            .get("manifest_path")
+            .and_then(Json::as_str)
+            .ok_or("package 缺少 manifest_path")?;
+        let dir = Path::new(manifest)
+            .parent()
+            .ok_or_else(|| format!("manifest_path 没有父目录：{manifest}"))?;
+        out.push((name.to_string(), dir.to_string_lossy().replace('\\', "/")));
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// workspace **内部**依赖边：`(上游包, 下游包)`。
+///
+/// 含 dev-dependencies —— 一个 crate 的测试正是靠 dev-deps 拉起被测 crate，
+/// 漏掉它们会让"改了某个 kernel crate"看起来不影响任何测试。
+pub fn internal_dependency_edges(metadata: &str) -> Result<Vec<(String, String)>, String> {
+    let root = parse_json(metadata)?;
+    let packages = root
+        .get("packages")
+        .and_then(Json::as_array)
+        .ok_or("cargo metadata 缺少 packages")?;
+    let names: BTreeSet<&str> = packages
+        .iter()
+        .filter_map(|package| package.get("name").and_then(Json::as_str))
+        .collect();
+    let mut edges = BTreeSet::new();
+    for package in packages {
+        let Some(downstream) = package.get("name").and_then(Json::as_str) else {
+            continue;
+        };
+        let Some(dependencies) = package.get("dependencies").and_then(Json::as_array) else {
+            continue;
+        };
+        for dependency in dependencies {
+            // 只有 workspace 内部依赖才有 `path`；外部 crate 一条都不进图。
+            if !matches!(dependency.get("path"), Some(value) if !value.is_null()) {
+                continue;
+            }
+            // 依赖被重命名时 `name` 是别名，`package` 才是真名。
+            let upstream = dependency
+                .get("package")
+                .and_then(Json::as_str)
+                .or_else(|| dependency.get("name").and_then(Json::as_str));
+            let Some(upstream) = upstream else {
+                continue;
+            };
+            if !names.contains(upstream) {
+                continue;
+            }
+            edges.insert((upstream.to_string(), downstream.to_string()));
+        }
+    }
+    Ok(edges.into_iter().collect())
+}
+
+/// 变更文件 → 测试范围（纯函数：只吃 `cargo metadata` 文本 + 相对路径）。
+///
+/// `root` 用来把相对路径拼成与 `manifest_path` 同口径的绝对路径。
+pub fn test_scope(metadata: &str, root: &str, changed: &[String]) -> Result<TestScope, String> {
+    if changed.is_empty() {
+        return Ok(TestScope::Full("工作区相对 HEAD 没有变更".to_string()));
+    }
+    if let Some(path) = changed.iter().find(|path| !is_crate_source(path)) {
+        return Ok(TestScope::Full(format!(
+            "非 crate 源文件的变更：{path}（不进依赖图 ⇒ 全量）"
+        )));
+    }
+
+    let packages = workspace_packages(metadata)?;
+    if packages.is_empty() {
+        return Ok(TestScope::Full(
+            "cargo metadata 里没有 workspace 成员".to_string(),
+        ));
+    }
+    let root = root.replace('\\', "/");
+    let root = root.trim_end_matches('/');
+
+    // 变更路径 → 包（取最长前缀，避免 `crates/app/zela-app` 与 `crates/app` 混淆）。
+    let mut seeds: BTreeSet<usize> = BTreeSet::new();
+    let mut unknown = Vec::new();
+    for path in changed {
+        let absolute = format!("{root}/{}", path.replace('\\', "/"));
+        match packages
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, dir))| absolute.starts_with(&format!("{dir}/")))
+            .max_by_key(|(_, (_, dir))| dir.len())
+        {
+            Some((index, _)) => {
+                seeds.insert(index);
+            }
+            None => unknown.push(path.clone()),
+        }
+    }
+    if !unknown.is_empty() {
+        return Ok(TestScope::Full(format!(
+            "变更路径不在任何 workspace 包内：{}（全量）",
+            unknown.join(", ")
+        )));
+    }
+
+    let edges = internal_dependency_edges(metadata)?;
+    let index_of = |name: &str| packages.iter().position(|(package, _)| package == name);
+    let mut graph = ze_graph_core::Adjacency::<usize>::new();
+    for index in 0..packages.len() {
+        graph.add_node(index);
+    }
+    for (upstream, downstream) in &edges {
+        let (Some(upstream), Some(downstream)) = (index_of(upstream), index_of(downstream)) else {
+            continue;
+        };
+        graph.add_edge(upstream, downstream);
+    }
+
+    let seeds: Vec<usize> = seeds.into_iter().collect();
+    let mut hit: BTreeSet<usize> = seeds.iter().copied().collect();
+    // `dirty_downstream` 只回下游（不含种子自身），所以先并上种子。
+    hit.extend(ze_graph_core::dirty_downstream(&graph, &seeds));
+    let skipped = packages.len() - hit.len();
+    Ok(TestScope::Affected {
+        packages: hit
+            .into_iter()
+            .map(|index| packages[index].0.clone())
+            .collect(),
+        skipped,
+    })
 }
 
