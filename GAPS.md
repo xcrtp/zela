@@ -1682,11 +1682,35 @@
 
 ---
 
+## BN. Pass 声明化与 Pod 可插拔批次（2026-10-31）
+
+> 计划《Pass 声明化与 Pod 可插拔_执行计划》。目标：把 `zela-render-vector` 里写死的
+> pass 调度改成「声明提供哪些 pass + 框架按声明校验与调度」，使**新增一个 pass 的 diff
+> 里不出现任何已有 pass 的修改**。
+> 强制约束沿用：像素 36 条逐位不变、只做 Vector 侧、不做 RDG 自动推导、不留无声降级。
+> 本段按阶段记账；**未兑现的项写成记账，不写成"已关闭"**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BN-01 | 组 1 的 24 个 binding 是手写编号（排到 23） | zela-render-vector / vector.wgsl | **已关闭** | 新增 `zela_render_vector::passes::IMAGE_SLOTS`：名字 + 绑定种类，**数组下标即 binding**；`vector.rs` 的 `image_layout` 由它按声明序生成，手写 0..23 消失。槽位用例逐项固定编号（值取自改造前的手写 entry），另两条用例守住"稠密且唯一""中间插入会整体偏移"。判据：`--step hashes` 36 项 ok / DIFF 0。 |
+| BN-02 | 目标纹理只做了**身份化**，未做物理池化 | zela-render-vector | **记账** | 已落：`RenderTargetId` 名字集 + pass 声明的 `outputs` 用它；`base` / `base_light` / `bloomed` / `occlusion` 等目标在声明里可读。**未落**：池化复用（同一纹理跨目标别名）。理由：本批没有引入任何新的临时目标，池化只会凭空引入计划自己标为"最高风险"的残留问题（复用 ⇒ 必须 `LoadOp::Clear`，而清除语义分散在 `Canvas::pass` / `attach` / `attach_slabs` 里）。触发条件：出现"需要一个可复用的中间目标"的新 pass 时，先落池 + 强制 Clear，再补"连续两帧不残留"的用例。 |
+| BN-03 | 自动绑定未做（`set_bind_group` 仍逐处手写） | zela-render-vector | **记账** | 现状：组索引在管线创建时固定（scene=0 / images=1 / appends=2 / lighting=3），但**每个 pass 绑哪几个组、绑哪个具体 BindGroup 是分支内决定的**（`append` / `s.groups[0]` / `image_groups[&0]`）。自动绑定需要一个"帧内按名字取 BindGroup"的注册表；没有它，声明里写 `binds: [...]` 只能是第二份真相。触发条件：把帧内 BindGroup 收进一个按名字索引的注册表之后（与 BN-02 的池天然同源）。 |
+| BN-04 | Pod `PassProvider`：接口与协商就绪，装配期未接线 | zela-render-vector / ze-pod-core | **记账** | 已落：`trait PassProvider` + `negotiate(providers, frame_resources)` —— 同名计划整批失败、每张计划自身合法（重名 / 前序生产者 / 环）、缺任一输入资源**整批失败不降级**；资源边单开一类（`inputs` / `outputs`），不混进 `ServiceRequirement`（服务一次注入 vs 资源一帧内生产-消费）。未落：把它接成 `ze-pod-core` 的一个 capability / Injector 单位 —— 那需要"渲染 Pod 持有后端"的装配形态，本批不做（计划也只要求声明与可插拔的形状）。触发条件：下一个需要按宿主替换 pass 集的批次。 |
+| BN-05 | 顺序契约：无依赖边保持**声明序** | zela-render-vector | **已关闭** | `PassSchedule` 按计划下标推进，**不调用 `topo_sort` 决定顺序**（它的就绪集合取最小 id，会重排无依赖边的 pass）；`ze-graph-core` 只用于 `find_cycle` 查环。用例 `undeclared_order_is_declared_order` 用反例锁住（声明 b 在前就执行 b）。运行时：三张计划（`RASTER_PLAN` / `RASTER_LAYERED_PLAN` / `VECTOR_PLAN`）在 `encode_frame` 里逐步核对，顺序不符 / 被 `enabled_when` 关掉却仍执行 / 启用项既没记录也没显式跳过，三种都变成帧错误。判据：36 个作品的真实录制序与声明序一致（`--step hashes` 全绿即为证据）。 |
+| BN-06 | 数据驱动的 pass 缺席必须有明确出口 | zela-render-vector | **已关闭** | 没有阴影投射者、没有遮蔽源、没有栅格内容、没有路径计划时，pass 本来就不存在。做法是 `PassSchedule::step(name, present)` 的**显式跳过**：计入 `skipped`，`finish` 不报缺失；与"漏记"（既不记录也不声明，会被 `finish` 抓住）区分开。用例 `step_without_content_is_explicit_skip` / `step_tolerates_disabled_pass` 固定这两条。 |
+| BN-07 | 作者可编程（声明输入/输出/逐像素做什么 ⇒ 引擎生成完整 pass） | 渲染 / codegen | **记账** | 本批只做到"pass 集合可声明、顺序可校验"。作者可编程还差两步：① `ze-comb` 的表达式 AST 目前只生成**片元颜色函数**（`ShaderFill` / `ShaderPaint`），不生成顶点阶段与 pass 骨架；② pass 声明要能携带"逐像素表达式"的引用（`entry` 现在是字符串）。我们的条件比字符串拼 HLSL 的方案好（有 AST + 类型化 codegen），但缺口在 ①。触发条件：codegen 能生成完整 pass（vs + fs + dispatch 形状）时。 |
+
+**BN 段小计**：已关闭 3 · 记账 4。
+> 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过。
+> 三层测试的落点：① 特征快照（槽位编号 / 顺序契约 / enabled 集合穷举）在 `passes.rs` 的 `#[cfg(test)]`；② 双跑等价由"声明序逐步核对 + 36 个作品"承担（本批没有保留新旧两条路径，旧路径一旦删掉就不该复活）；③ 纯数据穷尽（槽位 / 计划校验 / 协商 / 逃生舱）不依赖设备，秒级反馈。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BM**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BM 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BN**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BN 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
