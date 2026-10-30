@@ -63,7 +63,7 @@ use ze_scene_core::{
 /// ⇒ 装配层无法走"经 `add_known` 登记表"的动态创建入口。二者在此补发。
 pub use ze_scene_contract::{
     Component, Components, Group, GroupId, GroupVisibility, LifetimeTracked, Name, ObjectId,
-    Parent, Scene, SceneRead, Visibility, VisibilityTag,
+    Parent, ParentInherit, Scene, SceneRead, Visibility, VisibilityTag,
 };
 
 use crate::composer::Composer;
@@ -536,7 +536,7 @@ mod tests {
 
     // ─── 登记表双向化（本轮）────────────────────────────────────────────
 
-    /// 反向 ①：27 个登记类型**逐个**有稳定名字；未登记 ⇒ `None`。
+    /// 反向 ①：30 个登记类型**逐个**有稳定名字；未登记 ⇒ `None`。
     ///
     /// ⚠️ 本用例是**覆盖度绊线**（新增类型时提醒补样例），不是注册表 ——
     /// 生产侧的登记表只有 `known_component_table!` 一处。
@@ -573,6 +573,10 @@ mod tests {
         assert_eq!(known_type_name::<Reveal>(), Some("Reveal"));
         assert_eq!(known_type_name::<Parent>(), Some("Parent"));
         assert_eq!(
+            known_type_name::<ParentInherit>(),
+            Some("ParentInherit")
+        );
+        assert_eq!(
             known_type_name::<LifetimeTracked>(),
             Some("LifetimeTracked")
         );
@@ -587,7 +591,7 @@ mod tests {
         );
     }
 
-    /// 反向 ②：27 个登记类型**逐个**可克隆（不能只测一两个）。
+    /// 反向 ②：30 个登记类型**逐个**可克隆（不能只测一两个）。
     ///
     /// `AxesLine` 未 derive `Clone` —— 由登记表的 `manual:` 段显式重构
     /// （**没有改它的定义**）。
@@ -638,10 +642,11 @@ mod tests {
             Box::new(ContentTextureItem),
             Box::new(Reveal::new(ze_notion::Path2D::new())),
             Box::new(Parent(ObjectId::DANGLING)),
+            Box::new(ParentInherit::default()),
             Box::new(LifetimeTracked),
             Box::new(Composer::default()),
         ];
-        assert_eq!(samples.len(), 29, "登记表当前应为 29 个类型");
+        assert_eq!(samples.len(), 30, "登记表当前应为 30 个类型");
 
         for (i, c) in samples.iter().enumerate() {
             let cloned =

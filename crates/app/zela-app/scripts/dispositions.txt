@@ -36,13 +36,14 @@ surface_matrix.lua = baseline
 vector_paths.lua = baseline
 
 # ─── 显式豁免（理由 = 当前用什么保护它；不是「不重要」）──────────────────
-# 以下 5 件是 demo/manifest.txt 里的能力展示作品：payload 由 manifest 的
+# 以下为 demo/manifest.txt 里的能力展示作品：payload 由 manifest 的
 # payload-hash 断言（`--step demo` / build.ps1 编译后逐字节比对），
 # 但**没有像素 / 结构回归**。补 [vector] 基线需要一次录制设备的 `--record`。
 cap_codegen.lua = exempt: 阶段 2 着色 codegen 能力展示；payload 由 manifest 断言；像素基线待补（录制设备）
 cap_stroke_width.lua = exempt: 阶段 7 线宽通道能力展示；payload 由 manifest 断言；像素基线待补（录制设备批次）
 cap_channels2d.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
 cap_channels3d.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
+cap_parent_inherit.lua = exempt: 第 BC 批 Parent 多维度继承能力展示；payload 由 manifest 断言；像素基线待补（录制设备批次）
 expr_demo.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
 expr_read.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
 sine_trace.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）

@@ -10,7 +10,7 @@
 #
 # 重录：ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes（结构指纹与设备无关，无需 --record）。
 
-atlas = 10760f65a80589f2
+atlas = daf99d7cc2d1b109
 cap_background = 42b9a61345666af9
 cap_dash = 39f367d61fcb56b9
 cap_gradient = d63f043fe8fbd329
@@ -19,16 +19,16 @@ cap_second = b22e4e48cdf5e705
 cap_window = bb41730ca749961b
 capability_gaps = 7a625f5e9f26501e
 demo3d = 8d4e2feb1f0c1505
-fourier = c237f1d876843e77
+fourier = 5ba121e215890f97
 fusion = e230e67c3aa38323
-orbit = 34a95326e1884203
+orbit = 095859f305e02d53
 pbr_lights = c5083bbb0f9be1e3
 pbr_materials = 72bf9ecc72395787
 pbr_scene = 799ccf1bee89289b
-pendulum = 34bf99f8a0a22122
+pendulum = 52faf18dc59dddb7
 shaded_meshes = 621dbe9086a20fed
 spring = 6fc3ab36b031a858
 storyboard = cee5ea10e798d307
-surface_matrix = cc4985454fba587c
-surface_matrix.js = cc4985454fba587c
+surface_matrix = 75fcfd7d42553f06
+surface_matrix.js = 75fcfd7d42553f06
 vector_paths = 8721ae3b216c98a1

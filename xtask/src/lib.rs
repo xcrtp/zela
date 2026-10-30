@@ -1229,7 +1229,11 @@ fn is_spec_invocation(line: &str) -> bool {
         .any(|prefix| line.starts_with(prefix))
 }
 
-/// `scalar_spec!(IDENT, "name", "address", Component, field);` ⇒ 四个字段。
+/// `scalar_spec!(IDENT, "name", "address", "ComponentName", ComponentTy, field);`
+/// 或手写五参形态 ⇒ 名称 / 地址 / 组件名 / 字段。
+///
+/// `scalar_spec!` 的组件名与组件类型是**两个**参数（前者是登记表里的稳定名字）；
+/// 早先只认五参 ⇒ 所有宏形态的通道都被无提示地漏掉，覆盖门禁看不到它们。
 fn parse_spec_invocation(text: &str) -> Option<SpecFields> {
     let open = text.find('(')?;
     let close = text.rfind(')')?;
@@ -1238,13 +1242,17 @@ fn parse_spec_invocation(text: &str) -> Option<SpecFields> {
         .map(str::trim)
         .filter(|arg| !arg.is_empty())
         .collect();
-    let [_, name, address, component, field] = args.as_slice() else {
-        return None;
+    let (name, address, component, field) = match args.as_slice() {
+        [_, name, address, component, field] => (*name, *address, *component, *field),
+        [_, name, address, component, _component_ty, field] => {
+            (*name, *address, *component, *field)
+        }
+        _ => return None,
     };
     Some(SpecFields {
         name: name.trim_matches('"').to_string(),
         address: address.trim_matches('"').to_string(),
-        component: component.to_string(),
+        component: component.trim_matches('"').to_string(),
         field: field.to_string(),
     })
 }

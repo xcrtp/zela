@@ -1466,11 +1466,29 @@
 
 ---
 
+## BC. Parent 多维度连续继承批次（2026-10-30）
+
+> 方案《方案_Parent多维度连续继承.md》。定位：把 `Parent` 从"只传变换"扩成
+> 变换三维 + 样式三维的连续继承；默认权重让现有作品逐位不变。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BC-01 | `Parent` 只有一个字段，继承权重无处表达 | 契约 / 脚本 API | **已关闭** | `ze_scene_contract::relation::ParentInherit` 六个 `f32`（`position` / `rotation` / `scale` 默认 `1.0`，`opacity` / `fill` / `stroke` 默认 `0.0`）+ `none()` + `full_transform()`；`ze_scene_api::types::Parent` 加同名字段；`ze_pod_binding::defaults::{field_default, field_default_literal}` 各加 6 条 ⇒ 13 处 `Parent { parent = h }` 与 26 个脚本源码零改动。组件登记表加入 `ParentInherit`（29 → 30 个类型，`clone_known_covers_every_registered_type` 同步）；`scene_service::scene_parent` 一次插入 `Parent` + `ParentInherit` 两个组件 |
+| BC-02 | 派生态只产世界矩阵，父链的样式不继承 | 派生 / ECS | **已关闭** | `ze_scene_core::world_inherit::WorldInherit`（`opacity` / `fill` / `stroke`）挂在 `WorldTransforms::{with_inherit, inherit}` 上，与矩阵在**同一次**父链遍历里产出（不新增第二个资源：`zela_schedule::ResourceTuple` 没有 5 元组）。`zela_scene_ecs::transform_hierarchy::{mix_transform, inherit_style_of, inherit_color}`：position 线性、rotation 四元数 slerp、scale 线性；三个变换权重全 `1.0` 时整份复制父矩阵 ⇒ 逐位等于旧行为；不透明度 `local × mix(1, parent, w)` 乘性累积；颜色在 `w > 0` 时按权重混合，子缺席则继承父色。用例：`opacity_inherits_when_weight_is_one` / `opacity_not_inherited_by_default` / `fill_inherits_when_weight_is_one` / `full_transform_weights_match_manual_composition` / `zero_transform_weights_ignore_parent` / `half_position_weight_halves_translation` |
+| BC-03 | 消费层只看本地 `Opacity` 与填充 / 描边色 | 渲染 | **已关闭** | `zela_render::draw::opacity_of` 增加继承入参（缺席回退本地 `Opacity`）；新增 `apply_inherit` 先覆盖填充 / 描边色，再调用 `apply_opacity` —— 全仓唯一施加点不变；`surface_route::try_record_direct` 同步；`MorphRecordSystem` / `RevealRecordSystem` / `ContentTextureRecordSystem` 经 `WorldTransforms.inherit()` 取结果。默认权重下继承是空操作 ⇒ 渲染结果不变 |
+| BC-04 | 六个继承权重不可动画 | 动画 / 脚本 | **已关闭** | `ze_scene_core::animation::target` 新增 6 条 `scalar_spec!` + 6 条 `make_target!` + `TARGETS` 6 项（地址 `Parent.position` / `Parent.rotation` / `Parent.scale` / `Parent.opacity` / `Parent.fill` / `Parent.stroke`）。作品 [`cap_parent_inherit.lua`](crates/app/zela-app/scripts/cap_parent_inherit.lua)：子 A 驱动 `opacity` / `fill` / `stroke`，子 B 驱动 `position` / `rotation` / `scale`；登记进 `demo/manifest.txt` 做 payload 断言，并在 `dispositions.txt` 记显式豁免理由。`--step coverage` **70/70**；`--step demo` **30/30**。父链作品（fourier / orbit / pendulum / atlas / surface_matrix / surface_matrix_js）payload 因新增 `ParentInherit` 组件重录；`structures.txt` 因登记表与六条通道重录；像素基线逐位不变（默认权重不改变任何渲染输入） |
+| BC-05 | 描边线宽与 ZOrder 的继承本批不做 | 渲染 / 动画 | **记账** | `stroke` 权重只管颜色（`ze_render_ir::StrokeSolid::color`）；线宽要独立权重，会继续膨胀 `Parent` 字段；`ZOrder` 继承会改绘制顺序，与 BB-11 ③ 同因。触发条件：文字组落地时评估线宽继承；ZOrder 单独立项 |
+| BC-06 | 覆盖门禁的能力抽取只认五参形态，宏写法的通道被无提示漏掉 | xtask / 门禁 | **已关闭** | `xtask::parse_spec_invocation` 同时接受五参（手写）与六参（`scalar_spec!`：组件名 + 组件类型）两种形态；六个 `Parent.*` 通道因此进入覆盖矩阵，并连带补回此前漏掉的 `Dash.*` / `CurveWindow.*` / `Stroke.width`（宏形态通道共 12 条）。修复后 `--step coverage` 从 58/58 变为 **70/70**（全部被现有作品使用，豁免 0 条）——旧口径下这些通道"没有义务"，正是门禁要防的安静漏检 |
+
+**BC 段小计**：已关闭 5 · 记账 1。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BB**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BB 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BC**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BC 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

@@ -57,6 +57,13 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
         ("zela.Camera3D", "up") => Some(vec3(0.0, 1.0, 0.0)),
         // 2D 摆放：z 只用于少量分层场景，多数作品写 0。
         ("zela.Transform", "z") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
+        // 父子继承权重：变换三维默认全继承（旧行为），样式三维默认不继承（旧行为）。
+        ("zela.Parent", "position") => Some(PodValue::Scalar(ScalarValue::F32(1.0))),
+        ("zela.Parent", "rotation") => Some(PodValue::Scalar(ScalarValue::F32(1.0))),
+        ("zela.Parent", "scale") => Some(PodValue::Scalar(ScalarValue::F32(1.0))),
+        ("zela.Parent", "opacity") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
+        ("zela.Parent", "fill") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
+        ("zela.Parent", "stroke") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
         // 3D 材质：Lambert + 非金属 + 中等粗糙 + 不双面 + 不透明 + 无纹理。
         ("zela.Material3D", "variant") => Some(PodValue::Enum(
             "zela.ShaderVariant",
@@ -112,6 +119,12 @@ pub fn field_default_literal(type_name: &str, field_name: &str) -> Option<&'stat
         ("zela.Camera3D", "target") => Some("Vec3(0, 0, 0)"),
         ("zela.Camera3D", "up") => Some("Vec3(0, 1, 0)"),
         ("zela.Transform", "z") => Some("0"),
+        ("zela.Parent", "position") => Some("1"),
+        ("zela.Parent", "rotation") => Some("1"),
+        ("zela.Parent", "scale") => Some("1"),
+        ("zela.Parent", "opacity") => Some("0"),
+        ("zela.Parent", "fill") => Some("0"),
+        ("zela.Parent", "stroke") => Some("0"),
         ("zela.Material3D", "variant") => Some("ShaderVariant.Lambert"),
         ("zela.Material3D", "metallic") => Some("0"),
         ("zela.Material3D", "roughness") => Some("0.5"),

@@ -78,6 +78,7 @@ pub static DEMOS: &[Demo] = &[
     lua!("sine_trace", "小球画正弦", "sine_trace.lua"),
     lua!("cap_codegen", "着色codegen", "cap_codegen.lua"),
     lua!("cap_stroke_width", "线宽通道", "cap_stroke_width.lua"),
+    lua!("cap_parent_inherit", "Parent继承", "cap_parent_inherit.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。

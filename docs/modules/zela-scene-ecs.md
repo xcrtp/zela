@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：24 个 · 8662 行
+- 源文件：24 个 · 9032 行
 
 ### 文件清单
 
@@ -24,7 +24,7 @@
 | `src/animation/target_tests.rs` | 397 | — |
 | `src/camera_input.rs` | 667 | — |
 | `src/composer.rs` | 306 | — |
-| `src/contract.rs` | 802 | — |
+| `src/contract.rs` | 807 | — |
 | `src/deferred.rs` | 434 | — |
 | `src/director_state.rs` | 51 | — |
 | `src/driver.rs` | 420 | Driver pod：**命令驱动**的场景推进器（P4）。 |
@@ -39,7 +39,7 @@
 | `src/register.rs` | 72 | — |
 | `src/scene.rs` | 234 | — |
 | `src/scene_script_tests.rs` | 697 | — |
-| `src/transform_hierarchy.rs` | 375 | — |
+| `src/transform_hierarchy.rs` | 740 | — |
 | `src/utils.rs` | 60 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

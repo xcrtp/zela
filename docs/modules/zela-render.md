@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-vertex`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`
-- 源文件：17 个 · 7209 行
+- 源文件：17 个 · 7296 行
 
 ### 文件清单
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | `src/components.rs` | 45 | — |
 | `src/content_ir.rs` | 236 | — |
-| `src/draw.rs` | 1831 | — |
+| `src/draw.rs` | 1870 | — |
 | `src/draw_queue_3d.rs` | 340 | — |
 | `src/filters.rs` | 243 | — |
 | `src/frame.rs` | 348 | — |
@@ -27,9 +27,9 @@
 | `src/light_queue.rs` | 104 | — |
 | `src/painter_2d.rs` | 30 | — |
 | `src/painter_3d.rs` | 72 | — |
-| `src/record_systems.rs` | 1087 | — |
+| `src/record_systems.rs` | 1133 | — |
 | `src/shape_to_mesh.rs` | 328 | — |
-| `src/surface_route.rs` | 340 | — |
+| `src/surface_route.rs` | 342 | — |
 | `src/tessellate.rs` | 1654 | — |
 | `src/vertex_record.rs` | 344 | — |
 | `src/view_rect.rs` | 7 | — |
@@ -71,7 +71,7 @@ graph LR
 | `src/draw.rs` | `pub fn record_drawables<D: Drawable, I>(queue: &mut DrawQueue, t: &Affine2D, scale: f32, items: I)` |
 | `src/draw.rs` | `pub struct SceneRender<T: Painter2D>` |
 | `src/draw.rs` | `pub fn visible_for<S: SceneRead>(` |
-| `src/draw.rs` | `pub fn opacity_of<S: SceneRead>(scene: &S, id: ObjectId) -> Opacity` |
+| `src/draw.rs` | `pub fn opacity_of<S: SceneRead>(` |
 | `src/draw.rs` | `pub fn apply_opacity(style: &mut Style2D, opacity: Opacity)` |
 | `src/draw.rs` | `pub fn record_scene<S: SceneRead>(scene: &S, camera: &Camera2D, queue: &mut DrawQueue)` |
 | `src/draw.rs` | `pub fn record_scene_tagged<S: SceneRead>(` |

@@ -12,10 +12,16 @@ use std::collections::HashMap;
 use ze_notion::{Transform2D, Transform3D};
 use ze_scene_contract::ObjectId;
 
-/// 每帧派生的**世界矩阵**（Resource；不进持久化）。
+use crate::world_inherit::WorldInherit;
+
+/// 每帧派生的**世界矩阵** + **样式继承结果**（Resource；不进持久化）。
+///
+/// `inherit` 与 `world` 由**同一次**父链遍历产出（`TransformHierarchySystem`）：
+/// 放在一起既省一次递归，也避开 `ResourceTuple` 不支持 5 元组的限制。
 #[derive(Debug, Clone, Default)]
 pub struct WorldTransforms {
     world: HashMap<ObjectId, Transform3D>,
+    inherit: WorldInherit,
 }
 
 impl WorldTransforms {
@@ -25,7 +31,19 @@ impl WorldTransforms {
     pub fn from_map(world: impl IntoIterator<Item = (ObjectId, Transform3D)>) -> Self {
         Self {
             world: world.into_iter().collect(),
+            inherit: WorldInherit::default(),
         }
+    }
+
+    /// 附上样式继承结果（与矩阵同帧产出）。
+    pub fn with_inherit(mut self, inherit: WorldInherit) -> Self {
+        self.inherit = inherit;
+        self
+    }
+
+    /// 样式继承结果（不透明度 / 填充 / 描边；缺席条目 = 沿用本地组件）。
+    pub fn inherit(&self) -> &WorldInherit {
+        &self.inherit
     }
 
     /// 写入 / 覆盖一个对象的世界矩阵（测试与增量构建用）。

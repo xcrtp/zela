@@ -237,6 +237,14 @@ pub struct Polyline {
 #[pod_type(name = "zela.Parent")]
 pub struct Parent {
     pub parent: Handle,
+    /// 三个变换维度的继承权重（`1.0` = 全量继承，旧行为）。
+    pub position: f32,
+    pub rotation: f32,
+    pub scale: f32,
+    /// 三个样式维度的继承权重（`0.0` = 不继承，旧行为）。
+    pub opacity: f32,
+    pub fill: f32,
+    pub stroke: f32,
 }
 
 /// 对象名（便于排查 / 文本组父对象）。

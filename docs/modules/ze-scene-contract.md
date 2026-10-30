@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-scene-contract`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-core`、`ze-scene-hecs`、`zela-render`、`zela-scene-ecs`
-- 源文件：7 个 · 887 行
+- 源文件：7 个 · 935 行
 
 ### 文件清单
 
@@ -22,7 +22,7 @@
 | `src/lib.rs` | 40 | — |
 | `src/lifetime.rs` | 17 | — |
 | `src/organize.rs` | 289 | — |
-| `src/relation.rs` | 80 | — |
+| `src/relation.rs` | 128 | — |
 | `src/scene.rs` | 174 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -59,6 +59,7 @@ graph LR
 | `src/organize.rs` | `pub struct Visibility` |
 | `src/organize.rs` | `pub struct GroupVisibility` |
 | `src/relation.rs` | `pub struct Parent(pub ObjectId)` |
+| `src/relation.rs` | `pub struct ParentInherit` |
 | `src/relation.rs` | `pub struct Children(pub Vec<ObjectId>)` |
 | `src/scene.rs` | `pub trait Component: Send + Sync + 'static` |
 | `src/scene.rs` | `pub trait SceneRead` |

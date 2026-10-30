@@ -28,9 +28,10 @@
 
 use std::collections::BTreeMap;
 
-use ze_notion::Transform3D;
-use ze_scene_core::Transform;
-use ze_scene_contract::{ObjectId, Parent, SceneRead};
+use ze_notion::{Color32, Mat4, Quat, Transform3D, Vec3};
+use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
+use ze_scene_core::{Transform, WorldInherit};
+use ze_scene_contract::{ObjectId, Parent, ParentInherit, SceneRead};
 use zela_schedule::context::ExecutorContext;
 use zela_schedule::system::System;
 
@@ -75,14 +76,20 @@ pub struct TransformHierarchySystem;
 
 impl System for TransformHierarchySystem {
     type Reads = ();
+    // 样式继承结果与矩阵**同帧同 System** 产出：`WorldInherit` 作为
+    // `WorldTransforms` 的字段一起写（避开 `ResourceTuple` 不支持 5 元组）。
     type Writes = (WorldTransforms, TransformHierarchyError);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
-        // 先在世界只读借用内收集 local / parent（收集完即释放）。
-        let (locals, parents) = {
+        // 先在世界只读借用内收集 local / parent / 继承权重 / 本地样式（收集完即释放）。
+        let (locals, parents, inherits, local_opacity, local_fill, local_stroke) = {
             let world = WorldView::new(ctx.borrow_world());
             let mut locals: BTreeMap<ObjectId, Transform3D> = BTreeMap::new();
             let mut parents: BTreeMap<ObjectId, ObjectId> = BTreeMap::new();
+            let mut inherits: BTreeMap<ObjectId, ParentInherit> = BTreeMap::new();
+            let mut local_opacity: BTreeMap<ObjectId, f32> = BTreeMap::new();
+            let mut local_fill: BTreeMap<ObjectId, Color32> = BTreeMap::new();
+            let mut local_stroke: BTreeMap<ObjectId, Color32> = BTreeMap::new();
             world.for_each::<Transform>(|id, transform| {
                 locals.insert(id, transform.to_affine3d());
             });
@@ -91,7 +98,19 @@ impl System for TransformHierarchySystem {
                     parents.insert(id, parent.0);
                 }
             });
-            (locals, parents)
+            world.for_each::<ParentInherit>(|id, inherit| {
+                inherits.insert(id, *inherit);
+            });
+            world.for_each::<Opacity>(|id, opacity| {
+                local_opacity.insert(id, opacity.0);
+            });
+            world.for_each::<FillSolid>(|id, fill| {
+                local_fill.insert(id, fill.color);
+            });
+            world.for_each::<StrokeSolid>(|id, stroke| {
+                local_stroke.insert(id, stroke.color);
+            });
+            (locals, parents, inherits, local_opacity, local_fill, local_stroke)
         };
 
         // 拓扑序由 ObjectId 升序决定（确定性；BTreeMap 的键序即最终序）。
@@ -104,14 +123,54 @@ impl System for TransformHierarchySystem {
         ids.dedup();
 
         let mut out: BTreeMap<ObjectId, Transform3D> = BTreeMap::new();
+        let mut style_out: BTreeMap<ObjectId, InheritedStyle> = BTreeMap::new();
         let mut visiting: Vec<ObjectId> = Vec::new();
         let mut chain: Option<Vec<ObjectId>> = None;
         for id in ids {
-            let _ = world_of(id, &locals, &parents, &mut out, &mut visiting, &mut chain);
+            let _ = world_of(
+                id,
+                &locals,
+                &parents,
+                &inherits,
+                &mut out,
+                &mut visiting,
+                &mut chain,
+            );
+            let _ = inherit_style_of(
+                id,
+                &local_opacity,
+                &local_fill,
+                &local_stroke,
+                &inherits,
+                &parents,
+                &mut style_out,
+                &mut visiting,
+                &mut chain,
+            );
         }
 
+        // 只有**与本地不同**的填充 / 描边才登记覆盖；不透明度按最终值登记
+        // （消费方缺席回退本地，故登记 `local` 本身也是逐位等价的）。
+        let mut opacity: BTreeMap<ObjectId, f32> = BTreeMap::new();
+        let mut fill: BTreeMap<ObjectId, Color32> = BTreeMap::new();
+        let mut stroke: BTreeMap<ObjectId, Color32> = BTreeMap::new();
+        for (id, style) in style_out {
+            opacity.insert(id, style.opacity);
+            if style.fill != local_fill.get(&id).copied() {
+                if let Some(color) = style.fill {
+                    fill.insert(id, color);
+                }
+            }
+            if style.stroke != local_stroke.get(&id).copied() {
+                if let Some(color) = style.stroke {
+                    stroke.insert(id, color);
+                }
+            }
+        }
+        let inherit = WorldInherit::from_maps(opacity, fill, stroke);
+
         if let Some(resource) = ctx.get_mut::<WorldTransforms>() {
-            *resource = WorldTransforms::from_map(out);
+            *resource = WorldTransforms::from_map(out).with_inherit(inherit);
         }
         if let Some(resource) = ctx.get_mut::<TransformHierarchyError>() {
             resource.chain = chain;
@@ -119,10 +178,19 @@ impl System for TransformHierarchySystem {
     }
 }
 
+/// 递归得到的样式继承结果（final 值，`opacity` 已含本对象）。
+#[derive(Clone, Copy, Default)]
+struct InheritedStyle {
+    opacity: f32,
+    fill: Option<Color32>,
+    stroke: Option<Color32>,
+}
+
 fn world_of(
     id: ObjectId,
     locals: &BTreeMap<ObjectId, Transform3D>,
     parents: &BTreeMap<ObjectId, ObjectId>,
+    inherits: &BTreeMap<ObjectId, ParentInherit>,
     out: &mut BTreeMap<ObjectId, Transform3D>,
     visiting: &mut Vec<ObjectId>,
     error: &mut Option<Vec<ObjectId>>,
@@ -147,15 +215,142 @@ fn world_of(
         .unwrap_or_else(Transform3D::identity);
     let world = match parents.get(&id) {
         // 先 local 后 parent ⇒ parent ∘ local。
-        Some(parent) => local.compose(world_of(
-            *parent, locals, parents, out, visiting, error,
-        )),
+        Some(parent) => {
+            let parent_world = world_of(*parent, locals, parents, inherits, out, visiting, error);
+            let w = inherits.get(&id).copied().unwrap_or_default();
+            // 三个变换权重全 1 ⇒ 整份使用父世界矩阵 ⇒ 与旧行为逐位相同；
+            // 全 0 ⇒ 不继承变换 ⇒ world = local。
+            if w.full_transform() {
+                local.compose(parent_world)
+            } else if w.position == 0.0 && w.rotation == 0.0 && w.scale == 0.0 {
+                local
+            } else {
+                local.compose(mix_transform(&parent_world, &w))
+            }
+        }
         None => local,
     };
 
     visiting.pop();
     out.insert(id, world);
     world
+}
+
+/// 把父世界矩阵按三个权重混合到 identity：位置 `0→父平移`、旋转
+/// `identity→父旋转`（slerp）、缩放 `1→父缩放`。
+///
+/// `full_transform()` 由调用方短路，故这里只处理至少一个权重非 1 的情形。
+fn mix_transform(parent: &Transform3D, w: &ParentInherit) -> Transform3D {
+    let (scale, rotation, translation) = parent.matrix.to_scale_rotation_translation();
+    // 单个维度权重为 1 时**原样**保留该分量（不经过 lerp 的舍入）。
+    let translation = if w.position == 1.0 {
+        translation
+    } else {
+        translation * w.position
+    };
+    let rotation = if w.rotation == 1.0 {
+        rotation
+    } else {
+        Quat::IDENTITY.slerp(rotation, w.rotation)
+    };
+    let scale = if w.scale == 1.0 {
+        scale
+    } else {
+        Vec3::ONE.lerp(scale, w.scale)
+    };
+    Transform3D::from_matrix(Mat4::from_scale_rotation_translation(
+        scale,
+        rotation,
+        translation,
+    ))
+}
+
+fn inherit_style_of(
+    id: ObjectId,
+    local_opacity: &BTreeMap<ObjectId, f32>,
+    local_fill: &BTreeMap<ObjectId, Color32>,
+    local_stroke: &BTreeMap<ObjectId, Color32>,
+    inherits: &BTreeMap<ObjectId, ParentInherit>,
+    parents: &BTreeMap<ObjectId, ObjectId>,
+    out: &mut BTreeMap<ObjectId, InheritedStyle>,
+    visiting: &mut Vec<ObjectId>,
+    error: &mut Option<Vec<ObjectId>>,
+) -> InheritedStyle {
+    if let Some(style) = out.get(&id) {
+        return *style;
+    }
+    let local = InheritedStyle {
+        opacity: local_opacity.get(&id).copied().unwrap_or(1.0),
+        fill: local_fill.get(&id).copied(),
+        stroke: local_stroke.get(&id).copied(),
+    };
+    if let Some(start) = visiting.iter().position(|visited| *visited == id) {
+        if error.is_none() {
+            let mut chain: Vec<ObjectId> = visiting[start..].to_vec();
+            chain.push(id);
+            *error = Some(chain);
+        }
+        return local;
+    }
+    visiting.push(id);
+
+    let style = match parents.get(&id) {
+        None => local,
+        Some(parent) => {
+            let parent_style = inherit_style_of(
+                *parent,
+                local_opacity,
+                local_fill,
+                local_stroke,
+                inherits,
+                parents,
+                out,
+                visiting,
+                error,
+            );
+            let w = inherits.get(&id).copied().unwrap_or_default();
+            InheritedStyle {
+                // world_opacity = local × mix(1, parent_world, w)
+                opacity: local.opacity * (1.0 + (parent_style.opacity - 1.0) * w.opacity),
+                fill: inherit_color(local.fill, parent_style.fill, w.fill),
+                stroke: inherit_color(local.stroke, parent_style.stroke, w.stroke),
+            }
+        }
+    };
+
+    visiting.pop();
+    out.insert(id, style);
+    style
+}
+
+/// 颜色继承：子有颜色 ⇒ 按 `w` 向父色靠拢（父缺席时向透明色靠拢）；
+/// 子缺席且 `w > 0` ⇒ 继承父色；`w = 0` ⇒ 保持本地（逐位不变）。
+fn inherit_color(local: Option<Color32>, parent: Option<Color32>, w: f32) -> Option<Color32> {
+    if w == 0.0 {
+        return local;
+    }
+    match local {
+        Some(color) => Some(mix_color(
+            color,
+            parent.unwrap_or(Color32::TRANSPARENT),
+            w,
+        )),
+        None => parent,
+    }
+}
+
+fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let lerp = |a: u8, b: u8| {
+        (a as f32 + (b as f32 - a as f32) * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color32::new(
+        lerp(from.r(), to.r()),
+        lerp(from.g(), to.g()),
+        lerp(from.b(), to.b()),
+        lerp(from.a(), to.a()),
+    )
 }
 
 #[cfg(test)]
@@ -165,19 +360,27 @@ mod tests {
     use zela_schedule::resource::Resources;
     use zela_schedule::scheduler::{Phase, Scheduler};
 
-    fn run(world: hecs::World) -> (WorldTransforms, TransformHierarchyError) {
+    fn run_all(world: hecs::World) -> (WorldTransforms, TransformHierarchyError, WorldInherit) {
         let mut sched = Scheduler::new(world, Resources::new());
         sched.add_system(Phase::Prepare, TransformHierarchySystem);
         sched.init_resources();
         sched.run_frame(0.0);
+        let worlds = sched.resources().get::<WorldTransforms>().cloned().unwrap();
+        let inherit = worlds.inherit().clone();
         (
-            sched.resources().get::<WorldTransforms>().cloned().unwrap(),
+            worlds,
             sched
                 .resources()
                 .get::<TransformHierarchyError>()
                 .cloned()
                 .unwrap(),
+            inherit,
         )
+    }
+
+    fn run(world: hecs::World) -> (WorldTransforms, TransformHierarchyError) {
+        let (worlds, error, _) = run_all(world);
+        (worlds, error)
     }
 
     fn transform(x: f32, y: f32) -> Transform {
@@ -371,5 +574,167 @@ mod tests {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<WorldTransforms>();
         assert_send_sync::<TransformHierarchyError>();
+    }
+
+    // ─── BC：多维度连续继承 ────────────────────────────────────────────────
+
+    /// 不透明度：`w = 1` 时父 0.5、子不设 `Opacity` ⇒ 子世界不透明度 = 0.5。
+    #[test]
+    fn opacity_inherits_when_weight_is_one() {
+        let mut world = hecs::World::new();
+        let parent = world.spawn((transform(0.0, 0.0), Opacity::new(0.5)));
+        let parent_id = crate::contract::object_id_of(parent);
+        let child = world.spawn((
+            transform(0.0, 0.0),
+            Parent(parent_id),
+            ParentInherit {
+                opacity: 1.0,
+                ..ParentInherit::default()
+            },
+        ));
+        let child_id = crate::contract::object_id_of(child);
+
+        let (_, error, inherit) = run_all(world);
+        assert!(!error.is_err());
+        assert_eq!(inherit.opacity_of(parent_id), Some(0.5));
+        assert_eq!(
+            inherit.opacity_of(child_id),
+            Some(0.5),
+            "w_opacity = 1 ⇒ 子完全继承父的不透明度"
+        );
+    }
+
+    /// 默认权重（`opacity = 0`）⇒ 子不继承样式 ⇒ 与旧行为一致。
+    #[test]
+    fn opacity_not_inherited_by_default() {
+        let mut world = hecs::World::new();
+        let parent = world.spawn((transform(0.0, 0.0), Opacity::new(0.5)));
+        let parent_id = crate::contract::object_id_of(parent);
+        let child = world.spawn((transform(0.0, 0.0), Parent(parent_id)));
+        let child_id = crate::contract::object_id_of(child);
+
+        let (_, _, inherit) = run_all(world);
+        assert_eq!(inherit.opacity_of(child_id), Some(1.0));
+    }
+
+    /// 填充色：`w_fill = 1` 时子不设 `Fill`、父红 ⇒ 子继承红。
+    #[test]
+    fn fill_inherits_when_weight_is_one() {
+        let red = Color32::new(255, 0, 0, 255);
+        let mut world = hecs::World::new();
+        let parent = world.spawn((transform(0.0, 0.0), FillSolid::new(red)));
+        let parent_id = crate::contract::object_id_of(parent);
+        let child = world.spawn((
+            transform(0.0, 0.0),
+            Parent(parent_id),
+            ParentInherit {
+                fill: 1.0,
+                ..ParentInherit::default()
+            },
+        ));
+        let child_id = crate::contract::object_id_of(child);
+
+        let (_, _, inherit) = run_all(world);
+        assert_eq!(inherit.fill_of(child_id), Some(red));
+        // 子自身有 Fill 且 w = 0 ⇒ 不登记覆盖（默认行为）。
+        assert_eq!(inherit.fill_of(parent_id), None);
+    }
+
+    /// 三个变换权重全 1 ⇒ 世界矩阵与"手动写死父变换到子对象"逐位相同。
+    #[test]
+    fn full_transform_weights_match_manual_composition() {
+        let parent_local = Transform {
+            position: ze_notion::Vec3::new(3.0, -2.0, 1.0),
+            rotation: ze_notion::Quat::from_rotation_z(0.4),
+            scale: ze_notion::Vec3::new(2.0, 0.5, 1.0),
+        };
+        let child_local = transform(1.0, 4.0);
+        let expected = child_local
+            .to_affine3d()
+            .compose(parent_local.to_affine3d());
+
+        let mut world = hecs::World::new();
+        let parent = world.spawn((parent_local,));
+        let parent_id = crate::contract::object_id_of(parent);
+        let child = world.spawn((
+            child_local,
+            Parent(parent_id),
+            // 显式写满 1.0：与缺席完全同义。
+            ParentInherit::none(),
+        ));
+        let child_id = crate::contract::object_id_of(child);
+
+        let (worlds, error, _) = run_all(world);
+        assert!(!error.is_err());
+        assert_eq!(
+            worlds.get(child_id),
+            Some(&expected),
+            "全 1 权重必须逐位等于 parent ∘ local"
+        );
+    }
+
+    /// 三个变换权重全 0 ⇒ 完全忽略父变换（world = local）。
+    #[test]
+    fn zero_transform_weights_ignore_parent() {
+        let parent_local = Transform {
+            position: ze_notion::Vec3::new(10.0, 0.0, 0.0),
+            ..Transform::default()
+        };
+        let child_local = transform(1.0, 2.0);
+        let expected = child_local.to_affine3d();
+        let mut world = hecs::World::new();
+        let parent = world.spawn((parent_local,));
+        let parent_id = crate::contract::object_id_of(parent);
+        let child = world.spawn((
+            child_local,
+            Parent(parent_id),
+            ParentInherit {
+                position: 0.0,
+                rotation: 0.0,
+                scale: 0.0,
+                ..ParentInherit::default()
+            },
+        ));
+        let child_id = crate::contract::object_id_of(child);
+
+        let (worlds, _, _) = run_all(world);
+        assert_eq!(
+            worlds.get(child_id),
+            Some(&expected),
+            "三个权重全 0 ⇒ world = local"
+        );
+    }
+
+    /// 位置权重 0.5 ⇒ 平移只继承一半。
+    #[test]
+    fn half_position_weight_halves_translation() {
+        let parent_local = Transform {
+            position: ze_notion::Vec3::new(8.0, 0.0, 0.0),
+            ..Transform::default()
+        };
+        let mut world = hecs::World::new();
+        let parent = world.spawn((parent_local,));
+        let parent_id = crate::contract::object_id_of(parent);
+        let child = world.spawn((
+            Transform::default(),
+            Parent(parent_id),
+            ParentInherit {
+                position: 0.5,
+                rotation: 1.0,
+                scale: 1.0,
+                ..ParentInherit::default()
+            },
+        ));
+        let child_id = crate::contract::object_id_of(child);
+
+        let (worlds, _, _) = run_all(world);
+        let p = worlds.get(child_id).unwrap().apply_point(ze_notion::Vec3::ZERO);
+        assert!((p.x - 4.0).abs() < 1e-5, "x = {}", p.x);
+    }
+
+    #[test]
+    fn world_inherit_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<WorldInherit>();
     }
 }

@@ -22,7 +22,10 @@ use ze_scene_core::object::{
 };
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 use ze_render_ir::{FillSolid, MeasureSpace, Opacity as NativeOpacity, StrokeSolid};
-use ze_scene_contract::{Components, Group as NativeGroup, GroupId as NativeGroupId, Name as NativeName, Parent as NativeParent};
+use ze_scene_contract::{
+    Components, Group as NativeGroup, GroupId as NativeGroupId, Name as NativeName,
+    Parent as NativeParent, ParentInherit as NativeParentInherit,
+};
 
 use crate::content_service::PathStore;
 use crate::RegisterSceneComponent;
@@ -724,9 +727,17 @@ fn scene_parent(pod: &dyn Pod, parent: Parent) -> Handle {
         }
     };
     match resolved {
-        Some(handle) => rec
-            .components
-            .insert(vec![Box::new(NativeParent(handle_ref(handle)))]),
+        Some(handle) => rec.components.insert(vec![
+            Box::new(NativeParent(handle_ref(handle))),
+            Box::new(NativeParentInherit {
+                position: parent.position,
+                rotation: parent.rotation,
+                scale: parent.scale,
+                opacity: parent.opacity,
+                fill: parent.fill,
+                stroke: parent.stroke,
+            }),
+        ]),
         None => rec.components.insert(Vec::new()),
     }
 }

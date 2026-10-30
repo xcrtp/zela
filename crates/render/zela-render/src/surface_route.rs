@@ -23,10 +23,10 @@ use ze_scene_contract::{ObjectId, SceneRead};
 use ze_scene_core::components::{ContentTextureItem, MorphShape, Reveal};
 use ze_scene_core::{
     resolve_surface, Surface, SurfaceError, SurfaceMapping, SurfaceOwner, SurfaceRenderer, Transform,
-    WorldTransforms,
+    WorldInherit, WorldTransforms,
 };
 
-use crate::draw::{apply_opacity, opacity_of, DrawItem, DrawQueue};
+use crate::draw::{apply_inherit, apply_opacity, opacity_of, DrawItem, DrawQueue};
 use crate::draw_queue_3d::MeshDraw;
 use crate::shape_to_mesh::{derive_mesh, ShapeMeshError};
 
@@ -76,6 +76,7 @@ pub(crate) fn try_record_direct<S, A, B>(
     style_component: &B,
     z: Option<ZOrder>,
     worlds: Option<&WorldTransforms>,
+    inherit: Option<&WorldInherit>,
     queue: &mut DrawQueue,
 ) -> bool
 where
@@ -130,7 +131,8 @@ where
     let local_shape = shape_component.to_shape2d(&Transform2D::identity());
     // 1 px = 1 世界单位（与 `derive_mesh` 的 tolerance 同一约定）。
     let mut style = style_component.resolve_style(1.0);
-    apply_opacity(&mut style, opacity_of(scene, id));
+    apply_inherit(&mut style, inherit, id);
+    apply_opacity(&mut style, opacity_of(scene, id, inherit));
 
     let derived = match derive_mesh(&local_shape, &style) {
         Ok(derived) => derived,

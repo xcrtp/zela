@@ -46,7 +46,7 @@ zela-render        渲染管线    三角化 / 合批 / 队列
 | 模块 | 类型 | 说明 |
 |------|------|------|
 | `id` | `ObjectId` | 稳定句柄：`index`（可复用槽位）+ `generation`（代）；`DANGLING` 哨兵；`is_stale(current)` |
-| `relation` | `Parent` / `Children` | 父子关系（组件形态：`Parent` 挂子对象、`Children` 挂父对象）|
+| `relation` | `Parent` / `ParentInherit` / `Children` | 父子关系（组件形态：`Parent` + 继承权重挂子对象、`Children` 挂父对象）|
 | `organize` | `Name` / `Group` / `GroupId` | 组织语义：声明式引用（按名字找对象）+ 分组标签（**只含标识、不含变换**）|
 | `organize` | `Visibility` / `VisibilityTag` / `GroupVisibility` | 「**对谁可见**」（关系而非布尔）：tag 集合（相机 / 组 / 全局）+ 组级开关 |
 | `descriptor` | `Describable` / `StrokeDesc` / `FillDesc` / `MaterialDesc` | 样式描述符体系（增量覆盖）|
@@ -151,6 +151,11 @@ let style = circle.apply(&(
 
 `Parent(pub ObjectId)` 挂子对象、`Children(Vec<ObjectId>)` 挂父对象；`Scene::attach`
 只写子侧的 `Parent`，`Children` 的维护策略由装配层决定（契约层不强制双向同步）。
+
+`ParentInherit` 与 `Parent` 成对出现，携带六个继承权重：`position` / `rotation` /
+`scale` 默认 `1.0`（全量继承父变换），`opacity` / `fill` / `stroke` 默认 `0.0`
+（不继承样式）。缺席同默认值 ⇒ 老场景的世界矩阵与渲染结果不变；派生侧在
+`TransformHierarchySystem` 的同一次父链遍历里产出 `WorldTransforms.inherit()`。
 
 > **S5 已接线**：`TransformHierarchySystem`（`zela-scene`）每帧按拓扑序累乘出
 > `WorldTransforms`（S1 起存 **3D 世界矩阵 `Transform3D`**，2D 消费方经 `get2d`

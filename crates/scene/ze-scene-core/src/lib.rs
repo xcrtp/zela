@@ -49,6 +49,8 @@ pub mod transform;
 pub mod types;
 /// 每帧派生的世界矩阵容器（生产在 ECS 层，消费在渲染层）。
 pub mod world_transforms;
+/// 每帧派生的样式继承结果（与 `WorldTransforms` 同批生产）。
+pub mod world_inherit;
 
 // 让 `object/*.rs` 内部的 `crate::{affine, camera, …}` 继续解析（见文件头）。
 pub use object::{affine, axes, camera, content_texture, graph, layer, placement, primitives, zorder};
@@ -69,4 +71,5 @@ pub use time_state::TimeState;
 pub use transform::{Transform2D, Transform2DInto};
 pub use types::{Color32, Rect2D, Vec2, Vec3, Vec4};
 pub use world_transforms::WorldTransforms;
+pub use world_inherit::WorldInherit;
 

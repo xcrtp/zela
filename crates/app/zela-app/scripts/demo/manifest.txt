@@ -28,19 +28,19 @@
 # 条数按**字形**计（如 fourier 63 → 50 个对象），payload 随之变化 —— 属预期。
 #
 # id            title              script          payload-hash
-fourier         傅里叶级数展开      fourier.lua     5bb6eda6365137b795b99a9985c1c469256135ffcabd7c0cc0802d9d8b5c1d47
+fourier         傅里叶级数展开      fourier.lua     694b232a8404248cd3089116f80ca3d6fbd672bfcebc775eed50ad97d0b6edcb
 storyboard      分镜演示            storyboard.lua  450a9288caebc746c5c3f11f34c0bab6fc8256fbc120e575f5671b8c0afad65f
 demo3d          3D 场景             demo3d.lua      97abe197e27a4aa2f0db7d7a0bf2b8c365529b61bf674f7b74c19bc73cd99f24
 fusion          融合演示(双面+透明) fusion.lua      20f7eb9909497901057b83f4effed8d937b279c8479c2d14d58aa6366425b3ed
 pbr_materials   PBR材质画廊        pbr_materials.lua 183501ee94e9959417ad1836e8e1dfa39ed2603cb75164e52ad46de463bcddea
 pbr_lights      PBR光照实验室      pbr_lights.lua   ef370699810032cc94050fdddb18e086c19d7072f3500a901bab2c8f8878130f
 pbr_scene       PBR材质秀          pbr_scene.lua    087be064edfe63dd3f9e453323e798e00c0405f6bea26a3d7fdf8de3d8ab51fb
-pendulum        钟摆动画            pendulum.lua    b2846b58a7bc5dc1dfe3477ebe7069bc2294b24d695f334dddcfbc297dbe9f07
-orbit           公转行星            orbit.lua       84427b0482899e7af6a19c6cf68165255289be863aabec46e2073f1ff594ba6b
+pendulum        钟摆动画            pendulum.lua    b80a49c04e920d839465dd54e4ba758230c84fb465a9afdcb4ad83b1f1f06a82
+orbit           公转行星            orbit.lua       41adb10f221e9d9a8d023081a1749c0dbefa89ac3641ddd9b3809be3116fbee2
 spring          弹跳小球            spring.lua      540f7ff5530a1e8c04e2276178fd8d3285875257fa67e99391a5763b3fd6f7e8
-surface_matrix  Surface能力矩阵      surface_matrix.lua  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
-surface_matrix_js  Surface能力矩阵(JS) surface_matrix.js  bc132f3424f92c12b77f57b00e6eb39898adbb93d09d39c617e961a6bcbd9b51
-atlas           2D纹理进3D           atlas.lua       826a61d598b18a7395d86b7842a77754d5c2240b7e57e7d7798a46d04e80a30a
+surface_matrix  Surface能力矩阵      surface_matrix.lua  098aff13a8e6f39cba37ba5b4bcdb00ef409d5263b4293b57dc2390ed54a3ab9
+surface_matrix_js  Surface能力矩阵(JS) surface_matrix.js  098aff13a8e6f39cba37ba5b4bcdb00ef409d5263b4293b57dc2390ed54a3ab9
+atlas           2D纹理进3D           atlas.lua       96b8de5d3156133bc22023eb78931f1a0a4c0e37c2e6acecf36df044815e3c4d
 vector_paths    矢量后端作品         vector_paths.lua b2f6f4f8eeded354294e64bb8111f49817031c523efa0946579dcc7458605b9c
 capability_gaps 能力缺口补齐        capability_gaps.lua ab35c0c5598547a5b125f04fd29ffcf408ead4f49edd4ab645d691c373bfeba6
 shaded_meshes   3D网格着色栈        shaded_meshes.lua 7d7081ba5e06f7ff9ec51eba706fd7d7cd7c592a05daed2dd31029f4f65bd40b
@@ -65,4 +65,6 @@ sine_trace      小球画正弦          sine_trace.lua      03a4a6dbd68a51f517b
 cap_codegen     着色codegen         cap_codegen.lua     6a54e4d672a8e8c5f576464c1382f0c2b7cdc53c1103f3c86dc80ea0e7d262b0
 # 阶段 7（第 BB 批）验收作品：`Stroke.width` 通道可动画（新算子 abs / pow + 糖）。
 cap_stroke_width 线宽通道           cap_stroke_width.lua 57a6d2541657778f2ae4457e911e00d2e717614fa143638d2ba1d0926e9fc1c2
+# 第 BC 批验收作品：`Parent` 六个继承权重通道（变换三维 + 样式三维）。
+cap_parent_inherit Parent继承        cap_parent_inherit.lua 43d03caa4dfa772ff3640164455127fce2432af68bec048d0d57c27ca51137c0
 

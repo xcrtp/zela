@@ -24,6 +24,54 @@ impl Parent {
     }
 }
 
+/// 父对象的**多维度继承权重**（与 [`Parent`] 成对出现）。
+///
+/// - 变换三维默认 `1.0`（全量继承，等于旧行为）；
+/// - 样式三维默认 `0.0`（不继承，等于旧行为）。
+///
+/// 缺席（老产物 / 未写这几个字段）按 [`ParentInherit::default`] 处理。
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ParentInherit {
+    pub position: f32,
+    pub rotation: f32,
+    pub scale: f32,
+    pub opacity: f32,
+    pub fill: f32,
+    pub stroke: f32,
+}
+
+impl Default for ParentInherit {
+    fn default() -> Self {
+        Self {
+            position: 1.0,
+            rotation: 1.0,
+            scale: 1.0,
+            opacity: 0.0,
+            fill: 0.0,
+            stroke: 0.0,
+        }
+    }
+}
+
+impl ParentInherit {
+    /// 全量继承变换、不继承样式（旧行为）。
+    pub const fn none() -> Self {
+        Self {
+            position: 1.0,
+            rotation: 1.0,
+            scale: 1.0,
+            opacity: 0.0,
+            fill: 0.0,
+            stroke: 0.0,
+        }
+    }
+
+    /// 三个变换权重全为 `1.0` ⇒ 世界矩阵可整份复制（逐位等于旧行为）。
+    pub fn full_transform(&self) -> bool {
+        self.position == 1.0 && self.rotation == 1.0 && self.scale == 1.0
+    }
+}
+
 /// 子对象列表（组件形态：挂在**父**对象上）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Children(pub Vec<ObjectId>);

@@ -11,14 +11,14 @@
 - 路径：`crates/ze/pod/ze-pod-binding`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-core`
 - 被依赖（下游）：`ze-pod`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-pod-tests`、`zela-app`、`zela-commands`
-- 源文件：5 个 · 720 行
+- 源文件：5 个 · 733 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/codec.rs` | 56 | 值与语言对象的双向转换 + 一次调用的通用编排。 |
-| `src/defaults.rs` | 132 | 构造器参数的**默认值白名单**（提案 #6 C）。 |
+| `src/defaults.rs` | 145 | 构造器参数的**默认值白名单**（提案 #6 C）。 |
 | `src/docs.rs` | 351 | **语言无关**的文档导出：JSON 是唯一来源。 |
 | `src/lib.rs` | 56 | ze-pod-binding：**语言无关**的绑定驱动。 |
 | `src/plan.rs` | 125 | 能力计划：把 `C::calls()` 摊平成"函数 + 可达类型"，供任意语言适配器消费。 |

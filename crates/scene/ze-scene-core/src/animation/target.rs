@@ -264,6 +264,57 @@ scalar_spec!(
     ze_render_ir::CurveWindow,
     hi
 );
+// 第 BC 批：`Parent` 的六个继承权重都是可动画通道（连同变换 / 透明度 / 颜色
+// 一起做连续继承，见 `ParentInherit`）。存储组件是契约层的 `ParentInherit`，
+// 脚本侧挂到 `Parent` 构造器上（组件名同源，无需 `CHANNEL_HOMES` 映射）。
+scalar_spec!(
+    PARENT_POSITION,
+    "Parent.position",
+    "Parent.position",
+    "Parent",
+    ze_scene_contract::ParentInherit,
+    position
+);
+scalar_spec!(
+    PARENT_ROTATION,
+    "Parent.rotation",
+    "Parent.rotation",
+    "Parent",
+    ze_scene_contract::ParentInherit,
+    rotation
+);
+scalar_spec!(
+    PARENT_SCALE,
+    "Parent.scale",
+    "Parent.scale",
+    "Parent",
+    ze_scene_contract::ParentInherit,
+    scale
+);
+scalar_spec!(
+    PARENT_OPACITY,
+    "Parent.opacity",
+    "Parent.opacity",
+    "Parent",
+    ze_scene_contract::ParentInherit,
+    opacity
+);
+scalar_spec!(
+    PARENT_FILL,
+    "Parent.fill",
+    "Parent.fill",
+    "Parent",
+    ze_scene_contract::ParentInherit,
+    fill
+);
+scalar_spec!(
+    PARENT_STROKE,
+    "Parent.stroke",
+    "Parent.stroke",
+    "Parent",
+    ze_scene_contract::ParentInherit,
+    stroke
+);
 
 /// 旧名 `Camera2DFraming`：`Scalar → scale`、`Vec2 → center`（一个 target 两种值型）。
 ///
@@ -643,6 +694,12 @@ make_target!(make_curve_window_lo, CURVE_WINDOW_LO);
 make_target!(make_curve_window_hi, CURVE_WINDOW_HI);
 make_target!(make_gradient_from, GRADIENT_FROM);
 make_target!(make_gradient_to, GRADIENT_TO);
+make_target!(make_parent_position, PARENT_POSITION);
+make_target!(make_parent_rotation, PARENT_ROTATION);
+make_target!(make_parent_scale, PARENT_SCALE);
+make_target!(make_parent_opacity, PARENT_OPACITY);
+make_target!(make_parent_fill, PARENT_FILL);
+make_target!(make_parent_stroke, PARENT_STROKE);
 
 /// 表项：一个字段规格 + 它的构造器。
 #[derive(Clone, Copy)]
@@ -713,6 +770,31 @@ pub const TARGETS: &[TargetEntry] = &[
     TargetEntry {
         spec: &GRADIENT_TO,
         make: make_gradient_to,
+    },
+    // 第 BC 批：`Parent` 六个继承权重通道。
+    TargetEntry {
+        spec: &PARENT_POSITION,
+        make: make_parent_position,
+    },
+    TargetEntry {
+        spec: &PARENT_ROTATION,
+        make: make_parent_rotation,
+    },
+    TargetEntry {
+        spec: &PARENT_SCALE,
+        make: make_parent_scale,
+    },
+    TargetEntry {
+        spec: &PARENT_OPACITY,
+        make: make_parent_opacity,
+    },
+    TargetEntry {
+        spec: &PARENT_FILL,
+        make: make_parent_fill,
+    },
+    TargetEntry {
+        spec: &PARENT_STROKE,
+        make: make_parent_stroke,
     },
     // 派生组件通道（F 批）：`#[derive(Channels)]` 生成的 const / make fn 逐个登记。
     // （stable Rust 尚无 `[..const_array]` 数组展开语法，逐项与 `..CHANNELS` spread 等价；

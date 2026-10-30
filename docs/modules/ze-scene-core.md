@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：41 个 · 9724 行
+- 源文件：42 个 · 9911 行
 
 ### 文件清单
 
@@ -20,7 +20,7 @@
 | `src/animation/binding.rs` | 293 | — |
 | `src/animation/mod.rs` | 27 | — |
 | `src/animation/predicate.rs` | 729 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
-| `src/animation/target.rs` | 1154 | — |
+| `src/animation/target.rs` | 1236 | — |
 | `src/animation/timeline.rs` | 601 | — |
 | `src/bounds.rs` | 197 | — |
 | `src/camera_input.rs` | 160 | — |
@@ -34,7 +34,7 @@
 | `src/domain/mod.rs` | 24 | — |
 | `src/domain/view.rs` | 263 | — |
 | `src/domain/view_rect.rs` | 38 | — |
-| `src/lib.rs` | 72 | — |
+| `src/lib.rs` | 75 | — |
 | `src/math_pod.rs` | 107 | — |
 | `src/mesh_primitives/cube.rs` | 196 | — |
 | `src/mesh_primitives/parametric_surface.rs` | 193 | — |
@@ -57,7 +57,8 @@
 | `src/time_state.rs` | 34 | — |
 | `src/transform.rs` | 221 | — |
 | `src/types.rs` | 14 | — |
-| `src/world_transforms.rs` | 55 | — |
+| `src/world_inherit.rs` | 84 | — |
+| `src/world_transforms.rs` | 73 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -92,6 +93,8 @@ graph LR
     f27["src/scene_script.rs"]
     f28["src/surface.rs"]
     f10["src/types.rs"]
+    f30["src/world_inherit.rs"]
+    f29["src/world_transforms.rs"]
     f0 --> f1
     f0 --> f2
     f0 --> f3
@@ -129,6 +132,7 @@ graph LR
     f27 --> f28
     f28 --> f8
     f28 --> f15
+    f29 --> f30
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -263,6 +267,7 @@ graph LR
 | `src/time_state.rs` | `pub struct TimeState` |
 | `src/transform.rs` | `pub trait Transform2D` |
 | `src/transform.rs` | `pub trait Transform2DInto` |
+| `src/world_inherit.rs` | `pub struct WorldInherit` |
 | `src/world_transforms.rs` | `pub struct WorldTransforms` |
 <!-- AUTO:END -->
 
