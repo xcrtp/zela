@@ -11,21 +11,21 @@
 - 路径：`crates/app/zela-app`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-macro`、`ze-notion`、`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-prerender`、`ze-render-ir`、`ze-scene-core`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`、`zela-commands`、`zela-gui`
-- 源文件：10 个 · 7800 行
+- 源文件：10 个 · 7964 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/assembly.rs` | 845 | — |
+| `src/assembly.rs` | 955 | — |
 | `src/bin/zela-parity.rs` | 788 | `zela-parity`：**作品级**双后端对拍（B13 Step 1/2）。 |
 | `src/bin/zela-render.rs` | 687 | `zela-render`：headless 薄壳 —— 脚本直接渲到视频。 |
 | `src/bin/zela-verify.rs` | 719 | `zela-verify`：**批量**对拍入口（B9 Step 3）。 |
-| `src/demos.rs` | 141 | 内置作品清单（GUI 的"作品"下拉；默认加载**全部** demo）。 |
+| `src/demos.rs` | 142 | 内置作品清单（GUI 的"作品"下拉；默认加载**全部** demo）。 |
 | `src/export.rs` | 467 | — |
 | `src/formula.rs` | 585 | — |
 | `src/frame_loop.rs` | 739 | 帧循环（B9 Step 3）：`zela-render` 与 `zela-verify` 共用的**唯一**渲染循环。 |
-| `src/lib.rs` | 2688 | — |
+| `src/lib.rs` | 2741 | — |
 | `src/python_env.rs` | 141 | 内嵌 Python 的**前置探测**（`feature = "python"`）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

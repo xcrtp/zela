@@ -561,6 +561,24 @@ impl SceneScript {
         components.push(Box::new(paint));
         Ok(())
     }
+
+    /// **动画层阶段 1（plot）**：给对象挂一条**装配期采样**出来的折线（完整可见）。
+    ///
+    /// 与脚本手写 `Polyline` 走同一条路径（`Path2D::from_polyline` → `Reveal::visible`），
+    /// 因此渲染侧不需要新图元；`closed` 恒为 `false`（函数图像是开放折线）。
+    pub fn attach_polyline(&mut self, object: Handle, points: &[(f32, f32)]) -> Result<(), String> {
+        let vertices: Vec<ze_notion::Vec2> = points
+            .iter()
+            .map(|&(x, y)| ze_notion::Vec2::new(x, y))
+            .collect();
+        let path = ze_notion::Path2D::from_polyline(&vertices, false);
+        let components = self
+            .creates
+            .get_mut(object.0 as usize)
+            .ok_or_else(|| format!("函数图像的对象句柄无效：{}", object.0))?;
+        components.push(Box::new(crate::components::Reveal::visible(path)));
+        Ok(())
+    }
 }
 
 impl serde::Serialize for SceneScript {

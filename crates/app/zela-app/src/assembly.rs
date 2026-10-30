@@ -182,6 +182,7 @@ impl PodAssembly {
         let _ = self.expr.take_bindings();
         let _ = self.expr.take_bind_each();
         let _ = self.expr.take_shaders();
+        let _ = self.expr.take_plots();
     }
 
     /// 把脚本登记的表达式动画并入成品脚本（S3 / 提案 #6 B）。
@@ -299,6 +300,8 @@ impl PodAssembly {
                 })?;
         }
         self.expand_bind_each(&mut script, bind_each)?;
+        // **动画层阶段 1（plot）**：装配期采样成折线（一次性，不进运行期）。
+        self.sample_plots(&mut script, self.expr.take_plots())?;
         // **阶段 2（着色 codegen）**：脚本登记的 `expr.shader` 挂成对象组件（装饰性）。
         for pending in self.expr.take_shaders() {
             let object = self.scene.object_handle(&pending.object).ok_or_else(|| {
@@ -340,6 +343,63 @@ impl PodAssembly {
                 })?;
         }
         Ok(script)
+    }
+
+    /// **动画层阶段 1（plot）**：装配期逐点求值，把结果挂成对象的折线。
+    ///
+    /// 采样只发生一次（脚本结束后），参数（`lo` / `hi` / `samples`）随脚本固定 ⇒
+    /// 运行期每帧不重算。自变量由 [`PlotMono::x_at`] 给出（与运行期语义同一份实现）。
+    fn sample_plots(
+        &self,
+        script: &mut SceneScript,
+        pendings: Vec<ze_pod_func::PendingPlot>,
+    ) -> Result<(), BrokerError> {
+        for pending in pendings {
+            let object = self.scene.object_handle(&pending.object).ok_or_else(|| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "函数图像的对象句柄无效：{}",
+                        pending.object
+                    )),
+                }
+            })?;
+            let program = ze_comb::CompiledExpr::compile(&pending.y).map_err(|error| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!("函数图像的表达式非法：{error}")),
+                }
+            })?;
+            let mono = PlotMono {
+                lo: pending.lo,
+                hi: pending.hi,
+                samples: pending.samples,
+            };
+            let values = program
+                .eval_elements(&mono, pending.samples)
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!("函数图像采样失败：{error}")),
+                })?;
+            let mut points = Vec::with_capacity(values.len());
+            for (index, value) in values.items().iter().enumerate() {
+                let y = value.as_f64().ok_or_else(|| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "函数图像第 {index} 个采样点不是数值（实际 {}）",
+                        value.kind()
+                    )),
+                })?;
+                points.push((mono.x_at(index as u32) as f32, y as f32));
+            }
+            script
+                .attach_polyline(object, &points)
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(error),
+                })?;
+        }
+        Ok(())
     }
 
     /// **B4 Query**：把批量绑定在**装配期**展开成 N 条具体绑定。
@@ -453,6 +513,56 @@ impl PodAssembly {
             );
         }
         Ok(())
+    }
+}
+
+/// **动画层阶段 1（plot）**：装配期采样单子。
+///
+/// 只提供一条逐元素通道 `plot.x`（第 `i` 个采样点的自变量）；其余通道**显式失败**
+/// —— 采样发生在装配期，`time` / 组件字段此刻没有值。
+struct PlotMono {
+    lo: f64,
+    hi: f64,
+    samples: u32,
+}
+
+impl PlotMono {
+    /// 第 `element` 个采样点的自变量：`lo + (hi - lo) * i / (samples - 1)`。
+    fn x_at(&self, element: u32) -> f64 {
+        let u = f64::from(element) / f64::from(self.samples - 1);
+        self.lo + (self.hi - self.lo) * u
+    }
+}
+
+impl ze_comb::Mono for PlotMono {
+    fn read(
+        &self,
+        channel: &ze_comb::ChannelRef,
+    ) -> Result<ze_comb::Value, ze_comb::EvalError> {
+        Err(ze_comb::EvalError::MissingChannel {
+            channel: channel.clone(),
+        })
+    }
+
+    fn call(
+        &self,
+        op: &ze_comb::OpRef,
+        args: &[ze_comb::Value],
+    ) -> Result<ze_comb::Value, ze_comb::EvalError> {
+        ze_pod_func::eval_op(op, args)
+    }
+
+    fn read_element(
+        &self,
+        channel: &ze_comb::ChannelRef,
+        element: u32,
+    ) -> Result<ze_comb::Value, ze_comb::EvalError> {
+        match (channel.namespace.as_str(), channel.name.as_str()) {
+            ("plot", "x") => Ok(ze_comb::Value::f64(self.x_at(element))),
+            _ => Err(ze_comb::EvalError::MissingElementChannel {
+                channel: channel.clone(),
+            }),
+        }
     }
 }
 

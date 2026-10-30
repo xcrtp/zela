@@ -1846,7 +1846,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## AD.", "## AE.", "## AF.", "## AG.", "## AH.", "## AI.", "## AJ.", "## AK.",
         "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.", "## AR.", "## AS.", "## AT.",
         "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.", "## BB.",
-        "## BC.", "## BD.",
+        "## BC.", "## BD.", "## BE.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1908,7 +1908,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("BA-")
                     || id.starts_with("BB-")
                     || id.starts_with("BC-")
-                    || id.starts_with("BD-"));
+                    || id.starts_with("BD-")
+                    || id.starts_with("BE-"));
             if !is_item {
                 continue;
             }

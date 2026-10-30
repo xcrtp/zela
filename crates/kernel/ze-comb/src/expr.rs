@@ -525,6 +525,8 @@ impl ChannelRef {
             "uv" | "zela.vertex" => ChannelClass::Element,
             // **阶段 2**：着色内建（对象 / 片元属性）——由后端提供，不进 uniform。
             "zela.shader" => ChannelClass::Element,
+            // **动画层阶段 1（plot）**：采样下标给出自变量，装配期逐元素求值。
+            "plot" => ChannelClass::Element,
             _ => ChannelClass::HostState,
         }
     }

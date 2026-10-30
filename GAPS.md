@@ -1503,11 +1503,31 @@
 
 ---
 
+## BE. 动画层补全 · 阶段 1（plot 采样，2026-10-30）
+
+> 计划《动画层补全_执行计划》阶段 1。定位：把 AU 阶段 5 建好的逐元素求值
+> （`CompiledExpr::eval_elements` + `Mono::read_element`）接出第一个真实用途 ——
+> **函数图像在装配期采样成折线**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BE-01 | 能力形态：计划写的是 `ze-scene-api` 的 `Plot` 组件，实际改为 `expr.plot` | 表达式 / 场景装配 | **已关闭（偏差）** | 新增 `zela.math::plot { object, lo, hi, samples, y }`：脚本先 `spawn{ Stroke{…} }`，再由宿主逐点求值并在 `SceneScript::attach_polyline` 挂成 `Reveal::visible`（与手写 `Polyline` 同一条 `Path2D::from_polyline` 路径）。理由：`Plot` 组件的消费端（采样）只能在宿主侧做，做成组件会多一层"组件→采样器"的间接；改成登记式与 `expr.shader` 同构，且不需要新图元 |
+| BE-02 | 自变量通道：`plot.x` 是逐元素通道 | kernel / 表达式 | **已关闭** | `ChannelRef::class` 把 namespace `plot` 归入 `ChannelClass::Element`；`expr.plot_x()` 产出 `("plot","x", Number)` 叶子，求值时经 `Mono::read_element` 拿 `lo + (hi-lo)*i/(samples-1)` |
+| BE-03 | `zela.math` 签名增至 `@23`，payload 随之变化 | Pod / 产物 | **已关闭** | `LIBRARY_VERSION` 22→23、`MATH_API_VERSION` 22→23、指纹更新；`cap_plot` 之外 **19 件含表达式的作品** payload 重录（像素不变）；`zela-authored` 的两处版本常量同步 |
+| BE-04 | 与手写折线**逐位相同**（阶段判据 1） | 装配 / 测试 | **已关闭** | 用例 `plot_sampling_matches_a_handwritten_polyline`：同一函数、同一结合顺序（`K*(x*x)+B`）、同一采样公式 ⇒ 两条 `Path2D.commands` 相等（不是容差比较） |
+| BE-05 | `samples` 装配期固定、运行期不重采样（阶段判据 2） | 装配 | **已关闭** | 采样发生在 `PodAssembly::sample_plots`（脚本结束后一次），产物里只有顶点；`samples < 2` / 纵坐标非 Number / 表达式读了 `plot.x` 之外的通道 都是装配期显式失败 |
+| BE-06 | 阶段 0 漏改 Python 侧：`fourier.py` 的 `f32` 糖仍产 `RoundF32` | 脚本 / 语言对拍 | **已关闭** | `python_fourier_matches_lua` 因此红（Lua 侧已切 `narrow_f32`）；改 `expr.NarrowF32` 后两侧逐项相等。教训同 BD-02：改名必须两语言一起扫 |
+
+**BE 段小计**：已关闭 6。
+> 本段读数（`cargo verify` 全量）：demo 31/31 · 覆盖 70/70（豁免 0）· 结构 22 件一致 · 像素 36 项 ok 36 / DIFF 0。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BD**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BD 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BE**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BE 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

@@ -2365,6 +2365,59 @@ expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
             "predicate + Hold 不再需要重放"
         );
     }
+
+    /// **动画层阶段 1（plot）**：`expr.plot` 采样出的折线与手写 `Polyline` **逐位相同**。
+    ///
+    /// 两侧的顶点算式与结合顺序一致（`K * (x * x) + B`），采样点 `x` 的公式同源
+    /// （`lo + (hi - lo) * i / (samples - 1)`）⇒ 差别只能是实现，不是容差。
+    #[test]
+    fn plot_sampling_matches_a_handwritten_polyline() {
+        use ze_prerender::placeholder_engine;
+
+        let assembly =
+            crate::assembly::assemble(std::sync::Arc::new(placeholder_engine())).expect("装配成功");
+        let script = assembly
+            .run_script(
+                r#"
+                scene.spawn({ Camera2D { scale = 40.0 } })
+                local N = 9
+                local pts = {}
+                for i = 0, N - 1 do
+                    local x = -2.0 + 4.0 * (i / (N - 1))
+                    pts[#pts + 1] = scene.vec2(x, 0.5 * (x * x) - 1.0)
+                end
+                scene.spawn({ Polyline { points = pts, closed = false } })
+                local curve = scene.spawn({
+                    Stroke { width = 2.0, color = scene.rgba(255, 255, 255, 255) },
+                })
+                expr.plot {
+                    object = curve,
+                    lo = -2.0,
+                    hi = 2.0,
+                    samples = N,
+                    y = expr.add {
+                        a = expr.scale { k = 0.5, of = expr.mul { a = expr.plot_x(), b = expr.plot_x() } },
+                        b = expr.pure(-1.0),
+                    },
+                }
+                "#,
+            )
+            .expect("脚本执行成功");
+
+        let mut scene = zela_scene_ecs::scene::Scene::new();
+        script.commit(&mut scene).expect("commit 成功");
+        let world = scene.into_world();
+        let paths: Vec<ze_notion::Path2D> = world
+            .query::<&ze_scene_core::components::Reveal>()
+            .iter()
+            .map(|reveal| reveal.path.clone())
+            .collect();
+        assert_eq!(paths.len(), 2, "手写折线 + plot 折线");
+        assert_eq!(
+            paths[0].commands, paths[1].commands,
+            "plot 的顶点必须与手写 Polyline 逐位相同"
+        );
+    }
 }
 
 /// **T1 / T2 / T3 的 GPU 像素级验收**（计划 §2.4 / §3.4 / §4.4）。

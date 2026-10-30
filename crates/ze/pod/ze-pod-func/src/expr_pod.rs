@@ -32,7 +32,7 @@ use crate::api::{
     ComponentSpec, CosSpec, DistanceSpec, EqSpec, FractSpec, GeSpec, GtSpec, LeSpec, LengthSpec,
     LtSpec, MixSpec, MulSpec, SmoothstepSpec,
     BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
-    PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
+    PlotSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
     ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
     // 第 BB 批（算子扩充）：WGSL 标准库算子
@@ -69,7 +69,8 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `log` / `log2` / `pow` / `tan` / `asin` / `acos` / `atan` / `atan2` / `degrees` /
 /// `radians` / `step` / `dot` / `cross` / `reflect` / `faceforward`，并把 `round_f32`
 /// 的新名字 `narrow_f32` 一并登记（旧名保留）。
-pub const LIBRARY_VERSION: &str = "22";
+/// `23`：**动画层阶段 1** 新增 `plot_x`（逐元素自变量通道）与 `plot`（装配期采样成折线）。
+pub const LIBRARY_VERSION: &str = "23";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -138,6 +139,20 @@ pub struct PendingShader {
     pub fragment: bool,
 }
 
+/// **动画层阶段 1**：一条待采样的函数图像（宿主在脚本结束后逐点求值并挂成折线）。
+#[derive(Clone, Debug)]
+pub struct PendingPlot {
+    /// 场景对象**句柄**（pod 侧；装配期转成本脚本内的局部句柄）。
+    pub object: Handle,
+    /// 定义域。
+    pub lo: f64,
+    pub hi: f64,
+    /// 采样点数（装配期固定）。
+    pub samples: u32,
+    /// 纵坐标表达式（自变量是 `plot.x`）。
+    pub y: Expr,
+}
+
 /// 表达式 Pod。
 pub struct ExprPod {
     id: PodId,
@@ -149,6 +164,8 @@ pub struct ExprPod {
     shaders: Mutex<Vec<PendingShader>>,
     /// 脚本登记的**批量绑定**（宿主在装配期展开成 N 条具体绑定）。
     bind_each: Mutex<Vec<PendingBindEach>>,
+    /// 脚本登记的**函数图像采样**（宿主在脚本结束后一次算完并挂成折线）。
+    plots: Mutex<Vec<PendingPlot>>,
     /// 装配期错误（未知通道 / 未知算子 / 非法句柄）—— 宿主取走时显式失败。
     errors: Mutex<Vec<String>>,
 }
@@ -387,6 +404,14 @@ impl ExprPod {
         registry.register_fn0_named("zela.math::pos2", HANDLE, pos2_ctor);
         registry.register_fn0_named("zela.math::local", HANDLE, local_ctor);
         registry.register_fn0_named("zela.math::uv", HANDLE, uv_ctor);
+        // **动画层阶段 1**：函数图像（逐元素自变量 + 装配期采样）。
+        registry.register_fn0_named("zela.math::plot_x", HANDLE, plot_x_ctor);
+        registry.register_fn1_named::<PlotSpec, ()>(
+            "zela.math::plot",
+            "zela.math.Plot",
+            "()",
+            plot,
+        );
         // B4 Query：装配期展开的批量绑定 + `it` 占位读。
         registry.register_fn1_named::<ChannelSpec, Handle>(
             "zela.math::query_self",
@@ -457,6 +482,7 @@ impl ExprPod {
             bindings: Mutex::new(Vec::new()),
             shaders: Mutex::new(Vec::new()),
             bind_each: Mutex::new(Vec::new()),
+            plots: Mutex::new(Vec::new()),
             errors: Mutex::new(Vec::new()),
         }
     }
@@ -490,6 +516,16 @@ impl ExprPod {
                 .bind_each
                 .lock()
                 .expect("批量绑定表只在持有期间被 panic 毒化"),
+        )
+    }
+
+    /// 取走本轮登记的**函数图像**（装配期逐点采样用）。
+    pub fn take_plots(&self) -> Vec<PendingPlot> {
+        std::mem::take(
+            &mut *self
+                .plots
+                .lock()
+                .expect("函数图像表只在持有期间被 panic 毒化"),
         )
     }
 
@@ -1429,6 +1465,109 @@ fn uv_ctor(pod: &dyn Pod) -> Handle {
 fn shader_builtin(pod: &dyn Pod, name: &str) -> Handle {
     let channel = ChannelRef::new("zela.shader", name).with_type(ChannelType::Vec2);
     expr_pod(pod).intern(Expr::channel(channel))
+}
+
+/// **动画层阶段 1**：`plot_x()` —— 采样点的自变量（逐元素通道，装配期由宿主给值）。
+fn plot_x_ctor(pod: &dyn Pod) -> Handle {
+    let channel = ChannelRef::new("plot", "x").with_type(ChannelType::Number);
+    expr_pod(pod).intern(Expr::channel(channel))
+}
+
+/// **动画层阶段 1**：`plot { object, lo, hi, samples, y }` —— 登记装配期采样。
+///
+/// 校验三件事（都在装配期显式失败）：
+/// 1. 表达式只读 `plot.x`（采样发生在装配期 ⇒ `time` / 组件字段没有值）；
+/// 2. 根类型是 `Number`（`plot` 的纵坐标是标量）；
+/// 3. `samples ≥ 2`（`i / (samples - 1)` 需要两个端点）。
+fn plot(pod: &dyn Pod, spec: PlotSpec) {
+    let this = expr_pod(pod);
+    let expr = match this.tree(spec.y) {
+        Ok(expr) => expr,
+        Err(error) => {
+            push_binding_error(this, format!("函数图像的表达式句柄无效：{error}"));
+            return;
+        }
+    };
+    if let Err(message) = CompiledExpr::compile(&expr) {
+        push_binding_error(this, format!("函数图像 `{}` 非法：{message}", spec.object));
+        return;
+    }
+    if let Err(message) = validate_plot_channels(&expr) {
+        push_binding_error(this, format!("函数图像 `{}` 非法：{message}", spec.object));
+        return;
+    }
+    match infer_root(&expr) {
+        Ok(ChannelType::Number) => {}
+        Ok(other) => {
+            push_binding_error(
+                this,
+                format!(
+                    "函数图像 `{}` 的纵坐标必须是 Number，实际 {}",
+                    spec.object,
+                    other.name()
+                ),
+            );
+            return;
+        }
+        Err(error) => {
+            push_binding_error(
+                this,
+                format!("函数图像 `{}` 类型检查失败：{error}", spec.object),
+            );
+            return;
+        }
+    }
+    if spec.samples < 2 {
+        push_binding_error(
+            this,
+            format!(
+                "函数图像 `{}` 的采样点数必须 ≥ 2（当前 {}）",
+                spec.object, spec.samples
+            ),
+        );
+        return;
+    }
+    this.plots
+        .lock()
+        .expect("函数图像表未被毒化")
+        .push(PendingPlot {
+            object: spec.object,
+            lo: spec.lo,
+            hi: spec.hi,
+            samples: spec.samples,
+            y: expr,
+        });
+}
+
+/// 采样在装配期发生 ⇒ 表达式里只有 `plot.x` 有值（其它通道没有注入者）。
+fn validate_plot_channels(expr: &Expr) -> Result<(), String> {
+    struct Check;
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Check {
+        type Error = String;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, String> {
+            if let Some(channel) = expr.node.channel() {
+                if channel.namespace != "plot" || channel.name != "x" {
+                    return Err(format!(
+                        "通道 `{channel}` 在装配期采样里没有值（只有 `plot.x` 可以读）"
+                    ));
+                }
+            }
+            if let Some((op, _)) = expr.node.call() {
+                if !crate::ops::is_known(op) {
+                    return Err(format!("未知算子 `{op}`"));
+                }
+            }
+            Ok(true)
+        }
+    }
+
+    expr.walk(&mut Check)
 }
 
 fn bind(pod: &dyn Pod, spec: BindSpec) {

@@ -31,13 +31,14 @@ pub mod sugar;
 pub use api::{
     AddSpec, AndSpec, BindEachSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec,
     EqSpec, ExistsSpec, GeSpec, GtSpec, LeSpec, LtSpec, METHOD_SIGNATURES, MathApi, MethodCallSpec,
-    MulSpec, NatRecSpec, NeSpec, NotSpec, OrSpec, PredicateSpec, ResetSpec, SUGAR_API_FINGERPRINT,
-    SUGAR_API_VERSION, ScaleSpec, ShaderSpec, SinSpec, SugarApi, SumSpec, method_signature,
+    MulSpec, NatRecSpec, NeSpec, NotSpec, OrSpec, PlotSpec, PredicateSpec, ResetSpec,
+    SUGAR_API_FINGERPRINT, SUGAR_API_VERSION, ScaleSpec, ShaderSpec, SinSpec, SugarApi, SumSpec,
+    method_signature,
 };
 pub use sugar::{SUGAR, SugarDoc};
 pub use expr_pod::{
-    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBindEach, PendingBinding, PendingShader,
-    QUERY_SELF_OBJECT, SCENE_NAMESPACE,
+    ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBindEach, PendingBinding, PendingPlot,
+    PendingShader, QUERY_SELF_OBJECT, SCENE_NAMESPACE,
 };
 pub use infer::{
     Inference, PointwiseReport, TypeError, infer, infer_full, infer_pointwise, infer_predicate,

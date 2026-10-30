@@ -184,6 +184,26 @@ pub struct ShaderSpec {
     pub root: Handle,
 }
 
+/// **动画层阶段 1**：`plot { object, lo, hi, samples, y }` —— 装配期采样成折线。
+///
+/// `y` 是**闭**表达式（没有 lambda），自变量从通道 `plot.x` 读：第 `i` 个采样点
+/// `x = lo + (hi - lo) * i / (samples - 1)`。采样在装配期一次完成（`eval_elements`），
+/// 结果挂成对象的 `Reveal` 折线 —— 与手写 `Polyline` 同一条渲染路径。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Plot")]
+pub struct PlotSpec {
+    /// 目标对象**句柄**（先 `scene.spawn{ Stroke {...} }`）。
+    pub object: Handle,
+    /// 定义域左端。
+    pub lo: f64,
+    /// 定义域右端。
+    pub hi: f64,
+    /// 采样点数（装配期固定，必须 ≥ 2）。
+    pub samples: u32,
+    /// 纵坐标表达式（必须返回 Number；`plot.x` 是自变量）。
+    pub y: Handle,
+}
+
 /// `Sin { of = ... }`。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.math.Sin")]
@@ -596,7 +616,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "22",
+    version = "23",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -863,6 +883,14 @@ pub struct MathApi<'a> {
     pub local: fn(&'a dyn Pod) -> Handle,
     /// **阶段 3**：`uv()` —— `local / size`（0..1）。
     pub uv: fn(&'a dyn Pod) -> Handle,
+
+    /// **动画层阶段 1**：`plot_x()` —— 采样点的自变量（逐元素通道，装配期由宿主给值）。
+    pub plot_x: fn(&'a dyn Pod) -> Handle,
+
+    /// **动画层阶段 1**：`plot { object, lo, hi, samples, y }` —— 装配期采样成折线。
+    ///
+    /// 这里只登记；宿主在脚本结束后逐点求值并挂成对象的 `Reveal` 折线。
+    pub plot: fn(&'a dyn Pod, spec: PlotSpec) -> (),
 }
 
 // ─── G 批（D14）：能力指纹与版本的配对基线 ─────────────────────────────────
@@ -889,13 +917,14 @@ pub struct MathApi<'a> {
 /// `@21`（阶段 3）：新增 `distance` / `smoothstep` / `fract`（内建 mono）。
 /// `@22`（第 BB 批）：新增 28 个 WGSL 标准库算子（代数 / 指数 / 三角 / 向量），
 /// 并新增 `narrow_f32`（`round_f32` 的新名字，旧名保留）。
+/// `@23`（动画层阶段 1）：新增 `plot_x`（逐元素自变量通道）与 `plot`（装配期采样成折线）。
 ///
 /// **加算子的代价（实测）**：新增算子必然改 `signatures()` ⇒ 必须递增 version ⇒
 /// `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**（像素不变）。第 BB 批
 /// 因此把 28 个算子**一次**加完、只 bump 一次（`@21 → @22`），而不是分五批 bump 五次。
-pub const MATH_API_VERSION: &str = "22";
+pub const MATH_API_VERSION: &str = "23";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 5_482_242_184_379_522_694;
+pub const MATH_API_FINGERPRINT: u64 = 5_434_256_126_357_669_687;
 
 /// **糖层能力**（第 BB 批，阶段 4）：装配期展开成 `zela.math` 的 core 算子组合。
 ///

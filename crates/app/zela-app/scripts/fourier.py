@@ -64,10 +64,10 @@ def rgba(r, g, b, a):
     return Color(r=r, g=g, b=b, a=a)
 
 
-# 动画值域是 f32，而表达式层是 f64：`RoundF32` 在旧曲线的同一位置落位
+# 动画值域是 f32，而表达式层是 f64：`NarrowF32` 在旧曲线的同一位置落位
 # （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
 def f32(v):
-    return expr.RoundF32(of=v)
+    return expr.NarrowF32(of=v)
 
 
 def ramp(from_, to, dur):
