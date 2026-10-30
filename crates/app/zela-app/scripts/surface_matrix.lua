@@ -65,24 +65,18 @@ scene.spawn({
     belong,
 })
 
--- Path × Stroke：文本编译出的描边路径（每条形一条对象）。
-local paths = content.text(Text { source = "AB", font_size = 3.0, x = 3.0, y = -0.5 })
-for i = 1, #paths do
-    scene.spawn({
-        PathShape { path = paths[i] },
-        belong,
-    })
-end
+-- Path × Stroke：文本编译出的描边路径（每字形一条对象）。
+-- 排版糖：`parent = surf` ⇒ 字形直接挂到内容层对象下（与 `belong` 同一个 `Parent`）。
+scene.text("AB", { size = 3.0, x = 3.0, y = -0.5, parent = surf })
 
 -- Path × Fill：同一份字形轮廓走填充（另一种样式组合，空间上不重叠）。
-local fills = content.text(Text { source = "CD", font_size = 2.5, x = 3.0, y = 4.0 })
-for i = 1, #fills do
-    scene.spawn({
-        PathShape { path = fills[i] },
-        fill_warm,
-        belong,
-    })
-end
+scene.text("CD", {
+    size = 2.5,
+    x = 3.0,
+    y = 4.0,
+    parent = surf,
+    style = { fill_warm },
+})
 
 -- **PG Step 0 判定：这不是占位**。删掉它之后两条基线都变了 ——
 -- `[native] a6e4394c… → 9a34bf69…`、`[vector] 3e9d4b0e… → e313809d…` ⇒ 内容层的 2D

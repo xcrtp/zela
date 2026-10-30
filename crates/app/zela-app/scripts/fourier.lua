@@ -67,26 +67,6 @@ local function curve_points()
     return points
 end
 
-local function place_text_group(source, size, x, y)
-    local group = scene.spawn({
-        Name { value = "text-group" },
-        Transform { x = x, y = y },
-    })
-    local glyphs = content.text(Text {
-        source = source,
-        font_size = size,
-        x = 0.0,
-        y = 0.0,
-    })
-    for i = 1, #glyphs do
-        scene.spawn({
-            PathShape { path = glyphs[i] },
-            Parent { parent = group },
-        })
-    end
-    return group
-end
-
 -- ── 0. 网格 + 相机 ────────────────────────────────────────────────────
 scene.spawn({
     Axes2D {
@@ -103,7 +83,15 @@ local camera = scene.spawn({
     },
 })
 
-place_text_group("Fourier epicycles: square wave", 0.40, -3.3, 2.75)
+-- 文字排版糖（`scene.text`，见 `ze-scene-api/src/lua_prelude.lua`）：
+-- 内部仍是「建组（`Name` + `Transform`）→ 逐字形 `PathShape` + `Parent`」，
+-- 与手写循环逐位一致（本作品的 payload 就是这条契约的对拍基准）。
+scene.text("Fourier epicycles: square wave", {
+    size = 0.40,
+    x = -3.3,
+    y = 2.75,
+    name = "text-group",
+})
 
 -- ── 1. 右侧曲线：静态 Polyline + 脉冲 Reveal ─────────────────────────
 local points = curve_points()

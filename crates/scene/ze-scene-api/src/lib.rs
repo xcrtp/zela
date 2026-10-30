@@ -69,6 +69,16 @@ impl RegisterSceneComponent for ze_pod_core::RegistryPod {
     }
 }
 
+/// 脚本**前置块**（Lua）：宿主在用户脚本之前执行。
+///
+/// 内容见 [`lua_prelude.lua`](lua_prelude.lua)：目前只有 `scene.text`（把
+/// 「`content.text` 编译 + 逐字形 spawn」收成一行）。放在前置块而不是能力函数，
+/// 是因为它是**组合调用**（跨 `scene` / `content`），做成能力会改 `zela.scene` 签名
+/// ⇒ 所有作品 payload 改名，而它的定位是"改写法不改产物"。
+///
+/// 语言绑定侧保持通用：`LuaPod::with_prelude` 只接收一段脚本，不认识里面的领域名。
+pub const LUA_PRELUDE: &str = include_str!("lua_prelude.lua");
+
 use std::sync::Arc;
 
 use ze_prerender::InMemoryEngine;

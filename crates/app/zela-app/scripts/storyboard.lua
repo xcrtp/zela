@@ -61,18 +61,14 @@ for i = 1, #formula do
 end
 
 -- ── T3：标注文字（静态，经 Transform 摆放）────────────────────────────
-local text = content.text(Text {
-    source = "math animation",
-    font_size = 0.55,
-    x = 0.0,
-    y = 0.0,
+-- 排版糖：`glyph_transform = true` ⇒ 每个字形各带 `Transform { x, y }`
+-- （与手写循环逐位一致；内容在原点烘焙）。
+scene.text("math animation", {
+    size = 0.55,
+    x = -1.5,
+    y = 3.0,
+    glyph_transform = true,
 })
-for i = 1, #text do
-    scene.spawn({
-        PathShape { path = text[i] },
-        Transform { x = -1.5, y = 3.0 },
-    })
-end
 
 -- ── T2：箭头（实心，指向曲线峰值）────────────────────────────────────
 scene.spawn({

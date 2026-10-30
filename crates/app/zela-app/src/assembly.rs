@@ -759,7 +759,8 @@ fn base_nodes(
     let content = pod::content_service(engine, paths);
     let expr = Arc::new(ExprPod::new());
 
-    let lua = Arc::new(LuaPod::new());
+    // 前置块：`scene.text`（组合调用糖）。领域文本在 `ze-scene-api`，LuaPod 只当脚本执行。
+    let lua = Arc::new(LuaPod::new().with_prelude(pod::LUA_PRELUDE));
     lua.register_capability::<SceneApi>("scene", true);
     lua.register_capability::<ContentApi>("content", true);
     lua.register_capability::<MathApi>(EXPR_SERVICE, true);
@@ -833,6 +834,50 @@ mod tests {
         // 组件名写错是装配期错误，不是"匹配空集"。
         let bad = ze_comb::Expr::exists(vec!["NoSuchComponent".to_string()], vec![]);
         assert!(fold_exists(&bad, &names).is_err());
+    }
+
+    /// **阶段 3 判据 1**：`scene.text`（前置块糖）与手写循环产出**逐位相同**的世界。
+    ///
+    /// 手写版就是四个既有作品里的写法（建组 → `content.text` → 逐字形 `PathShape` +
+    /// `Parent`）；糖版是一行 `scene.text(…)`。两者都必须落在同一个结构指纹上
+    /// —— 否则"改写法不改产物"只是口号。
+    #[test]
+    fn text_sugar_matches_the_handwritten_loop() {
+        use zela_scene_ecs::fingerprint_world;
+        use zela_scene_ecs::scene::Scene;
+
+        let assembly = assemble(Arc::new(crate::formula::build_engine())).expect("脚本 Pod 装配成功");
+        let handwritten = r#"
+scene.spawn({ Camera2D { scale = 40.0 } })
+local group = scene.spawn({
+    Name { value = "g" },
+    Transform { x = -1.0, y = 2.0 },
+})
+local glyphs = content.text(Text { source = "Hi", font_size = 0.5, x = 0.0, y = 0.0 })
+for i = 1, #glyphs do
+    scene.spawn({
+        PathShape { path = glyphs[i] },
+        Parent { parent = group },
+    })
+end
+"#;
+        let sugar = r#"
+scene.spawn({ Camera2D { scale = 40.0 } })
+scene.text("Hi", { size = 0.5, x = -1.0, y = 2.0, name = "g" })
+"#;
+        let digest = |source: &str| {
+            let script = assembly.run_script(source).expect("脚本执行成功");
+            let mut scene = Scene::new();
+            script.commit(&mut scene).expect("commit");
+            fingerprint_world(scene.world(), None)
+        };
+        let handwritten = digest(handwritten);
+        let sugar = digest(sugar);
+        assert_eq!(handwritten.objects, sugar.objects, "对象数必须相同");
+        assert_eq!(
+            handwritten.digest, sugar.digest,
+            "结构摘要必须逐位相同（手写 vs 糖）：{handwritten:?} / {sugar:?}"
+        );
     }
 
     /// 描述层：拓扑 / 边 / optional 缺失全部可在**不建 Pod** 时断言。

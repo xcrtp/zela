@@ -71,4 +71,6 @@ cap_parent_inherit Parent继承        cap_parent_inherit.lua 628f4bffcc92649623
 cap_plot        函数图像            cap_plot.lua         0756afa3bb29271fd3b07101d0a08f43af4db523dcb73c1a019da0217f56fda4
 # 动画层阶段 2 验收作品：路径跟随（`PathFollow` 组件 + 方法 `Reveal.point_at` / `tangent_at`）。
 cap_path_follow 路径跟随            cap_path_follow.lua  f9dcae8fe6e65101b1b131efbb28a95b2c41e8efeb66e742e212d5d25fd82c10
+# 动画层阶段 3 验收作品：文字排版糖 `scene.text` + 组级淡出 / 缩放（只动容器一个字段）。
+cap_text_group  文字组              cap_text_group.lua   e9934807e967c913f2f7ecdff4a408b029400c0d931d0fc6eac1fe132d3f57c9
 

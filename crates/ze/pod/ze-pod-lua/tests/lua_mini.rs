@@ -230,6 +230,48 @@ fn lua_pod_run_is_generic() {
     assert_eq!(out.values, vec![1.5, 2.5]);
 }
 
+/// **前置块**：宿主给的脚本在**用户脚本之前**执行；前置块写错是显式错误。
+///
+/// 用途是"组合调用糖"（`scene.text` 这类跨能力的多步封装）：它不动能力签名，
+/// 因此既有作品 payload 不变。绑定层只把它当一段脚本，不认识里面的领域名。
+#[test]
+fn prelude_runs_before_the_user_script() {
+    let mini = Arc::new(MiniPod::new());
+    let lua = Arc::new(LuaPod::new().with_prelude(
+        "function scene.emit_twice(value)\n  scene.emit(value)\n  scene.emit(value)\nend\n",
+    ));
+    lua.register_capability::<MiniApi>("scene", true);
+    let broker = Broker::new(vec![
+        PodNode::new("scene", Arc::clone(&mini) as Arc<dyn Pod>, &["scene"]),
+        PodNode::new("lua", Arc::clone(&lua) as Arc<dyn Pod>, &["script"]),
+    ]);
+    broker.assemble().expect("mini 装配成功");
+
+    let source = "scene.emit_twice(1.5)".to_string();
+    let arg: &dyn Any = &source;
+    let out: MiniOutput = broker
+        .run_with::<MiniOutput>("lua", RUN_ENTRY, &[arg])
+        .expect("前置块里的函数可被用户脚本调用");
+    assert_eq!(out.values, vec![1.5, 1.5]);
+
+    // 前置块语法错误 ⇒ 显式失败（不静默跳过、不带病继续跑用户脚本）。
+    let broken = Arc::new(LuaPod::new().with_prelude("function ("));
+    broken.register_capability::<MiniApi>("scene", true);
+    let broker = Broker::new(vec![
+        PodNode::new("scene", Arc::clone(&mini) as Arc<dyn Pod>, &["scene"]),
+        PodNode::new("lua", Arc::clone(&broken) as Arc<dyn Pod>, &["script"]),
+    ]);
+    broker.assemble().expect("装配不因前置块内容失败");
+    let source = "scene.emit(1.0)".to_string();
+    let arg: &dyn Any = &source;
+    assert!(
+        broker
+            .run_with::<MiniOutput>("lua", RUN_ENTRY, &[arg])
+            .is_err(),
+        "前置块执行失败必须报错"
+    );
+}
+
 /// 注册名 == capability 签名（绑定层与实际函数表不漂移）。
 #[test]
 fn registered_names_match_signatures() {

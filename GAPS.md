@@ -1544,11 +1544,30 @@
 
 ---
 
+## BG. 动画层补全 · 阶段 3（文字 / 公式排版糖，2026-10-30）
+
+> 计划《动画层补全_执行计划》阶段 3。定位：把四个文字作品里手写的
+> 「`content.text` 编译 + 逐字形 spawn」收成一行 `scene.text(…)`，且**产物一字不改**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BG-01 | 落点：糖做成**前置块**（脚本级）而非能力函数 | 脚本绑定 | **已关闭（偏差）** | `ze-scene-api::LUA_PRELUDE`（`lua_prelude.lua`）+ 通用入口 `LuaPod::with_prelude`（宿主给一段脚本，绑定层不认识领域名）。做成能力会改 `zela.scene` 签名 ⇒ 全部作品 payload 改名，与"改写法不改产物"直接冲突 |
+| BG-02 | 判据 1：四个作品 payload 逐位不变 | 装配 / 产物 | **已关闭** | `--step demo` 逐条断言：fourier `b2ad6beb…` / storyboard `42b5847a…` / surface_matrix `098aff13…` / vector_paths `b2f6f4f8…` 均未变；另加 `text_sugar_matches_the_handwritten_loop`（手写 vs 糖的 `fingerprint_world` 摘要逐位相等） |
+| BG-03 | 判据 2：组级淡出只动容器一个字段 | 场景 / 渲染 | **已关闭** | `cap_text_group.lua`：组 A 只写 `Opacity.value`、组 B 只写 `Transform.scale`；字形的 `Parent` 由糖生成。注意样式权重缺省为 0 ⇒ 需要 `inherit_opacity = true`（`Parent { opacity = 1.0 }`）才能继承，这是 BC 批的既有口径，不是本批新增 |
+| BG-04 | 判据 3：默认排版参数与手写逐位一致 | 脚本 / 排版 | **已关闭** | 位置口径写成显式规则：有组 / 有 `glyph_transform` ⇒ 内容在原点烘焙（位置由容器承担）；否则内容按 `(x, y)` 烘焙（`parent` 只管层级）。四个手写版的三种形态都由这套规则**逐位**覆盖，糖不引入新的默认偏移 |
+| BG-05 | 计划标题含"公式"，本批只做文字 | 表达式 / 内容 | **记账** | `content.formula` 与 `content.text` 的参数同形，糖可以同构扩展；但当前无任何作品用公式走这套排版（现有公式都走 `RevealPath` 书写），无判据可对拍 ⇒ 等第一个消费方出现再加 |
+| BG-06 | 语言面：糖只在 Lua | 语言绑定 | **记账** | 四件文字作品都是 Lua；`LuaPod::with_prelude` 是 Lua 侧的通用入口，Python / JS 没有对应机制。触发条件：出现 Python/JS 文字作品且重复手写循环时，按同样方式给对应 Pod 加前置块 |
+
+**BG 段小计**：已关闭 4 · 记账 2。
+> 本段读数（`cargo verify` 全量）：demo 33/33 · 覆盖 72/72（豁免 0）· 结构 22 件一致 · 像素 36 项 ok 36 / DIFF 0。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BF**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BF 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BG**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BG 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

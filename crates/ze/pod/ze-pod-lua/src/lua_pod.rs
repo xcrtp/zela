@@ -62,6 +62,12 @@ pub struct LuaPod {
     state: RefCell<ScriptState>,
     /// Service 名 → 能力绑定器（**不写死任何 domain 类型**；同一 Service 可有多个能力）。
     binders: RefCell<BTreeMap<String, Vec<BinderEntry>>>,
+    /// 宿主给的**前置块**（每次 `run` 在用户脚本之前执行；不认识里面的内容）。
+    ///
+    /// 定位：把"跨能力的组合调用"收成一行（如 `scene.text`），且**不动能力签名**
+    /// ⇒ 既有作品 payload 不变。领域知识留在提供方（`ze-scene-api::LUA_PRELUDE`），
+    /// 本 Pod 只把它当一段脚本执行。
+    prelude: Option<&'static str>,
     requirements_fn: RequirementsFn,
     inject_fn: InjectFn,
     run_fn: RunFn,
@@ -93,10 +99,20 @@ impl LuaPod {
                 scene: None,
             }),
             binders: RefCell::new(BTreeMap::new()),
+            prelude: None,
             requirements_fn: requirements_impl,
             inject_fn: inject_impl,
             run_fn: run_impl,
         }
+    }
+
+    /// 挂上**前置块**（每次 `run` 在用户脚本之前执行）。
+    ///
+    /// 前置块只做"组合调用糖"（例如 `scene.text`），不参与能力协商：它引用的
+    /// 宏构造器 / 全局表都由已注入的服务提供，执行失败会显式报错（不静默跳过）。
+    pub fn with_prelude(mut self, source: &'static str) -> Self {
+        self.prelude = Some(source);
+        self
     }
 
     /// 注册一个能力的绑定器（必须在 Broker 装配前调用）。
@@ -312,6 +328,15 @@ fn run_impl(pod: &dyn Pod, source: String) -> Result<Box<dyn Any>, PodError> {
     })?;
 
     scene.call(function_id(scene, RESET_PATH, "()")?, &[])?;
+
+    // 前置块：在用户脚本之前执行（重置之后 ⇒ 每次 run 都能拿到干净的录制状态）。
+    if let Some(prelude) = this.prelude {
+        state
+            .lua
+            .load(prelude)
+            .exec()
+            .map_err(|e| PodError::CallFailed(format!("前置块执行失败：{e}")))?;
+    }
 
     state
         .lua

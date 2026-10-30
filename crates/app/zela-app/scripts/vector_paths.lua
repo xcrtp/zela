@@ -63,15 +63,10 @@ scene.spawn({
 })
 
 -- ④ 文本轮廓（内容路径 + 填充 ⇒ Path × Fill）。
-local text = content.text(Text {
-    source = "vector",
-    font_size = 0.9,
+-- 排版糖：内容按 (x, y) 烘焙，`style` 逐字形追加同一个填充组件。
+scene.text("vector", {
+    size = 0.9,
     x = -1.2,
     y = -3.4,
+    style = { Fill { color = mint } },
 })
-for i = 1, #text do
-    scene.spawn({
-        PathShape { path = text[i] },
-        Fill { color = mint },
-    })
-end
