@@ -27,9 +27,11 @@ pub mod buffer;
 pub mod cache;
 pub mod check;
 pub mod layout;
+pub mod semantic;
 
 pub use aa::{AaModel, AaSlotSemantics, AttribSemantic};
 pub use buffer::{VertexBufferData, VertexBufferError, bytes_of};
 pub use cache::CacheStrategy;
 pub use check::{hash_bytes, hash_bytes_sampled, StaticConsistencyChecker};
+pub use semantic::Semantic;
 pub use layout::{AttribType, StepMode, VertexAttrib, VertexInputDesc, VertexLayout, VertexLayoutError};

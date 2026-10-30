@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-vertex`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-render-ir`、`zela-render`、`zela-render-backends`
-- 源文件：6 个 · 1565 行
+- 源文件：7 个 · 1749 行
 
 ### 文件清单
 
@@ -21,8 +21,9 @@
 | `src/buffer.rs` | 168 | — |
 | `src/cache.rs` | 123 | — |
 | `src/check.rs` | 254 | — |
-| `src/layout.rs` | 807 | — |
-| `src/lib.rs` | 35 | — |
+| `src/layout.rs` | 827 | — |
+| `src/lib.rs` | 37 | — |
+| `src/semantic.rs` | 162 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -33,12 +34,14 @@ graph LR
     f2["src/cache.rs"]
     f3["src/check.rs"]
     f4["src/layout.rs"]
+    f5["src/semantic.rs"]
     f0 --> f1
     f0 --> f2
     f3 --> f2
     f3 --> f4
     f4 --> f1
     f4 --> f2
+    f4 --> f5
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -61,6 +64,7 @@ graph LR
 | `src/layout.rs` | `pub struct VertexLayout` |
 | `src/layout.rs` | `pub enum VertexLayoutError` |
 | `src/layout.rs` | `pub struct VertexInputDesc` |
+| `src/semantic.rs` | `pub enum Semantic` |
 <!-- AUTO:END -->
 
 ## 职责
