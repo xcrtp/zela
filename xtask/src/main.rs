@@ -1343,6 +1343,11 @@ fn step_check(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
 fn step_test(root: &Path, plan: &FeaturePlan) -> Result<(), String> {
     // 本机页面文件有限：编译并行度压到 2，避免 rustc mmap 失败（os error 1455）；
     // 测试线程仍按仓库既有做法单线程。
+    //
+    // **为什么不用 nextest**（测过，读数见 GAPS BK-02）：它的价值是"GPU 组串行 /
+    // CPU 组并行"，但它不跑 doctest ⇒ 必须另起一次 `cargo test --doc`，而那次调用
+    // 会按 dev 口径重建 rlib（首跑 +5 min，稳态 +62s）；GPU 那 44 次 headless
+    // 初始化本来就要串行，CPU 侧只省 ~10s。两相抵消是**净慢 55s**，所以不采用。
     if plan.pyo3_available() {
         return cargo(
             root,

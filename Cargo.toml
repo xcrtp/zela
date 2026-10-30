@@ -89,6 +89,14 @@ opt-level = 3
 debug = false
 incremental = false
 
+# **测试构建只留行号表**（`debug = "line-tables-only"`）：去掉变量 / 泛型调试信息，
+# panic 行号仍在。收益不在编译，而在**链接与 PDB 体积**：`target/debug/deps` 曾累积
+# 69GB PDB 把 D 盘写满，直接导致 `LNK1140 / LNK1318` —— 那是**门禁假失败**，
+# 不是"机器慢"。
+[profile.test]
+inherits = "dev"
+debug = "line-tables-only"
+
 # **GUI 开发构建也要能跑矢量预览**：矢量后端的 CPU 侧工作（曲线细分 / 三角化 /
 # 内容层合成）是热路径；`opt-level = 0` 下 1200×839 一帧实测 ~314 ms（3 fps，像卡死）。
 # 只给这条链上的包开优化，其余 crate 仍是 debug（断点 / 增量构建不受影响）。
