@@ -163,4 +163,22 @@ fn texture_target_matches_the_cpu_readback_and_repeats_bitwise() {
         reference.len()
     );
     assert!(first == second, "同一帧连渲两次应逐位相同");
+
+    // 视口 resize / 重播会**新建纹理**：同尺寸也必须换目标。
+    // 回归：Player 按 `(width, height, samples)` 缓存，旧实现只比尺寸 / 代数 ⇒ 继续写
+    // 调用方已释放的旧纹理，新纹理全空（GUI 上表现为"改窗口大小后画面全黑"）。
+    let replacement = target(&device);
+    zela_render_vector::render_2d_to_texture(&replacement, WIDTH, HEIGHT, 1, clear, &records)
+        .expect("零回读出口（同尺寸新纹理）");
+    let after = read_back(&device, &queue, &replacement);
+    assert!(
+        after == reference,
+        "同尺寸换纹理后仍写旧目标：新纹理与参考不一致（{} / {} 字节不同）",
+        after
+            .iter()
+            .zip(&reference)
+            .filter(|(a, b)| a != b)
+            .count(),
+        reference.len()
+    );
 }

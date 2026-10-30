@@ -2507,6 +2507,12 @@ pub(crate) struct Targets {
     pub(crate) padded: u32,
     /// B17：这一份目标是否由调用方给（乙）——复用 Player 时模式变了就必须重建。
     external: bool,
+    /// 外部目标的**纹理身份**：同尺寸换了一张纹理（视口 resize / 重播）也必须重建。
+    ///
+    /// 只按 `target_generation` / 尺寸判断不够：`take_player` 按 `(width, height, samples)`
+    /// 缓存 Player，窗口缩回旧尺寸时会取回旧 Player，而它的目标仍指向调用方**已经释放**
+    /// 的那张纹理 ⇒ 继续画进旧纹理，新纹理全空（画面全黑）。
+    external_texture: Option<wgpu::Texture>,
 }
 
 /// The see-through fragments of a frame's 3D views (see `blend.wgsl`): a list head per pixel of
@@ -3044,9 +3050,15 @@ impl Player {
         // B17：Player 复用期间，"读回"与"外部目标"两种模式互斥；外部目标换了一张纹理（重播时
         // 新建离屏目标，代数变化）也必须重建（同一模式内的逐帧复用保留纹理，正是 churn 的修复点）。
         let generation = TARGET_GENERATION.load(Ordering::Relaxed);
+        let external_texture = target.map(|view| view.texture().clone());
         let rebuild = self.targets.is_none()
             || self.target_generation != generation
-            || self.targets.as_ref().is_some_and(|t| t.external != target.is_some());
+            || self.targets.as_ref().is_some_and(|t| t.external != target.is_some())
+            // 视口 resize / 重播会**新建纹理**：同尺寸也必须换目标（旧纹理已被调用方释放）。
+            || self
+                .targets
+                .as_ref()
+                .is_some_and(|t| t.external_texture != external_texture);
         if rebuild {
             // 与目标无关的附件（raster 的 MSAA、AO 只依赖尺寸与视图内容）留下来复用，
             // 免得每次重播都重建一批纹理。**bloom 不能搬**：它的最后一组绑定在创建时就指向
@@ -3076,6 +3088,7 @@ impl Player {
                 })),
                 padded,
                 external: target.is_some(),
+                external_texture,
             });
         }
         self.targets.as_ref().expect("the targets")
