@@ -1,4 +1,4 @@
-//! S3/S6/S7 验收：32 个组件逐条 serde、`Components` 往返、`SceneScript`
+//! S3/S6/S7 验收：33 个组件逐条 serde、`Components` 往返、`SceneScript`
 //! 持久化往返与"克隆后重新 commit"。
 
 use ze_notion::{FunctionX2Y, Path2D, Rect2D, Sampler1D, Vec2, Vec3};
@@ -17,10 +17,12 @@ use zela_scene_ecs::persist::{
     PersistError, TaggedComponent, deserialize_components, serialize_components,
 };
 use zela_scene_ecs::scene::Scene;
-use zela_scene_ecs::scene::components::{ContentTextureItem, MorphShape, PhaseAnim, Reveal};
+use zela_scene_ecs::scene::components::{
+    ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
+};
 use zela_scene_ecs::{SceneEncoder, SceneScript};
 
-/// 32 个登记组件的样例（与 `known_component_table!` 一一对应）。
+/// 33 个登记组件的样例（与 `known_component_table!` 一一对应）。
 fn samples() -> zela_scene_ecs::contract::Components {
     vec![
         Box::new(Circle::new((0.0, 0.0), 1.0)),
@@ -84,16 +86,17 @@ fn samples() -> zela_scene_ecs::contract::Components {
         Box::new(MorphShape::new(Path2D::new(), Path2D::new())),
         Box::new(ContentTextureItem),
         Box::new(Reveal::new(Path2D::new())),
+        Box::new(PathFollow::new(Path2D::new())),
         Box::new(Parent(ObjectId::DANGLING)),
     ]
 }
 
-/// 验收 1/2（S3）：32 个组件**逐个**可序列化 + 解码后重编码一致。
+/// 验收 1/2（S3）：33 个组件**逐个**可序列化 + 解码后重编码一致。
 #[test]
 fn every_registered_component_round_trips() {
     let original = samples();
-    let tagged = serialize_components(&original).expect("32 个组件都应可序列化");
-    assert_eq!(tagged.len(), 32);
+    let tagged = serialize_components(&original).expect("33 个组件都应可序列化");
+    assert_eq!(tagged.len(), 33);
 
     let mut names: Vec<&str> = tagged.iter().map(|t| t.type_name.as_str()).collect();
     names.sort_unstable();
@@ -129,13 +132,14 @@ fn every_registered_component_round_trips() {
         "MorphShape",
         "ContentTextureItem",
         "Reveal",
+        "PathFollow",
         "Parent",
     ];
     expected.sort_unstable();
-    assert_eq!(names, expected, "登记表 32 条必须逐条出现");
+    assert_eq!(names, expected, "登记表 33 条必须逐条出现");
 
     let decoded = deserialize_components(tagged.clone()).expect("全部可解码");
-    assert_eq!(decoded.len(), 32);
+    assert_eq!(decoded.len(), 33);
 
     // 再编码一次 ⇒ 与第一次逐项相等（往返一致；函数组件比较名字）。
     let again = serialize_components(&decoded).expect("解码后的组件仍可序列化");

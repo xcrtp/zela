@@ -12,6 +12,7 @@ use std::any::Any;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use ze_scene_core::components::Reveal as NativeReveal;
+use ze_scene_core::components::PathFollow as NativePathFollow;
 use ze_scene_core::scene_script::{
     Handle as ScriptHandle, SceneEncoder, SceneScript, handle_ref,
 };
@@ -32,9 +33,9 @@ use crate::RegisterSceneComponent;
 use crate::types::{
     Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
     Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
-    Path, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, ShaderVariant, Stroke,
-    Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D, Vec2,
-    Vec3,
+    Path, PathFollow, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, ShaderVariant,
+    Stroke, Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D,
+    Vec2, Vec3,
 };
 use ze_scene_core::components::{
     Light as NativeLight, Material3D as NativeMaterial3D, MorphShape as NativeMorphShape,
@@ -178,6 +179,7 @@ impl SceneServicePod {
         registry.register_component::<Transform>(scene_transform);
         registry.register_component::<RevealPath>(scene_reveal_path);
         registry.register_component::<PathShape>(scene_path_shape);
+        registry.register_component::<PathFollow>(scene_path_follow);
 
         // ── 对象 ────────────────────────────────────────────────────────
         registry.register_fn1::<Vec<Handle>, Handle>("zela.scene::spawn", scene_spawn);
@@ -915,6 +917,27 @@ fn scene_path_shape(pod: &dyn Pod, shape: PathShape) -> Handle {
             rec.components.insert(Vec::new())
         }
     }
+}
+
+/// `zela.PathFollow` → `PathFollow`（动画层阶段 2；`Target.PathFollow.t` 的写入对象）。
+///
+/// 折线点表 → `Path2D::from_polyline`，与 `reveal` / `polyline` / `morph` 同一口径。
+/// 本组件**不绘制**：位置由 `PathFollowApplySystem` 写进同对象的 `Transform`。
+fn scene_path_follow(pod: &dyn Pod, follow: PathFollow) -> Handle {
+    let points: Vec<NotionVec2> = follow
+        .points
+        .iter()
+        .map(|p| NotionVec2::new(p.x, p.y))
+        .collect();
+    let path = ze_notion::Path2D::from_polyline(&points, follow.closed);
+    let mut native = NativePathFollow::new(path);
+    native.t = follow.t;
+    native.orient = follow.orient;
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(native)])
 }
 
 fn scene_spawn(pod: &dyn Pod, handles: Vec<Handle>) -> Handle {

@@ -29,7 +29,7 @@
 //   样式：      `StrokeSolid` / `FillSolid` / `Gradient` / `Dash` / `SecondPaint` /
 //               `BackgroundStroke` / `CurveWindow`（PE 起）
 //   装配对象：  `Axes2D` / `AxesLine` / `FunctionGraph`（M4：网格与函数图像归对象层）
-//   动画与标记：`PhaseAnim` / `MorphShape` / `ContentTextureItem` / `Reveal`
+//   动画与标记：`PhaseAnim` / `MorphShape` / `ContentTextureItem` / `Reveal` / `PathFollow`
 //   关系：      `Parent`
 //
 // 未登记的组件类型 ⇒ `spawn_dyn` 返回 `None`（**不静默丢组件**——宁可失败也不
@@ -68,7 +68,7 @@ pub use ze_scene_contract::{
 
 use crate::composer::Composer;
 use crate::domain::CameraMode;
-use crate::scene::components::{ContentTextureItem, MorphShape, PhaseAnim, Reveal};
+use crate::scene::components::{ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal};
 
 // B3-1 收尾：hecs 只读适配器与身份互转已抽到 `ze-scene-hecs`
 // （渲染层需要它，但不应依赖本 ECS 实现 crate）。

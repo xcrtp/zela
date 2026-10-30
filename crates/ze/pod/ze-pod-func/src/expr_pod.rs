@@ -70,7 +70,9 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `radians` / `step` / `dot` / `cross` / `reflect` / `faceforward`，并把 `round_f32`
 /// 的新名字 `narrow_f32` 一并登记（旧名保留）。
 /// `23`：**动画层阶段 1** 新增 `plot_x`（逐元素自变量通道）与 `plot`（装配期采样成折线）。
-pub const LIBRARY_VERSION: &str = "23";
+/// `24`：**动画层阶段 2** 方法目录新增 `Reveal.point_at` / `Reveal.tangent_at`
+/// （按归一化弧长取点 / 切线；`METHOD_SIGNATURES` 变 ⇒ 版本必须递增）。
+pub const LIBRARY_VERSION: &str = "24";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";

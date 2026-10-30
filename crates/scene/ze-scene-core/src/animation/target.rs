@@ -35,7 +35,7 @@ use ze_pod_core::{ScalarKind, TypeSpec};
 use ze_scene_contract::ObjectId;
 use ze_time::AnimValue;
 
-use crate::components::{MORPH_SHAPE_T, PHASE_ANIM_PHASE, Reveal};
+use crate::components::{MORPH_SHAPE_T, PHASE_ANIM_PHASE, REVEAL_TOLERANCE, Reveal};
 use crate::object::camera::CAMERA3D_EYE;
 use crate::object::primitives::CIRCLE_RADIUS;
 use crate::object::{Framing2D, Transform};
@@ -447,6 +447,67 @@ pub static REVEAL_CURRENT_POS_METHOD: MethodSpec = MethodSpec {
     },
 };
 
+/// `Reveal.point_at(t)`：路径上**归一化弧长 `t`** 处的点。
+///
+/// 与 [`REVEAL_CURRENT_POS_METHOD`] 同一份弧长实现（`Path2D::point_at`，同一容差），
+/// 差别只是 `t` 由参数给而不是读 `end` 通道 ⇒ `reads` 为空（路径帧间不变）。
+pub static REVEAL_POINT_AT_METHOD: MethodSpec = MethodSpec {
+    name: "Reveal.point_at",
+    component: "Reveal",
+    params: &[TypeSpec::Scalar(ScalarKind::F32)],
+    ret: &TypeSpec::Struct {
+        name: "zela.Vec2",
+        layout: None,
+        fields: &[],
+    },
+    reads: &[],
+    eval: |scene, id, args| {
+        let t = method_scalar_arg("Reveal.point_at", args)?;
+        let point = read_component::<Reveal, _>(scene, id, |r| r.path.point_at(t, REVEAL_TOLERANCE))
+            .ok_or_else(|| EvalError::MissingComponent {
+                object: id.to_packed(),
+                channel: ChannelRef::new("zela.scene", "Reveal.point_at"),
+            })?;
+        Ok(Value::vec2([point.x, point.y]))
+    },
+};
+
+/// `Reveal.tangent_at(t)`：路径上**归一化弧长 `t`** 处的单位切向量（朝向用）。
+pub static REVEAL_TANGENT_AT_METHOD: MethodSpec = MethodSpec {
+    name: "Reveal.tangent_at",
+    component: "Reveal",
+    params: &[TypeSpec::Scalar(ScalarKind::F32)],
+    ret: &TypeSpec::Struct {
+        name: "zela.Vec2",
+        layout: None,
+        fields: &[],
+    },
+    reads: &[],
+    eval: |scene, id, args| {
+        let t = method_scalar_arg("Reveal.tangent_at", args)?;
+        let tangent =
+            read_component::<Reveal, _>(scene, id, |r| r.path.tangent_at(t, REVEAL_TOLERANCE))
+                .ok_or_else(|| EvalError::MissingComponent {
+                    object: id.to_packed(),
+                    channel: ChannelRef::new("zela.scene", "Reveal.tangent_at"),
+                })?;
+        Ok(Value::vec2([tangent.x, tangent.y]))
+    },
+};
+
+/// 方法的**第一个显式参数**取数（表达式层的数是 `F64 × 1`；其余类型显式失败）。
+fn method_scalar_arg(name: &str, args: &[Value]) -> Result<f32, EvalError> {
+    let value = args.first().ok_or_else(|| EvalError::Op {
+        op: name.to_string(),
+        message: "缺少参数".to_string(),
+    })?;
+    let number = value.as_f64().ok_or_else(|| EvalError::Op {
+        op: name.to_string(),
+        message: "参数必须是数".to_string(),
+    })?;
+    Ok(number as f32)
+}
+
 /// `Rect2D` → 表达式值（`Bytes + zela.Rect2D`，4×f32 小端）。
 ///
 /// 表达式值系统还没有 `Rect` 标量（W-A：值系统三套收敛不在本批）⇒ 用命名字节块
@@ -514,6 +575,8 @@ pub static CIRCLE_BOUNDS_METHOD: MethodSpec = MethodSpec {
 /// 全部方法（脚本面与方法名的**唯一来源**）。
 pub const METHODS: &[&MethodSpec] = &[
     &REVEAL_CURRENT_POS_METHOD,
+    &REVEAL_POINT_AT_METHOD,
+    &REVEAL_TANGENT_AT_METHOD,
     &OBJECT_BOUNDS_METHOD,
     &CIRCLE_BOUNDS_METHOD,
 ];
@@ -843,6 +906,11 @@ pub const TARGETS: &[TargetEntry] = &[
         spec: &MORPH_SHAPE_T,
         make: crate::components::make_morph_shape_t,
     },
+    // 阶段 2（路径跟随）：`PathFollow.t` —— 派生摆放（位置 = f(path, t)）。
+    TargetEntry {
+        spec: &crate::components::PATH_FOLLOW_T,
+        make: crate::components::make_path_follow_t,
+    },
     TargetEntry {
         spec: &crate::components::REVEAL_START,
         make: crate::components::make_reveal_start,
@@ -1029,10 +1097,11 @@ mod tests {
 
     use crate::Circle;
 
-    /// 迷你场景：只挂 `Circle`（roundtrip 测试够用）。
+    /// 迷你场景：只挂 `Circle` / `Reveal`（roundtrip 与方法求值测试够用）。
     #[derive(Default)]
     struct MockScene {
         circles: HashMap<ObjectId, Circle>,
+        reveals: HashMap<ObjectId, Reveal>,
     }
 
     impl SceneWrite for MockScene {
@@ -1045,6 +1114,12 @@ mod tests {
             if type_id == std::any::TypeId::of::<Circle>() {
                 if let Some(c) = self.circles.get_mut(&id) {
                     f(c);
+                    return true;
+                }
+            }
+            if type_id == std::any::TypeId::of::<Reveal>() {
+                if let Some(r) = self.reveals.get_mut(&id) {
+                    f(r);
                     return true;
                 }
             }
@@ -1062,6 +1137,12 @@ mod tests {
             if type_id == std::any::TypeId::of::<Circle>() {
                 if let Some(c) = self.circles.get(&id) {
                     f(c);
+                    return true;
+                }
+            }
+            if type_id == std::any::TypeId::of::<Reveal>() {
+                if let Some(r) = self.reveals.get(&id) {
+                    f(r);
                     return true;
                 }
             }
@@ -1217,6 +1298,43 @@ mod tests {
         assert_eq!(method.reads, &["Reveal.end"], "reads 必须静态声明");
         assert!(method.params.is_empty(), "current_pos 无显式参数");
         assert!(method_entry("Reveal.no_such_method").is_none());
+    }
+
+    /// **阶段 2**：`Reveal.point_at` / `Reveal.tangent_at` 走方法目录求值 ——
+    /// 与 `current_pos` 同一份弧长实现（`Path2D::point_at` / `tangent_at`），
+    /// 参数缺失 / 类型不符 / 无组件都是**显式错误**。
+    #[test]
+    fn reveal_point_and_tangent_methods_evaluate() {
+        let id = ObjectId::new(9, 1);
+        let path = ze_notion::Path2D::from_polyline(
+            &[
+                ze_notion::Vec2::new(0.0, 0.0),
+                ze_notion::Vec2::new(4.0, 0.0),
+            ],
+            false,
+        );
+        let mut scene = MockScene::default();
+        scene.reveals.insert(id, Reveal::new(path));
+
+        let point = method_entry("Reveal.point_at").expect("方法已注册");
+        assert_eq!(point.component, "Reveal");
+        assert_eq!(point.params.len(), 1, "point_at(t) 只有一个显式参数");
+        assert!(point.reads.is_empty(), "路径帧间不变 ⇒ 不读任何通道");
+        assert!(
+            target_entry("Reveal.point_at").is_none(),
+            "方法不得进写表"
+        );
+        let value = (point.eval)(&scene, id, &[Value::f64(0.5)]).expect("求值成功");
+        assert_eq!(value, Value::vec2([2.0, 0.0]), "直线中点");
+
+        let tangent = method_entry("Reveal.tangent_at").expect("方法已注册");
+        let value = (tangent.eval)(&scene, id, &[Value::f64(0.25)]).expect("求值成功");
+        assert_eq!(value, Value::vec2([1.0, 0.0]), "水平直线的切线");
+
+        // 显式失败：缺参数 / 参数不是数 / 对象上没有 Reveal。
+        assert!((point.eval)(&scene, id, &[]).is_err());
+        assert!((point.eval)(&scene, id, &[Value::Bool(true)]).is_err());
+        assert!((point.eval)(&scene, ObjectId::new(10, 1), &[Value::f64(0.5)]).is_err());
     }
 
     /// F 批：复合目标（多字段 / 多值型）标记 `is_composite`；其余规格为 `false`。

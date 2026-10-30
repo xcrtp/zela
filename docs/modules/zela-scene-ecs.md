@@ -11,15 +11,16 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：24 个 · 9032 行
+- 源文件：25 个 · 9168 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/animation/camera_drive.rs` | 527 | — |
-| `src/animation/mod.rs` | 26 | — |
+| `src/animation/mod.rs` | 28 | — |
 | `src/animation/morph.rs` | 115 | — |
+| `src/animation/path_follow.rs` | 131 | — |
 | `src/animation/system.rs` | 748 | — |
 | `src/animation/target_tests.rs` | 397 | — |
 | `src/camera_input.rs` | 667 | — |
@@ -36,7 +37,7 @@
 | `src/input.rs` | 298 | — |
 | `src/lib.rs` | 102 | — |
 | `src/lifetime.rs` | 403 | — |
-| `src/register.rs` | 72 | — |
+| `src/register.rs` | 75 | — |
 | `src/scene.rs` | 234 | — |
 | `src/scene_script_tests.rs` | 697 | — |
 | `src/transform_hierarchy.rs` | 740 | — |
@@ -49,56 +50,58 @@ graph LR
     f0["src/animation/camera_drive.rs"]
     f1["src/animation/mod.rs"]
     f2["src/animation/morph.rs"]
+    f4["src/animation/path_follow.rs"]
     f3["src/animation/system.rs"]
-    f5["src/animation/target_tests.rs"]
-    f6["src/camera_input.rs"]
-    f7["src/composer.rs"]
-    f4["src/contract.rs"]
-    f8["src/deferred.rs"]
-    f10["src/director_state.rs"]
-    f9["src/driver.rs"]
-    f11["src/expr_binding_tests.rs"]
-    f13["src/expr_mono.rs"]
-    f14["src/fingerprint.rs"]
-    f15["src/geometry.rs"]
-    f16["src/input.rs"]
-    f17["src/lifetime.rs"]
-    f18["src/register.rs"]
-    f12["src/scene.rs"]
-    f20["src/scene_script_tests.rs"]
-    f19["src/transform_hierarchy.rs"]
+    f6["src/animation/target_tests.rs"]
+    f7["src/camera_input.rs"]
+    f8["src/composer.rs"]
+    f5["src/contract.rs"]
+    f9["src/deferred.rs"]
+    f11["src/director_state.rs"]
+    f10["src/driver.rs"]
+    f12["src/expr_binding_tests.rs"]
+    f14["src/expr_mono.rs"]
+    f15["src/fingerprint.rs"]
+    f16["src/geometry.rs"]
+    f17["src/input.rs"]
+    f18["src/lifetime.rs"]
+    f19["src/register.rs"]
+    f13["src/scene.rs"]
+    f21["src/scene_script_tests.rs"]
+    f20["src/transform_hierarchy.rs"]
     f0 --> f1
     f2 --> f1
     f2 --> f3
+    f4 --> f1
     f3 --> f1
-    f3 --> f4
-    f5 --> f1
-    f5 --> f4
-    f6 --> f4
-    f7 --> f4
-    f4 --> f7
-    f8 --> f1
-    f8 --> f4
-    f9 --> f10
-    f11 --> f1
-    f11 --> f12
-    f13 --> f4
-    f14 --> f7
-    f15 --> f12
-    f16 --> f1
-    f16 --> f4
-    f16 --> f10
-    f17 --> f4
-    f18 --> f6
-    f18 --> f7
-    f18 --> f10
-    f18 --> f17
-    f18 --> f19
-    f12 --> f4
-    f12 --> f8
-    f20 --> f1
-    f20 --> f12
-    f19 --> f4
+    f3 --> f5
+    f6 --> f1
+    f6 --> f5
+    f7 --> f5
+    f8 --> f5
+    f5 --> f8
+    f9 --> f1
+    f9 --> f5
+    f10 --> f11
+    f12 --> f1
+    f12 --> f13
+    f14 --> f5
+    f15 --> f8
+    f16 --> f13
+    f17 --> f1
+    f17 --> f5
+    f17 --> f11
+    f18 --> f5
+    f19 --> f7
+    f19 --> f8
+    f19 --> f11
+    f19 --> f18
+    f19 --> f20
+    f13 --> f5
+    f13 --> f9
+    f21 --> f1
+    f21 --> f13
+    f20 --> f5
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -107,6 +110,7 @@ graph LR
 |---|---|
 | `src/animation/camera_drive.rs` | `pub struct CameraDriveSystem` |
 | `src/animation/morph.rs` | `pub struct MorphApplySystem` |
+| `src/animation/path_follow.rs` | `pub struct PathFollowApplySystem` |
 | `src/animation/system.rs` | `pub struct BindingApplySystem` |
 | `src/camera_input.rs` | `pub struct CameraInputSystem` |
 | `src/composer.rs` | `pub struct ComposerSystem` |

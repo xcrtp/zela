@@ -20,7 +20,7 @@ use ze_render_ir::{
 use ze_scene_contract::{Component, Group, LifetimeTracked, Name, Parent, ParentInherit, Visibility};
 
 use crate::components::{
-    ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PhaseAnim, Reveal,
+    ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow, PhaseAnim, Reveal,
 };
 use crate::composer::Composer;
 use crate::domain::CameraMode;
@@ -47,7 +47,7 @@ macro_rules! known_component_table {
                    // 阶段 2：着色 codegen（装饰性；由 `expr.shader` 挂上）。
                    ShaderPaint,
                    Axes2D, AxesLine, FunctionGraph,
-                   PhaseAnim, MorphShape, ContentTextureItem, Reveal, Parent, ParentInherit,
+                   PhaseAnim, MorphShape, ContentTextureItem, Reveal, PathFollow, Parent, ParentInherit,
                    // B3 Step 3：2D/3D 融合边界（Surface 是数据组件，不含 position）。
                    Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef,
                    // B1-D：3D 装配组件（脚本层入口）。`Arc<MeshGeometry>` 是

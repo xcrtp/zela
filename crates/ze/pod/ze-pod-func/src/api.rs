@@ -616,7 +616,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "23",
+    version = "24",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -918,11 +918,14 @@ pub struct MathApi<'a> {
 /// `@22`（第 BB 批）：新增 28 个 WGSL 标准库算子（代数 / 指数 / 三角 / 向量），
 /// 并新增 `narrow_f32`（`round_f32` 的新名字，旧名保留）。
 /// `@23`（动画层阶段 1）：新增 `plot_x`（逐元素自变量通道）与 `plot`（装配期采样成折线）。
+/// `@24`（动画层阶段 2）：方法目录新增 `Reveal.point_at` / `Reveal.tangent_at`。
+/// 算子签名未变（⇒ 指纹不动），但表达式库的方法面变了 ⇒ 版本递增，
+/// `LIBRARY_VERSION` 随之进产物。
 ///
 /// **加算子的代价（实测）**：新增算子必然改 `signatures()` ⇒ 必须递增 version ⇒
 /// `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**（像素不变）。第 BB 批
 /// 因此把 28 个算子**一次**加完、只 bump 一次（`@21 → @22`），而不是分五批 bump 五次。
-pub const MATH_API_VERSION: &str = "23";
+pub const MATH_API_VERSION: &str = "24";
 /// `zela.math` 的 `hash(signatures())` 基线。
 pub const MATH_API_FINGERPRINT: u64 = 5_434_256_126_357_669_687;
 
@@ -977,8 +980,12 @@ pub const SUGAR_API_FINGERPRINT: u64 = 7_485_630_297_182_827_369;
 /// 这是 `zela.math` 侧的唯一一份：`infer` 用它给 `Node::Method` 定型。
 /// 求值注册表在 `ze-scene-core::animation::METHODS`；两侧由
 /// `zela-scene-ecs` 的一致性用例逐条对拍（缺失任何一侧都红）。
-pub const METHOD_SIGNATURES: &[(&str, usize, ChannelTypeSpec)] =
-    &[("Reveal.current_pos", 0, ChannelTypeSpec::Vec2)];
+pub const METHOD_SIGNATURES: &[(&str, usize, ChannelTypeSpec)] = &[
+    ("Reveal.current_pos", 0, ChannelTypeSpec::Vec2),
+    // 动画层阶段 2：按归一化弧长取点 / 切线（与 `current_pos` 同一份实现）。
+    ("Reveal.point_at", 1, ChannelTypeSpec::Vec2),
+    ("Reveal.tangent_at", 1, ChannelTypeSpec::Vec2),
+];
 
 /// 按名字查方法签名（未知 ⇒ `None`）。
 pub fn method_signature(name: &str) -> Option<(usize, ChannelTypeSpec)> {

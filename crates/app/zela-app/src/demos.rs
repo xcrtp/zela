@@ -80,6 +80,7 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_stroke_width", "线宽通道", "cap_stroke_width.lua"),
     lua!("cap_parent_inherit", "Parent继承", "cap_parent_inherit.lua"),
     lua!("cap_plot", "函数图像", "cap_plot.lua"),
+    lua!("cap_path_follow", "路径跟随", "cap_path_follow.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。

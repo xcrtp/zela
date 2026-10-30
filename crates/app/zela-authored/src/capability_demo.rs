@@ -241,7 +241,7 @@ fn fade_expr(dur: f64) -> Expr {
 fn fade_library() -> LibraryRef {
     LibraryRef {
         namespace: "zela.math".to_string(),
-        version: "23".to_string(),
+        version: "24".to_string(),
         op_revisions: Default::default(),
     }
 }

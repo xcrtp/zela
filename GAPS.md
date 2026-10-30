@@ -1523,11 +1523,32 @@
 
 ---
 
+## BF. 动画层补全 · 阶段 2（路径跟随，2026-10-30）
+
+> 计划《动画层补全_执行计划》阶段 2。定位：把「对象沿一条路径按归一化弧长移动」
+> 做成场景能力 —— 原语（`Path2D::point_at` / `tangent_at`）、组件（`PathFollow`）、
+> 方法（`Reveal.point_at` / `Reveal.tangent_at`）三层共用**一份**弧长实现。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BF-01 | 能力形态：计划写 `PathFollow { path = p }`，实际是折线点表 `PathFollow { points, closed, t, orient }` | 场景 / 装配 | **已关闭（偏差）** | 点表与 `Reveal` / `Polyline` / `Morph` 同一口径（`Path2D::from_polyline`），不引入"内容路径句柄"这条额外依赖；`scene_path_follow` 就是一次 `from_polyline` |
+| BF-02 | 原语层命名：计划写 `Path.point_at(t)` / `Path.tangent_at(t)`，实际挂在 `Reveal` 上 | 表达式 / 方法目录 | **已关闭（偏差）** | `Path` 在脚本侧是**值类型**（`zela.Path`），不挂构造器；方法只能挂脚本能 spawn 的组件（`Pod::methods` 的 `component`）。`Reveal` 已持有 `Path2D` 且已有 `current_pos` 先例 ⇒ `Reveal.point_at(obj, t)` / `Reveal.tangent_at(obj, t)`（arity 1） |
+| BF-03 | 弧长逻辑**只有一份**（判据 1：`Reveal.current_pos` 逐位不变） | kernel `ze-notion` | **已关闭** | 抽取到 `Path2D::point_at(t, tolerance)` / `tangent_at(t, tolerance)`；`Reveal::current_pos` 改为 `point_at(end, REVEAL_TOLERANCE)`（`0.25` 常量，运算顺序与旧实现逐项一致）。像素 36 项全绿即逐位不变 |
+| BF-04 | 判据 2：`t` 从 0 到 1 与手写逐帧 `Transform` 逐位相同 | ECS / 测试 | **已关闭** | `follow_matches_handwritten_transforms_bitwise`：同一份 `point_at` 的手写参照 ⇒ `x` / `y` 用 `assert_eq!` 逐位比较，`z` 保留原值 |
+| BF-05 | 判据 3：`orient = false` 只写位置 | ECS / 测试 | **已关闭** | `orient_false_leaves_rotation_alone`（旋转仍是 `IDENTITY`）；`orient_true_turns_along_the_tangent` 对拍 `Quat::from_rotation_z(angle_at(t))` |
+| BF-06 | 版本与基线：新增脚本组件 + 通道 + 方法 ⇒ payload 全量重录 | Pod / 产物 | **已关闭** | `zela.scene` 13→14（指纹更新）、`LIBRARY_VERSION` / `zela.math` 23→24（算子签名不变 ⇒ 指纹不动）；manifest 20 行 payload 更新（19 件既有作品重录 + 新作品首次写值，像素全绿）；`zela-authored` 两处版本常量同步 |
+| BF-07 | `PathFollow.t` 进 `TARGETS` 是否改既有结构基线 | 基线 | **已关闭** | 结构摘要只对**读得到**的 `(对象, 地址)` 入哈希（缺组件直接跳过）⇒ 既有 22 件结构指纹不变；新作品无像素基线（`exempt`），故不新增结构基线 |
+
+**BF 段小计**：已关闭 7。
+> 本段读数（`cargo verify` 全量）：demo 32/32 · 覆盖 72/72（豁免 0）· 结构 22 件一致 · 像素 36 项 ok 36 / DIFF 0。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BE**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BE 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BF**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BF 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

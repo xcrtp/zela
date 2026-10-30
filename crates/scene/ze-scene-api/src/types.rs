@@ -447,6 +447,25 @@ pub struct PathShape {
     pub path: Path,
 }
 
+/// 路径跟随组件（动画层阶段 2）：对象沿折线按**归一化弧长** `t` 移动。
+///
+/// `points` / `closed` 与 `Reveal` / `Polyline` 同一口径（折线点表 → `Path2D`），
+/// 因此"跟随"与"绘制"用的是同一条路径数据；`t` 是唯一的每帧变量
+/// （`Target.PathFollow.t` 写），`orient` 决定是否把切线方向写进 `Transform.rotation`。
+///
+/// 与 `PathShape` 的区别：那个是**绘制**（`Path` + 描边），本组件**不绘制** ——
+/// 它只驱动同对象 `Transform` 的摆放。
+#[derive(Clone, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.PathFollow")]
+pub struct PathFollow {
+    pub points: Vec<Vec2>,
+    pub closed: bool,
+    /// 归一化弧长 ∈ [0, 1]（超出按端点钳位）。
+    pub t: f32,
+    /// `true` ⇒ 同时按切线方向旋转（`atan2(tangent.y, tangent.x)`）。
+    pub orient: bool,
+}
+
 /// 公式编译请求。
 #[derive(Clone, Debug, PartialEq, PodType)]
 #[pod_type(name = "zela.Formula")]
@@ -529,6 +548,7 @@ mod tests {
         check::<Transform>("transform", "zela.Transform");
         check::<RevealPath>("reveal_path", "zela.RevealPath");
         check::<PathShape>("path_shape", "zela.PathShape");
+        check::<PathFollow>("path_follow", "zela.PathFollow");
     }
 
 }

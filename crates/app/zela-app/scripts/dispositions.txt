@@ -45,6 +45,7 @@ cap_channels2d.lua = exempt: demo 能力展示；payload 由 manifest 断言；�
 cap_channels3d.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
 cap_parent_inherit.lua = exempt: 第 BC 批 Parent 多维度继承能力展示；payload 由 manifest 断言；像素基线待补（录制设备批次）
 cap_plot.lua = exempt: 动画层阶段 1 函数图像采样能力展示；payload 由 manifest 断言；像素基线待补（录制设备批次）
+cap_path_follow.lua = exempt: 动画层阶段 2 路径跟随能力展示（PathFollow + point_at/tangent_at）；payload 由 manifest 断言；像素基线待补（录制设备批次）
 expr_demo.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
 expr_read.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
 sine_trace.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）

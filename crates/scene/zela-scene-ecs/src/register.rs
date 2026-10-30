@@ -15,7 +15,7 @@
 
 use zela_schedule::scheduler::{Phase, Scheduler};
 
-use crate::animation::{Binding, BindingApplySystem, CameraDriveSystem};
+use crate::animation::{Binding, BindingApplySystem, CameraDriveSystem, PathFollowApplySystem};
 use crate::camera_input::CameraInputSystem;
 use crate::composer::ComposerSystem;
 use crate::deferred::{DeferredApplySystem, ReplaySystem};
@@ -46,6 +46,9 @@ pub fn register_systems(
     scheduler.add_system(Phase::Input, CameraInputSystem);
 
     scheduler.add_system(Phase::SceneSync, BindingApplySystem);
+    // 阶段 2（路径跟随）：`PathFollow.t` → `Transform`。必须在 BindingApply 之后
+    // （后者本帧写 `t`），且早于 Prepare 的 `TransformHierarchySystem`（父子累乘）。
+    scheduler.add_system(Phase::SceneSync, PathFollowApplySystem);
 
     // P6/B4：重播清理 —— 运行时创建的对象在重播时销毁（`Prepare`，在录制之前；
     // 该相位当前无其它 Resource 写者）。

@@ -11,17 +11,17 @@
 - 路径：`crates/scene/ze-scene-api`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-pod-core`、`ze-pod-macro`、`ze-prerender`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`zela-scene-ecs`
-- 源文件：5 个 · 2017 行
+- 源文件：5 个 · 2068 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/api.rs` | 211 | — |
+| `src/api.rs` | 219 | — |
 | `src/content_service.rs` | 202 | — |
 | `src/lib.rs` | 87 | 脚本 Pod 的 **domain 侧**：能力定义 + `scene` / `content` 两个 Service。 |
-| `src/scene_service.rs` | 983 | — |
-| `src/types.rs` | 534 | — |
+| `src/scene_service.rs` | 1006 | — |
+| `src/types.rs` | 554 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -88,6 +88,7 @@ graph LR
 | `src/types.rs` | `pub struct PathList(pub Vec<Path>)` |
 | `src/types.rs` | `pub struct RevealPath` |
 | `src/types.rs` | `pub struct PathShape` |
+| `src/types.rs` | `pub struct PathFollow` |
 | `src/types.rs` | `pub struct Formula` |
 | `src/types.rs` | `pub struct Text` |
 | `src/types.rs` | `pub struct ScalarKey` |

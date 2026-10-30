@@ -8,6 +8,7 @@
 
 pub mod camera_drive;
 pub mod morph;
+pub mod path_follow;
 pub mod system;
 
 #[cfg(test)]
@@ -15,6 +16,7 @@ mod target_tests;
 
 pub use camera_drive::CameraDriveSystem;
 pub use morph::MorphApplySystem;
+pub use path_follow::PathFollowApplySystem;
 pub use system::BindingApplySystem;
 
 pub use ze_scene_core::animation::{binding, target, timeline};

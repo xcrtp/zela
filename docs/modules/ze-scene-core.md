@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：42 个 · 9929 行
+- 源文件：42 个 · 10074 行
 
 ### 文件清单
 
@@ -20,12 +20,12 @@
 | `src/animation/binding.rs` | 293 | — |
 | `src/animation/mod.rs` | 27 | — |
 | `src/animation/predicate.rs` | 729 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
-| `src/animation/target.rs` | 1236 | — |
+| `src/animation/target.rs` | 1354 | — |
 | `src/animation/timeline.rs` | 601 | — |
 | `src/bounds.rs` | 197 | — |
 | `src/camera_input.rs` | 160 | — |
 | `src/components/3d.rs` | 402 | — |
-| `src/components.rs` | 196 | — |
+| `src/components.rs` | 223 | — |
 | `src/composer.rs` | 146 | — |
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
@@ -181,6 +181,7 @@ graph LR
 | `src/components.rs` | `pub struct MorphShape` |
 | `src/components.rs` | `pub struct ContentTextureItem` |
 | `src/components.rs` | `pub struct Reveal` |
+| `src/components.rs` | `pub struct PathFollow` |
 | `src/composer.rs` | `pub struct Composer` |
 | `src/composer.rs` | `pub struct ComposerQueue` |
 | `src/composer.rs` | `pub fn full_recompute(scene: &impl SceneRead) -> Vec<ObjectId>` |

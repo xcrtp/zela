@@ -1567,6 +1567,7 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("Opacity", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("Parent", "scene-api 的 Pod 侧包装 vs scene-contract 的契约类型"),
     ("Path", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("PathFollow", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("PhaseAnim", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("Rect", "scene-core 的几何组件 vs node-editor 的编辑框"),
     ("Reveal", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
@@ -1846,7 +1847,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## AD.", "## AE.", "## AF.", "## AG.", "## AH.", "## AI.", "## AJ.", "## AK.",
         "## AL.", "## AM.", "## AN.", "## AO.", "## AP.", "## AQ.", "## AR.", "## AS.", "## AT.",
         "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.", "## BB.",
-        "## BC.", "## BD.", "## BE.",
+        "## BC.", "## BD.", "## BE.", "## BF.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -1909,7 +1910,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("BB-")
                     || id.starts_with("BC-")
                     || id.starts_with("BD-")
-                    || id.starts_with("BE-"));
+                    || id.starts_with("BE-")
+                    || id.starts_with("BF-"));
             if !is_item {
                 continue;
             }

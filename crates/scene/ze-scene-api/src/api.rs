@@ -11,9 +11,9 @@
 
 use crate::types::{
     Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
-    Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathList,
-    PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, Stroke, Surface, Text,
-    Transform, Transform3D, Vec2, Vec3,
+    Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathFollow,
+    PathList, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, Stroke, Surface,
+    Text, Transform, Transform3D, Vec2, Vec3,
 };
 use ze_pod_core::Handle;
 use ze_pod_macro::capability;
@@ -38,7 +38,7 @@ use ze_pod_macro::capability;
 /// `Reveal.end` / … 同时可用；未知地址在装配期显式失败。
 #[capability(
     namespace = "zela.scene",
-    version = "13",
+    version = "14",
     description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
     bindings
 )]
@@ -99,6 +99,10 @@ pub struct SceneApi<'a> {
 
     /// 由内容路径构造静态对象（`Path` + `StrokeSolid` 组件组）。
     pub path_shape: fn(&'a dyn Pod, shape: PathShape) -> Handle,
+
+    /// 构造路径跟随组件（动画层阶段 2）：`PathFollow.t` 每帧写 `t`，
+    /// 系统把 `t` 处的位置（及切线朝向）写进同对象的 `Transform`。
+    pub path_follow: fn(&'a dyn Pod, follow: PathFollow) -> Handle,
 
     /// 创建对象：组件句柄列表（异构 ⇒ 保持 `Array<Opaque>`）。
     pub spawn: fn(&'a dyn Pod, components: Vec<Handle>) -> Handle,
@@ -173,9 +177,13 @@ pub struct ContentApi<'a> {
 /// `@12 → @13`（第 BB 批，阶段 4）：新增三个**构造糖** `rgba` / `vec2` / `vec3`。
 /// 它们只返回值、不碰录制状态（展开成与 `Color{…}` / `Vec2{…}` 相同的值），
 /// 因此这个版本号不进产物（ZSB 的 libraries 只记表达式函子库）⇒ payload 不变。
-pub const SCENE_API_VERSION: &str = "13";
+///
+/// `@13 → @14`（动画层补全 · 阶段 2）：新增 `path_follow`（路径跟随组件）。
+/// 它进 `signatures()` ⇒ 指纹与版本一起动；既有作品不引用它 ⇒ 像素不变，
+/// 但 `zela.scene` 版本进产物 ⇒ payload 需重录（像素基线不动）。
+pub const SCENE_API_VERSION: &str = "14";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 12_092_751_274_414_054_408;
+pub const SCENE_API_FINGERPRINT: u64 = 11_782_065_197_837_869_228;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

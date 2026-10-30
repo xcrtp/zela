@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-notion`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-content`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-time`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-ecs`
-- 源文件：15 个 · 3602 行
+- 源文件：15 个 · 3698 行
 
 ### 文件清单
 
@@ -23,7 +23,7 @@
 | `src/lerp.rs` | 112 | — |
 | `src/lib.rs` | 64 | — |
 | `src/mat.rs` | 8 | — |
-| `src/path.rs` | 1186 | — |
+| `src/path.rs` | 1282 | — |
 | `src/primitives.rs` | 829 | — |
 | `src/proj.rs` | 17 | — |
 | `src/rect.rs` | 129 | — |
