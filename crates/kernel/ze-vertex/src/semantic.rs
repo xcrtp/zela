@@ -21,6 +21,8 @@
 // - `ShadingNormal → (0,0,1)`：与默认头顶光 `L=(0,0,1)` 点积为 1 ⇒ `lit = 1` ⇒
 //   外观与加光照之前逐位一致（见 `cube.wgsl` 顶部说明）。换值会让线框 / 平面片像素动。
 
+use super::layout::AttribType;
+
 /// 顶点属性的绝对语义。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Semantic {
@@ -95,6 +97,21 @@ impl Semantic {
             // 骨骼权重默认全 0 = **无骨骼影响**。不能用 `[1,0,0,0]`：那会把所有顶点
             // 绑到骨骼 0，且与「未提供骨骼数据」的语义相反。
             Self::Weights0 => Some([0.0, 0.0, 0.0, 0.0]),
+        }
+    }
+
+    /// 补齐该语义时使用的属性类型（宽度即该语义的常规形态）。
+    ///
+    /// 只在**补齐**（提供方缺该槽）时使用：2D 三角化器必然产齐四个槽，走不到这里；
+    /// `Position` 没有默认值（[`Self::default_value`] 为 `None`），也在补齐前就被
+    /// 挡下，故此处的取值只为让 match 穷尽。
+    pub const fn padding_type(self) -> AttribType {
+        match self {
+            Self::Position | Self::ShadingNormal => AttribType::F32x3,
+            Self::Uv | Self::Attrib0 => AttribType::F32x2,
+            Self::Attrib1 | Self::Attrib2 => AttribType::F32,
+            // 本批不加 U8x4Norm（无消费者），骨骼槽先用 F32x4 承载。
+            Self::Joints0 | Self::Weights0 => AttribType::F32x4,
         }
     }
 }
