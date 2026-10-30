@@ -306,6 +306,11 @@ struct CachedMeshBuffers {
     vertex_count: u32,
     index_count: u32,
     topology: PrimitiveTopology,
+    /// 该缓冲是按哪个顶点布局打包的（生产端随 `VertexBufferData` 给出）。
+    ///
+    /// 布局随缓冲一起缓存：命中缓存时也必须能拿到同一份布局，否则管线会按
+    /// "另一套布局"解释同一段字节。
+    layout: ze_vertex::VertexLayout,
 }
 
 /// ResourceKey 类型标签：用于 mesh（顶点+索引）缓冲内容缓存。
@@ -330,6 +335,11 @@ pub struct PreparedDraw3D {
     pub vertex_count: u32,
     pub index_count: u32,
     pub topology: PrimitiveTopology,
+    /// 该顶点缓冲的布局（生产端声明，录制时**读取**而非现场构造）。
+    ///
+    /// D15 的第五维从"写死 standard_3d()"变成"随 draw 携带"——同一条 draw 的字节
+    /// 与解释它的管线必须来自同一份声明。
+    pub layout: ze_vertex::VertexLayout,
     /// 着色变体：与 `topology` 一起构成 pipeline 表的查表键。
     pub variant: ShaderVariant,
     /// B2-2：背面剔除（IR 类型，不再存 wgpu 类型）。
@@ -1009,6 +1019,8 @@ impl WgpuBackend3D {
             vertex_count: u32,
             index_count: u32,
             topology: PrimitiveTopology,
+            /// 顶点布局（随缓冲携带；`record_prepared` 直接读它构造管线键）。
+            layout: ze_vertex::VertexLayout,
             /// 着色变体（pipeline 查表键之一）。
             variant: ShaderVariant,
             /// B2-2：剔除模式（pipeline 查表键）。
@@ -1036,6 +1048,7 @@ impl WgpuBackend3D {
                 vertex_count: cached.vertex_count,
                 index_count: cached.index_count,
                 topology: cached.topology,
+                layout: cached.layout.clone(),
             }
         }
         struct CachedMeshBuffersCopy {
@@ -1044,6 +1057,7 @@ impl WgpuBackend3D {
             vertex_count: u32,
             index_count: u32,
             topology: PrimitiveTopology,
+            layout: ze_vertex::VertexLayout,
         }
 
         // ── MeshDraws：按几何 id + version 寻址（几何内容变化时 bump_version 失效）──
@@ -1086,6 +1100,7 @@ impl WgpuBackend3D {
                     vertex_count: data.vertex_count,
                     index_count: data.indices.len() as u32,
                     topology: geometry.topology,
+                    layout: data.layout.clone(),
                 };
                 let copy = CachedMeshBuffersCopy {
                     vertex_buffer: cached.vertex_buffer.clone(),
@@ -1093,6 +1108,7 @@ impl WgpuBackend3D {
                     vertex_count: cached.vertex_count,
                     index_count: cached.index_count,
                     topology: cached.topology,
+                    layout: cached.layout.clone(),
                 };
                 let owned = GpuHandle::new(cached);
                 let _ = cache_guard.insert_handle(key, (), owned);
@@ -1126,6 +1142,7 @@ impl WgpuBackend3D {
                 vertex_count: cached_copy.vertex_count,
                 index_count: cached_copy.index_count,
                 topology: cached_copy.topology,
+                layout: cached_copy.layout,
                 variant: md.material.variant,
                 // B2-2：意图层 → 状态（材质未声明双面 ⇒ 剔除背面，与旧行为一致）。
                 cull: cull_mode_for(cached_copy.topology, md.material.double_sided),
@@ -1182,6 +1199,7 @@ impl WgpuBackend3D {
                     vertex_count: 2,
                     index_count: 0,
                     topology: PrimitiveTopology::Lines,
+                    layout: data.layout.clone(),
                 };
                 let copy = CachedMeshBuffersCopy {
                     vertex_buffer: cached.vertex_buffer.clone(),
@@ -1189,6 +1207,7 @@ impl WgpuBackend3D {
                     vertex_count: 2,
                     index_count: 0,
                     topology: PrimitiveTopology::Lines,
+                    layout: cached.layout.clone(),
                 };
                 let owned = GpuHandle::new(cached);
                 let _ = cache_guard.insert_handle(line_key, (), owned);
@@ -1207,6 +1226,7 @@ impl WgpuBackend3D {
                 vertex_count: cached_copy.vertex_count,
                 index_count: cached_copy.index_count,
                 topology: cached_copy.topology,
+                layout: cached_copy.layout,
                 // line 默认走 Lambert（法线填 (0,0,1) → lit = 1，外观不受光照影响）。
                 variant: ShaderVariant::Lambert,
                 // B2-2：线段没有面朝向 ⇒ 恒不剔除；不透明混合（与旧行为一致）。
@@ -1280,6 +1300,7 @@ impl WgpuBackend3D {
                     vertex_count: s.vertex_count,
                     index_count: s.index_count,
                     topology: s.topology,
+                    layout: s.layout,
                     variant: s.variant,
                     cull: s.cull,
                     blend: s.blend,
@@ -1314,8 +1335,8 @@ impl WgpuBackend3D {
                 variant: d.variant,
                 cull: d.cull,
                 blend: d.blend,
-                // D15：3D 顶点布局是第五维（当前全部 3D draw 共用 standard_3d）。
-                layout: ze_vertex::VertexLayout::standard_3d(),
+                // D15：布局是第五维，**取自本 draw 携带的声明**（不再现场构造）。
+                layout: d.layout.clone(),
             };
             let pipeline = self.get_or_create_pipeline(key);
             rpass.set_pipeline(&pipeline);
