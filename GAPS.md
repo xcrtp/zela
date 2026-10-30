@@ -1730,11 +1730,38 @@
 
 ---
 
+## BP. BindGroup 名字寻址与声明一致性（2026-10-31）
+
+> 计划《BindGroup名字寻址与声明一致性_执行计划》。
+> 目标：把 `PassDecl.inputs/outputs` 里已经写好的名字与帧循环里**实际绑定的资源**连起来 ——
+> 加一个 pass 只需改声明，不必在 `encode_frame` 里手协调"绑的是哪个组、什么时候失效"。
+> 强制约束沿用：像素 36 条逐位不变、结构 22 件不变、不新造名字、`GpuHandle` 不施加 `Send`/`Sync`。
+> 本段按阶段记账；**未兑现项写触发条件，不写成「已关闭」**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BP-01 | 资源只有内容 / 版本寻址，没有**名字**维度 | ze-resource / ze-render-ir | **已关闭** | `ResourceKey` 加 `Named { type_id, name, version }` 与 `named::<C>(name, version)`，生命周期完全复用既有实现（generation slot / 3 帧延迟销毁 / dirty / 驱逐）；5 条纯数据用例：同名同版本命中（句柄 id 不变、不新增条目）、版本变化未命中、`evict_unused` 后重建（旧 id 失效、旧句柄进延迟销毁）、同名不同类型不命中、三变体互不相等。`ze_render_ir::bind::BindSymbols` / `GroupSymbol` 提供「组名 → 组号 → 资源名」与三条证伪用例（组号重复 / 组名重复 / 资源跨组重复）。 |
+| BP-02 | 声明与录制之间零校验（P2 的一般形态） | zela-render-vector | **已关闭** | `PassSchedule::note_bind(pass, group)` 在 `set_bind_group` 的下一行记账（归属 pass 由调用点给出，因为一个闭包可能先后记录两个声明 pass）；`finish` 比对：声明里的 input 属于某组而该组没绑 ⇒ `Unbound`（少绑）；绑了带资源名的组而声明里没有一个来自它 ⇒ `Surplus`（多绑）；记在没记录过的 pass 名下 ⇒ `BindOutsidePass`。三条证伪用例（改坏声明 / 多绑 / 少绑）+ 一条"未接入的 pass 只被指出、不报错"（`unbound_passes()`）。判据：像素 36 项 ok 36 / DIFF 0。 |
+| BP-03 | 15 处帧级固定绑定以局部变量名绑定，与声明是两套体系 | zela-render-vector | **已关闭** | 全部改为「`set_bind_group` 下一行 `note_bind`」：`scene` 8（shadow / occlusion depth / base / opaque / append / slabs / composite sprites / atlas raster）、`lighting` 5（含 `buffers.shadow_maps.group` 那一处）、`list` 1（append）、`images` 1（composite sprites 的白图）。`RASTER_GROUPS` / `VECTOR_GROUPS` 两张组名表定义组号与它携带的可声明资源名，用例逐项守住「表里的组 1 名字都是 `IMAGE_SLOTS` 槽位」。**句柄级对照**：`tests/binding_snapshot.rs` 固定每个 `set_bind_group` 的实参逐字节不变，并断言帧级绑定的下一行记账名映射回同一组号（`wgpu::BindGroup` 没有稳定 id，像素也抓不到"绑了另一个同内容组"，故用这两条代替）。判据：像素 36 项 ok 36 / DIFF 0。 |
+| BP-04 | 20 处 escape 没有账；`image_groups: Keyed<BindGroup>` 是同一事实的第二份表达 | zela-render-vector | **已关闭** | `docs/research/BP_绑定点普查.md` 按「现场构造 11 / 参数传递 4 / per-iteration 4 / per-draw 1」逐条写明触发条件与为什么不能名字化；运行时名单由 `unbound_passes()` 给出。`image_groups` 收成具名封装 `ImageGroups`（白图按名字取、纹理与相机视图按 key 取，插入 / 移除只此一处）；`binding_snapshot` 的 7 处 escape 计数固定住，防止顺手接入。判据：像素 36 项 ok 36 / DIFF 0。 |
+| BP-05 | `vector.rs` 的 11 处帧级固定绑定未接入记账 | zela-render-vector | **记账** | 这些绑定发生在 `Vector::encode` 内（`&scene` 5 / `read` 1 / `images` 2 / `write` 1 / `bounds` 2），而 `&mut PassSchedule` 不在作用域；要接入必须改 `encode` 的签名（5 个调用点）并重新核对 `slabs` / `occlusion depth` 这类"一个闭包覆盖两个声明 pass"的归属。触发条件：下一次改 `Vector::encode` 的形状时（或需要校验 `vector composite` 的 `atlas` / `base_depth` 时）一并接。注：`VECTOR_GROUPS` 已备好，接入时不需要再造名字。 |
+| BP-06 | 自动绑定（BN-03 本体）仍未做 | zela-render-vector | **记账** | 本批建立的是「按名字取 + 一致性校验」；`PassDecl` 仍不携带 `binds`，`set_bind_group` 仍逐处写。理由是：声明里写 `binds` 需要注册表先能回答"这个 pass 需要哪些组、组从哪来"，而"组从哪来"今天是分支决定的（`own_lighting` 的遮蔽组 vs `shadow_maps.group`；白图 vs 逐纹理组）。触发条件：BP-05 接入后，`groups_for` 式的查表能覆盖"组来源"（同一 pass 的两个候选来源各有名字与失效条件）。 |
+| BP-07 | 后端持有的 `BindGroup` 无法交给 kernel 的 `ResourceCache` | zela-render-vector / ze-resource | **记账** | `GpuHandle = Box<dyn Any>` 故意不施加 `Send`/`Sync`（红线 3），而 native 的 `Gpu` 在 `static OnceLock<Mutex<Gpu>>` 里 ⇒ `Mutex<T>: Sync` 要求 `T: Send`，组一旦以 `GpuHandle` 形式存进 `Gpu` 就编译不过（BP-4 实测）。因此 `ImageGroups` 停在类型化封装，生命周期交回 wgpu 的引用计数。触发条件：需要把组交给 kernel 缓存的后端必须是"不把缓存放进全局 static"的形状（`wgpu_2d` 即如此），或 kernel 引入 `Send` 版本句柄（会与红线 3 冲突，需先改红线）。 |
+
+**BP 段小计**：已关闭 4 · 记账 3。
+> 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过。
+> 判据说明：像素抓不到"绑了另一个内容相同的组"，因此 BP-3 的判据是
+> `tests/binding_snapshot.rs` 的实参快照 + 记账名映射回同一组号，而不是只比像素。
+> 与既有记账的关系：BN-03（自动绑定缺注册表）本批建立了注册表的一半（名字 → 组 → 资源名），
+> 余下的"声明携带 binds"记在 BP-06；P2（声明的形状与调用点无校验）由 BP-02 直接解决。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BO**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BO 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BP**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BP 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
