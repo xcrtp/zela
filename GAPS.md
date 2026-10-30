@@ -1659,11 +1659,34 @@
 
 ---
 
+## BM. 顶点契约扩充批次（语义 / 需求 / 调和，2026-10-30）
+
+> 计划《顶点契约扩充_实施计划》（上游：R1–R7 七份调研文档，见 `docs/research/`）。
+> 目标：把 2D 已有的「通用槽 + 语义解释」模式推广到 3D，并用一个真实落地页证明机制可用。
+> 强制约束沿用：像素 36 条逐位不变、`ShadingNormal` 默认值恒为 `(0,0,1)`、调和失败显式报错。
+> 本段只记**结论与残留**，实施细节见各阶段提交（`feat(ze-vertex)` / `feat(ze-render-ir)` /
+> `refactor(zela-render)` / `refactor(zela-render-backends)` / `feat(zela-render-backends)`）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BM-01 | 顶点语义需求表放哪：IR 还是后端 | ze-render-ir / zela-render / zela-render-backends | **已关闭（定案：下沉 IR）** | 依赖方向是单向的（`zela-render-backends → zela-render`），而**生产端**（写出顶点字节的地方）要读需求表才能补齐 ⇒ 表不能放后端。定案放 kernel 层 `ze_render_ir::pipeline::ShaderRequirements`，与 `PipelineDesc` 同层，语义上也最正（需求是管线意图）。shader 源码是 `@location` 的事实来源、IR 表是第二份表达 ⇒ 新增 `tests/wgsl_requirements.rs` 解析 `cube.wgsl` 的 `fn vs_*`，比对 location 数量与顺序，两侧任一方多出条目即红（含一条"门禁自身有效性"的反例用例）。 |
+| BM-02 | `PipelineDesc.vertex_layout` 仍无生产者 | ze-render-ir / zela-render-backends | **记账** | 计划 §阶段 5 要求"接上这个零生产者字段"，实施时**未接**：后端管线键需要**精确的** `CullMode`（`Front` / `Back` / `None`），而 `PipelineDesc` 只有意图层 `double_sided`（lossy）。把键改成从 desc 推导会把 `Front` 折叠成 `Back`，属静默丢信息。当前真正兑现的是"布局随 draw 携带"：`CachedMeshBuffers` / `Skeleton` / `PreparedDraw3D` 逐层携带 `ze_vertex::VertexLayout`，`PipelineKey` 的第五维改读它。触发条件：给 `PipelineDesc` 一个无损的剔除表达之后，再把管线键收敛到 desc。 |
+| BM-03 | `U8x4Norm` 本批不加 | ze-vertex / zela-render-backends | **已记录** | 全仓当前无消费者（骨骼未落地），加了只是提前扩大枚举面与 match 面。**取值已定**（不是待定）：`size()` = 4、`alignment()` = 4（沿用既有常量）、`to_wgpu_format` → `wgpu::VertexFormat::Unorm8x4`。加时是 3 处穷尽 match 各补一行：`ze_vertex::layout::AttribType::size` / `zela_render_backends::wgpu_3d::to_wgpu_format` / `vertex_layout::attrib_format`。带宽差 4 倍（每顶点 32 B vs 8 B），只在骨骼真正落地时才有意义。 |
+| BM-04 | 线段拓扑 + PBR 变体会除零 | zela-render-backends / shader | **已关闭（显式拒绝）** | 线段走 `vs_line`，布局只有位置、UV 由入口给常量 `(0,0)`；而 `color_pbr` 用 UV 导数构造屏幕空间 TBN，常量 UV ⇒ 导数恒 0 ⇒ `det = 0` ⇒ NaN。做法是**显式拒绝而非降级**（降级会让"作者写 PBR、画面按 Lambert 出"无声发生）：`fn zela_render_backends::wgpu_3d::assert_variant_supported` 在 `prepare_draws` 的 mesh 循环入口调用；用例 `test_lines_with_pbr_variant_is_rejected`（`should_panic`）与 `test_triangles_with_pbr_variant_is_allowed`（反向证明只针对线段）。 |
+| BM-05 | `fallback_uvs` 不并入默认值表 | zela-render / ze-vertex | **已记录** | 它是**生成策略**（包围盒归一化 + 投影方式，`Planar` 还刻意 V 轴取反），不是标量常量；默认值表（`ze_vertex::semantic::Semantic::default_value`）只放标量。因此 `fn zela_render::vertex_record::fallback_uvs` 留在生产端，调和只负责"整个槽缺失"的常量补齐。另一条同源纪律：采纳布局不需要 UV 时（线段）不再生成兜底 UV。 |
+| BM-06 | 下一批候选 | 排期 | **记账** | ① **多布局第二靶**：目前只有 `Triangles`(32) 与 `Lines`(12) 两种布局；第二靶应选"同一拓扑、不同布局"（骨骼）才算把机制走全。② **骨骼批**：`JOINTS_0` / `WEIGHTS_0` 语义已预留（`Weights0` 默认值必须全零 = 无骨骼影响），届时一并加 `U8x4Norm`。③ **Vector 侧 Pass 声明化**（原计划与本次都明确不做）。 |
+
+**BM 段小计**：已关闭 2（BM-01、BM-04）· 记账 2（BM-02、BM-06）· 已记录 2（BM-03、BM-05）。
+> 本段读数（`cargo verify` 全批）：demo 34/34 · 覆盖 72/72（豁免 0）· 结构 22 件一致 · 像素 36 项 ok 36 / DIFF 0。
+> 阶段 4（手工兜底 → 查表补齐）与阶段 6（Lines 布局 stride 32 → 12）是本批的两个强判据，两次都在改完后直接跑 `--step hashes` 得到 36/36。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BL**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BL 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BM**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BM 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
