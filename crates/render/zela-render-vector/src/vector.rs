@@ -18,6 +18,8 @@
 use bytemuck::{Pod, Zeroable};
 
 use super::{Camera, Kind, Mat34, NONE, Paint, ROUND, Record, SQUARE, Shape, Store, compose};
+// BN-1：组 1 的 binding 编号由声明序给出（`passes::IMAGE_SLOTS`），不再手写 0..23。
+use crate::passes::{IMAGE_SLOTS, ImageKind};
 
 const TILE: u32 = 16;
 const ATLAS_WIDTH: u32 = 4096;
@@ -727,17 +729,37 @@ impl Vector {
         let target = |format| wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format, view_dimension: wgpu::TextureViewDimension::D2 };
         // what its paths with a material are lit with: a 3D view's lights' shadow maps and their comparison, the DFG
         // table and its bilinear reads, its environment's cube, its ambient occlusion
-        let maps = wgpu::BindGroupLayoutEntry { binding: 10, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None };
-        let compare = wgpu::BindGroupLayoutEntry { binding: 11, visibility: composing, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None };
-        let dfg = wgpu::BindGroupLayoutEntry { binding: 12, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
-        let linear = wgpu::BindGroupLayoutEntry { binding: 13, visibility: composing, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None };
-        let cube = wgpu::BindGroupLayoutEntry { binding: 15, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::Cube, multisampled: false }, count: None };
-        // and a 3D view's see-through points' slabs, as many layers as `SLABS`
-        let slabs = wgpu::BindGroupLayoutEntry { binding: 21, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None };
-        let image_layout = [false, true].map(|multisampled| layout(
-            "vector images",
-            &[texture(0), texture(1), texture(2), wgpu::BindGroupLayoutEntry { binding: 3, visibility: compute, ty: target(super::COLOR), count: None }, texture(4), entry(5, compute, read), entry(6, compute, read), sampled(7, wgpu::TextureSampleType::Float { filterable: false }, multisampled), sampled(8, wgpu::TextureSampleType::Depth, multisampled), entry(9, compute, read), maps, compare, dfg, linear, entry(14, compute, rw), cube, texture(16), texture(17), sampled(18, wgpu::TextureSampleType::Float { filterable: false }, multisampled), wgpu::BindGroupLayoutEntry { binding: 19, visibility: compute, ty: target(super::RADIANCE), count: None }, texture(20), slabs, entry(22, compute, read), texture(23)],
-        ));
+        //
+        // BN-1：这 24 个 entry 由 `passes::IMAGE_SLOTS` 的**声明序**生成 —— 编号不再手写，
+        // 数组下标即 binding。名字与 `vector.wgsl` / `vector_buffers.wgsl` /
+        // `vector_compute.wgsl` 的 `@group(1) @binding(n)` 一一对应。
+        let image_layout = [false, true].map(|multisampled| {
+            let entries: Vec<wgpu::BindGroupLayoutEntry> = IMAGE_SLOTS
+                .iter()
+                .enumerate()
+                .map(|(slot, declared)| {
+                    let binding = slot as u32;
+                    match declared.kind {
+                        ImageKind::Texture => texture(binding),
+                        ImageKind::StorageColor => wgpu::BindGroupLayoutEntry { binding, visibility: compute, ty: target(super::COLOR), count: None },
+                        ImageKind::StorageRadiance => wgpu::BindGroupLayoutEntry { binding, visibility: compute, ty: target(super::RADIANCE), count: None },
+                        ImageKind::BufferRead => entry(binding, compute, read),
+                        ImageKind::BufferReadWrite => entry(binding, compute, rw),
+                        ImageKind::SampledCompute { multisampled: wants_samples, depth } => {
+                            let sample_type = if depth { wgpu::TextureSampleType::Depth } else { wgpu::TextureSampleType::Float { filterable: false } };
+                            sampled(binding, sample_type, multisampled && wants_samples)
+                        }
+                        ImageKind::DepthArray => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None },
+                        ImageKind::ComparisonSampler => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison), count: None },
+                        ImageKind::FilterableTexture => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
+                        ImageKind::Sampler => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                        ImageKind::Cube => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::Cube, multisampled: false }, count: None },
+                        ImageKind::FloatArray => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None },
+                    }
+                })
+                .collect();
+            layout("vector images", &entries)
+        });
         let read_layout = layout("records in", &[entry(0, vertex, read), entry(1, vertex, read), entry(2, fragment, rw)]);
         // **阶段 3**：逐片元着色的绑定：Params（uniform）、颜色画布（storage texture）、入口参数（uniform）
         let frag_layout = layout(

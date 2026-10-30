@@ -7163,6 +7163,7 @@ dependencies = [
  "thiserror 2.0.20",
  "wgpu",
  "xxhash-rust",
+ "ze-graph-core",
  "ze-notion",
  "ze-render-ir",
 ]

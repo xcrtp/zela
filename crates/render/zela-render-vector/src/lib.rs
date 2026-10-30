@@ -34,6 +34,8 @@ pub const UPSTREAM_REPO: &str = "manimgx";
 mod environment;
 mod mesh;
 mod render;
+/// BN 批：pass 声明、资源槽位与调度校验（纯数据 + 纯函数）。
+pub mod passes;
 
 pub mod api;
 pub use api::{

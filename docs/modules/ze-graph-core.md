@@ -10,7 +10,7 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-graph-core`
 - 生产依赖（上游，dev-deps 不计）：（无）
-- 被依赖（下游）：`ze-comb`、`ze-graph-algo`、`ze-pod-core`
+- 被依赖（下游）：`ze-comb`、`ze-graph-algo`、`ze-pod-core`、`zela-render-vector`
 - 源文件：7 个 · 712 行
 
 ### 文件清单

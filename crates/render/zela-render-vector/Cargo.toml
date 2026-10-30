@@ -30,6 +30,9 @@ pollster = "1.0.1"
 # `zela-render-backends` 对它是 dev-dependency，生产依赖图保持不变（B4 验收 §1.3）。
 ze-notion = { path = "../../kernel/ze-notion" }
 ze-render-ir = { path = "../../kernel/ze-render-ir" }
+# BN 批：pass 计划的环检测与校验复用纯拓扑算法（第三个消费者）。
+# ze-graph-core 只认「节点 id + 边」，不认识渲染概念，分层不变量不变。
+ze-graph-core = { path = "../../kernel/ze-graph-core" }
 
 [features]
 # 本 crate 即矢量渲染色；`render` 默认开启（保留上游 `#[cfg(feature = "render")]` 标注）。
