@@ -98,12 +98,16 @@ impl BindSymbols {
         self.symbol(name).map(|s| s.group)
     }
 
-    /// 资源名 → 组号。
-    pub fn group_of_resource(&self, resource: &str) -> Option<u32> {
+    /// 资源名 → 组符号。
+    pub fn symbol_of_resource(&self, resource: &str) -> Option<&'static GroupSymbol> {
         self.groups
             .iter()
             .find(|s| s.resources.contains(&resource))
-            .map(|s| s.group)
+    }
+
+    /// 资源名 → 组号。
+    pub fn group_of_resource(&self, resource: &str) -> Option<u32> {
+        self.symbol_of_resource(resource).map(|s| s.group)
     }
 
     /// 表里是否登记过这个名字（组名或资源名）。

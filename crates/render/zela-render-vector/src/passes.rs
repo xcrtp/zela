@@ -24,6 +24,8 @@
 //! 不会让画面变化。真正的"变了"由 `--step hashes` 判定。
 
 use ze_graph_core::{Adjacency, find_cycle};
+// BP-2：组的名字表（纯数据，定义在 kernel 层 IR）—— 名字 → 组号 → 它携带的可声明资源名。
+use ze_render_ir::{BindSymbols, GroupSymbol};
 
 // ─── 资源槽位：组 1（vector images） ──────────────────────────────────────
 
@@ -136,6 +138,75 @@ pub fn image_slot(name: &str) -> u32 {
         .position(|slot| slot.name == name)
         .unwrap_or_else(|| panic!("组 1 没有登记资源 {name:?}（IMAGE_SLOTS 缺项）")) as u32
 }
+
+// ─── 组名表（BP-2） ──────────────────────────────────────────────────────
+
+/// `PassDecl.inputs` 里会用到的组 1（images）名字。
+///
+/// 每个都必须是 `IMAGE_SLOTS` 的槽位（用例 [`tests::groups_only_name_registered_slots`] 逐项比对），
+/// 不是新造的词；这里只列"声明会引用"的那些，不是 layout 的副本。
+const IMAGE_NAMES: [&str; 13] = [
+    "atlas",
+    "layers",
+    "base",
+    "base_depth",
+    "crossings",
+    "slab_bounds",
+    "slabs",
+    "occlusion",
+    "environment",
+    "shadow_maps",
+    "dfg_table",
+    "shader_programs",
+    "shader_colors",
+];
+
+/// 光栅视图的组名表（`RASTER_PLAN` / `RASTER_LAYERED_PLAN`）。
+///
+/// `resources` 只列声明会引用的名字：`scene_group` 还绑着 `views` / `vertices` / `links` /
+/// `extras`，但没有任何 `PassDecl.inputs` 引用它们。
+///
+/// 组 3（`lighting`）的清单为空：光照是每个受光 pass 都绑的环境组，声明侧目前不描述
+/// 光照依赖 —— 空清单 ⇒ 不参与"多绑"判定（BP-4 记账）。
+pub const RASTER_GROUPS: BindSymbols = BindSymbols::new(&[
+    GroupSymbol {
+        group: 0,
+        name: "scene",
+        resources: &["instances", "rows", "sprites"],
+    },
+    GroupSymbol {
+        group: 2,
+        name: "list",
+        resources: &["list_appended"],
+    },
+    GroupSymbol {
+        group: 3,
+        name: "lighting",
+        resources: &[],
+    },
+]);
+
+/// 矢量合成视图的组名表（`VECTOR_PLAN`）。
+///
+/// 两个组都可能是组 0，但 layout 不同：光栅的 `scene` 带实例缓冲，矢量的
+/// `vector scene` 带曲线控制点。名字分开记，免得"声明了 `ctrl` 却只绑了光栅组"被放过。
+pub const VECTOR_GROUPS: BindSymbols = BindSymbols::new(&[
+    GroupSymbol {
+        group: 0,
+        name: "vector scene",
+        resources: &["ctrl", "subs", "objects", "rows", "tiles"],
+    },
+    GroupSymbol {
+        group: 1,
+        name: "images",
+        resources: &IMAGE_NAMES,
+    },
+    GroupSymbol {
+        group: 3,
+        name: "lighting",
+        resources: &[],
+    },
+]);
 
 // ─── 目标纹理身份 ────────────────────────────────────────────────────────
 
@@ -682,6 +753,23 @@ pub enum ScheduleError {
     Undeclared { name: &'static str },
     /// 计划里该跑的 pass 没有被记录（静默跳过）。
     Missing { name: &'static str },
+    /// **少绑**（BP-2）：pass 声明读某个资源，但本帧没有绑定它所属的组。
+    Unbound {
+        pass: &'static str,
+        group: &'static str,
+    },
+    /// **多绑**（BP-2）：pass 绑了一个组，但它的声明里没有任何一个资源名来自这个组。
+    Surplus {
+        pass: &'static str,
+        group: &'static str,
+    },
+    /// 记录了一个组名表里没有的组（名字对不上表）。
+    UnknownGroup {
+        pass: &'static str,
+        group: &'static str,
+    },
+    /// 在任何一个 pass 之外记录了绑定（记账位置错了）。
+    BindOutsidePass { group: &'static str },
 }
 
 impl std::fmt::Display for ScheduleError {
@@ -702,6 +790,22 @@ impl std::fmt::Display for ScheduleError {
             Self::Missing { name } => {
                 write!(f, "计划里的 pass {name:?} 没有被记录（静默跳过）")
             }
+            Self::Unbound { pass, group } => write!(
+                f,
+                "pass {pass:?} 声明读的资源在组 {group:?} 里，但本帧没有绑定这个组（少绑）"
+            ),
+            Self::Surplus { pass, group } => write!(
+                f,
+                "pass {pass:?} 绑定了组 {group:?}，但它的声明里没有任何资源来自这个组（多绑）"
+            ),
+            Self::UnknownGroup { pass, group } => write!(
+                f,
+                "pass {pass:?} 绑定的组 {group:?} 不在组名表里（名字对不上，无法校验）"
+            ),
+            Self::BindOutsidePass { group } => write!(
+                f,
+                "组 {group:?} 的绑定记录在任何 pass 之外（记账位置错了）"
+            ),
         }
     }
 }
@@ -723,10 +827,27 @@ pub struct PassSchedule {
     recorded: Vec<&'static str>,
     skipped: Vec<&'static str>,
     raw_recorded: Vec<&'static str>,
+    /// 名字表：声明名 → 组（空表 = 不做绑定校验，见 [`Self::new`]）。
+    groups: BindSymbols,
+    /// 实际绑定的记录：`(pass, 组名)`，由 [`Self::note_bind`] 在绑定处自动产生。
+    bound: Vec<(&'static str, &'static str)>,
+    /// 在任何 pass 之外记下的组名（`finish` 报错）。
+    stray: Vec<&'static str>,
+    /// 当前正在记录的 pass（`note_bind` 归到它名下）。
+    current: Option<&'static str>,
 }
 
 impl PassSchedule {
+    /// 不带组名表：只校验顺序与完整性（绑定校验留给 [`Self::with_groups`]）。
     pub fn new(plan: PassPlan, skip: u32) -> Self {
+        Self::with_groups(plan, skip, BindSymbols::new(&[]))
+    }
+
+    /// 带组名表：`finish` 会比对「实际绑定」与「声明」。
+    ///
+    /// 只校验**参与记账**的 pass：一个 pass 只要本帧记过至少一次绑定，就算接入；
+    /// 一次都没记的 pass 不参与比对（那是还没改造的调用点 —— 由 [`Self::unbound_passes`] 点名）。
+    pub fn with_groups(plan: PassPlan, skip: u32, groups: BindSymbols) -> Self {
         Self {
             plan,
             skip,
@@ -734,6 +855,10 @@ impl PassSchedule {
             recorded: Vec::new(),
             skipped: Vec::new(),
             raw_recorded: Vec::new(),
+            groups,
+            bound: Vec::new(),
+            stray: Vec::new(),
+            current: None,
         }
     }
 
@@ -750,6 +875,36 @@ impl PassSchedule {
     /// 因**数据**缺席而显式跳过的 pass（诊断用）。
     pub fn skipped(&self) -> &[&'static str] {
         &self.skipped
+    }
+
+    /// 记录过的 pass 里**没有接入绑定记账**的那些（BP-2 / BP-4 的 escape 清单）。
+    ///
+    /// 它们照常通过顺序与完整性校验，但不参与"声明 vs 实际"比对 —— 名单本身就是账。
+    pub fn unbound_passes(&self) -> Vec<&'static str> {
+        self.recorded
+            .iter()
+            .copied()
+            .filter(|pass| !self.bound.iter().any(|(p, _)| p == pass))
+            .collect()
+    }
+
+    /// 本帧记过绑定账的 pass 数（诊断用）。
+    pub fn bound_passes(&self) -> usize {
+        self.recorded
+            .iter()
+            .filter(|pass| self.bound.iter().any(|(p, _)| p == *pass))
+            .count()
+    }
+
+    /// **记一笔绑定**（BP-2）：在 `set_bind_group` 的同一处调用，归到当前 pass 名下。
+    ///
+    /// 它不执行绑定（渲染 pass 与计算 pass 的 `set_bind_group` 没有共同 trait），
+    /// 但**紧接着**那次调用 —— 一致性数据由行为产生，调用方不申报期望值。
+    pub fn note_bind(&mut self, group: &'static str) {
+        match self.current {
+            Some(pass) => self.bound.push((pass, group)),
+            None => self.stray.push(group),
+        }
     }
 
     /// 该 pass 声明的启用状态。
@@ -798,6 +953,7 @@ impl PassSchedule {
         }
         self.cursor += 1;
         self.recorded.push(name);
+        self.current = Some(name);
         Ok(())
     }
 
@@ -826,8 +982,10 @@ impl PassSchedule {
         self.cursor += 1;
         if present {
             self.recorded.push(name);
+            self.current = Some(name);
         } else {
             self.skipped.push(name);
+            self.current = None;
         }
         Ok(())
     }
@@ -854,10 +1012,11 @@ impl PassSchedule {
         }
         self.cursor += 1;
         self.raw_recorded.push(name);
+        self.current = Some(name);
         Ok(())
     }
 
-    /// 帧末核对：所有启用项都被记录或被显式跳过。
+    /// 帧末核对：所有启用项都被记录或被显式跳过；接入记账的 pass 的绑定与声明一致。
     pub fn finish(mut self) -> Result<(), ScheduleError> {
         while self.cursor < self.plan.len() {
             let decl = &self.plan[self.cursor];
@@ -865,6 +1024,58 @@ impl PassSchedule {
                 return Err(ScheduleError::Missing { name: decl.name });
             }
             self.cursor += 1;
+        }
+        self.check_bindings()
+    }
+
+    /// **声明 vs 实际**（BP-2）。
+    ///
+    /// 只看本帧记过绑定的 pass（`bound` 里出现过的名字）。对每个这样的 pass：
+    /// 1. 声明里的每个 **input**，若它属于表里某个组 ⇒ 该组必须绑过（少绑即红）；
+    /// 2. 绑过的每个组，若它带可声明资源 ⇒ 声明里至少要有一个名字来自它（多绑即红）。
+    ///
+    /// `outputs` 是写入目标，不会被 `set_bind_group` 绑定，故不参与比对。
+    fn check_bindings(&self) -> Result<(), ScheduleError> {
+        if let Some(group) = self.stray.first() {
+            return Err(ScheduleError::BindOutsidePass { group });
+        }
+        for decl in self.plan {
+            let bound: Vec<&'static str> = self
+                .bound
+                .iter()
+                .filter(|(pass, _)| *pass == decl.name)
+                .map(|(_, group)| *group)
+                .collect();
+            if bound.is_empty() {
+                continue;
+            }
+            for input in decl.inputs {
+                if let Some(symbol) = self.groups.symbol_of_resource(input) {
+                    if !bound.contains(&symbol.name) {
+                        return Err(ScheduleError::Unbound {
+                            pass: decl.name,
+                            group: symbol.name,
+                        });
+                    }
+                }
+            }
+            for group in &bound {
+                let Some(symbol) = self.groups.symbol(group) else {
+                    return Err(ScheduleError::UnknownGroup {
+                        pass: decl.name,
+                        group,
+                    });
+                };
+                if symbol.resources.is_empty() {
+                    continue;
+                }
+                if !symbol.resources.iter().any(|r| decl.inputs.contains(r)) {
+                    return Err(ScheduleError::Surplus {
+                        pass: decl.name,
+                        group,
+                    });
+                }
+            }
         }
         Ok(())
     }
@@ -1460,5 +1671,198 @@ mod tests {
                 input: "shader_programs"
             }
         );
+    }
+
+    // ── 声明 vs 实际绑定（BP-2） ─────────────────────────────────────────
+
+    /// 一条两 pass 的玩具计划 + 它用的组名表（`scene` / `images` 各管一边，`lighting` 空清单）。
+    const BOUND_GROUPS: BindSymbols = BindSymbols::new(&[
+        GroupSymbol {
+            group: 0,
+            name: "scene",
+            resources: &["instances", "rows", "sprites"],
+        },
+        GroupSymbol {
+            group: 1,
+            name: "images",
+            resources: &["atlas", "base"],
+        },
+        GroupSymbol {
+            group: 3,
+            name: "lighting",
+            resources: &[],
+        },
+    ]);
+
+    const BOUND_PLAN: PassPlan = &[
+        PassDecl {
+            name: "draw",
+            kind: PassStage::Render,
+            inputs: &["instances", "rows", "sprites"],
+            outputs: &["view"],
+            entry: "draw",
+            dispatch: Dispatch::Draw,
+            enabled_when: EnabledWhen::ALWAYS,
+        },
+        PassDecl {
+            name: "composite",
+            kind: PassStage::Compute,
+            inputs: &["instances", "atlas", "base"],
+            outputs: &["view"],
+            entry: "composite",
+            dispatch: Dispatch::Fixed,
+            enabled_when: EnabledWhen::ALWAYS,
+        },
+    ];
+
+    /// 声明与绑定一致 ⇒ 通过（`lighting` 空清单不参与"多绑"判定）。
+    #[test]
+    fn bindings_match_the_declaration() {
+        let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
+        schedule.step("draw", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.note_bind("lighting");
+        schedule.step("composite", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.note_bind("images");
+        assert_eq!(schedule.bound_passes(), 2);
+        assert!(schedule.unbound_passes().is_empty());
+        schedule.finish().expect("声明与绑定一致");
+    }
+
+    /// 证伪 1（少绑）：声明读 `atlas`，却只绑了 `scene` ⇒ `Unbound { group: "images" }`。
+    #[test]
+    fn a_declared_group_that_is_not_bound_is_red() {
+        let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
+        schedule.step("draw", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.step("composite", true).unwrap();
+        schedule.note_bind("scene");
+        assert_eq!(
+            schedule.finish().unwrap_err(),
+            ScheduleError::Unbound {
+                pass: "composite",
+                group: "images"
+            }
+        );
+    }
+
+    /// 证伪 2（多绑）：绑了 `images`，但声明里没有一个来自它的名字 ⇒ `Surplus`。
+    #[test]
+    fn a_bound_group_that_is_not_declared_is_red() {
+        let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
+        schedule.step("draw", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.note_bind("images");
+        schedule.step("composite", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.note_bind("images");
+        assert_eq!(
+            schedule.finish().unwrap_err(),
+            ScheduleError::Surplus {
+                pass: "draw",
+                group: "images"
+            }
+        );
+    }
+
+    /// 证伪 3（改坏声明）：把 `draw` 的 `rows` 改成 `atlas` ⇒ 声明的 `atlas` 在 `images` 里，
+    /// 而 `draw` 只绑了 `scene` ⇒ 红。
+    #[test]
+    fn breaking_a_declaration_is_red() {
+        const BROKEN: PassPlan = &[
+            PassDecl {
+                name: "draw",
+                kind: PassStage::Render,
+                inputs: &["instances", "atlas", "sprites"],
+                outputs: &["view"],
+                entry: "draw",
+                dispatch: Dispatch::Draw,
+                enabled_when: EnabledWhen::ALWAYS,
+            },
+            PassDecl {
+                name: "composite",
+                kind: PassStage::Compute,
+                inputs: &["instances", "atlas", "base"],
+                outputs: &["view"],
+                entry: "composite",
+                dispatch: Dispatch::Fixed,
+                enabled_when: EnabledWhen::ALWAYS,
+            },
+        ];
+        let mut schedule = PassSchedule::with_groups(BROKEN, 0, BOUND_GROUPS);
+        schedule.step("draw", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.step("composite", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.note_bind("images");
+        assert_eq!(
+            schedule.finish().unwrap_err(),
+            ScheduleError::Unbound {
+                pass: "draw",
+                group: "images"
+            }
+        );
+    }
+
+    /// 未接入记账的 pass 不参与比对，但会被 [`PassSchedule::unbound_passes`] 点名（escape 账）。
+    #[test]
+    fn unbound_passes_are_listed_not_checked() {
+        let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
+        schedule.step("draw", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.step("composite", true).unwrap();
+        assert_eq!(schedule.unbound_passes(), vec!["composite"]);
+        schedule.finish().expect("未接入的 pass 不产生绑定错误");
+    }
+
+    /// 绑定记录写在任何 pass 之外 ⇒ `BindOutsidePass`（记账位置错了）。
+    #[test]
+    fn binds_outside_a_pass_are_red() {
+        let mut schedule = PassSchedule::with_groups(BOUND_PLAN, 0, BOUND_GROUPS);
+        // 还没记录任何 pass 就先记账。
+        schedule.note_bind("scene");
+        schedule.step("draw", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.step("composite", true).unwrap();
+        schedule.note_bind("scene");
+        schedule.note_bind("images");
+        assert_eq!(
+            schedule.finish().unwrap_err(),
+            ScheduleError::BindOutsidePass { group: "scene" }
+        );
+    }
+
+    /// 真实组名表自身合法，且 `images` 里的每个名字都是 `IMAGE_SLOTS` 的槽位。
+    #[test]
+    fn real_group_tables_are_valid() {
+        RASTER_GROUPS.validate().expect("raster 组表非法");
+        VECTOR_GROUPS.validate().expect("vector 组表非法");
+        let images = VECTOR_GROUPS.symbol("images").expect("images 组");
+        for name in images.resources {
+            image_slot(name); // 未登记即 panic 并点名
+        }
+        assert!(
+            !images.resources.is_empty(),
+            "images 组必须带可声明资源，否则多绑判定形同虚设"
+        );
+    }
+
+    /// 真实计划里出现在声明中的组 1 名字都能在 `VECTOR_GROUPS` 里查到组
+    /// （否则"声明了却绑不上"会悄悄逃过校验）。
+    #[test]
+    fn declared_image_names_are_covered_by_the_vector_table() {
+        for decl in VECTOR_PLAN {
+            for input in decl.inputs {
+                let known = IMAGE_SLOTS.iter().any(|slot| slot.name == *input);
+                if known {
+                    assert!(
+                        VECTOR_GROUPS.symbol_of_resource(input).is_some(),
+                        "pass {:?} 的输入 {input:?} 是组 1 槽位，但 vector 组表未覆盖",
+                        decl.name
+                    );
+                }
+            }
+        }
     }
 }

@@ -3580,9 +3580,10 @@ impl Player {
                     // B18 排查：`skip=lit` 强制无光管线（单目标，无 MRT 的 light）。
                     let light = *light && skipping() & SKIP_LIGHT == 0;
                     // BN-3：本帧走哪张计划由数据决定（有无链表 / slabs）；**顺序**由声明给出。
-                    let mut schedule = crate::passes::PassSchedule::new(
+                    let mut schedule = crate::passes::PassSchedule::with_groups(
                         if *listing || *slabs { crate::passes::RASTER_LAYERED_PLAN } else { crate::passes::RASTER_PLAN },
                         skipping(),
+                        crate::passes::RASTER_GROUPS,
                     );
                     let mut schedule_error: Option<crate::passes::ScheduleError> = None;
                     // 阴影是**一个**逻辑 pass（层数由数据决定，0 层也记录 —— 顺序位置固定）。
@@ -3701,6 +3702,9 @@ impl Player {
                             let mut pass = canvas.pass(&mut encoder, Some((cleared, true)), if plan.is_some() { Depth::Kept } else { Depth::Fresh }, base.as_ref(), base_light.as_ref());
                             pass.set_bind_group(0, buffers.group.as_ref(), &slot);
                             pass.set_bind_group(3, lighting_group, &[]);
+                            // BP-2：绑定即记账 —— `base` 是第一个接入的 pass（其余在 BP-3 铺开）。
+                            schedule.note_bind("scene");
+                            schedule.note_bind("lighting");
                             if sprites.is_empty() {
                                 self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::All);
                             } else {
