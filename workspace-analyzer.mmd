@@ -1,60 +1,142 @@
 graph TD
+    ze-comb --> ze-graph-core
+    ze-comb --> ze-type
     ze-content --> ze-notion
+    ze-func --> ze-comb
+    ze-func --> ze-reflect
+    ze-func --> ze-type
+    ze-graph-algo --> ze-graph-core
     ze-graph-algo --> ze-node-core
     ze-graph-eval --> ze-node-core
+    ze-node --> ze-graph-algo
+    ze-node --> ze-graph-eval
+    ze-node --> ze-node-core
+    ze-node --> ze-node-schema
+    ze-node-core --> ze-type
     ze-node-schema --> ze-node-core
     ze-node-schema --> ze-node-schema-macros
-    ze-object --> ze-macro
-    ze-object --> ze-notion
-    ze-object --> ze-render-ir
-    ze-object --> ze-scene-contract
+    ze-pod --> ze-pod-binding
+    ze-pod --> ze-pod-core
+    ze-pod --> ze-pod-macro
     ze-pod-binding --> ze-pod-core
-    ze-pod-lua --> ze-pod-core
+    ze-pod-core --> ze-graph-core
+    ze-pod-core --> ze-reflect
+    ze-pod-core --> ze-type
+    ze-pod-func --> ze-comb
+    ze-pod-func --> ze-func
+    ze-pod-func --> ze-pod-core
+    ze-pod-func --> ze-pod-macro
+    ze-pod-func --> ze-reflect
+    ze-pod-func --> ze-type
+    ze-pod-js --> ze-pod-binding
+    ze-pod-js --> ze-pod-core
     ze-pod-lua --> ze-pod-binding
-    ze-pod-py --> ze-pod-core
+    ze-pod-lua --> ze-pod-core
     ze-pod-py --> ze-pod-binding
+    ze-pod-py --> ze-pod-core
     ze-pod-py --> ze-pod-macro
-    ze-pod-tests --> ze-pod-core
     ze-pod-tests --> ze-pod-binding
+    ze-pod-tests --> ze-pod-core
+    ze-pod-tests --> ze-pod-js
     ze-pod-tests --> ze-pod-lua
     ze-pod-tests --> ze-pod-macro
     ze-pod-tests --> ze-pod-py
     ze-prerender --> ze-content
     ze-prerender --> ze-notion
+    ze-reflect --> ze-type
     ze-render-ir --> ze-notion
+    ze-render-ir --> ze-pod-core
+    ze-render-ir --> ze-vertex
+    ze-scene-api --> ze-content
+    ze-scene-api --> ze-notion
+    ze-scene-api --> ze-pod-core
+    ze-scene-api --> ze-pod-macro
+    ze-scene-api --> ze-prerender
+    ze-scene-api --> ze-render-ir
+    ze-scene-api --> ze-scene-contract
+    ze-scene-api --> ze-scene-core
+    ze-scene-api --> ze-scene-macros
+    ze-scene-api --> ze-time
     ze-scene-contract --> ze-notion
     ze-scene-contract --> ze-render-ir
+    ze-scene-core --> ze-comb
+    ze-scene-core --> ze-content
+    ze-scene-core --> ze-func
+    ze-scene-core --> ze-macro
+    ze-scene-core --> ze-notion
+    ze-scene-core --> ze-pod-core
+    ze-scene-core --> ze-prerender
+    ze-scene-core --> ze-reflect
+    ze-scene-core --> ze-render-ir
+    ze-scene-core --> ze-scene-contract
+    ze-scene-core --> ze-scene-macros
+    ze-scene-core --> ze-time
+    ze-scene-hecs --> ze-scene-contract
     ze-time --> ze-notion
+    zela --> ze-node
+    zela --> ze-pod
+    zela-app --> ze-comb
     zela-app --> ze-content
     zela-app --> ze-macro
     zela-app --> ze-notion
-    zela-app --> ze-object
-    zela-app --> ze-pod-core
     zela-app --> ze-pod-binding
+    zela-app --> ze-pod-core
+    zela-app --> ze-pod-func
+    zela-app --> ze-pod-js
     zela-app --> ze-pod-lua
     zela-app --> ze-pod-py
     zela-app --> ze-prerender
+    zela-app --> ze-render-ir
+    zela-app --> ze-scene-core
+    zela-app --> zela-authored
     zela-app --> zela-playback
     zela-app --> zela-render
     zela-app --> zela-render-backends
-    zela-app --> zela-scene
+    zela-app --> zela-render-vector
     zela-app --> zela-scene-bundle
+    zela-app --> zela-scene-ecs
     zela-app --> zela-schedule
-    zela-compile --> zela-app
-    zela-compile --> zela-scene-bundle
+    zela-authored --> ze-comb
+    zela-authored --> ze-content
+    zela-authored --> ze-notion
+    zela-authored --> ze-prerender
+    zela-authored --> ze-render-ir
+    zela-authored --> ze-scene-core
+    zela-authored --> ze-time
+    zela-authored --> zela-scene-ecs
+    zela-cli --> zela-app
+    zela-cli --> zela-commands
+    zela-cli --> zela-gui
+    zela-cli --> zela-render-backends
+    zela-cli --> zela-scene-bundle
+    zela-commands --> ze-pod-binding
+    zela-commands --> ze-pod-core
+    zela-commands --> ze-pod-func
+    zela-commands --> ze-pod-js
+    zela-commands --> ze-pod-lua
+    zela-commands --> ze-pod-py
+    zela-commands --> zela-app
+    zela-commands --> zela-playback
+    zela-commands --> zela-render-backends
+    zela-commands --> zela-render-vector
+    zela-commands --> zela-scene-bundle
+    zela-commands --> zela-scene-ecs
+    zela-commands --> zela-schedule
     zela-egui --> ze-macro
     zela-egui --> ze-notion
-    zela-egui --> ze-object
     zela-egui --> ze-pod-core
+    zela-egui --> ze-scene-core
     zela-egui --> zela-render
     zela-egui --> zela-render-backends
-    zela-egui --> zela-scene
+    zela-egui --> zela-scene-ecs
     zela-egui --> zela-schedule
     zela-gui --> ze-pod-core
     zela-gui --> zela-app
     zela-gui --> zela-egui
+    zela-gui --> zela-playback
     zela-gui --> zela-render-backends
-    zela-gui --> zela-scene
+    zela-gui --> zela-render-vector
+    zela-gui --> zela-scene-ecs
     zela-gui --> zela-schedule
     zela-node-editor --> ze-graph-algo
     zela-node-editor --> ze-node-core
@@ -64,48 +146,50 @@ graph TD
     zela-node-egui-ui --> ze-node-schema
     zela-node-egui-ui --> zela-node-egui
     zela-playback --> ze-notion
-    zela-playback --> ze-object
     zela-playback --> ze-pod-core
+    zela-playback --> ze-pod-func
+    zela-playback --> ze-render-ir
+    zela-playback --> ze-scene-core
     zela-playback --> zela-render
     zela-playback --> zela-render-backends
-    zela-playback --> zela-scene
+    zela-playback --> zela-render-vector
     zela-playback --> zela-scene-bundle
+    zela-playback --> zela-scene-ecs
     zela-playback --> zela-schedule
     zela-render --> ze-content
     zela-render --> ze-notion
-    zela-render --> ze-object
     zela-render --> ze-render-ir
     zela-render --> ze-resource
     zela-render --> ze-scene-contract
+    zela-render --> ze-scene-core
+    zela-render --> ze-scene-hecs
     zela-render --> ze-vertex
-    zela-render --> zela-scene
     zela-render --> zela-schedule
     zela-render-backends --> ze-notion
-    zela-render-backends --> ze-object
     zela-render-backends --> ze-render-ir
+    zela-render-backends --> ze-resource
+    zela-render-backends --> ze-scene-core
+    zela-render-backends --> ze-vertex
     zela-render-backends --> zela-render
-    zela-scene --> ze-content
-    zela-scene --> ze-macro
-    zela-scene --> ze-notion
-    zela-scene --> ze-object
-    zela-scene --> ze-pod-core
-    zela-scene --> ze-pod-macro
-    zela-scene --> ze-prerender
-    zela-scene --> ze-render-ir
-    zela-scene --> ze-scene-contract
-    zela-scene --> ze-time
-    zela-scene --> zela-schedule
-    zela-scene-bundle --> zela-scene
-    zela-web --> zela-playback
-    zela-web --> zela-render-backends
-    zela-web --> zela-scene-bundle
-    zela --> ze-pod
-    zela --> ze-node
-    ze-pod --> ze-pod-binding
-    ze-pod --> ze-pod-core
-    ze-pod --> ze-pod-macro
-    ze-node --> ze-graph-algo
-    ze-node --> ze-graph-eval
-    ze-node --> ze-node-core
-    ze-node --> ze-node-schema
+    zela-render-vector --> ze-graph-core
+    zela-render-vector --> ze-notion
+    zela-render-vector --> ze-render-ir
+    zela-scene-bundle --> ze-render-ir
+    zela-scene-bundle --> zela-scene-ecs
+    zela-scene-ecs --> ze-comb
+    zela-scene-ecs --> ze-content
+    zela-scene-ecs --> ze-func
+    zela-scene-ecs --> ze-macro
+    zela-scene-ecs --> ze-notion
+    zela-scene-ecs --> ze-pod-core
+    zela-scene-ecs --> ze-pod-func
+    zela-scene-ecs --> ze-pod-macro
+    zela-scene-ecs --> ze-prerender
+    zela-scene-ecs --> ze-render-ir
+    zela-scene-ecs --> ze-scene-api
+    zela-scene-ecs --> ze-scene-contract
+    zela-scene-ecs --> ze-scene-core
+    zela-scene-ecs --> ze-scene-hecs
+    zela-scene-ecs --> ze-time
+    zela-scene-ecs --> zela-schedule
 classDef red stroke:#ff0000,stroke-width:2px;
