@@ -23,6 +23,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::Instant;
 
 use xtask::{
     ArchLayer, Baselines, ModuleDocFacts, Options, Step, apply_record, architecture_layers,
@@ -292,8 +293,10 @@ fn run(options: &Options) -> Result<(), String> {
             .join(" → ")
     );
 
+    let mut timings: Vec<(&'static str, f64)> = Vec::with_capacity(steps.len());
     for step in steps {
         println!("\n[xtask] ===== {} =====", step.name());
+        let started = Instant::now();
         match step {
             Step::Check => step_check(&root, &plan)?,
             Step::Test => step_test(&root, &plan)?,
@@ -306,6 +309,21 @@ fn run(options: &Options) -> Result<(), String> {
             Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent)?,
             Step::Bench => step_bench(&root)?,
             Step::Fixtures => step_fixtures(&root)?,
+        }
+        let elapsed = started.elapsed().as_secs_f64();
+        // 每步计时（阶段 0）：让"哪一步最贵"可度量，而不是靠人工推。
+        println!("[xtask] step {}: {elapsed:.1}s", step.name());
+        timings.push((step.name(), elapsed));
+    }
+
+    // 汇总（总耗时 + 各步降序），一行一条 —— 便于直接贴进计划 / 复盘。
+    if timings.len() > 1 {
+        let total: f64 = timings.iter().map(|(_, seconds)| seconds).sum();
+        println!("\n[xtask] 耗时汇总：{total:.1}s");
+        let mut sorted = timings.clone();
+        sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (name, seconds) in sorted {
+            println!("[xtask]   {name}: {seconds:.1}s");
         }
     }
 
