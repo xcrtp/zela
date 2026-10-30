@@ -11,17 +11,18 @@
 - 路径：`crates/kernel/ze-render-ir`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-pod-core`、`ze-vertex`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-web`
-- 源文件：13 个 · 2992 行
+- 源文件：14 个 · 3253 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
+| `src/bind.rs` | 259 | — |
 | `src/caps.rs` | 425 | — |
 | `src/degrade.rs` | 40 | — |
 | `src/draw.rs` | 111 | — |
 | `src/layer.rs` | 30 | — |
-| `src/lib.rs` | 75 | — |
+| `src/lib.rs` | 77 | — |
 | `src/mesh.rs` | 64 | — |
 | `src/paint.rs` | 314 | — |
 | `src/params.rs` | 417 | — |
@@ -53,6 +54,9 @@ graph LR
 
 | 文件 | 项 |
 |---|---|
+| `src/bind.rs` | `pub struct GroupSymbol` |
+| `src/bind.rs` | `pub struct BindSymbols` |
+| `src/bind.rs` | `pub enum BindSymbolError` |
 | `src/caps.rs` | `pub fn signatures_of(namespace: &str) -> Option<&'static [FnSig]>` |
 | `src/caps.rs` | `pub fn fingerprints() -> [(&'static str, u64); 4]` |
 | `src/caps.rs` | `pub enum MeshForm` |

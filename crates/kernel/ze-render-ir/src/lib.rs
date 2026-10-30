@@ -23,6 +23,7 @@
 // 为什么 `ToShape2D` 吃的是仿射矩阵而不是相机：见 `degrade.rs` 顶部注释
 // （相机在场景对象层，IR 层认识它会成环）。
 
+pub mod bind;
 pub mod caps;
 pub mod degrade;
 pub mod draw;
@@ -36,6 +37,7 @@ pub mod style;
 pub mod target;
 pub mod uniform;
 
+pub use bind::{BindSymbolError, BindSymbols, GroupSymbol};
 pub use caps::{
     CapabilityNegotiationError, MeshForm, MeshFormError, MeshForms, NAMESPACES,
     PINNED_FINGERPRINTS, RenderCapabilitySet, fingerprints, negotiate, signatures_of,

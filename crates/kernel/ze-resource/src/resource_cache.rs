@@ -26,6 +26,15 @@ pub enum ResourceKey {
         id: u64,
         version: u64,
     },
+    /// 名字寻址（BP-1）：同一类资源里按**稳定名字 + 版本**取。
+    ///
+    /// 用于"本来就有名字"的资源（绑定组、pass 的组），
+    /// 生命周期与另外两个变体完全一致 —— 只换 key 维度，不动 generation / 延迟销毁 / dirty / 驱逐。
+    Named {
+        type_id: TypeId,
+        name: &'static str,
+        version: u64,
+    },
 }
 
 impl ResourceKey {
@@ -44,9 +53,31 @@ impl ResourceKey {
         }
     }
 
+    /// 名字 + 版本寻址（BP-1）。
+    ///
+    /// `name` 必须是稳定字面量（与 `IMAGE_SLOTS` 同源），`version` 是它对外的代数：
+    /// 版本一变就是另一条 key ⇒ 缓存重建，旧句柄走 3 帧延迟销毁。
+    pub fn named<C: 'static>(name: &'static str, version: u64) -> Self {
+        Self::Named {
+            type_id: TypeId::of::<C>(),
+            name,
+            version,
+        }
+    }
+
+    /// 名字（只有 [`Self::Named`] 有）。
+    pub fn name(&self) -> Option<&'static str> {
+        match self {
+            Self::Named { name, .. } => Some(*name),
+            _ => None,
+        }
+    }
+
     pub fn type_id(&self) -> TypeId {
         match self {
-            Self::Content { type_id, .. } | Self::Versioned { type_id, .. } => *type_id,
+            Self::Content { type_id, .. }
+            | Self::Versioned { type_id, .. }
+            | Self::Named { type_id, .. } => *type_id,
         }
     }
 }
@@ -464,7 +495,6 @@ mod tests {
     }
 
     // ── G7 诊断：动画内容逐帧变化时 pending / 条目数有界 ──────────────
-
     /// 🔴 R5-2（G7 最关键一条）：复刻 `wgpu_2d::finish_frame` 的每帧调用序列 ——
     /// `begin_frame` → 插入本帧全部条目 → `evict_unused(0)` → `notify_submit` ——
     /// 并让"动画内容"每帧哈希都变（几何全 miss、全重建、全驱逐），
@@ -505,5 +535,89 @@ mod tests {
         // 3) 实测峰值上界 = (graveyard_period + 1) × 每帧条目数。
         let bound = ((DeferredDestroyer::DEFAULT_GRAVEYARD_PERIOD + 1) * PER_FRAME) as usize;
         assert!(peak <= bound, "pending 峰值 {peak} 越界（上界 {bound}）");
+    }
+
+    // ── BP-1：名字寻址（Named）与既有两变体语义一致 ─────────────────────
+
+    struct Groups;
+
+    /// 同名同版本 ⇒ 命中同一条目（句柄 id 不变）。
+    #[test]
+    fn named_key_hits_the_same_entry() {
+        let mut cache = ResourceCache::<()>::new();
+        let key = ResourceKey::named::<Groups>("scene", 1);
+        let first = cache
+            .insert_handle(key, (), GpuHandle::new(7_u32))
+            .id();
+        assert_eq!(key.name(), Some("scene"));
+        let again = cache.get(key).expect("命中").id();
+        assert_eq!(first, again, "同名同版本必须是同一条目");
+        assert_eq!(
+            cache.get(key).and_then(|h| h.downcast_ref::<u32>()),
+            Some(&7),
+            "再插入不得替换已命中的句柄"
+        );
+        assert_eq!(cache.len(), 1, "不得因再取而新增条目");
+    }
+
+    /// 版本变化 ⇒ 未命中 ⇒ 插入后是新条目（旧条目仍在，由驱逐回收）。
+    #[test]
+    fn named_key_version_change_misses() {
+        let mut cache = ResourceCache::<()>::new();
+        let old = ResourceKey::named::<Groups>("lighting", 1);
+        let new = ResourceKey::named::<Groups>("lighting", 2);
+        let old_id = cache.insert_handle(old, (), GpuHandle::new(1_u32)).id();
+        assert!(cache.get(new).is_none(), "版本变了就是另一条 key");
+        let new_id = cache.insert_handle(new, (), GpuHandle::new(2_u32)).id();
+        assert_ne!(old_id, new_id);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(old).expect("旧条目还在").id(), old_id);
+    }
+
+    /// `evict_unused` 之后重取：先 miss，重新插入得到新 id，旧句柄进延迟销毁。
+    #[test]
+    fn named_key_after_evict_is_rebuilt() {
+        let mut cache = ResourceCache::<()>::new();
+        let key = ResourceKey::named::<Groups>("image_groups", 3);
+        cache.begin_frame();
+        let first = cache.insert_handle(key, (), GpuHandle::new(1_u32)).id();
+
+        // 空闲 1 帧 ⇒ 超过 max_idle_frames = 0，被驱逐。
+        cache.begin_frame();
+        assert_eq!(cache.evict_unused(0), 1);
+        assert!(cache.get(key).is_none(), "驱逐后旧 key 不得命中");
+        assert_eq!(cache.pending_destroy_count(), 1, "旧句柄走延迟销毁");
+
+        let second = cache.insert_handle(key, (), GpuHandle::new(1_u32)).id();
+        assert_ne!(first, second, "重建必须换 slot（旧 id 已失效）");
+        assert!(cache.get_by_id(first).is_err(), "旧 id 必须是 Stale / Dropped");
+        cache.get_by_id(second).expect("新 id 可访问");
+    }
+
+    /// 同名不同类型的资源互不命中（type_id 参与 key）。
+    #[test]
+    fn named_key_carries_the_type() {
+        struct OtherGroups;
+        let a = ResourceKey::named::<Groups>("scene", 1);
+        let b = ResourceKey::named::<OtherGroups>("scene", 1);
+        assert_ne!(a, b);
+        let mut cache = ResourceCache::<()>::new();
+        cache.insert_handle(a, (), GpuHandle::new(1_u32));
+        assert!(cache.get(b).is_none());
+    }
+
+    /// 三个变体只在 key 维度不同：同一个名字不会与内容 / 版本寻址的 key 撞上。
+    #[test]
+    fn named_key_is_distinct_from_the_other_two() {
+        assert_ne!(
+            ResourceKey::named::<Groups>("x", 0),
+            ResourceKey::content::<Groups>(0)
+        );
+        assert_ne!(
+            ResourceKey::named::<Groups>("x", 0),
+            ResourceKey::versioned::<Groups>(0, 0)
+        );
+        assert_eq!(ResourceKey::content::<Groups>(0).name(), None);
+        assert_eq!(ResourceKey::versioned::<Groups>(0, 0).name(), None);
     }
 }

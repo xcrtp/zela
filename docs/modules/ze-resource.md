@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-resource`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`zela-render`、`zela-render-backends`
-- 源文件：3 个 · 704 行
+- 源文件：3 个 · 818 行
 
 ### 文件清单
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | `src/lib.rs` | 14 | — |
 | `src/render_backend.rs` | 181 | — |
-| `src/resource_cache.rs` | 509 | — |
+| `src/resource_cache.rs` | 623 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
