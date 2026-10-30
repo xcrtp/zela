@@ -38,7 +38,10 @@
 //   - fs_flat    ← ShaderVariant::Flat（无光照：纹理 over 颜色）
 //   - fs_lambert ← ShaderVariant::Lambert（朗伯漫反射，默认）
 //   - fs_pbr     ← ShaderVariant::Pbr（金属-粗糙度 PBR，B1-C）
-// 顶点着色阶段（vs_main）与顶点布局对所有变体共享，因此新增风格**不得**改顶点格式。
+// 顶点着色阶段：`vs_main`（位置 / UV / 法线，三角形）与 `vs_line`（仅位置，线段）。
+// 新增**着色风格**仍不得改顶点格式（只加 `fs_*` 变体）；改变拓扑可以有自己的
+// 顶点入口与布局，但入口名与语义需求的对应关系由 `ze_render_ir::vs_requirements`
+// 声明、由 `tests/wgsl_requirements.rs` 与本文件逐项核对。
 
 struct Uniforms {
     mvp: mat4x4<f32>,
@@ -91,6 +94,27 @@ fn vs_main(
     out.uv = uv;
     out.normal = normal;
     // B1-B：世界位置（点光衰减用）。line 的 model = 恒等 ⇒ world_pos = pos。
+    out.world_pos = (u.model * vec4<f32>(pos, 1.0)).xyz;
+    return out;
+}
+
+// 线段入口（顶点契约扩展）：线段布局只有位置（stride 12），uv / normal 由此处给常量。
+//
+// 与 vs_main 逐位等价的依据：
+//   - uv = (0,0)：line 路径绑的是 1×1 透明黑兜底纹理 ⇒ 采样值恒 0，
+//     `albedo = tex.rgb + color * lit * (1 - tex.a)` 与 uv 取什么无关；
+//   - normal = (0,0,1)：与写出端原先逐顶点补的 `(0,0,1)` 同值；与默认头顶光
+//     点积为 1 ⇒ `lit = 1`，颜色不被光照压暗。
+//
+// ⚠️ 线段不得使用 `Pbr` 变体：`color_pbr` 用 uv 导数构造屏幕空间 TBN，
+// 常量 uv ⇒ 导数恒 0 ⇒ `det = 0` ⇒ NaN。后端已显式拒绝（不静默降级）。
+@vertex
+fn vs_line(@location(0) pos: vec3<f32>) -> VertexOutput {
+    var out: VertexOutput;
+    out.position = u.mvp * vec4<f32>(pos, 1.0);
+    out.color = u.color;
+    out.uv = vec2<f32>(0.0, 0.0);
+    out.normal = vec3<f32>(0.0, 0.0, 1.0);
     out.world_pos = (u.model * vec4<f32>(pos, 1.0)).xyz;
     return out;
 }

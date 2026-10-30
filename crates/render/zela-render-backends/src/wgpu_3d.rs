@@ -240,6 +240,23 @@ fn cull_mode_for(topology: PrimitiveTopology, double_sided: bool) -> CullMode {
     }
 }
 
+/// 线段拓扑**不支持** `Pbr` 变体：显式拒绝，不静默降级。
+///
+/// 依据：线段走 `vs_line`，布局只有位置，UV 由入口给常量 `(0,0)`；而 `color_pbr`
+/// 用 UV 导数构造屏幕空间 TBN（`det = uv1.x·uv2.y − uv2.x·uv1.y`）——
+/// 常量 UV ⇒ 导数恒 0 ⇒ `det = 0` ⇒ 除零得 NaN。
+///
+/// 为什么是拒绝而不是降级到 Lambert：降级会让"作者写 PBR、画面按 Lambert 出"这件事
+/// 无声发生；拒绝会在第一次绘制时当面报错。
+fn assert_variant_supported(topology: PrimitiveTopology, variant: ShaderVariant) {
+    if topology == PrimitiveTopology::Lines && variant == ShaderVariant::Pbr {
+        panic!(
+            "不静默：线段拓扑（Lines）不支持 PBR 变体（vs_line 不提供 UV，\
+             屏幕空间 TBN 会除零产生 NaN）；请改用 Lambert / Flat"
+        );
+    }
+}
+
 /// IR `CullMode` → wgpu `Face`（后端翻译，B2-2）。
 fn to_wgpu_cull_mode(cull: CullMode) -> Option<wgpu::Face> {
     match cull {
@@ -1063,6 +1080,8 @@ impl WgpuBackend3D {
         // ── MeshDraws：按几何 id + version 寻址（几何内容变化时 bump_version 失效）──
         for md in meshes {
             let geometry = &md.geometry;
+            // 线段拓扑不能用 PBR（vs_line 不提供 UV）；显式拒绝，不静默降级。
+            assert_variant_supported(geometry.topology, md.material.variant);
             // UV 来源（几何自带 vs 兜底策略）参与缓存键：同一几何在不同投影策略下
             // 顶点数据不同，必须区分（见 `uv_source_code`）。
             let uv_code = uv_source_code(geometry.uvs.is_some(), md.material.uv_projection);
@@ -1379,7 +1398,10 @@ impl WgpuBackend3D {
                 layout: Some(&self.pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &self.shader,
-                    entry_point: Some("vs_main"),
+                    // 顶点入口按拓扑查表（`vs_entry_for`）：三角形走 vs_main，
+                    // 线段走 vs_line（只读位置）。入口名与语义需求由 IR 声明，
+                    // 与 `cube.wgsl` 的一致性由 `tests/wgsl_requirements.rs` 核对。
+                    entry_point: Some(ze_render_ir::vs_entry_for(key.topology)),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &vertex_buffers,
                 },
@@ -2874,6 +2896,23 @@ mod tests {
             partial(&p4),
             partial(&p1)
         );
+    }
+
+    /// 线段 + PBR ⇒ **必须显式报错**（`vs_line` 不提供 UV，屏幕空间 TBN 会除零）。
+    ///
+    /// 证伪：若改成"静默降级到 Lambert"，本 `should_panic` 测试变红。
+    #[test]
+    #[should_panic(expected = "线段拓扑（Lines）不支持 PBR 变体")]
+    fn test_lines_with_pbr_variant_is_rejected() {
+        assert_variant_supported(PrimitiveTopology::Lines, ShaderVariant::Pbr);
+    }
+
+    /// 三角形 + PBR 仍然是合法组合（拒绝只针对线段）。
+    #[test]
+    fn test_triangles_with_pbr_variant_is_allowed() {
+        assert_variant_supported(PrimitiveTopology::Triangles, ShaderVariant::Pbr);
+        assert_variant_supported(PrimitiveTopology::Lines, ShaderVariant::Lambert);
+        assert_variant_supported(PrimitiveTopology::Lines, ShaderVariant::Flat);
     }
 
     /// **B1-F 验收（真实设备）**：点列表拓扑 ⇒ **必须显式报错**，不得静默跳过

@@ -68,11 +68,15 @@ pub struct ShaderRequirements {
 /// 顶点入口：三角形（读位置 / UV / 着色法线）。
 pub const VS_MAIN: &str = "vs_main";
 
+/// 顶点入口：线段（只读位置；UV 与着色法线由入口内给常量）。
+pub const VS_LINE: &str = "vs_line";
+
 /// 顶点入口名 → 语义需求。未知入口返回 `None`（调用方显式报错，**不猜**）。
 pub fn vs_requirements(entry: &str) -> Option<ShaderRequirements> {
     use ze_vertex::Semantic;
     let semantics = match entry {
         VS_MAIN => vec![Semantic::Position, Semantic::Uv, Semantic::ShadingNormal],
+        VS_LINE => vec![Semantic::Position],
         _ => return None,
     };
     Some(ShaderRequirements { semantics })
@@ -80,14 +84,16 @@ pub fn vs_requirements(entry: &str) -> Option<ShaderRequirements> {
 
 /// 图元拓扑 → 顶点入口名。
 ///
-/// 现状：三种拓扑共用 `vs_main`（`cube.wgsl` 只有一个顶点入口）。拓扑改用独立
-/// 入口时（如线段读位置即可）只改这张表 —— 入口名是 shader 的事实，集中在这里
-/// 才有一处可查。
+/// - `Triangles` → [`VS_MAIN`]（位置 / UV / 法线）；
+/// - `Lines` → [`VS_LINE`]（只有位置，stride 12）；
+/// - `Points` → [`VS_MAIN`]：3D 后端显式拒绝点列表（无生产者），映射只为穷尽。
+///
+/// 入口名是 shader 的事实，集中在这里才有一处可查；`tests/wgsl_requirements.rs`
+/// 核对"这张表里的入口在 `cube.wgsl` 里真实存在且 location 数量一致"。
 pub fn vs_entry_for(topology: PrimitiveTopology) -> &'static str {
     match topology {
-        PrimitiveTopology::Triangles | PrimitiveTopology::Lines | PrimitiveTopology::Points => {
-            VS_MAIN
-        }
+        PrimitiveTopology::Triangles | PrimitiveTopology::Points => VS_MAIN,
+        PrimitiveTopology::Lines => VS_LINE,
     }
 }
 
@@ -315,20 +321,26 @@ mod tests {
         assert_eq!(vs_requirements(""), None);
     }
 
-    /// 三种拓扑当前都走 `vs_main`（与 `cube.wgsl` 只有一个顶点入口一致）。
+    /// 拓扑 → 入口：三角形/点走 `vs_main`，线段走 `vs_line`（只读位置）。
     #[test]
-    fn all_topologies_use_vs_main_for_now() {
-        for topology in [
-            PrimitiveTopology::Triangles,
-            PrimitiveTopology::Lines,
-            PrimitiveTopology::Points,
-        ] {
-            assert_eq!(vs_entry_for(topology), VS_MAIN);
-            assert_eq!(
-                vs_requirements_for(topology),
-                vs_requirements(VS_MAIN).unwrap()
-            );
-        }
+    fn topology_maps_to_its_vertex_entry() {
+        assert_eq!(vs_entry_for(PrimitiveTopology::Triangles), VS_MAIN);
+        assert_eq!(vs_entry_for(PrimitiveTopology::Points), VS_MAIN);
+        assert_eq!(vs_entry_for(PrimitiveTopology::Lines), VS_LINE);
+
+        // 线段需求只有位置 —— 这正是它能把布局缩到 stride 12 的原因。
+        assert_eq!(
+            vs_requirements_for(PrimitiveTopology::Lines).semantics,
+            vec![ze_vertex::Semantic::Position]
+        );
+        assert_eq!(
+            vs_requirements_for(PrimitiveTopology::Triangles).semantics,
+            vec![
+                ze_vertex::Semantic::Position,
+                ze_vertex::Semantic::Uv,
+                ze_vertex::Semantic::ShadingNormal,
+            ]
+        );
     }
 
     #[test]

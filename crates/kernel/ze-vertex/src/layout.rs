@@ -291,6 +291,33 @@ impl VertexLayout {
         }
     }
 
+    /// 3D **线段**布局（顶点契约扩展）：`position(F32x3)@0` → stride = 12。
+    ///
+    /// 与 [`Self::standard_3d`] 并存的第二套 3D 布局：
+    /// - 线段不消费 UV（line 路径绑的是 1×1 透明黑兜底纹理，采样值恒 0）；
+    /// - 线段不需要逐顶点着色法线（常量 `(0,0,1)` 由 `vs_line` 入口给出，
+    ///   与默认头顶光点积为 1 ⇒ `lit = 1`，与写出端补 `(0,0,1)` 等价）。
+    ///
+    /// 因此只需位置：每顶点 12 字节，而非 32 字节。采纳布局由
+    /// `ze_vertex::reconcile`（需求 `[Position]` × 提供方）算出，本函数给出
+    /// 声明形态，两者逐字段一致（单测固定）。
+    pub fn standard_3d_lines() -> Self {
+        let mut attribs = vec![VertexAttrib {
+            semantic: Semantic::Position.as_str(),
+            ty: AttribType::F32x3,
+            offset: 0,
+        }];
+        let stride = Self::compute_layout(&mut attribs);
+        Self {
+            attribs,
+            stride,
+            // 与 standard_3d 同一套声明：3D 走硬件 MSAA、缓冲按内容寻址跨帧复用。
+            aa_model: AaModel::None,
+            cache: CacheStrategy::Static,
+            step_mode: StepMode::Vertex,
+        }
+    }
+
     /// 计算 stride 与每个属性的 offset（考虑对齐），返回 stride。
     ///
     /// 规则：offset 从 0 起，按 `attribs` 顺序累加；每个属性对齐到自身大小
@@ -466,6 +493,32 @@ mod tests {
         assert_eq!(l.aa_model, AaModel::None);
         assert_eq!(l.cache, CacheStrategy::Static, "R-E 实测：3D mesh/line 按版本/内容寻址跨帧复用");
         l.validate().unwrap();
+    }
+
+    /// 线段布局：只有位置，`position@0` / stride 12，且与调和结果逐字段一致。
+    ///
+    /// 后半段是这条契约的"第二份表达"对齐：`standard_3d_lines()` 与
+    /// `reconcile([Position], standard_3d())` 必须给出同一套属性与 stride。
+    #[test]
+    fn standard_3d_lines_contract() {
+        let l = VertexLayout::standard_3d_lines();
+        assert_eq!(l.attribs.len(), 1);
+        assert_eq!(l.attribs[0].semantic, "position");
+        assert_eq!(l.attribs[0].ty, AttribType::F32x3);
+        assert_eq!(l.attribs[0].offset, 0);
+        assert_eq!(l.stride, 12);
+        l.validate().unwrap();
+
+        let reconciled = crate::reconcile::reconcile(
+            &[Semantic::Position],
+            &VertexLayout::standard_3d(),
+        )
+        .unwrap();
+        assert_eq!(
+            reconciled.layout.attribs, l.attribs,
+            "线段布局必须等于 [Position] 的调和结果"
+        );
+        assert_eq!(reconciled.layout.stride, l.stride);
     }
 
     /// 词汇表只有一份定义：`VOCABULARY` 必须逐字等于 `Semantic::ALL` 的字符串视图。

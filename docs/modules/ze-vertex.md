@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-vertex`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-render-ir`、`zela-render`、`zela-render-backends`
-- 源文件：8 个 · 2045 行
+- 源文件：8 个 · 2098 行
 
 ### 文件清单
 
@@ -21,7 +21,7 @@
 | `src/buffer.rs` | 168 | — |
 | `src/cache.rs` | 123 | — |
 | `src/check.rs` | 254 | — |
-| `src/layout.rs` | 827 | — |
+| `src/layout.rs` | 880 | — |
 | `src/lib.rs` | 39 | — |
 | `src/reconcile.rs` | 277 | — |
 | `src/semantic.rs` | 179 | — |

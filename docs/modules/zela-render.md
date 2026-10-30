@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-vertex`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`
-- 源文件：17 个 · 7459 行
+- 源文件：17 个 · 7491 行
 
 ### 文件清单
 
@@ -31,7 +31,7 @@
 | `src/shape_to_mesh.rs` | 328 | — |
 | `src/surface_route.rs` | 342 | — |
 | `src/tessellate.rs` | 1654 | — |
-| `src/vertex_record.rs` | 507 | — |
+| `src/vertex_record.rs` | 539 | — |
 | `src/view_rect.rs` | 7 | — |
 | `src/viewport.rs` | 67 | — |
 

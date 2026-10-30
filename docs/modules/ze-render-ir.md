@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-render-ir`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-pod-core`、`ze-vertex`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-web`
-- 源文件：13 个 · 2980 行
+- 源文件：13 个 · 2992 行
 
 ### 文件清单
 
@@ -25,7 +25,7 @@
 | `src/mesh.rs` | 64 | — |
 | `src/paint.rs` | 314 | — |
 | `src/params.rs` | 417 | — |
-| `src/pipeline.rs` | 371 | — |
+| `src/pipeline.rs` | 383 | — |
 | `src/shape.rs` | 400 | — |
 | `src/style.rs` | 344 | — |
 | `src/target.rs` | 114 | — |

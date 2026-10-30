@@ -99,10 +99,17 @@ fn every_shader_vertex_entry_matches_requirement_table() {
 fn requirement_table_has_no_orphan_entry() {
     let entries = parse_vertex_entries(CUBE_WGSL);
     let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
-    for entry in [ze_render_ir::VS_MAIN] {
+    for entry in [ze_render_ir::VS_MAIN, ze_render_ir::VS_LINE] {
         assert!(
             names.contains(&entry),
             "需求表登记了 {entry:?}，但 cube.wgsl 里没有这个 `fn`（表多出了条目）"
+        );
+    }
+    // 反向：源码里的入口也必须都在表里（由 `every_shader_vertex_entry_matches_requirement_table` 覆盖）。
+    for name in names {
+        assert!(
+            ze_render_ir::vs_requirements(name).is_some(),
+            "cube.wgsl 的顶点入口 {name:?} 未在需求表里登记"
         );
     }
 }

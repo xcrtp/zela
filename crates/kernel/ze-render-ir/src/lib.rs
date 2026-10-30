@@ -54,7 +54,7 @@ pub use params::{
 };
 pub use pipeline::{
     Capabilities, CapabilityError, ColorFormat, CullMode, DepthFormat, PassDepth, PassDesc,
-    PipelineDesc, PostCaps, ShaderRequirements, VS_MAIN, vs_entry_for, vs_requirements,
+    PipelineDesc, PostCaps, ShaderRequirements, VS_LINE, VS_MAIN, vs_entry_for, vs_requirements,
     vs_requirements_for,
 };
 pub use shape::{CustomShapeData, CustomSpec, CustomSpecs, Shape2D, SpecId, Style2D};

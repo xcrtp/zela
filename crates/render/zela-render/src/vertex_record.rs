@@ -326,9 +326,19 @@ pub fn mesh_vertex_buffer(
     projection: UvProjection,
 ) -> Result<VertexBufferData, VertexRecordError> {
     let plan = reconcile_3d(geometry.topology, geometry.normals.is_some());
-    let uvs = match &geometry.uvs {
-        Some(uvs) => uvs.clone(),
-        None => fallback_uvs(&geometry.positions, projection),
+    // 采纳布局不要 UV 时（线段）不必生成兜底 UV —— 生成了也不会写进字节。
+    let needs_uv = plan
+        .layout
+        .attribs
+        .iter()
+        .any(|a| a.semantic == Semantic::Uv.as_str());
+    let uvs = if needs_uv {
+        match &geometry.uvs {
+            Some(uvs) => uvs.clone(),
+            None => fallback_uvs(&geometry.positions, projection),
+        }
+    } else {
+        Vec::new()
     };
     let floats = interleave(
         &plan,
@@ -363,7 +373,7 @@ pub fn line_vertex_buffer(start: Vec3, end: Vec3) -> Result<VertexBufferData, Ve
 mod tests {
     use super::*;
     use ze_notion::Color32;
-    use ze_scene_core::mesh_primitives::wireframe_cube;
+    use ze_scene_core::mesh_primitives::{solid_cube, wireframe_cube};
 
     /// Planar 兜底 UV：图像行首（`v = 0`）对应模型 **+y**（矩形上沿），不得上下倒转。
     #[test]
@@ -381,32 +391,38 @@ mod tests {
         assert_eq!(uvs[3], Vec2::new(1.0, 0.0), "右上角 → 图像右上");
     }
 
-    /// 3D 顶点缓冲：stride 32、顶点数正确、字节序与布局一致。
+    /// 3D 三角形缓冲：stride 32、顶点数正确、字节序与布局一致。
     #[test]
     fn mesh_vertex_buffer_matches_layout() {
-        let geometry = wireframe_cube(1.0);
+        let geometry = solid_cube(1.0);
         let data = mesh_vertex_buffer(&geometry, UvProjection::Planar).unwrap();
         assert_eq!(data.layout.stride, 32);
         assert_eq!(data.vertex_count as usize, geometry.positions.len());
         data.validate().unwrap();
     }
 
-    /// line 顶点缓冲：2 个顶点、无索引、法线 +Z。
+    /// 线框立方体走 **线段布局**（stride 12）：只有位置，无 UV / 法线。
+    #[test]
+    fn wireframe_mesh_uses_lines_layout() {
+        let geometry = wireframe_cube(1.0);
+        let data = mesh_vertex_buffer(&geometry, UvProjection::Planar).unwrap();
+        assert_eq!(data.layout.stride, 12);
+        assert_eq!(data.layout.attribs.len(), 1);
+        assert_eq!(data.layout.attribs[0].semantic, "position");
+        assert_eq!(data.vertex_count as usize, geometry.positions.len());
+        data.validate().unwrap();
+    }
+
+    /// line 顶点缓冲：2 个顶点、无索引、stride 12（线段布局只有位置）。
     #[test]
     fn line_vertex_buffer_is_two_vertices() {
         let data = line_vertex_buffer(Vec3::ZERO, Vec3::X).unwrap();
         assert_eq!(data.vertex_count, 2);
         assert!(data.indices.is_empty());
-        let words: Vec<f32> = data
-            .vertices
-            .chunks_exact(4)
-            .map(|c| f32::from_ne_bytes(c.try_into().unwrap()))
-            .collect();
-        assert_eq!(&words[5..8], &[0.0, 0.0, 1.0]);
-        assert_eq!(&words[13..16], &[0.0, 0.0, 1.0]);
+        assert_eq!(data.layout.stride, 12);
     }
 
-    // ── 字节级判据：把手工兜底换成查表补齐后，输出必须**逐位不变** ──────────
+    // ── 字节级判据：布局缩窄后，输出必须与"位置逐位相同、只少尾随槽" ──────
 
     /// 顶点字节 → f32 序列（逐位比对用）。
     fn words_of(data: &VertexBufferData) -> Vec<f32> {
@@ -469,18 +485,34 @@ mod tests {
         assert_eq!(&words[13..16], &[0.0, 0.0, 1.0], "第二个顶点补 (0,0,1)");
     }
 
-    /// line 顶点缓冲的完整字节：位置 + `(0,0)` UV + `(0,0,1)` 法线。
+    /// line 顶点缓冲的完整字节：只有位置（每顶点 3 个 f32）。
+    ///
+    /// 原先这里还带 `(0,0)` UV 与 `(0,0,1)` 法线；两者改由 `vs_line` 入口给常量，
+    /// 字节因此缩短，而着色结果不变（见 `cube.wgsl` 的 `vs_line` 注释）。
     #[test]
     fn line_bytes_are_pinned() {
         let data = line_vertex_buffer(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)).unwrap();
-        assert_eq!(data.layout.stride, 32, "本阶段 line 仍与 mesh 同布局");
+        assert_eq!(data.layout.stride, 12, "线段布局：position F32x3");
         assert_eq!(
             words_of(&data),
-            vec![
-                1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, //
-                0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-            ]
+            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
         );
+    }
+
+    /// 线框立方体的字节：顶点数与位置逐个一致，每顶点 3 个 f32。
+    #[test]
+    fn wireframe_bytes_are_positions_only() {
+        let geometry = wireframe_cube(1.0);
+        let data = mesh_vertex_buffer(&geometry, UvProjection::Planar).unwrap();
+        let words = words_of(&data);
+        assert_eq!(words.len(), geometry.positions.len() * 3);
+        for (index, position) in geometry.positions.iter().enumerate() {
+            assert_eq!(
+                &words[index * 3..index * 3 + 3],
+                &[position.x, position.y, position.z],
+                "第 {index} 个顶点只写位置"
+            );
+        }
     }
 
     /// 2D 生产：矩形填充 → stride 24、validate 通过（格式未变，D1）。
