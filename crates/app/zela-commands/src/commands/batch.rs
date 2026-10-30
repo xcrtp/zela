@@ -102,6 +102,14 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
         return Ok(Vec::new());
     }
     let workers = options.workers.clamp(1, total);
+    // 单帧量级门禁只在串行时判定（见 [`report_timings`]）：并行时单帧墙钟被邻居污染。
+    // 跳过要**说根因**，不做"看起来绿"的静默豁免。
+    let enforce_timings = workers == 1;
+    if !enforce_timings {
+        println!(
+            "[timing] 并行执行（workers = {workers}）⇒ 单帧量级门禁只在串行时判定（`--workers 1` 或 `--independent`）"
+        );
+    }
 
     // 索引队列：worker 抢下一个作品（作品级并行，帧级串行）。
     let next = std::sync::atomic::AtomicUsize::new(0);
@@ -120,7 +128,7 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
                         break;
                     };
                     let mut lines = ReportLines::new();
-                    let result = run_work(ctx, options, work, env, &mut lines);
+                    let result = run_work(ctx, options, work, env, &mut lines, enforce_timings);
                     if tx.send((index, lines, result)).is_err() {
                         break;
                     }
@@ -214,6 +222,7 @@ fn run_work(
     work: &Work,
     env: &str,
     reports: &mut ReportLines,
+    enforce_timings: bool,
 ) -> Result<WorkOutcome, String> {
     let (script_path, language) = locate_script(&options.scripts, &work.name)?;
     let source = std::fs::read_to_string(&script_path)
@@ -230,8 +239,15 @@ fn run_work(
     // ── 路径 1：脚本 ──
     let mut runtime = build_script_runtime(ctx.clone(), source, language)
         .map_err(|e| format!("[{}] 脚本装配失败：{e}", work.name))?;
-    let (script_hash, script_structure, lines) =
-        render_hash(ctx, &mut runtime, work, options.fps, "script", env)?;
+    let (script_hash, script_structure, lines) = render_hash(
+        ctx,
+        &mut runtime,
+        work,
+        options.fps,
+        "script",
+        env,
+        enforce_timings,
+    )?;
     reports.extend(lines);
     drop(runtime);
 
@@ -242,8 +258,15 @@ fn run_work(
         Bundle::from_bytes(&bytes).map_err(|e| format!("[{}] ZSB 解析失败：{e}", work.name))?;
     let mut runtime = build_bundle_runtime(ctx.clone(), &bundle)
         .map_err(|e| format!("[{}] bundle 装配失败：{e}", work.name))?;
-    let (bundle_hash, bundle_structure, lines) =
-        render_hash(ctx, &mut runtime, work, options.fps, "bundle", env)?;
+    let (bundle_hash, bundle_structure, lines) = render_hash(
+        ctx,
+        &mut runtime,
+        work,
+        options.fps,
+        "bundle",
+        env,
+        enforce_timings,
+    )?;
     reports.extend(lines);
 
     // 阶段 1：脚本 / bundle 两条路径的**结构**必须逐位相同（不只像素）。
@@ -601,7 +624,17 @@ fn write_reports(lines: &[(ReportTarget, String)]) {
 ///
 /// 默认不打印（门禁输出要保持可读）；`ZELA_FRAME_TIMING=1` 时逐帧 `[timing]` + 每遍
 /// `[timing-summary]`，字段名与 `zela-render` 完全一致。
-fn report_timings(work: &str, pass: &str, timings: &[FrameTiming]) -> Result<(), String> {
+///
+/// `enforce`：**单帧量级门禁只在串行时判定**。它比的是单帧墙钟时间，并行跑时
+/// N 个作品争 CPU / GPU，一帧 2.6s 只说明"同时在跑别的"（实测：16 worker 下
+/// `orbit` / `spring` 的矢量帧会撞 500ms 线），不是性能回归。串行（`--workers 1`）
+/// 是这条判据唯一可比的口径，`--independent` 也天然串行。
+fn report_timings(
+    work: &str,
+    pass: &str,
+    timings: &[FrameTiming],
+    enforce: bool,
+) -> Result<(), String> {
     let print = std::env::var("ZELA_FRAME_TIMING").is_ok_and(|value| value != "0");
     let mut stats = FrameStats::new();
     for (index, timing) in timings.iter().enumerate() {
@@ -616,8 +649,13 @@ fn report_timings(work: &str, pass: &str, timings: &[FrameTiming]) -> Result<(),
             eprintln!("[timing] {error}");
         }
     }
-    // B12 Step 6：**量级门禁恒开**（单帧 > 500ms ⇒ 退出码非 0）；打印才是可选的。
-    stats.check().map_err(|error| format!("[{work}] {pass}：{error}"))
+    if !enforce {
+        return Ok(());
+    }
+    // B12 Step 6：**量级门禁**（单帧 > 500ms ⇒ 退出码非 0）；打印才是可选的。
+    stats
+        .check()
+        .map_err(|error| format!("[{work}] {pass}：{error}"))
 }
 
 /// 渲一个作品并把 PNG 写进 `dir`；`hash` 决定是否同时累积序列哈希。
@@ -674,7 +712,7 @@ fn render_png(
     )
     .map_err(|e| format!("[{}] 渲染失败：{e}", work.name))?;
     report_decisions(&work.name, "png", &run.decisions);
-    report_timings(&work.name, "png", &run.timings)?;
+    report_timings(&work.name, "png", &run.timings, true)?;
     // 单线程路径（V3-12）：行就地落盘，不经过批量汇总。
     write_reports(&report_work(work, "png", frames, env, &run));
     write_reports(&report_structure(work, "png", env, &run));
@@ -692,6 +730,7 @@ fn render_hash(
     fps: f64,
     path: &str,
     env: &str,
+    enforce_timings: bool,
 ) -> Result<(String, Vec<u64>, ReportLines), String> {
     let mut backends = StandardBackends::new(ctx);
     let mut target = HeadlessTarget::new();
@@ -721,7 +760,7 @@ fn render_hash(
     )
     .map_err(|e| format!("[{}] {path} 渲染失败：{e}", work.name))?;
     report_decisions(&work.name, path, &run.decisions);
-    report_timings(&work.name, path, &run.timings)?;
+    report_timings(&work.name, path, &run.timings, enforce_timings)?;
     let mut lines = report_work(work, path, frames, env, &run);
     lines.extend(report_structure(work, path, env, &run));
     Ok((
