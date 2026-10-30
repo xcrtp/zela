@@ -48,15 +48,19 @@ pub use api::{
 // B15：同步读回只在 native 存在；浏览器只有异步面（没有阻塞读回）。
 #[cfg(not(target_arch = "wasm32"))]
 pub use api::{
-    render_2d, render_2d_to_texture, render_2d_with, render_3d, render_3d_to_texture,
-    render_3d_with,
+    render_2d, render_2d_on, render_2d_to_texture, render_2d_to_texture_on, render_2d_with,
+    render_2d_with_on, render_3d, render_3d_on, render_3d_to_texture, render_3d_to_texture_on,
+    render_3d_with, render_3d_with_on,
 };
 #[cfg(target_arch = "wasm32")]
 pub use api::{
-    render_2d_async, render_2d_to_texture_async, render_3d_to_texture_async, render_3d_with_async,
+    render_2d_async, render_2d_async_on, render_2d_to_texture_async,
+    render_2d_to_texture_async_on, render_3d_to_texture_async, render_3d_to_texture_async_on,
+    render_3d_with_async, render_3d_with_async_on,
 };
 // B11 Step 3：device 注入入口（native / wasm 同签名，内部绕开 `Gpu::new()`）。
-pub use render::init_gpu;
+// BQ-02：`Gpu` 公开为可注入句柄，`GpuLease` 是它的独占借用（`*_on` 变体的入参来源）。
+pub use render::{Gpu, GpuLease, init_gpu};
 // 阶段 2：着色 codegen 的程序（生成 WGSL + uniform 字节）。
 pub use render::ShaderFill;
 // B17 Step 0：矢量后端的资源创建计数（纹理 / 缓冲；取走即清零）。

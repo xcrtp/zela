@@ -1080,24 +1080,13 @@ fn render_with_view(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    crate::render::with_gpu(|gpu| {
-        let mut player = gpu.take_player(width, height, samples);
-        let result = (|| {
-            let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
-            let cameras = prepare_cameras(&mut player, cameras)?;
-            let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
-            let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
-            player.pixels(gpu, &frames, &mut out)?;
-            Ok(out)
-        })();
-        gpu.put_player(width, height, samples, player);
-        result
-    })?
+    crate::render::with_gpu(|gpu| render_with_view_on(gpu, view, width, height, samples, cameras, records))?
 }
 
-/// **B15（甲）**：浏览器上的同一帧——回读用 `await`（不再同步三连）。
-#[cfg(target_arch = "wasm32")]
-async fn render_with_view_async(
+/// 同 [`render_with_view`]，但 GPU 由调用方给（BQ：注入形态）。
+#[cfg(not(target_arch = "wasm32"))]
+fn render_with_view_on(
+    gpu: &mut crate::render::Gpu,
     view: Vec<f32>,
     width: u32,
     height: u32,
@@ -1105,8 +1094,30 @@ async fn render_with_view_async(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    let mut slot = crate::render::GpuSlot::take()?;
-    let gpu = slot.get();
+    let mut player = gpu.take_player(width, height, samples);
+    let result = (|| {
+        let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
+        let cameras = prepare_cameras(&mut player, cameras)?;
+        let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
+        let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
+        player.pixels(gpu, &frames, &mut out)?;
+        Ok(out)
+    })();
+    gpu.put_player(width, height, samples, player);
+    result
+}
+
+/// **B15（甲）**：浏览器上的同一帧——回读用 `await`（不再同步三连）。
+#[cfg(target_arch = "wasm32")]
+async fn render_with_view_async_on(
+    gpu: &mut crate::render::Gpu,
+    view: Vec<f32>,
+    width: u32,
+    height: u32,
+    samples: u32,
+    cameras: &[CameraView],
+    records: &[PathRecord],
+) -> Result<Vec<u8>, String> {
     let mut player = gpu.take_player(width, height, samples);
     let result = frame_pixels_async(&mut player, gpu, view, width, height, cameras, records).await;
     gpu.put_player(width, height, samples, player);
@@ -1173,24 +1184,13 @@ fn render_to_texture(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    check_target(target, width, height)?;
-    let target_view = target.create_view(&Default::default());
-    crate::render::with_gpu(|gpu| {
-        let mut player = gpu.take_player(width, height, samples);
-        let result = (|| {
-            let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
-            let cameras = prepare_cameras(&mut player, cameras)?;
-            let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
-            player.render_to(gpu, &frames, &target_view)
-        })();
-        gpu.put_player(width, height, samples, player);
-        result
-    })?
+    crate::render::with_gpu(|gpu| render_to_texture_on(gpu, view, target, width, height, samples, cameras, records))?
 }
 
-/// **B15（乙）**：同 [`render_to_texture`]，浏览器上的异步版。
-#[cfg(target_arch = "wasm32")]
-async fn render_to_texture_async(
+/// 同 [`render_to_texture`]，但 GPU 由调用方给（BQ：注入形态）。
+#[cfg(not(target_arch = "wasm32"))]
+fn render_to_texture_on(
+    gpu: &mut crate::render::Gpu,
     view: Vec<f32>,
     target: &wgpu::Texture,
     width: u32,
@@ -1201,8 +1201,31 @@ async fn render_to_texture_async(
 ) -> Result<(), String> {
     check_target(target, width, height)?;
     let target_view = target.create_view(&Default::default());
-    let mut slot = crate::render::GpuSlot::take()?;
-    let gpu = slot.get();
+    let mut player = gpu.take_player(width, height, samples);
+    let result = (|| {
+        let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
+        let cameras = prepare_cameras(&mut player, cameras)?;
+        let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
+        player.render_to(gpu, &frames, &target_view)
+    })();
+    gpu.put_player(width, height, samples, player);
+    result
+}
+
+/// **B15（乙）**：同 [`render_to_texture`]，浏览器上的异步版。
+#[cfg(target_arch = "wasm32")]
+async fn render_to_texture_async_on(
+    gpu: &mut crate::render::Gpu,
+    view: Vec<f32>,
+    target: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    samples: u32,
+    cameras: &[CameraView],
+    records: &[PathRecord],
+) -> Result<(), String> {
+    check_target(target, width, height)?;
+    let target_view = target.create_view(&Default::default());
     let mut player = gpu.take_player(width, height, samples);
     let result = frame_to_texture_async(
         &mut player,
@@ -1359,6 +1382,30 @@ pub fn render_3d_with(
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
     render_with_view(view_3d(view), width, height, samples, cameras, records)
+}
+
+/// **BQ**：同 [`render_3d`]，GPU 由调用方给（注入形态；经 [`Gpu::take`] 拿到的租约）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_3d_on(
+    gpu: &mut crate::render::Gpu,
+    view: &View3,
+    records: &[PathRecord],
+) -> Result<Vec<u8>, String> {
+    render_3d_with_on(gpu, view.size.0, view.size.1, 1, view, &[], records)
+}
+
+/// **BQ**：同 [`render_3d_with`]，GPU 由调用方给（注入形态）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_3d_with_on(
+    gpu: &mut crate::render::Gpu,
+    width: u32,
+    height: u32,
+    samples: u32,
+    view: &View3,
+    cameras: &[CameraView],
+    records: &[PathRecord],
+) -> Result<Vec<u8>, String> {
+    render_with_view_on(gpu, view_3d(view), width, height, samples, cameras, records)
 }
 
 /// 一条绘制记录（保持声明顺序 = 绘制顺序）。
@@ -1541,6 +1588,44 @@ pub fn render_2d_with(
     )
 }
 
+/// **BQ**：同 [`render_2d`]，GPU 由调用方给（注入形态）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_2d_on(
+    gpu: &mut crate::render::Gpu,
+    width: u32,
+    height: u32,
+    samples: u32,
+    background: [f32; 4],
+    records: &[PathRecord],
+) -> Result<Vec<u8>, String> {
+    render_2d_with_on(gpu, width, height, samples, background, ViewOptions::default(), records)
+}
+
+/// **BQ**：同 [`render_2d_with`]，GPU 由调用方给（注入形态）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_2d_with_on(
+    gpu: &mut crate::render::Gpu,
+    width: u32,
+    height: u32,
+    samples: u32,
+    background: [f32; 4],
+    options: ViewOptions,
+    records: &[PathRecord],
+) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 {
+        return Err(format!("canvas {width}x{height} is empty"));
+    }
+    render_with_view_on(
+        gpu,
+        view_2d_with(width, height, background, options),
+        width,
+        height,
+        samples,
+        &[],
+        records,
+    )
+}
+
 /// **B15（甲）**：浏览器上的 2D 离屏渲染（异步回读；与 [`render_2d`] 逐位同口径）。
 #[cfg(target_arch = "wasm32")]
 pub async fn render_2d_async(
@@ -1550,7 +1635,22 @@ pub async fn render_2d_async(
     background: [f32; 4],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    render_with_view_async(
+    let mut slot = crate::render::GpuSlot::take()?;
+    render_2d_async_on(slot.get(), width, height, samples, background, records).await
+}
+
+/// **BQ**：同 [`render_2d_async`]，GPU 由调用方给（注入形态）。
+#[cfg(target_arch = "wasm32")]
+pub async fn render_2d_async_on(
+    gpu: &mut crate::render::Gpu,
+    width: u32,
+    height: u32,
+    samples: u32,
+    background: [f32; 4],
+    records: &[PathRecord],
+) -> Result<Vec<u8>, String> {
+    render_with_view_async_on(
+        gpu,
         view_2d_with(width, height, background, ViewOptions::default()),
         width,
         height,
@@ -1571,7 +1671,22 @@ pub async fn render_3d_with_async(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    render_with_view_async(view_3d(view), width, height, samples, cameras, records).await
+    let mut slot = crate::render::GpuSlot::take()?;
+    render_3d_with_async_on(slot.get(), width, height, samples, view, cameras, records).await
+}
+
+/// **BQ**：同 [`render_3d_with_async`]，GPU 由调用方给（注入形态）。
+#[cfg(target_arch = "wasm32")]
+pub async fn render_3d_with_async_on(
+    gpu: &mut crate::render::Gpu,
+    width: u32,
+    height: u32,
+    samples: u32,
+    view: &View3,
+    cameras: &[CameraView],
+    records: &[PathRecord],
+) -> Result<Vec<u8>, String> {
+    render_with_view_async_on(gpu, view_3d(view), width, height, samples, cameras, records).await
 }
 
 /// **B15（乙）**：2D 一帧直接合成进 `target`，像素**不经过 CPU**（native 同步版）。
@@ -1601,6 +1716,32 @@ pub fn render_2d_to_texture(
     )
 }
 
+/// **BQ**：同 [`render_2d_to_texture`]，GPU 由调用方给（注入形态）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_2d_to_texture_on(
+    gpu: &mut crate::render::Gpu,
+    target: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    samples: u32,
+    background: [f32; 4],
+    records: &[PathRecord],
+) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        return Err(format!("canvas {width}x{height} is empty"));
+    }
+    render_to_texture_on(
+        gpu,
+        view_2d_with(width, height, background, ViewOptions::default()),
+        target,
+        width,
+        height,
+        samples,
+        &[],
+        records,
+    )
+}
+
 /// **B15（乙）**：3D 一帧直接合成进 `target`（native 同步版）。
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_3d_to_texture(
@@ -1615,6 +1756,21 @@ pub fn render_3d_to_texture(
     render_to_texture(view_3d(view), target, width, height, samples, cameras, records)
 }
 
+/// **BQ**：同 [`render_3d_to_texture`]，GPU 由调用方给（注入形态）。
+#[cfg(not(target_arch = "wasm32"))]
+pub fn render_3d_to_texture_on(
+    gpu: &mut crate::render::Gpu,
+    target: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    samples: u32,
+    view: &View3,
+    cameras: &[CameraView],
+    records: &[PathRecord],
+) -> Result<(), String> {
+    render_to_texture_on(gpu, view_3d(view), target, width, height, samples, cameras, records)
+}
+
 /// **B15（乙）**：2D 一帧直接合成进 `target`（浏览器异步版）。
 #[cfg(target_arch = "wasm32")]
 pub async fn render_2d_to_texture_async(
@@ -1625,10 +1781,27 @@ pub async fn render_2d_to_texture_async(
     background: [f32; 4],
     records: &[PathRecord],
 ) -> Result<(), String> {
+    let mut slot = crate::render::GpuSlot::take()?;
+    render_2d_to_texture_async_on(slot.get(), target, width, height, samples, background, records)
+        .await
+}
+
+/// **BQ**：同 [`render_2d_to_texture_async`]，GPU 由调用方给（注入形态）。
+#[cfg(target_arch = "wasm32")]
+pub async fn render_2d_to_texture_async_on(
+    gpu: &mut crate::render::Gpu,
+    target: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    samples: u32,
+    background: [f32; 4],
+    records: &[PathRecord],
+) -> Result<(), String> {
     if width == 0 || height == 0 {
         return Err(format!("canvas {width}x{height} is empty"));
     }
-    render_to_texture_async(
+    render_to_texture_async_on(
+        gpu,
         view_2d_with(width, height, background, ViewOptions::default()),
         target,
         width,
@@ -1651,12 +1824,49 @@ pub async fn render_3d_to_texture_async(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    render_to_texture_async(view_3d(view), target, width, height, samples, cameras, records).await
+    let mut slot = crate::render::GpuSlot::take()?;
+    render_3d_to_texture_async_on(slot.get(), target, width, height, samples, view, cameras, records)
+        .await
+}
+
+/// **BQ**：同 [`render_3d_to_texture_async`]，GPU 由调用方给（注入形态）。
+#[cfg(target_arch = "wasm32")]
+pub async fn render_3d_to_texture_async_on(
+    gpu: &mut crate::render::Gpu,
+    target: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    samples: u32,
+    view: &View3,
+    cameras: &[CameraView],
+    records: &[PathRecord],
+) -> Result<(), String> {
+    render_to_texture_async_on(gpu, view_3d(view), target, width, height, samples, cameras, records)
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **BQ**：注入路径（`*_on`）与环境默认路径**逐位相同**。
+    ///
+    /// 判据取自"同一条记录、同一台设备"：默认入口走 `with_gpu` 的静态单例，
+    /// 注入入口走 `Gpu::take()` 的租约；两者必须给出同一份字节。
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn injected_entry_point_matches_the_default_path() {
+        let records: Vec<PathRecord> = vec![FilledPath::polygon(
+            &[[-8.0, -8.0, 0.0], [8.0, -8.0, 0.0], [8.0, 8.0, 0.0], [-8.0, 8.0, 0.0]],
+            [1.0, 0.5, 0.0, 1.0],
+        )
+        .into()];
+        let background = [0.0, 0.0, 0.0, 1.0];
+        let default = render_2d(32, 32, 1, background, &records).expect("默认路径");
+        let mut lease = crate::render::Gpu::take().expect("GPU");
+        let injected = render_2d_on(lease.get(), 32, 32, 1, background, &records).expect("注入路径");
+        assert_eq!(default, injected, "注入路径必须与默认路径逐位相同");
+    }
 
     fn pixel(frame: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
         let at = ((y * width + x) * 4) as usize;

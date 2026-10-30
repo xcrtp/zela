@@ -1631,7 +1631,11 @@ struct Appends {
     slabs: wgpu::RenderPipeline,
 }
 
-pub(crate) struct Gpu {
+/// **BQ-02**：矢量后端的全部 GPU 状态（公开类型，字段仍 `pub(crate)`）。
+///
+/// 三个入口：`Gpu::new()`（自建，`with_gpu` 首次惰性调用）、[`init_gpu`]（注入宿主设备）、
+/// [`Gpu::take`]（拿到独占借用，供 `*_on` 注入变体使用）。注入不等于敞开内部：字段可见性不变。
+pub struct Gpu {
     #[cfg(feature = "player")]
     pub(crate) instance: wgpu::Instance, // a canvas's or a window's surface is made from it
     #[cfg(feature = "player")]
@@ -1753,6 +1757,57 @@ impl Drop for GpuSlot {
         if let Some(gpu) = self.0.take() {
             GPU.with_borrow_mut(|slot| *slot = Some(gpu));
         }
+    }
+}
+
+// ─── BQ-02：可注入的独占借用（租约） ──────────────────────────────────────
+
+/// 一段独占的 GPU 借用；`Drop` 归还。
+///
+/// native 上是 `static GPU` 的 `MutexGuard`（其它线程的 `with_gpu` 会等待，不报错）；
+/// wasm 上是 [`GpuSlot`]（`thread_local` 里的取走 + 归还）。
+///
+/// 用途：把 `&mut Gpu` 交给 [`crate::api`] 的 `*_on` 注入变体。
+/// **不要**在持有租约时再调用不带 `_on` 的入口（它们会再取一次锁 ⇒ 同一线程重复加锁）。
+#[cfg(not(target_arch = "wasm32"))]
+pub struct GpuLease(std::sync::MutexGuard<'static, Gpu>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl GpuLease {
+    pub fn get(&mut self) -> &mut Gpu {
+        &mut self.0
+    }
+}
+
+/// 一段独占的 GPU 借用（wasm：`thread_local` 取走 + 归还，同 [`GpuSlot`]）。
+#[cfg(target_arch = "wasm32")]
+pub struct GpuLease(GpuSlot);
+
+#[cfg(target_arch = "wasm32")]
+impl GpuLease {
+    pub fn get(&mut self) -> &mut Gpu {
+        self.0.get()
+    }
+}
+
+impl Gpu {
+    /// 拿到独占借用（租约），供 `*_on` 注入变体使用。
+    ///
+    /// native 的锁与 [`with_gpu`] 是同一把：租约期间其它线程的默认入口会**等待**而不是失败
+    /// （与 BQ 之前的行为一致）。
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn take() -> Result<GpuLease, String> {
+        let gpu = GPU
+            .get_or_init(|| pollster::block_on(Gpu::new()).map(std::sync::Mutex::new))
+            .as_ref()?;
+        let guard = gpu.lock().map_err(|_| "GPU mutex poisoned".to_string())?;
+        Ok(GpuLease(guard))
+    }
+
+    /// 拿到独占借用（wasm：要求 `init_gpu` 已跑过）。
+    #[cfg(target_arch = "wasm32")]
+    pub fn take() -> Result<GpuLease, String> {
+        GpuSlot::take().map(GpuLease)
     }
 }
 
