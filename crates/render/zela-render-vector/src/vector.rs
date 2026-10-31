@@ -89,13 +89,13 @@ pub(crate) const SLABS: usize = 4;
 /// heads are this frame's, its samples per pixel, and its raster base's samples (color, depth; with lit meshes, their
 /// light: `Out::Color`'s `light`) to lay among them.
 pub(crate) struct Listed<'a> {
-    pub(crate) heads: &'a wgpu::Buffer,
-    pub(crate) nodes: &'a wgpu::Buffer,
+    pub(crate) heads: &'a super::TrackedBuffer,
+    pub(crate) nodes: &'a super::TrackedBuffer,
     pub(crate) rows: [u32; 2],
     pub(crate) samples: u32,
-    pub(crate) colors: &'a wgpu::TextureView,
-    pub(crate) depths: &'a wgpu::TextureView,
-    pub(crate) lights: Option<&'a wgpu::TextureView>,
+    pub(crate) colors: &'a super::TrackedView,
+    pub(crate) depths: &'a super::TrackedView,
+    pub(crate) lights: Option<&'a super::TrackedView>,
 }
 
 /// Rectangles packed row by row (a row as tall as its tallest), `width` wide.
@@ -620,8 +620,8 @@ fn fit<T>(groups: &mut Vec<Group>, fresh: impl Fn() -> Group, mut place: impl Fn
     place(groups.last_mut().expect("a group")).ok_or_else(|| "an object does not fit an empty atlas".into())
 }
 
-/// A new texture's view (which keeps it).
-fn image(device: &wgpu::Device, label: &str, [width, height]: [u32; 2], format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> wgpu::TextureView {
+/// A new texture's view (which keeps it; BU-1：视图带着分配的租约)。
+fn image(device: &wgpu::Device, label: &str, [width, height]: [u32; 2], format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> super::TrackedView {
     let texture = super::counted_texture(device, &wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
@@ -632,15 +632,15 @@ fn image(device: &wgpu::Device, label: &str, [width, height]: [u32; 2], format: 
         usage,
         view_formats: &[],
     });
-    texture.create_view(&Default::default())
+    texture.view(&Default::default())
 }
 
-fn buffer(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+fn buffer(device: &wgpu::Device, label: &str, size: u64, usage: wgpu::BufferUsages) -> super::TrackedBuffer {
     super::counted_buffer(device, &wgpu::BufferDescriptor { label: Some(label), size, usage, mapped_at_creation: false })
 }
 
 /// An array the passes read: a storage buffer, and the bytes it has room for.
-struct Data(wgpu::Buffer, u64);
+struct Data(super::TrackedBuffer, u64);
 
 impl Data {
     fn new(device: &wgpu::Device, label: &str) -> Self {
@@ -660,7 +660,7 @@ impl Data {
 /// A group's buffers: every group drawn in a frame has its own (all are written before any is
 /// drawn).
 struct GroupBuffers {
-    uniform: wgpu::Buffer,
+    uniform: super::TrackedBuffer,
     objects: Data,
     tiles: Data,
     /// **阶段 3**：每个对象的着色程序标签（0 = 没有；合成按它认领颜色画布）。
@@ -676,43 +676,43 @@ pub(crate) struct Vector {
     flatten: [Option<wgpu::ComputePipeline>; 2], // independent fill and stroke records, made when needed
     composite: [Option<[wgpu::ComputePipeline; 2]>; 32], // by what a view lays (`LIT`, ...): the composite, `keep`; made when first needed
     crossing: [Option<[wgpu::ComputePipeline; 2]>; 32], // where depths cross: the count, the pixels (alike)
-    crossings: (wgpu::Buffer, wgpu::Buffer, u64),      // their list, the second pass's workgroups; pixels it holds
+    crossings: (super::TrackedBuffer, super::TrackedBuffer, u64),      // their list, the second pass's workgroups; pixels it holds
     groups_layout: wgpu::BindGroupLayout,              // the workgroups, as the count writes them
-    records: Option<(wgpu::Buffer, wgpu::Buffer, [u32; 2])>, // fill, stroke records' slots; how many they hold
+    records: Option<(super::TrackedBuffer, super::TrackedBuffer, [u32; 2])>, // fill, stroke records' slots; how many they hold
     depth_layouts: [wgpu::BindGroupLayout; 2], // a 3D view's base depth from its raster depth: multisampled, single
     depth_resolve: [wgpu::ComputePipeline; 2],
-    nothing: wgpu::Buffer,                      // a view's lists when it has none (and strokes' depths)
-    stroke_depths: Option<(wgpu::Buffer, u64)>, // a non-planar path's strokes' depths, per pixel of the atlas
-    no_samples: [[wgpu::TextureView; 2]; 2],         // its base's samples when it has none (color, depth)
+    nothing: super::TrackedBuffer,                      // a view's lists when it has none (and strokes' depths)
+    stroke_depths: Option<(super::TrackedBuffer, u64)>, // a non-planar path's strokes' depths, per pixel of the atlas
+    no_samples: [[super::TrackedView; 2]; 2],         // its base's samples when it has none (color, depth)
     nearest: Option<(wgpu::BindGroupLayout, [wgpu::RenderPipeline; 2])>, // a light's map, a view's opaque depth, from its paths (made when first needed)
     bounds: Option<([wgpu::BindGroupLayout; 2], wgpu::ComputePipeline)>, // a 3D view's slab bounds: what they read, where they go (made when first needed)
-    no_slabs: wgpu::TextureView, // a view's slabs when it has none: 1x1, one layer
+    no_slabs: super::TrackedView, // a view's slabs when it has none: 1x1, one layer
     scene_layout: wgpu::BindGroupLayout,
     image_layout: [wgpu::BindGroupLayout; 2],
     /// **阶段 3**：逐片元着色 —— 生成的 compute 管线（按 `source` 摘要缓存）与它的布局。
     frag_layout: wgpu::BindGroupLayout,
     frag_pipelines: std::collections::HashMap<u64, wgpu::ComputePipeline>,
     /// 逐片元的颜色画布（`Rgba32Float`：rgb = 颜色，a = 覆盖率），按视图尺寸建一次。
-    colors: Option<(wgpu::TextureView, [u32; 2])>,
-    no_colors: wgpu::TextureView, // 没有逐片元着色时绑定：1x1
+    colors: Option<(super::TrackedView, [u32; 2])>,
+    no_colors: super::TrackedView, // 没有逐片元着色时绑定：1x1
     /// **BT-2**：逐片元的程序标签（`R32Uint`，与颜色画布同尺寸），按视图尺寸建一次。
-    tags: Option<(wgpu::TextureView, [u32; 2])>,
-    no_tags: wgpu::TextureView, // 没有逐片元着色时绑定：1x1
+    tags: Option<(super::TrackedView, [u32; 2])>,
+    no_tags: super::TrackedView, // 没有逐片元着色时绑定：1x1
     read_layout: wgpu::BindGroupLayout,
     fill: wgpu::RenderPipeline,
     stroke: wgpu::RenderPipeline,
     groups: Vec<GroupBuffers>,
     used: usize, // groups drawn this frame
-    atlas: Option<(wgpu::TextureView, [u32; 2])>,
+    atlas: Option<(super::TrackedView, [u32; 2])>,
     rows: u32, // the atlas rows this frame's plans have needed most
-    scratch: Option<(wgpu::TextureView, [u32; 2])>, // where an overflowing view's groups alternate with its canvas
-    carried: Option<([wgpu::TextureView; 2], [u32; 2])>, // and, a view with lit content, their light (in turn)
-    no_light_out: wgpu::TextureView,                     // where a group that shows its pixels leaves no light: 1x1
-    empty: wgpu::TextureView,
-    base_depth: Option<(wgpu::TextureView, [u32; 2])>, // one float a pixel: its samples' nearest
-    base: Option<(wgpu::TextureView, [u32; 2])>,       // its colour, which the raster passes resolve into
-    base_light: Option<(wgpu::TextureView, [u32; 2])>, // with lit meshes: their light, beside it
-    far: wgpu::TextureView,                            // a 2D view's base depth: 1x1, far
+    scratch: Option<(super::TrackedView, [u32; 2])>, // where an overflowing view's groups alternate with its canvas
+    carried: Option<([super::TrackedView; 2], [u32; 2])>, // and, a view with lit content, their light (in turn)
+    no_light_out: super::TrackedView,                     // where a group that shows its pixels leaves no light: 1x1
+    empty: super::TrackedView,
+    base_depth: Option<(super::TrackedView, [u32; 2])>, // one float a pixel: its samples' nearest
+    base: Option<(super::TrackedView, [u32; 2])>,       // its colour, which the raster passes resolve into
+    base_light: Option<(super::TrackedView, [u32; 2])>, // with lit meshes: their light, beside it
+    far: super::TrackedView,                            // a 2D view's base depth: 1x1, far
 }
 
 impl Vector {
@@ -818,7 +818,7 @@ impl Vector {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
-            texture.create_view(&wgpu::TextureViewDescriptor { aspect: aspect.unwrap_or_default(), ..Default::default() })
+            texture.view(&wgpu::TextureViewDescriptor { aspect: aspect.unwrap_or_default(), ..Default::default() })
         }));
         let far = {
             let t = super::counted_texture(device, &wgpu::TextureDescriptor {
@@ -832,7 +832,7 @@ impl Vector {
                 view_formats: &[],
             });
             queue.write_texture(t.as_image_copy(), &0.0f32.to_le_bytes(), wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) }, wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 });
-            t.create_view(&Default::default())
+            t.view(&Default::default())
         };
         Self {
             limit: limits.max_texture_dimension_2d,
@@ -854,7 +854,7 @@ impl Vector {
             bounds: None,
             no_slabs: super::counted_texture(device,
                 &wgpu::TextureDescriptor { label: Some("no slabs"), size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: super::COLOR, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] })
-                .create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() }),
+                .view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() }),
             scene_layout,
             image_layout,
             frag_layout,
@@ -1180,7 +1180,7 @@ impl Vector {
     }
 
     /// Where a 3D view's raster passes put its base (their colour), for its composite to read as it writes the canvas.
-    pub(crate) fn base(&mut self, device: &wgpu::Device, size: [u32; 2]) -> wgpu::TextureView {
+    pub(crate) fn base(&mut self, device: &wgpu::Device, size: [u32; 2]) -> super::TrackedView {
         if self.base.as_ref().is_none_or(|(_, have)| *have != size) {
             self.base = Some((image(device, "base", size, super::COLOR, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING), size));
         }
@@ -1188,7 +1188,7 @@ impl Vector {
     }
 
     /// Where a 3D view with lit meshes puts its base's light (`blend.wgsl`'s `Base`), beside its paint (`base`).
-    pub(crate) fn base_light(&mut self, device: &wgpu::Device, size: [u32; 2]) -> wgpu::TextureView {
+    pub(crate) fn base_light(&mut self, device: &wgpu::Device, size: [u32; 2]) -> super::TrackedView {
         if self.base_light.as_ref().is_none_or(|(_, have)| *have != size) {
             self.base_light = Some((image(device, "base light", size, super::RADIANCE, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING), size));
         }
@@ -1651,7 +1651,7 @@ mod pipeline_demand {
 
 /// What group `g` of `groups` lies over and writes: each lies over what the ones before it made (the first over
 /// `first`); the last writes the target, the others alternate with the scratch image behind it.
-fn layered<'a>(g: usize, groups: usize, first: &'a wgpu::TextureView, target: &'a wgpu::TextureView, scratch: Option<&'a wgpu::TextureView>) -> (&'a wgpu::TextureView, &'a wgpu::TextureView) {
+fn layered<'a>(g: usize, groups: usize, first: &'a super::TrackedView, target: &'a super::TrackedView, scratch: Option<&'a super::TrackedView>) -> (&'a super::TrackedView, &'a super::TrackedView) {
     match (g, (groups - 1 - g).is_multiple_of(2)) {
         (0, true) => (first, target),
         (0, false) => (first, scratch.expect("scratch")),
@@ -1663,12 +1663,12 @@ fn layered<'a>(g: usize, groups: usize, first: &'a wgpu::TextureView, target: &'
 /// What a view's paths with a material are lit with: its lights' shadow maps (`maps`) and their comparison, the DFG
 /// table (`dfg`), its environment's cube, and their trilinear reads; its ambient occlusion (`occlusion.rs`).
 pub(crate) struct Lighting<'a> {
-    pub(crate) maps: &'a wgpu::TextureView,
+    pub(crate) maps: &'a super::TrackedView,
     pub(crate) compare: &'a wgpu::Sampler,
-    pub(crate) dfg: &'a wgpu::TextureView,
+    pub(crate) dfg: &'a super::TrackedView,
     pub(crate) linear: &'a wgpu::Sampler,
-    pub(crate) environment: &'a wgpu::TextureView,
-    pub(crate) occlusion: &'a wgpu::TextureView,
+    pub(crate) environment: &'a super::TrackedView,
+    pub(crate) occlusion: &'a super::TrackedView,
 }
 
 /// What a group's composite makes.
@@ -1681,17 +1681,17 @@ pub(crate) enum Out<'a> {
     /// `light_out`: where a view with lit content leaves its pixels' light, `target` their paint, for its glow to be
     /// spread from and shown with (`bloom.rs`), as its groups but the last leave theirs to the next (none: the last group
     /// shows its pixels).
-    Color { rasters: Option<&'a wgpu::TextureView>, target: &'a wgpu::TextureView, base: Option<&'a wgpu::TextureView>, light: Option<&'a wgpu::TextureView>, listed: Option<&'a Listed<'a>>, slabs: Option<[&'a wgpu::TextureView; 2]>, lighting: Lighting<'a>, light_out: Option<&'a wgpu::TextureView> },
+    Color { rasters: Option<&'a super::TrackedView>, target: &'a super::TrackedView, base: Option<&'a super::TrackedView>, light: Option<&'a super::TrackedView>, listed: Option<&'a Listed<'a>>, slabs: Option<[&'a super::TrackedView; 2]>, lighting: Lighting<'a>, light_out: Option<&'a super::TrackedView> },
     /// A 3D view's slab bounds (`vector.wgsl`'s `bound`), into `out`: at each pixel the depths of its first group's
     /// nearest layers, its paths' and its see-through fragments' (`listed`), for its see-through points to find their
     /// slab by before they are drawn.
-    Bounds { out: &'a wgpu::TextureView, listed: Option<&'a Listed<'a>> },
+    Bounds { out: &'a super::TrackedView, listed: Option<&'a Listed<'a>> },
     /// A light's shadow map (its layer, its meshes' depth drawn in it): at each texel, where nearer, the depth of the
     /// nearest layer of the plan (seen from the light) that covers it, half opaque or more (`fs_nearest`).
-    Depth(&'a wgpu::TextureView),
+    Depth(&'a super::TrackedView),
     /// A view's opaque depth, for its ambient occlusion (`occlusion.rs`; its opaque meshes' drawn in it, reversed Z):
     /// at each pixel, where nearer, the depth of the nearest opaque layer of the plan that covers it.
-    Opaque(&'a wgpu::TextureView),
+    Opaque(&'a super::TrackedView),
 }
 #[cfg(test)]
 mod area_contract {

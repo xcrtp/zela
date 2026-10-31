@@ -28,11 +28,14 @@ pub(crate) struct Bloom {
 /// Where a view's glow is made (for its canvas, at its size): the paint and light its composite leaves (`paint`,
 /// `light`), its levels, and what the passes are bound to, the last of them writing the canvas's color.
 pub(crate) struct Bloomed {
-    pub(crate) paint: wgpu::TextureView,
-    pub(crate) light: wgpu::TextureView,
-    params: wgpu::Buffer,
+    pub(crate) paint: super::TrackedView,
+    pub(crate) light: super::TrackedView,
+    params: super::TrackedBuffer,
     groups: Vec<wgpu::BindGroup>, // the first level, each level after it, each added up (coarsest first), the view shown
     sizes: Vec<[u32; 2]>,         // the levels', and last the view's
+    /// BU-1：金字塔各级只被 `groups` 引用（bind group 自己会持有纹理）。按住它们的视图，
+    /// 让分配的租约跟着 `Bloomed` 走 —— 否则持有量会提前减掉，读数是错的。
+    _held: Vec<super::TrackedView>,
 }
 
 impl Bloom {
@@ -82,12 +85,12 @@ impl Bloom {
         let image = |label: &str, [w, h]: [u32; 2], format| {
             let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
             let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
-            super::counted_texture(device, &wgpu::TextureDescriptor { label: Some(label), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] }).create_view(&Default::default())
+            super::counted_texture(device, &wgpu::TextureDescriptor { label: Some(label), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] }).view(&Default::default())
         };
         let (paint, light) = (image("bloom paint", [width, height], super::COLOR), image("bloom light", [width, height], super::RADIANCE));
         // each level's share, and (but the coarsest's) the coarser levels added to it
-        let down: Vec<wgpu::TextureView> = sizes.iter().map(|&s| image("bloom level", s, super::RADIANCE)).collect();
-        let up: Vec<wgpu::TextureView> = sizes[..sizes.len() - 1].iter().map(|&s| image("bloom level added up", s, super::RADIANCE)).collect();
+        let down: Vec<super::TrackedView> = sizes.iter().map(|&s| image("bloom level", s, super::RADIANCE)).collect();
+        let up: Vec<super::TrackedView> = sizes[..sizes.len() - 1].iter().map(|&s| image("bloom level added up", s, super::RADIANCE)).collect();
         let params = super::counted_buffer(device, &wgpu::BufferDescriptor { label: Some("bloom"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let bind = |k: usize, entries: &[(u32, wgpu::BindingResource)]| {
             let entries: Vec<wgpu::BindGroupEntry> = entries.iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding: *binding, resource: resource.clone() }).collect();
@@ -105,7 +108,8 @@ impl Bloom {
         }
         groups.push(bind(2, &[(0, params.as_entire_binding()), (2, sampler.clone()), (5, view(&paint)), (6, view(&light)), (7, view(added(0))), (8, view(target))]));
         sizes.push([width, height]);
-        Bloomed { paint, light, params, groups, sizes }
+        let held = down.iter().chain(up.iter()).cloned().collect();
+        Bloomed { paint, light, params, groups, sizes, _held: held }
     }
 
     /// A view's glow, once its composite has left its paint and light in `b`: its `Glow` (the share of

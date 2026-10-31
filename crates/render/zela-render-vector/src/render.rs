@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::ops::Range;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -44,25 +45,67 @@ mod shadow;
 #[path = "vector.rs"]
 mod vector;
 
-// ─── B17 Step 0：资源创建计数 ──────────────────────────────────────────────
+// ─── B17 Step 0：资源创建计数（BU-1：拆成"分配频次 / 持有量 / 高水位"）──────
 //
 // 为什么要有：B15 之前每帧新建一整套 `Player`，但全仓没有一处能证明"每帧建了多少"。
 // 判据（B17 §5）：**稳态下每帧新纹理 / 缓冲应为 0**；资源随帧数曲线持平 = churn 已修。
 //
+// **BU-1 修正了语义**：`ALLOC_*` 是**分配频次**（create 时累加、读取即清零），
+// 它证明不了"当前占了多少显存"——一个稳定复用的池会显示持续高值，而真正的泄漏
+// （只增不减）与高频分配无法区分。故另立：
+//
+// - `HELD_*`：当前持有（create 时加、**最后一个引用 drop 时减**，见 [`Lease`]）
+// - `PEAK_*`：高水位（持有量的历史最大）—— **这才是泄漏信号**：建了又放不会推高它
+//
+// 计量单位是**分配租约**，不是 wgpu 句柄：本 crate 的 16 处纹理创建里 15 处立刻
+// `create_view` 并丢弃 `Texture` 句柄（wgpu 的 `TextureView` 自己持有底层纹理），
+// 按句柄算"持有"会恒为 0。故 `counted_texture` 返回 [`TrackedTexture`]，由它派生的
+// [`TrackedView`] 共享同一个 `Arc<Lease>`；最后一个引用消失时才减 held。
+//
 // 计数口只覆盖**本 crate**（矢量后端）。wgpu 后端有自己的 `diagnostics::textures_created`；
 // 两者语义不同（后端各自的纹理集合），不得合并成一个"全局"数。
 
-static RES_TEXTURES: AtomicUsize = AtomicUsize::new(0);
-static RES_TEXTURE_BYTES: AtomicUsize = AtomicUsize::new(0);
-static RES_BUFFERS: AtomicUsize = AtomicUsize::new(0);
-static RES_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+static ALLOC_TEXTURES: AtomicUsize = AtomicUsize::new(0);
+static ALLOC_TEXTURE_BYTES: AtomicUsize = AtomicUsize::new(0);
+static ALLOC_BUFFERS: AtomicUsize = AtomicUsize::new(0);
+static ALLOC_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// 当前持有（最后一个租约引用 drop 时减）。
+static HELD_TEXTURES: AtomicUsize = AtomicUsize::new(0);
+static HELD_TEXTURE_BYTES: AtomicUsize = AtomicUsize::new(0);
+static HELD_BUFFERS: AtomicUsize = AtomicUsize::new(0);
+static HELD_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// 高水位：持有量（held）的历史最大值。
+static PEAK_TEXTURES: AtomicUsize = AtomicUsize::new(0);
+static PEAK_TEXTURE_BYTES: AtomicUsize = AtomicUsize::new(0);
+static PEAK_BUFFERS: AtomicUsize = AtomicUsize::new(0);
+static PEAK_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// 记一次持有：`held += n`，并把高水位推到新的持有量。
+///
+/// 拆成独立函数是为了能在本地原子量上确定性地测「建了又放不推高高水位」
+/// （见本文件末尾的 `held_watermark` 用例）——全局计数器与其它用例并行，数值不可断言。
+fn hold(held: &AtomicUsize, peak: &AtomicUsize, n: usize) {
+    let now = held.fetch_add(n, Ordering::Relaxed) + n;
+    peak.fetch_max(now, Ordering::Relaxed);
+}
+
+/// 记一次释放（`held -= n`）。
+fn release(held: &AtomicUsize, n: usize) {
+    held.fetch_sub(n, Ordering::Relaxed);
+}
+
 /// **AW-07 判据（E-G3）**：几何数组（`Store` 的 7 条 statics）写进 GPU 的字节数。
 ///
 /// 这是"每帧上传"的直接量：持久前缀生效后，稳态帧应为 **0**（只有新增 / 原地改的字节）。
-/// 与 `ResourceTotals`（创建量）分工不同，故单独计。
+/// 与 `ResourceTotals`（分配频次）分工不同，故单独计。
 static RES_STORE_UPLOAD_BYTES: AtomicUsize = AtomicUsize::new(0);
 
-/// 矢量后端自进程启动以来创建的 GPU 资源（累计）。
+/// 矢量后端自上次取走以来**分配**的 GPU 资源（**分配频次**，不是持有量）。
+///
+/// 语义：`counted_texture` / `counted_buffer` 每次创建累加，`take_resource_totals` 取走即清零。
+/// 它回答"这段区间建了多少次"，不回答"现在占着多少" —— 后者见 [`HeldTotals`]。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ResourceTotals {
     pub textures: usize,
@@ -101,13 +144,13 @@ impl ResourceTotals {
     }
 }
 
-/// 矢量后端累计创建的资源（不取走）。
+/// 矢量后端累计分配的资源（不取走）。
 pub fn resource_totals() -> ResourceTotals {
     ResourceTotals {
-        textures: RES_TEXTURES.load(Ordering::Relaxed),
-        texture_bytes: RES_TEXTURE_BYTES.load(Ordering::Relaxed),
-        buffers: RES_BUFFERS.load(Ordering::Relaxed),
-        buffer_bytes: RES_BUFFER_BYTES.load(Ordering::Relaxed),
+        textures: ALLOC_TEXTURES.load(Ordering::Relaxed),
+        texture_bytes: ALLOC_TEXTURE_BYTES.load(Ordering::Relaxed),
+        buffers: ALLOC_BUFFERS.load(Ordering::Relaxed),
+        buffer_bytes: ALLOC_BUFFER_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -116,13 +159,62 @@ pub fn take_store_upload_bytes() -> usize {
     RES_STORE_UPLOAD_BYTES.swap(0, Ordering::Relaxed)
 }
 
-/// 取走累计计数（取走即清零 ⇒ 每次采样拿到"这段区间"的值）。
+/// 取走累计的**分配频次**（取走即清零 ⇒ 每次采样拿到"这段区间"的值）。
 pub fn take_resource_totals() -> ResourceTotals {
     ResourceTotals {
-        textures: RES_TEXTURES.swap(0, Ordering::Relaxed),
-        texture_bytes: RES_TEXTURE_BYTES.swap(0, Ordering::Relaxed),
-        buffers: RES_BUFFERS.swap(0, Ordering::Relaxed),
-        buffer_bytes: RES_BUFFER_BYTES.swap(0, Ordering::Relaxed),
+        textures: ALLOC_TEXTURES.swap(0, Ordering::Relaxed),
+        texture_bytes: ALLOC_TEXTURE_BYTES.swap(0, Ordering::Relaxed),
+        buffers: ALLOC_BUFFERS.swap(0, Ordering::Relaxed),
+        buffer_bytes: ALLOC_BUFFER_BYTES.swap(0, Ordering::Relaxed),
+    }
+}
+
+/// **BU-1**：当前**持有**的 GPU 资源（最后一个租约引用 drop 时减）与历史高水位。
+///
+/// 泄漏判据看 `peak_*`：一个"建了又放"的循环把 `held_*` 推上去又落回来，
+/// **不得**推高 `peak_*`；只增不减的 `held_*`（与随之抬高的 `peak_*`）才是泄漏。
+///
+/// 与 [`ResourceTotals`]（分配频次）分工不同：那个是"建了多少次"，这个是"占着多少"。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HeldTotals {
+    pub textures: usize,
+    pub texture_bytes: usize,
+    pub buffers: usize,
+    pub buffer_bytes: usize,
+    pub peak_textures: usize,
+    pub peak_texture_bytes: usize,
+    pub peak_buffers: usize,
+    pub peak_buffer_bytes: usize,
+}
+
+impl HeldTotals {
+    /// 一行 JSON（全整数）。
+    pub fn json(&self) -> String {
+        format!(
+            "{{\"textures\":{},\"texture_bytes\":{},\"buffers\":{},\"buffer_bytes\":{},\"peak_textures\":{},\"peak_texture_bytes\":{},\"peak_buffers\":{},\"peak_buffer_bytes\":{}}}",
+            self.textures,
+            self.texture_bytes,
+            self.buffers,
+            self.buffer_bytes,
+            self.peak_textures,
+            self.peak_texture_bytes,
+            self.peak_buffers,
+            self.peak_buffer_bytes
+        )
+    }
+}
+
+/// **BU-1**：当前持有量与高水位（不取走：持有量不是区间量）。
+pub fn held_totals() -> HeldTotals {
+    HeldTotals {
+        textures: HELD_TEXTURES.load(Ordering::Relaxed),
+        texture_bytes: HELD_TEXTURE_BYTES.load(Ordering::Relaxed),
+        buffers: HELD_BUFFERS.load(Ordering::Relaxed),
+        buffer_bytes: HELD_BUFFER_BYTES.load(Ordering::Relaxed),
+        peak_textures: PEAK_TEXTURES.load(Ordering::Relaxed),
+        peak_texture_bytes: PEAK_TEXTURE_BYTES.load(Ordering::Relaxed),
+        peak_buffers: PEAK_BUFFERS.load(Ordering::Relaxed),
+        peak_buffer_bytes: PEAK_BUFFER_BYTES.load(Ordering::Relaxed),
     }
 }
 
@@ -393,7 +485,7 @@ impl crate::nodes::PassNode for OcclusionNode<'_> {
 /// `base_depth` 纹理因此仍在 `Vector` 里缓存（跨帧不重建）。
 struct BaseDepthNode<'a> {
     vector: &'a mut vector::Vector,
-    depth: &'a wgpu::TextureView,
+    depth: &'a TrackedView,
     samples: u32,
     size: [u32; 2],
     group: Option<wgpu::BindGroup>,
@@ -442,7 +534,7 @@ struct EnvironmentNode<'a> {
 
 impl EnvironmentNode<'_> {
     /// prepare 产出的立方体（`execute` 之后才可用）。
-    fn cube(&self) -> &wgpu::TextureView {
+    fn cube(&self) -> &TrackedView {
         &self.prepared.as_ref().expect("environment prepare").cube
     }
 }
@@ -494,15 +586,15 @@ struct RasterNode<'a> {
     canvas: &'a Canvas,
     color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>,
     depth: Depth,
-    into: Option<&'a wgpu::TextureView>,
-    light: Option<&'a wgpu::TextureView>,
+    into: Option<&'a TrackedView>,
+    light: Option<&'a TrackedView>,
     scene: Option<&'a wgpu::BindGroup>,
     lighting: Option<&'a wgpu::BindGroup>,
     images: Option<&'a wgpu::BindGroup>,
     list: Option<&'a wgpu::BindGroup>,
     player: &'a Player,
     pipelines: &'a Pipelines,
-    indices: &'a wgpu::Buffer,
+    indices: &'a TrackedBuffer,
     draws: &'a [Draw],
     offset: u32,
     slot: [u32; 1],
@@ -578,7 +670,7 @@ impl crate::nodes::PassNode for RasterNode<'_> {
 /// - 录之前要先跑 slab bounds 的 compute（`vector::encode` 的 `Out::Bounds`）——
 ///   这正是 [`crate::nodes::PassNode::prepare`] 的位置（`execute` 时 encoder 已被 pass 借走）。
 struct SlabsNode<'a> {
-    layers: &'a [wgpu::TextureView],
+    layers: &'a [TrackedView],
     scene: Option<&'a wgpu::BindGroup>,
     slot: [u32; 1],
     group: &'a wgpu::BindGroup,
@@ -588,7 +680,7 @@ struct SlabsNode<'a> {
     plan: &'a vector::Plan,
     statics: [wgpu::BindingResource<'a>; 3],
     listed: Option<&'a vector::Listed<'a>>,
-    bounds: &'a wgpu::TextureView,
+    bounds: &'a TrackedView,
     fill_layout: &'a wgpu::BindGroupLayout,
     fill_pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
     fill_error: &'a mut Option<String>,
@@ -635,11 +727,11 @@ impl crate::nodes::PassNode for SlabsNode<'_> {
 /// 一个只看深度的 wgpu pass（不透明网格先写深度），随后让 `vector::encode` 往**同一张**
 /// 深度里补路径的 `Out::Opaque` —— 后者在 [`crate::nodes::PassNode::after`] 里（pass 之后）。
 struct OcclusionDepthNode<'a> {
-    view: &'a wgpu::TextureView,
+    view: &'a TrackedView,
     pipeline: &'a wgpu::RenderPipeline,
     scene: Option<&'a wgpu::BindGroup>,
     slot: [u32; 1],
-    indices: &'a wgpu::Buffer,
+    indices: &'a TrackedBuffer,
     draws: &'a [Draw],
     offset: u32,
     vector: &'a mut vector::Vector,
@@ -701,11 +793,11 @@ impl crate::nodes::PassNode for OcclusionDepthNode<'_> {
 struct ShadowNode<'a> {
     shadows: &'a [shadow::Shadow],
     pipelines: &'a HashMap<usize, wgpu::RenderPipeline>,
-    layers: &'a [wgpu::TextureView],
+    layers: &'a [TrackedView],
     cast: &'a [vector::Plan],
     scene: Option<&'a wgpu::BindGroup>,
     slot: [u32; 1],
-    indices: &'a wgpu::Buffer,
+    indices: &'a TrackedBuffer,
     draws: &'a [Draw],
     offset: u32,
     vector: &'a mut vector::Vector,
@@ -774,17 +866,17 @@ struct AtlasNode<'a> {
     player: &'a Player,
     pipelines: &'a HashMap<(u32, bool), Pipelines>,
     samples: u32,
-    indices: &'a wgpu::Buffer,
+    indices: &'a TrackedBuffer,
     scene: Option<&'a wgpu::BindGroup>,
     lighting: &'a wgpu::BindGroup,
     slot: [u32; 1],
-    target: &'a wgpu::TextureView,
-    maps: &'a wgpu::TextureView,
+    target: &'a TrackedView,
+    maps: &'a TrackedView,
     compare: &'a wgpu::Sampler,
-    dfg: &'a wgpu::TextureView,
+    dfg: &'a TrackedView,
     linear: &'a wgpu::Sampler,
-    cube: &'a wgpu::TextureView,
-    occlusion: &'a wgpu::TextureView,
+    cube: &'a TrackedView,
+    occlusion: &'a TrackedView,
     vector: &'a mut vector::Vector,
     statics: [wgpu::BindingResource<'a>; 3],
     fill_layout: &'a wgpu::BindGroupLayout,
@@ -850,18 +942,18 @@ struct VectorCompositeNode<'a> {
     plan: &'a vector::Plan,
     vector: &'a mut vector::Vector,
     statics: [wgpu::BindingResource<'a>; 3],
-    target: &'a wgpu::TextureView,
-    light_out: Option<&'a wgpu::TextureView>,
-    base: Option<&'a wgpu::TextureView>,
-    base_light: Option<&'a wgpu::TextureView>,
+    target: &'a TrackedView,
+    light_out: Option<&'a TrackedView>,
+    base: Option<&'a TrackedView>,
+    base_light: Option<&'a TrackedView>,
     listed: Option<&'a vector::Listed<'a>>,
-    slabs: Option<[&'a wgpu::TextureView; 2]>,
-    maps: &'a wgpu::TextureView,
+    slabs: Option<[&'a TrackedView; 2]>,
+    maps: &'a TrackedView,
     compare: &'a wgpu::Sampler,
-    dfg: &'a wgpu::TextureView,
+    dfg: &'a TrackedView,
     linear: &'a wgpu::Sampler,
-    cube: &'a wgpu::TextureView,
-    occlusion: &'a wgpu::TextureView,
+    cube: &'a TrackedView,
+    occlusion: &'a TrackedView,
     fill_layout: &'a wgpu::BindGroupLayout,
     fill_pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
     fill_error: &'a mut Option<String>,
@@ -914,18 +1006,109 @@ fn texture_bytes(desc: &wgpu::TextureDescriptor<'_>) -> usize {
         * desc.sample_count as usize
 }
 
+/// **BU-1**：一次分配的租约。最后一个引用（句柄或任一视图）drop 时把持有量减回去。
+///
+/// 没有它，"持有"就只能按 `wgpu::Texture` 句柄算 —— 而本 crate 的纹理创建口几乎都在
+/// 建完立刻 `create_view` 并丢弃句柄（视图自己持有底层纹理）⇒ 读数会恒为 0。
+struct Lease {
+    textures: usize,
+    texture_bytes: usize,
+    buffers: usize,
+    buffer_bytes: usize,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        release(&HELD_TEXTURES, self.textures);
+        release(&HELD_TEXTURE_BYTES, self.texture_bytes);
+        release(&HELD_BUFFERS, self.buffers);
+        release(&HELD_BUFFER_BYTES, self.buffer_bytes);
+    }
+}
+
+/// 一条新建纹理的句柄，连同它的分配租约。
+pub(crate) struct TrackedTexture {
+    texture: wgpu::Texture,
+    lease: Arc<Lease>,
+}
+
+impl TrackedTexture {
+    /// 由它派生一个视图：视图与句柄共享同一个租约（谁最后 drop 谁减持有量）。
+    pub(crate) fn view(&self, desc: &wgpu::TextureViewDescriptor<'_>) -> TrackedView {
+        TrackedView { view: self.texture.create_view(desc), _lease: self.lease.clone() }
+    }
+}
+
+impl std::ops::Deref for TrackedTexture {
+    type Target = wgpu::Texture;
+    fn deref(&self) -> &wgpu::Texture {
+        &self.texture
+    }
+}
+
+/// 一个纹理视图，连同它所属分配的租约（`clone` 共享同一个租约；视图自己持有底层纹理）。
+#[derive(Clone)]
+pub(crate) struct TrackedView {
+    view: wgpu::TextureView,
+    _lease: Arc<Lease>,
+}
+
+impl TrackedView {
+    /// 不是本 crate 分配的视图（调用方给的外部目标）：没有租约可记。
+    pub(crate) fn untracked(view: wgpu::TextureView) -> Self {
+        Self { view, _lease: Arc::new(Lease { textures: 0, texture_bytes: 0, buffers: 0, buffer_bytes: 0 }) }
+    }
+}
+
+impl std::ops::Deref for TrackedView {
+    type Target = wgpu::TextureView;
+    fn deref(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+}
+
+/// 一条新建缓冲，连同它的分配租约（绑定组与字段同生同灭，按字段算）。
+pub(crate) struct TrackedBuffer {
+    buffer: wgpu::Buffer,
+    _lease: Arc<Lease>,
+}
+
+impl std::ops::Deref for TrackedBuffer {
+    type Target = wgpu::Buffer;
+    fn deref(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+}
+
+/// 记一次纹理分配（分配频次 + 持有量 + 高水位），返回它的租约。
+fn track_texture(desc: &wgpu::TextureDescriptor<'_>) -> Arc<Lease> {
+    let bytes = texture_bytes(desc);
+    ALLOC_TEXTURES.fetch_add(1, Ordering::Relaxed);
+    ALLOC_TEXTURE_BYTES.fetch_add(bytes, Ordering::Relaxed);
+    hold(&HELD_TEXTURES, &PEAK_TEXTURES, 1);
+    hold(&HELD_TEXTURE_BYTES, &PEAK_TEXTURE_BYTES, bytes);
+    Arc::new(Lease { textures: 1, texture_bytes: bytes, buffers: 0, buffer_bytes: 0 })
+}
+
+/// 记一次缓冲分配（分配频次 + 持有量 + 高水位），返回它的租约。
+fn track_buffer(bytes: usize) -> Arc<Lease> {
+    ALLOC_BUFFERS.fetch_add(1, Ordering::Relaxed);
+    ALLOC_BUFFER_BYTES.fetch_add(bytes, Ordering::Relaxed);
+    hold(&HELD_BUFFERS, &PEAK_BUFFERS, 1);
+    hold(&HELD_BUFFER_BYTES, &PEAK_BUFFER_BYTES, bytes);
+    Arc::new(Lease { textures: 0, texture_bytes: 0, buffers: 1, buffer_bytes: bytes })
+}
+
 /// 建纹理并计数（本 crate 的**唯一**纹理创建口）。
-pub(crate) fn counted_texture(device: &wgpu::Device, desc: &wgpu::TextureDescriptor<'_>) -> wgpu::Texture {
-    RES_TEXTURES.fetch_add(1, Ordering::Relaxed);
-    RES_TEXTURE_BYTES.fetch_add(texture_bytes(desc), Ordering::Relaxed);
-    device.create_texture(desc)
+pub(crate) fn counted_texture(device: &wgpu::Device, desc: &wgpu::TextureDescriptor<'_>) -> TrackedTexture {
+    let lease = track_texture(desc);
+    TrackedTexture { texture: device.create_texture(desc), lease }
 }
 
 /// 建缓冲并计数（本 crate 的**唯一**缓冲创建口；wgpu 的 `Buffer` 不暴露 size，故在此自存）。
-pub(crate) fn counted_buffer(device: &wgpu::Device, desc: &wgpu::BufferDescriptor<'_>) -> wgpu::Buffer {
-    RES_BUFFERS.fetch_add(1, Ordering::Relaxed);
-    RES_BUFFER_BYTES.fetch_add(desc.size as usize, Ordering::Relaxed);
-    device.create_buffer(desc)
+pub(crate) fn counted_buffer(device: &wgpu::Device, desc: &wgpu::BufferDescriptor<'_>) -> TrackedBuffer {
+    let lease = track_buffer(desc.size as usize);
+    TrackedBuffer { buffer: device.create_buffer(desc), _lease: lease }
 }
 
 pub(crate) const COLOR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -2257,12 +2440,12 @@ pub struct Gpu {
     max_samples: u32,
     vector: vector::Vector,
     shadow_compare: wgpu::Sampler, // a shadow map's depth compared with a surface's, bilinearly
-    dfg: wgpu::TextureView,        // the DFG table a lit surface's specular albedo is read from (`dfg.bin`)
+    dfg: TrackedView,        // the DFG table a lit surface's specular albedo is read from (`dfg.bin`)
     linear: wgpu::Sampler,         // its reads (and an environment's cube's): trilinear, clamped
-    no_environment: wgpu::TextureView, // a cube where a frame has no environment: 1x1, dark
+    no_environment: TrackedView, // a cube where a frame has no environment: 1x1, dark
     prefilter: Option<environment::Prefilter>, // made when a frame first shows an environment
     occlusion: Option<occlusion::Occlusion>, // a 3D view's ambient occlusion's passes, made when a view first has it
-    no_occlusion: wgpu::TextureView,         // what a view without it binds in its place: 1x1
+    no_occlusion: TrackedView,         // what a view without it binds in its place: 1x1
     bloom: Option<bloom::Bloom>,             // a 3D view's bloom's passes, made when a view first has it
     blend: [Option<wgpu::ShaderModule>; 2], // single/multisample texture forms (the shadow passes share either)
     shadow_passes: HashMap<usize, wgpu::RenderPipeline>, // by the light's slot in its view, made when first cast
@@ -2585,14 +2768,14 @@ impl Gpu {
         let size = wgpu::Extent3d { width: 128, height: 128, depth_or_array_layers: 1 };
         let table = counted_texture(&device, &wgpu::TextureDescriptor { label: Some("dfg"), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rg16Float, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
         queue.write_texture(table.as_image_copy(), include_bytes!("dfg.bin"), wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(128 * 4), rows_per_image: Some(128) }, size);
-        let dfg = table.create_view(&Default::default());
+        let dfg = table.view(&Default::default());
         let linear = device.create_sampler(&wgpu::SamplerDescriptor { label: Some("linear"), mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::MipmapFilterMode::Linear, ..Default::default() });
         let no_environment = counted_texture(&device,
             &wgpu::TextureDescriptor { label: Some("no environment"), size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 6 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba16Float, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] })
-            .create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
+            .view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
         let no_occlusion = counted_texture(&device,
             &wgpu::TextureDescriptor { label: Some("no occlusion"), size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::R32Float, usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] })
-            .create_view(&Default::default());
+            .view(&Default::default());
         // **阶段 2**：着色 codegen 的 compute 绑定布局（words 可写 + Params + 目标字偏移）。
         let fill_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fill codegen"),
@@ -3097,7 +3280,7 @@ impl Gpu {
 pub(crate) struct Canvas {
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) color: wgpu::TextureView,
+    pub(crate) color: TrackedView,
     pub(crate) raster: Option<Attachments>,
     occluded: Option<occlusion::Occluded>, // where a 3D view's ambient occlusion is found, once it has some
     bloomed: Option<bloom::Bloomed>,       // where a 3D view's glow is made, once it has some
@@ -3106,10 +3289,10 @@ pub(crate) struct Canvas {
 /// The raster pipeline's multisamples and depth: they stay on tile, and only the resolved image
 /// leaves it — but where a 3D view composites see-through layers (see `Lists`).
 pub(crate) struct Attachments {
-    pub(crate) msaa: Option<wgpu::TextureView>,
-    pub(crate) msaa_light: Option<wgpu::TextureView>, // with lit meshes, their light's samples (`blend.wgsl`'s `Base`)
-    pub(crate) depth: wgpu::TextureView,
-    pub(crate) depth_only: wgpu::TextureView, // its depth, as a see-through layer's appends read it
+    pub(crate) msaa: Option<TrackedView>,
+    pub(crate) msaa_light: Option<TrackedView>, // with lit meshes, their light's samples (`blend.wgsl`'s `Base`)
+    pub(crate) depth: TrackedView,
+    pub(crate) depth_only: TrackedView, // its depth, as a see-through layer's appends read it
     pub(crate) append: Option<(u64, wgpu::BindGroup)>, // the appends' bind group, for the lists' generation
     slabs: Option<Slabs>, // a 3D view's sprites' slabs, once they have see-through layers behind them
 }
@@ -3118,9 +3301,9 @@ pub(crate) struct Attachments {
 /// layers (`vector::Out::Bounds`), and the slabs between them, a target each and all together (as the composite reads
 /// them); the bounds as its sprites' passes read them (into the base; into the slabs, with the opaque depth).
 struct Slabs {
-    bounds: wgpu::TextureView,
-    layers: [wgpu::TextureView; vector::SLABS],
-    slabs: wgpu::TextureView,
+    bounds: TrackedView,
+    layers: [TrackedView; vector::SLABS],
+    slabs: TrackedView,
     groups: [wgpu::BindGroup; 2],
 }
 
@@ -3155,7 +3338,7 @@ impl Canvas {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let color = counted_texture(&gpu.device, &wgpu::TextureDescriptor { label: None, size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: COLOR, usage, view_formats: &[] });
-        Self { width, height, color: color.create_view(&Default::default()), raster: None, occluded: None, bloomed: None }
+        Self { width, height, color: color.view(&Default::default()), raster: None, occluded: None, bloomed: None }
     }
 
     /// B15（乙）：画布的颜色由调用方给（同一 view 承载合成输出），不再另建纹理。
@@ -3163,7 +3346,8 @@ impl Canvas {
     /// 调用方必须保证 `view` 是 `COLOR` 格式、尺寸与帧一致，并带
     /// `RENDER_ATTACHMENT | STORAGE_BINDING | TEXTURE_BINDING`（公共入口会显式校验）。
     fn covered(view: &wgpu::TextureView, width: u32, height: u32) -> Self {
-        Self { width, height, color: view.clone(), raster: None, occluded: None, bloomed: None }
+        // BU-1：外部目标不是本 crate 分配的 ⇒ 没有租约可记（持有量只算自己的分配）。
+        Self { width, height, color: TrackedView::untracked(view.clone()), raster: None, occluded: None, bloomed: None }
     }
 
     /// Give it the raster pipeline's attachments (once).
@@ -3177,16 +3361,16 @@ impl Canvas {
         let attached = self.raster.get_or_insert_with(|| {
             let depth = texture(DEPTH, usage);
             Attachments {
-                msaa: (samples > 1).then(|| texture(COLOR, usage).create_view(&Default::default())),
+                msaa: (samples > 1).then(|| texture(COLOR, usage).view(&Default::default())),
                 msaa_light: None,
-                depth_only: depth.create_view(&wgpu::TextureViewDescriptor { aspect: wgpu::TextureAspect::DepthOnly, ..Default::default() }),
-                depth: depth.create_view(&Default::default()),
+                depth_only: depth.view(&wgpu::TextureViewDescriptor { aspect: wgpu::TextureAspect::DepthOnly, ..Default::default() }),
+                depth: depth.view(&Default::default()),
                 append: None,
                 slabs: None,
             }
         });
         if light && samples > 1 && attached.msaa_light.is_none() {
-            attached.msaa_light = Some(texture(RADIANCE, usage).create_view(&Default::default()));
+            attached.msaa_light = Some(texture(RADIANCE, usage).view(&Default::default()));
         }
     }
 
@@ -3198,15 +3382,15 @@ impl Canvas {
         }
         let size = wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 };
         let texture = |label, size, format, usage| counted_texture(&gpu.device, &wgpu::TextureDescriptor { label: Some(label), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] });
-        let bounds = texture("slab bounds", size, wgpu::TextureFormat::Rgba32Float, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING).create_view(&Default::default());
+        let bounds = texture("slab bounds", size, wgpu::TextureFormat::Rgba32Float, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING).view(&Default::default());
         let slabs = texture("slabs", wgpu::Extent3d { depth_or_array_layers: vector::SLABS as u32, ..size }, COLOR, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
-        let layers = std::array::from_fn(|k| slabs.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: k as u32, array_layer_count: Some(1), ..Default::default() }));
+        let layers = std::array::from_fn(|k| slabs.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: k as u32, array_layer_count: Some(1), ..Default::default() }));
         let read = wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&bounds) };
         let depth = wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&attached.depth_only) };
         let group = |layout, entries: &[wgpu::BindGroupEntry]| gpu.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("slab bounds"), layout, entries });
         let layouts = &gpu.raster.slabs[(samples > 1) as usize];
         let groups = [group(&layouts[0], std::slice::from_ref(&read)), group(&layouts[1], &[read, depth])];
-        let slabs = slabs.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        let slabs = slabs.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         attached.slabs = Some(Slabs { bounds, layers, slabs, groups });
     }
 
@@ -3218,9 +3402,9 @@ impl Canvas {
     ///
     /// （`color`：`Some((load, resolve))` 与手写路径同参；`into` 是另一个目标 ——
     /// 3D 视图的 base，给它的合成读。）
-    fn parts<'a>(&'a self, color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>, depth: Depth, into: Option<&'a wgpu::TextureView>, light: Option<&'a wgpu::TextureView>) -> (crate::nodes::RenderParts<'a>, bool) {
+    fn parts<'a>(&'a self, color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>, depth: Depth, into: Option<&'a TrackedView>, light: Option<&'a TrackedView>) -> (crate::nodes::RenderParts<'a>, bool) {
         let attached = self.raster.as_ref().expect("the raster pipeline's attachments");
-        let target = into.unwrap_or(&self.color);
+        let target: &wgpu::TextureView = into.map_or(&*self.color, |view| &**view);
         // a target's attachment: its samples, resolved into it, or it alone; resolved, its samples are dropped (but where
         // the composite reads them after: `Depth::Shared`)
         fn attachment<'a>(msaa: Option<&'a wgpu::TextureView>, target: &'a wgpu::TextureView, load: wgpu::LoadOp<wgpu::Color>, resolve: bool, kept: bool) -> wgpu::RenderPassColorAttachment<'a> {
@@ -3230,10 +3414,10 @@ impl Canvas {
         let kept = matches!(depth, Depth::Shared);
         let mut colors: Vec<Option<wgpu::RenderPassColorAttachment>> = Vec::new();
         if let Some((load, resolve)) = color {
-            colors.push(Some(attachment(attached.msaa.as_ref(), target, load, resolve, kept)));
+            colors.push(Some(attachment(attached.msaa.as_deref(), target, load, resolve, kept)));
             if let Some(light) = light {
                 let load = if matches!(load, wgpu::LoadOp::Load) { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT) };
-                colors.push(Some(attachment(attached.msaa_light.as_ref(), light, load, resolve, kept)));
+                colors.push(Some(attachment(attached.msaa_light.as_deref(), light, load, resolve, kept)));
             }
         }
         let cleared = |store| Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store }); // (reversed Z: far)
@@ -3254,7 +3438,7 @@ pub(crate) struct Targets {
     // Modified by Zela: 读回缓冲对本 crate 的离屏渲染始终需要（上游只在 python/export 下建）。
     // Modified by Zela（B15 乙）：显示路径直接用外部目标，不需要像素缓冲 ⇒ 按需创建
     // （只有 3D see-through 列表的 4 字节计数会用到）。
-    pub(crate) readback: Option<wgpu::Buffer>, // the frame's pixels, then the lists' count (see `Lists`)
+    pub(crate) readback: Option<TrackedBuffer>, // the frame's pixels, then the lists' count (see `Lists`)
     pub(crate) padded: u32,
     /// B17：这一份目标是否由调用方给（乙）——复用 Player 时模式变了就必须重建。
     external: bool,
@@ -3270,9 +3454,9 @@ pub(crate) struct Targets {
 /// the largest view that composites, the nodes, and how many the frame appended — its views
 /// together: more than `capacity`, and the frame is drawn again with room for them.
 pub(crate) struct Lists {
-    pub(crate) heads: wgpu::Buffer,
-    pub(crate) nodes: wgpu::Buffer,
-    pub(crate) appended: wgpu::Buffer,
+    pub(crate) heads: TrackedBuffer,
+    pub(crate) nodes: TrackedBuffer,
+    pub(crate) appended: TrackedBuffer,
     pub(crate) pixels: u64,
     pub(crate) capacity: u64,
     pub(crate) generation: u64, // made anew this many times (the canvases' groups follow)
@@ -3281,14 +3465,14 @@ pub(crate) struct Lists {
 const NODE_BYTES: u64 = 16;
 
 struct Buffers {
-    views: wgpu::Buffer, // each raster pass's view, VIEW_STRIDE apart
+    views: TrackedBuffer, // each raster pass's view, VIEW_STRIDE apart
     slots: usize,        // views it has room for
-    instances: wgpu::Buffer,
+    instances: TrackedBuffer,
     capacity: usize,
-    sprites: wgpu::Buffer, // the frame's sprites, view after view (see `Player::sprites`)
+    sprites: TrackedBuffer, // the frame's sprites, view after view (see `Player::sprites`)
     room: usize,           // sprites it has room for
     group: Option<wgpu::BindGroup>, // the raster pipeline's
-    statics: [wgpu::Buffer; 7], // vertices, links, indices, rows, extras; control points, curve ranges
+    statics: [TrackedBuffer; 7], // vertices, links, indices, rows, extras; control points, curve ranges
     sizes: [u64; 7],            // their capacities, bytes
     sent: [usize; 7],           // bytes of the store's arrays they hold
     generation: u64,            // the store's packing they hold
@@ -3300,8 +3484,8 @@ struct Buffers {
 /// each layer to draw into, the whole array (as a 3D view's composite reads it), and the bind group the raster passes
 /// read it through.
 struct ShadowMaps {
-    layers: Vec<wgpu::TextureView>,
-    array: wgpu::TextureView,
+    layers: Vec<TrackedView>,
+    array: TrackedView,
     size: u32,
     group: wgpu::BindGroup, // the array and its comparison, as the lit passes read them (group 3), with the DFG table and
     environment: Option<u32>, // the environment whose cube it binds (none: `no_environment`)
@@ -3320,9 +3504,9 @@ impl ShadowMaps {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let array = texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
+        let array = texture.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), ..Default::default() });
         let layers = (0..layers)
-            .map(|layer| texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: layer, array_layer_count: Some(1), ..Default::default() }))
+            .map(|layer| texture.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2), base_array_layer: layer, array_layer_count: Some(1), ..Default::default() }))
             .collect();
         let group = Self::bind(gpu, &array, environment.1, &gpu.no_occlusion);
         Self { layers, array, size, group, environment: environment.0 }
@@ -5114,6 +5298,25 @@ mod buffer_contract {
             a.plus(b),
             ShadowTotals { events: 2, requested: 6, cast: 4 }
         );
+    }
+
+    /// **BU-1 的高水位断言**：一个"建了又放"的循环把持有量推上去又落回来，
+    /// **不得**推高高水位。用本地原子量验证生产函数（全局计数器与其它用例并行，数值不可断言）。
+    #[test]
+    fn held_does_not_raise_the_watermark_when_released() {
+        let (held, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        for _ in 0..1000 {
+            hold(&held, &peak, 1);
+            release(&held, 1);
+        }
+        assert_eq!(held.load(Ordering::Relaxed), 0);
+        assert_eq!(peak.load(Ordering::Relaxed), 1, "「建了又放」不应把高水位推过同时持有的最大值");
+        // 同时持有 3 份才把高水位推到 3
+        for _ in 0..3 {
+            hold(&held, &peak, 1);
+        }
+        assert_eq!(peak.load(Ordering::Relaxed), 3);
+        assert_eq!(held.load(Ordering::Relaxed), 3);
     }
 
     #[test]

@@ -65,8 +65,10 @@ pub use api::{
 pub use render::{Gpu, GpuLease, init_gpu};
 // 阶段 2：着色 codegen 的程序（生成 WGSL + uniform 字节）。
 pub use render::ShaderFill;
-// B17 Step 0：矢量后端的资源创建计数（纹理 / 缓冲；取走即清零）。
+// B17 Step 0：矢量后端的资源**分配频次**（纹理 / 缓冲；取走即清零）。
 pub use render::{ResourceTotals, resource_totals, take_resource_totals};
+// BU-1：当前**持有量**与高水位（泄漏信号；不取走）。
+pub use render::{HeldTotals, held_totals};
 // AW-07（E-G3）：几何数组上传字节（持久前缀生效后，稳态帧应为 0）。
 pub use render::take_store_upload_bytes;
 // B18：MSAA 能力查询（adapter 自述）、判别实验的采样覆盖、链表溢出的显式记录。

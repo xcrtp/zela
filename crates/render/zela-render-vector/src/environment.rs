@@ -371,7 +371,7 @@ pub(crate) struct Environment {
     pub(crate) height: u32,
     pub(crate) rgbe: Vec<u8>,
     pub(crate) harmonics: [[f32; 4]; 9],
-    pub(crate) cube: Option<wgpu::TextureView>,
+    pub(crate) cube: Option<crate::render::TrackedView>,
     pub(crate) unit: f32,
     pub(crate) sun: Option<Sun>,
 }
@@ -456,15 +456,15 @@ impl Prefilter {
         };
         let mips = SIDE.ilog2() + 1;
         let (source, out) = (cube("environment source", mips), cube("environment", LEVELS));
-        let level = |t: &wgpu::Texture, mip: u32| t.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), base_mip_level: mip, mip_level_count: Some(1), ..Default::default() });
+        let level = |t: &crate::render::TrackedTexture, mip: u32| t.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), base_mip_level: mip, mip_level_count: Some(1), ..Default::default() });
         let bind = |layout: &wgpu::BindGroupLayout, entries: &[(u32, wgpu::BindingResource)]| {
             let entries: Vec<wgpu::BindGroupEntry> = entries.iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding: *binding, resource: resource.clone() }).collect();
             device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
         };
         let view = wgpu::BindingResource::TextureView;
-        let picture_view = picture.create_view(&Default::default());
-        let sources: Vec<wgpu::TextureView> = (0..mips).map(|mip| level(&source, mip)).collect();
-        let outs: Vec<wgpu::TextureView> = (0..LEVELS).map(|l| level(&out, l)).collect();
+        let picture_view = picture.view(&Default::default());
+        let sources: Vec<crate::render::TrackedView> = (0..mips).map(|mip| level(&source, mip)).collect();
+        let outs: Vec<crate::render::TrackedView> = (0..LEVELS).map(|l| level(&out, l)).collect();
         let mut steps = Vec::with_capacity(1 + (mips - 1) as usize + LEVELS as usize);
         // BO-2：每个 entry 的除数由 `@workgroup_size` 查表给出（三个 entry 都是 8×8×1，六面）。
         let cube = |side: u32, entry: &'static str| {
@@ -482,22 +482,29 @@ impl Prefilter {
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&params));
             buffer
         };
+        // BU-1：这些缓冲与源图只被 steps 的组引用 —— 租金跟着 `Prefiltered` 走。
+        let mut held_buffers: Vec<crate::render::TrackedBuffer> = Vec::new();
         let scale = uniform([0.0, 0.0, 0.0, 0.0, 1.0 / env.unit, 0.0, 0.0, 0.0]);
         steps.push((0, bind(&self.to_cube.0, &[(0, view(&picture_view)), (1, view(&sources[0])), (3, scale.as_entire_binding())]), cube(SIDE, "to_cube")));
+        held_buffers.push(scale);
         for mip in 1..mips {
             steps.push((1, bind(&self.halve.0, &[(4, view(&sources[mip as usize - 1])), (1, view(&sources[mip as usize]))]), cube(SIDE >> mip, "halve")));
         }
         // the levels: the GGX lobe's average of the source
-        let source_cube = source.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
+        let source_cube = source.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
         for l in 0..LEVELS {
             let t = l as f32 / (LEVELS - 1) as f32;
             let perceptual = 1.0 - (1.0 - t).sqrt(); // l = (LEVELS - 1) r (2 - r)
             let samples: u32 = if l == 0 { 1 } else { SAMPLES };
             let buffer = uniform([perceptual * perceptual, samples as f32, (SIDE * SIDE) as f32, (SIDE / COARSEST).ilog2() as f32, 1.0, 0.0, 0.0, 0.0]);
             steps.push((2, bind(&self.prefilter.0, &[(5, view(&source_cube)), (1, view(&outs[l as usize])), (2, wgpu::BindingResource::Sampler(&self.sampler)), (3, buffer.as_entire_binding())]), cube(SIDE >> l, "prefilter")));
+            held_buffers.push(buffer);
         }
-        let cube = out.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
-        Prefiltered { steps, cube }
+        let cube = out.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
+        let mut held_views = vec![picture_view, source_cube];
+        held_views.extend(sources.iter().cloned());
+        held_views.extend(outs.iter().cloned());
+        Prefiltered { steps, cube, _held: (held_views, held_buffers) }
     }
 
     /// **BR-3**：录制 prepare 给出的每一步（顺序即 `steps` 的顺序）。
@@ -518,7 +525,10 @@ impl Prefilter {
 /// **BR-3**：`Prefilter::prepare` 的产物 —— 每一步（管线号 / 组 / 派发）与最终立方体。
 pub(crate) struct Prefiltered {
     steps: Vec<(u8, wgpu::BindGroup, [u32; 3])>,
-    pub(crate) cube: wgpu::TextureView,
+    pub(crate) cube: crate::render::TrackedView,
+    /// BU-1：源图 / 每级 mip / 参数缓冲只被 `steps` 的组引用（组自己会持有它们）。
+    /// 按住它们的租约，让持有量跟着 `Prefiltered` 走。
+    _held: (Vec<crate::render::TrackedView>, Vec<crate::render::TrackedBuffer>),
 }
 
 #[cfg(test)]
