@@ -642,6 +642,31 @@ pub const CODEGEN_PLAN: PassPlan = &[
 
 // ─── 校验 ────────────────────────────────────────────────────────────────
 
+/// **BU-5**：被**合法读-改-写**的资源 —— `(pass 名, 资源名)`，逐条登记。
+///
+/// 一个 `PassDecl` 聚合了若干子 pass（`Dispatch::Sequence`，或一次 render pass 的多个 draw），
+/// 同一逻辑资源在子 pass 之间"先读后写"是常态：bloom 读视图再写回视图、append 向链表追加、
+/// codegen 读实例再写着色画布。这些例外必须**在这里声明**——没登记的
+/// `inputs ∩ outputs` 一律是 [`PlanError::ReadWriteConflict`]。
+///
+/// 为什么不是"一律红"：声明名是**逻辑资源**，不是 wgpu 绑定；把子 pass 的先后误判成
+/// 同一 usage scope，会让五张真实计划全红（那是判据错了，不是代码错了）。
+/// 光追的累积缓冲正相反：它是一次 dispatch 内同读同写 ⇒ 没登记就必须红。
+pub const READ_WRITE: &[(&str, &str)] = &[
+    ("vector composite", "crossings"),
+    ("bloom", "view"),
+    ("append", "list_heads"),
+    ("append", "list_nodes"),
+    ("environment", "environment"),
+    ("fill codegen", "instances"),
+    ("frag codegen", "shader_colors"),
+];
+
+/// 某个 `(pass, 资源)` 是否登记为读-改-写。
+pub fn is_read_write(pass: &str, resource: &str) -> bool {
+    READ_WRITE.iter().any(|(p, r)| *p == pass && *r == resource)
+}
+
 /// 声明的结构问题。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
@@ -655,6 +680,14 @@ pub enum PlanError {
     IndirectUnproduced {
         pass: &'static str,
         source: &'static str,
+    },
+    /// **BU-5**：同一 pass 既读又写同一资源，且没有登记进 [`READ_WRITE`]。
+    ///
+    /// WebGPU 的 usage scope 也会拒绝它，但报的是 wgpu 的英文错误、不带我们的资源名。
+    ReadWriteConflict {
+        pass: &'static str,
+        resource: &'static str,
+        index: usize,
     },
 }
 
@@ -675,11 +708,20 @@ impl std::fmt::Display for PlanError {
                 "pass {pass:?} 用 indirect 参数 {source:?} 派发，但前面没有任何 pass 生产它\
                  （会照着上一帧留下的值派发）"
             ),
+            Self::ReadWriteConflict {
+                pass,
+                resource,
+                index,
+            } => write!(
+                f,
+                "pass #{index} {pass:?} 同时读和写资源 {resource:?}（WebGPU 的 usage scope 不允许）；\
+                 若这是子 pass 间的先读后写，请登记进 READ_WRITE"
+            ),
         }
     }
 }
 
-/// 校验一张计划：重名 → 输入必须有前序生产者 → 无环。
+/// 校验一张计划：重名 → 读-写冲突 → 无环 → 输入必须有前序生产者 → indirect 有来源。
 ///
 /// 注意：`inputs` 里出现在计划**外部**的名字（如 `instances` / `rows`，由帧前上传
 /// 提供）不要求有生产者 —— 只对"同一计划内某个 pass 的 outputs"做前置性检查。
@@ -692,6 +734,20 @@ pub fn validate(plan: PassPlan) -> Result<(), PlanError> {
                 first,
                 again,
             });
+        }
+    }
+
+    // ①b **BU-5**：同一 pass 既读又写同一资源 ⇒ usage scope 冲突。
+    // 子 pass 间的先读后写（bloom 读视图写回视图等）必须**逐条登记**进 `READ_WRITE`。
+    for (index, decl) in plan.iter().enumerate() {
+        for input in decl.inputs {
+            if decl.outputs.contains(input) && !is_read_write(decl.name, input) {
+                return Err(PlanError::ReadWriteConflict {
+                    pass: decl.name,
+                    resource: input,
+                    index,
+                });
+            }
         }
     }
 
@@ -2040,5 +2096,61 @@ mod tests {
                 .collect();
             assert_eq!(a, want, "第 {round} 组：默认策略必须与声明序一致");
         }
+    }
+
+    // ── BU-5：读-写冲突 ─────────────────────────────────────────────────
+
+    /// **BU-5 判据**：构造一个"同一 pass 读自己写的资源"的声明（未登记）⇒ 校验必须红，
+    /// 且报错里带**我们的**资源名（不是 wgpu 的英文 usage scope 错误）。
+    #[test]
+    fn a_pass_reading_what_it_writes_is_red() {
+        let plan: PassPlan = &[PassDecl {
+            name: "accumulate",
+            kind: PassStage::Compute,
+            inputs: &["trace"],
+            outputs: &["trace"],
+            entry: "accumulate",
+            dispatch: Dispatch::Fixed,
+            enabled_when: EnabledWhen::ALWAYS,
+        }];
+        let error = validate(plan).unwrap_err();
+        assert_eq!(
+            error,
+            PlanError::ReadWriteConflict {
+                pass: "accumulate",
+                resource: "trace",
+                index: 0
+            }
+        );
+        assert!(error.to_string().contains("trace"), "报错必须点名资源：{error}");
+    }
+
+    /// `READ_WRITE` 必须与五张真实计划里的重逐一模一样：
+    /// 少一条 ⇒ 校验会把真实计划判红；多一条 ⇒ 表在腐烂（登记了不存在的例外）。
+    #[test]
+    fn read_write_registry_matches_the_real_plans() {
+        let mut seen: Vec<(&str, &str)> = Vec::new();
+        for plan in [
+            RASTER_PLAN,
+            RASTER_LAYERED_PLAN,
+            VECTOR_PLAN,
+            ENVIRONMENT_PLAN,
+            CODEGEN_PLAN,
+        ] {
+            validate(plan).unwrap_or_else(|error| panic!("真实计划被读-写冲突判红：{error}"));
+            for decl in plan {
+                for input in decl.inputs {
+                    if decl.outputs.contains(input) {
+                        seen.push((decl.name, input));
+                    }
+                }
+            }
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        let mut registered: Vec<(&str, &str)> = READ_WRITE.to_vec();
+        registered.sort_unstable();
+        registered.dedup();
+        assert_eq!(seen, registered, "READ_WRITE 必须与真实计划的重叠逐条对应");
     }
 }
