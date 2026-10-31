@@ -33,7 +33,7 @@ use crate::api::{
     LtSpec, MixSpec, MulSpec, SmoothstepSpec,
     BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
     PlotSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
-    ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
+    ShaderSourceSpec, ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec, Vec4OfSpec,
     // 第 BB 批（算子扩充）：WGSL 标准库算子
     AbsSpec, AcosSpec, AsinSpec, Atan2Spec, AtanSpec, CeilSpec, CrossSpec, DegreesSpec, DotSpec,
@@ -72,7 +72,9 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `23`：**动画层阶段 1** 新增 `plot_x`（逐元素自变量通道）与 `plot`（装配期采样成折线）。
 /// `24`：**动画层阶段 2** 方法目录新增 `Reveal.point_at` / `Reveal.tangent_at`
 /// （按归一化弧长取点 / 切线；`METHOD_SIGNATURES` 变 ⇒ 版本必须递增）。
-pub const LIBRARY_VERSION: &str = "25";
+/// `25`：**BT-1** 新增 `vec4` / `w`（四维出口）。
+/// `26`：**BT-3** 新增 `shader_source`（作者手写 WGSL 的逃生舱）。
+pub const LIBRARY_VERSION: &str = "26";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -139,6 +141,8 @@ pub struct PendingShader {
     pub size: u32,
     /// **逐片元**：表达式读了 `zela.shader.fragment.*` ⇒ 颜色随像素变。
     pub fragment: bool,
+    /// **BT-3**：来源是作者手写（不是表达式产物）；宿主据此在 `ShaderPaint` 上打标。
+    pub hand_written: bool,
 }
 
 /// **动画层阶段 1**：一条待采样的函数图像（宿主在脚本结束后逐点求值并挂成折线）。
@@ -411,6 +415,13 @@ impl ExprPod {
             "zela.math.Shader",
             "()",
             shader,
+        );
+        // **BT-3**：作者手写 WGSL 的第二条入口（同一条后端路径）。
+        registry.register_fn1_named::<ShaderSourceSpec, ()>(
+            "zela.math::shader_source",
+            "zela.math.ShaderSource",
+            "()",
+            shader_source,
         );
         // **阶段 2**：着色内建通道（对象 / 片元属性；不进 uniform）。
         registry.register_fn0_named("zela.math::center", HANDLE, center_ctor);
@@ -685,6 +696,8 @@ impl Pod for ExprPod {
             "select" => Box::new(select_ctor(self, arg::<SelectSpec>(args, 0)?.clone())),
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
+            // **BT-3**：手写 WGSL 的慢路径分派（与注册表同源）。
+            "shader_source" => Box::new(shader_source(self, arg::<ShaderSourceSpec>(args, 0)?.clone())),
             "query_self" => Box::new(query_self_ctor(
                 self,
                 arg::<ChannelSpec>(args, 0)?.clone(),
@@ -1446,7 +1459,59 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
             params,
             size,
             fragment,
+            hand_written: false,
         });
+}
+
+/// **BT-3**：`shader_source { object, source, fragment }` —— 作者手写 WGSL。
+///
+/// 契约：`source` 必须含 `struct Params { … }` 与 `fn eval(p: Params, index: u32) -> …`
+/// （与生成产物同形 ⇒ 后端零分支）。本入口不注入参数：`Params` 里只允许占位字段
+/// `_unused: u32`；声明了别的字段就显式报错（否则读到的会是零，属于静默错误）。
+fn shader_source(pod: &dyn Pod, spec: ShaderSourceSpec) {
+    let this = expr_pod(pod);
+    if let Err(message) = validate_handwritten(&spec.source) {
+        push_binding_error(this, format!("手写 WGSL 不合契约：{message}"));
+        return;
+    }
+    this.shaders
+        .lock()
+        .expect("着色 codegen 表未被毒化")
+        .push(PendingShader {
+            object: spec.object,
+            source: spec.source,
+            params: Vec::new(),
+            size: 0,
+            fragment: spec.fragment,
+            hand_written: true,
+        });
+}
+
+/// **BT-3** 契约校验（显式失败，不静默）。
+fn validate_handwritten(source: &str) -> Result<(), String> {
+    let Some(params_at) = source.find("struct Params") else {
+        return Err("缺少 `struct Params`".to_string());
+    };
+    let Some(open) = source[params_at..].find('{').map(|at| params_at + at) else {
+        return Err("`struct Params` 缺少 `{`".to_string());
+    };
+    let Some(close) = source[open..].find('}').map(|at| open + at) else {
+        return Err("`struct Params` 缺少 `}`".to_string());
+    };
+    let body: Vec<&str> = source[open + 1..close]
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if !body.is_empty() && body != ["_unused: u32,"] {
+        return Err(format!(
+            "`Params` 只允许占位字段 `_unused: u32`（本入口不注入参数；需要参数请用 `expr.shader`）：{body:?}"
+        ));
+    }
+    if !source.contains("fn eval(") {
+        return Err("缺少 `fn eval(p: Params, index: u32)`".to_string());
+    }
+    Ok(())
 }
 
 /// 收集表达式里出现过的通道（限定名 + 槽类型）。
@@ -2232,5 +2297,44 @@ mod tests {
         assert!(errors.is_empty(), "{errors:?}");
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].root_type, ChannelType::Number);
+    }
+
+    /// **BT-3**：手写 WGSL 走第二条入口，落进**同一张**待注入表并打上手写标记。
+    #[test]
+    fn handwritten_shader_source_enters_the_same_pending_table() {
+        let this = pod();
+        let object = pure(&this, 1.0);
+        let source = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {\n    return vec3<f32>(1.0, 0.0, 0.0);\n}\n";
+        shader_source(
+            &this,
+            ShaderSourceSpec {
+                object,
+                source: source.to_string(),
+                fragment: true,
+            },
+        );
+        let pending = this.take_shaders();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].hand_written, "手写来源必须打标");
+        assert!(pending[0].fragment);
+        assert_eq!(pending[0].source, source);
+        assert_eq!(pending[0].size, 0, "本入口不注入参数");
+        assert!(pending[0].params.is_empty());
+    }
+
+    /// **BT-3** 契约：缺 `struct Params` / 缺 `fn eval` / 声明了参数 ⇒ 显式报错。
+    #[test]
+    fn handwritten_shader_contract_is_enforced() {
+        let eval_only = "fn eval(p: Params, index: u32) -> vec3<f32> { return vec3<f32>(0.0); }";
+        assert!(validate_handwritten(eval_only).unwrap_err().contains("Params"));
+        let params_only = "struct Params {\n    _unused: u32,\n}\n";
+        assert!(validate_handwritten(params_only).unwrap_err().contains("fn eval"));
+        let with_param = "struct Params {\n    a: vec4<f32>,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> { return vec3<f32>(0.0); }";
+        assert!(
+            validate_handwritten(with_param).unwrap_err().contains("_unused: u32"),
+            "声明参数必须显式拒绝（否则读到的是零）"
+        );
+        let ok = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> { return vec3<f32>(0.0); }";
+        assert!(validate_handwritten(ok).is_ok());
     }
 }

@@ -186,6 +186,23 @@ pub struct ShaderSpec {
     pub root: Handle,
 }
 
+/// **BT-3**：`expr.shader_source { object, source, fragment }` —— 作者**手写** WGSL。
+///
+/// 契约与生成产物同形：`source` 必须含 `struct Params { … }` 与
+/// `fn eval(p: Params, index: u32) -> vec3<f32>`；后端**零分支**（两种来源都只是
+/// 一段 `source` 字符串）。本入口**不注入参数**：`Params` 里只允许占位字段
+/// `_unused: u32`（需要外部参数时走表达式入口 `expr.shader`）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.ShaderSource")]
+pub struct ShaderSourceSpec {
+    /// 目标对象**句柄**（`scene.spawn` 的返回值）。
+    pub object: Handle,
+    /// 手写的 WGSL 纯函数（含 `struct Params` 与 `fn eval`）。
+    pub source: String,
+    /// **逐片元**：颜色随像素变（读了内建像素坐标）⇒ 走逐像素通道。
+    pub fragment: bool,
+}
+
 /// **动画层阶段 1**：`plot { object, lo, hi, samples, y }` —— 装配期采样成折线。
 ///
 /// `y` 是**闭**表达式（没有 lambda），自变量从通道 `plot.x` 读：第 `i` 个采样点
@@ -628,7 +645,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "25",
+    version = "26",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -890,6 +907,11 @@ pub struct MathApi<'a> {
     /// 这里只记录；宿主在脚本结束后把它挂成对象组件（`ShaderPaint`）。
     pub shader: fn(&'a dyn Pod, spec: ShaderSpec) -> (),
 
+    /// **BT-3**：作者**手写**的 WGSL，直接挂成对象的着色 codegen（装饰性）。
+    ///
+    /// 与 [`Self::shader`] 是同一条后端路径（`source` 字符串），区别只在来源与路由理由。
+    pub shader_source: fn(&'a dyn Pod, spec: ShaderSourceSpec) -> (),
+
     /// **阶段 2**：着色内建通道（对象在视图里的中心 / 尺寸，像素）。
     pub center: fn(&'a dyn Pod) -> Handle,
     /// **阶段 2**：`size()` —— 对象包围盒的尺寸（像素）。
@@ -939,13 +961,15 @@ pub struct MathApi<'a> {
 /// `@24`（动画层阶段 2）：方法目录新增 `Reveal.point_at` / `Reveal.tangent_at`。
 /// 算子签名未变（⇒ 指纹不动），但表达式库的方法面变了 ⇒ 版本递增，
 /// `LIBRARY_VERSION` 随之进产物。
+/// `@25`（BT-1）：新增 `vec4` / `w`（四维出口），`zela.math.Vec4Of` / `ChannelType::Vec4`。
+/// `@26`（BT-3）：新增 `shader_source`（作者手写 WGSL 的逃生舱）。
 ///
 /// **加算子的代价（实测）**：新增算子必然改 `signatures()` ⇒ 必须递增 version ⇒
 /// `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**（像素不变）。第 BB 批
 /// 因此把 28 个算子**一次**加完、只 bump 一次（`@21 → @22`），而不是分五批 bump 五次。
-pub const MATH_API_VERSION: &str = "25";
+pub const MATH_API_VERSION: &str = "26";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 4_642_708_175_479_784_670;
+pub const MATH_API_FINGERPRINT: u64 = 12_694_093_268_345_882_282;
 
 /// **糖层能力**（第 BB 批，阶段 4）：装配期展开成 `zela.math` 的 core 算子组合。
 ///

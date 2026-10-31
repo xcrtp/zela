@@ -52,3 +52,5 @@ futures-channel = "0.3"
 # BQ-01 的编译探针：证明「含 GpuHandle 的 ResourceCache 可以放进 Gpu」（BP-07 的阻塞已解除）。
 # 只用于测试断言，不进生产依赖图。
 ze-resource = { path = "../../kernel/ze-resource" }
+# **BT-3**：手写 WGSL 与表达式产物的渲染对拍要现场生成产物（只进测试依赖）。
+ze-comb = { path = "../../kernel/ze-comb" }

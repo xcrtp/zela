@@ -32,8 +32,8 @@ pub use api::{
     AddSpec, AndSpec, BindEachSpec, BindSpec, ChannelSpec, ClockLinkSpec, ClockSpec, CosSpec,
     EqSpec, ExistsSpec, GeSpec, GtSpec, LeSpec, LtSpec, METHOD_SIGNATURES, MathApi, MethodCallSpec,
     MulSpec, NatRecSpec, NeSpec, NotSpec, OrSpec, PlotSpec, PredicateSpec, ResetSpec,
-    SUGAR_API_FINGERPRINT, SUGAR_API_VERSION, ScaleSpec, ShaderSpec, SinSpec, SugarApi, SumSpec,
-    method_signature,
+    SUGAR_API_FINGERPRINT, SUGAR_API_VERSION, ScaleSpec, ShaderSourceSpec, ShaderSpec, SinSpec,
+    SugarApi, SumSpec, method_signature,
 };
 pub use sugar::{SUGAR, SugarDoc};
 pub use expr_pod::{

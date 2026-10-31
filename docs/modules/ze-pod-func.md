@@ -11,14 +11,14 @@
 - 路径：`crates/ze/pod/ze-pod-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-func`、`ze-pod-core`、`ze-pod-macro`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-playback`、`zela-scene-ecs`
-- 源文件：7 个 · 4500 行
+- 源文件：7 个 · 4628 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/api.rs` | 1050 | `zela.math`：表达式层的**叶子算子**能力（函子库）。 |
-| `src/expr_pod.rs` | 2236 | 表达式 Pod：**表达式数据留在 Pod 内，跨边界只传 [`Handle`]**。 |
+| `src/api.rs` | 1074 | `zela.math`：表达式层的**叶子算子**能力（函子库）。 |
+| `src/expr_pod.rs` | 2340 | 表达式 Pod：**表达式数据留在 Pod 内，跨边界只传 [`Handle`]**。 |
 | `src/infer.rs` | 819 | **装配期类型推导**（L2）：rank-1 合一 + kind 约束 + 重载列表。 |
 | `src/lib.rs` | 66 | ze-pod-func: **函子库 Pod**（namespace `zela.math`）。 |
 | `src/ops.rs` | 19 | `zela.math` 算子的**接线入口**（语义实现已迁到基础函子库 `ze-func`）。 |
@@ -52,6 +52,7 @@ graph LR
 | `src/api.rs` | `pub enum ResetSpec` |
 | `src/api.rs` | `pub struct BindSpec` |
 | `src/api.rs` | `pub struct ShaderSpec` |
+| `src/api.rs` | `pub struct ShaderSourceSpec` |
 | `src/api.rs` | `pub struct PlotSpec` |
 | `src/api.rs` | `pub struct SinSpec` |
 | `src/api.rs` | `pub struct CosSpec` |

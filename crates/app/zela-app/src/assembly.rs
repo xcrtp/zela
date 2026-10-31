@@ -337,6 +337,8 @@ impl PodAssembly {
                             .collect(),
                         size: pending.size,
                         fragment: pending.fragment,
+                        // **BT-3**：手写来源要一路带到 IR（路由理由按它区分）。
+                        hand_written: pending.hand_written,
                     },
                 )
                 .map_err(|error| BrokerError::Injection {

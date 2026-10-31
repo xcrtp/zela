@@ -84,7 +84,7 @@ impl FrameContent {
             return None;
         }
         Some(format!(
-            "wgpu 忽略本帧仅矢量支持的样式：{}",
+            "wgpu 已忽略本帧仅矢量支持的样式：{}",
             ze_render_ir::PathOptions::feature_names(self.vector_only_styles)
         ))
     }
@@ -527,6 +527,38 @@ mod tests {
         let vector = route(LoopBackend::Vector, content, capable()).unwrap();
         assert_eq!(vector.backend, BackendKind::Vector);
         assert!(!vector.reason.contains("忽略"), "{}", vector.reason);
+    }
+
+    /// **BT-3**：手写 WGSL 与生成的 codegen 在理由里**必须分开**。
+    ///
+    /// 判据：手写位 ⇒ 理由含「已忽略」与「手写 WGSL（仅 vector）」；生成位 ⇒ 只含
+    /// 「着色 codegen」，不得把两者混成一句（作者要能从日志看出是哪一类被丢）。
+    #[test]
+    fn handwritten_wgsl_is_ignored_with_its_own_reason() {
+        use ze_render_ir::PathOptions;
+        let handwritten = FrameContent {
+            vector_only_styles: PathOptions::FEATURE_SHADER_WRITTEN,
+            ..plain_2d()
+        };
+        let decision = route(LoopBackend::Wgpu, handwritten, capable()).unwrap();
+        assert!(
+            decision.reason.contains("已忽略") && decision.reason.contains("手写 WGSL"),
+            "理由必须点名手写 WGSL 已被忽略：{}",
+            decision.reason
+        );
+        assert!(
+            !decision.reason.contains("着色 codegen"),
+            "手写不得被说成生成产物：{}",
+            decision.reason
+        );
+        let generated = FrameContent {
+            vector_only_styles: PathOptions::FEATURE_CODEGEN,
+            ..plain_2d()
+        };
+        let decision = route(LoopBackend::Wgpu, generated, capable()).unwrap();
+        assert!(decision.reason.contains("已忽略"), "{}", decision.reason);
+        assert!(decision.reason.contains("着色 codegen"), "{}", decision.reason);
+        assert!(!decision.reason.contains("手写 WGSL"), "{}", decision.reason);
     }
 
     /// 回退路径同样要写明：矢量因 adapter 被拒 ⇒ 回退 wgpu 且说明忽略了什么。

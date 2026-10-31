@@ -2095,6 +2095,71 @@ mod tests {
         );
     }
 
+    /// **BT-3 判据**：手写 WGSL 与等价表达式产物**渲染逐位相同**。
+    ///
+    /// 表达式产物用 `ze_comb::emit_wgsl` 现场生成（`vec3(1, 0, 0)`，没有读端通道 ⇒
+    /// `Params` 只有占位字段）；手写版算同一个颜色但换了变量名与排版。两者到后端时
+    /// 都只是一段 `source` 字符串 ⇒ 逐位相同。这条用例同时钉住"后端零分支"：
+    /// 若有人按来源加分支（例如对手写版套另一套 `FRAG_TAIL`），这里会红。
+    #[test]
+    fn handwritten_wgsl_matches_the_expression_product() {
+        use crate::ShaderFill;
+        struct Bare;
+        impl ze_comb::WgslBackend for Bare {
+            fn op(
+                &self,
+                _op: &ze_comb::OpRef,
+                _types: &[ze_comb::SlotType],
+                _args: &[String],
+            ) -> Option<(ze_comb::SlotType, String)> {
+                None
+            }
+            fn channel(
+                &self,
+                _channel: &ze_comb::ChannelRef,
+            ) -> Option<(ze_comb::SlotType, String)> {
+                None
+            }
+        }
+        let generated =
+            ze_comb::emit_wgsl(&ze_comb::Expr::pure([1.0f32, 0.0, 0.0]), &Bare)
+                .expect("表达式产物")
+                .source;
+        assert!(
+            generated.contains("struct Params") && generated.contains("fn eval("),
+            "产物的契约与手写入口一致：\n{generated}"
+        );
+        let handwritten = "// hand-written\nstruct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {\n    let red = 1.0;\n    return vec3<f32>(red, 0.0, 0.0);\n}\n";
+        assert_ne!(generated, handwritten, "两段源码必须真的不同（否则不算对拍）");
+        let render = |source: &str| {
+            let mut square = FilledPath::polygon(
+                &[
+                    [-32.0, -32.0, 0.0],
+                    [32.0, -32.0, 0.0],
+                    [32.0, 32.0, 0.0],
+                    [-32.0, 32.0, 0.0],
+                ],
+                [0.0, 0.0, 1.0, 1.0],
+            );
+            square.shader = Some(ShaderFill {
+                source: source.to_string(),
+                params: Vec::new(),
+                fragment: true,
+            });
+            match render_2d(64, 64, 1, [0.0, 0.0, 0.0, 1.0], &[square.into()]) {
+                Ok(frame) => frame,
+                Err(error) => panic!("矢量后端起不来：{error}"),
+            }
+        };
+        let (a, b) = (render(&generated), render(handwritten));
+        assert!(
+            pixel(&a, 64, 32, 32)[0] > 200,
+            "着色器应真的画出红色：{:?}",
+            pixel(&a, 64, 32, 32)
+        );
+        assert_eq!(a, b, "手写 WGSL 与表达式产物必须渲染逐位相同");
+    }
+
     /// **B6 Step 1.2**：3D view 的槽位布局与上游 `feed.py::view` 一致 ——
     /// 投影矩阵（列主序）、`three_d`、`toward`/bias、eye、灯数、tone、bloom、AO、灯槽。
     #[test]

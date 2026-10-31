@@ -114,6 +114,13 @@ pub struct ShaderPaint {
     /// 颜色随像素变 ⇒ 后端不能把它折成每对象一个颜色（走逐像素通道）。
     #[serde(default)]
     pub fragment: bool,
+    /// **BT-3**：这段 WGSL 是作者**手写**的（不是表达式产物）。
+    ///
+    /// 唯一用途是路由理由：手写 WGSL 只支持 vector，选到 wgpu 时必须写出
+    /// 「已忽略：手写 WGSL（仅 vector）」，不能和生成的 codegen 混成一句话。
+    /// 后端**零分支** —— 两种来源到 `zela-render-vector` 时都只是 `source` 字符串。
+    #[serde(default)]
+    pub hand_written: bool,
 }
 
 /// 一个外部注入参数：通道名 + 槽类型 + 在 `Params` 里的字节偏移。
@@ -173,6 +180,8 @@ impl PathOptions {
     pub const FEATURE_WINDOW: u8 = 1 << 4;
     /// **阶段 2**：着色 codegen（颜色由生成的 WGSL 在 GPU 上算）。
     pub const FEATURE_CODEGEN: u8 = 1 << 5;
+    /// **BT-3**：手写 WGSL（作者直接提交源码；同样只有 vector 支持）。
+    pub const FEATURE_SHADER_WRITTEN: u8 = 1 << 6;
 
     /// 本组参数用到了哪些**只有矢量后端支持**的特性（位掩码）。
     ///
@@ -195,21 +204,27 @@ impl PathOptions {
         if self.curve_window.is_some() {
             bits |= Self::FEATURE_WINDOW;
         }
-        if self.shader.is_some() {
-            bits |= Self::FEATURE_CODEGEN;
+        if let Some(shader) = &self.shader {
+            // **BT-3**：手写与生成走不同位 —— 路由理由要能区分"哪一类"被忽略。
+            bits |= if shader.hand_written {
+                Self::FEATURE_SHADER_WRITTEN
+            } else {
+                Self::FEATURE_CODEGEN
+            };
         }
         bits
     }
 
     /// 把位掩码展开成人可读的名字（顺序固定 ⇒ 同一输入同一字符串）。
     pub fn feature_names(bits: u8) -> String {
-        const TABLE: [(u8, &str); 6] = [
+        const TABLE: [(u8, &str); 7] = [
             (PathOptions::FEATURE_GRADIENT, "渐变"),
             (PathOptions::FEATURE_DASH, "虚线"),
             (PathOptions::FEATURE_SECOND, "双 paint"),
             (PathOptions::FEATURE_BACKGROUND, "背景描边"),
             (PathOptions::FEATURE_WINDOW, "曲线窗口"),
             (PathOptions::FEATURE_CODEGEN, "着色 codegen"),
+            (PathOptions::FEATURE_SHADER_WRITTEN, "手写 WGSL（仅 vector）"),
         ];
         let names: Vec<&str> = TABLE
             .iter()
@@ -272,6 +287,7 @@ mod tests {
                 params: Vec::new(),
                 size: 0,
                 fragment: false,
+                hand_written: false,
             }),
             ..Default::default()
         };
@@ -279,6 +295,26 @@ mod tests {
         assert_eq!(
             PathOptions::feature_names(shader_only.feature_bits()),
             "着色 codegen"
+        );
+
+        // **BT-3**：手写 WGSL 占**另一位**，理由里要能把它和生成的 codegen 分开。
+        let handwritten = PathOptions {
+            shader: Some(ShaderPaint {
+                source: "fn eval() {}".to_string(),
+                params: Vec::new(),
+                size: 0,
+                fragment: false,
+                hand_written: true,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            handwritten.feature_bits(),
+            PathOptions::FEATURE_SHADER_WRITTEN
+        );
+        assert_eq!(
+            PathOptions::feature_names(handwritten.feature_bits()),
+            "手写 WGSL（仅 vector）"
         );
 
         let all = PathOptions {
@@ -322,5 +358,28 @@ mod tests {
         let text = serde_json::to_string(&paint).expect("序列化");
         let back: PathOptions = serde_json::from_str(&text).expect("反序列化");
         assert_eq!(back, paint);
+    }
+
+    /// **BT-3**：手写标记进 payload（ZSB 里是 JSON）并能原样往返。
+    #[test]
+    fn handwritten_shader_marker_round_trips_through_json() {
+        let paint = PathOptions {
+            shader: Some(ShaderPaint {
+                source: "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {\n    return vec3<f32>(1.0, 0.0, 0.0);\n}\n".to_string(),
+                params: Vec::new(),
+                size: 0,
+                fragment: true,
+                hand_written: true,
+            }),
+            ..Default::default()
+        };
+        let text = serde_json::to_string(&paint).expect("序列化");
+        assert!(text.contains("\"hand_written\":true"), "标记必须进 payload：{text}");
+        let back: PathOptions = serde_json::from_str(&text).expect("反序列化");
+        assert_eq!(back, paint);
+        // 旧 payload（没有该字段）反序列化为 `false`，不静默变成"手写"。
+        let legacy = r#"{"source":"x","params":[],"size":0,"fragment":true}"#;
+        let legacy: ShaderPaint = serde_json::from_str(legacy).expect("旧 payload 可读");
+        assert!(!legacy.hand_written);
     }
 }
