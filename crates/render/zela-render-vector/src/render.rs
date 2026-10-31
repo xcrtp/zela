@@ -240,6 +240,31 @@ fn record_shadow_drop(requested: u64, cast: u64) {
 /// 不是产品能力开关，默认 0（不改变任何行为）。
 static SAMPLE_OVERRIDE: AtomicU32 = AtomicU32::new(0);
 
+// ─── BS-0：命令流快照 ──────────────────────────────────────────────────────
+//
+// 为什么要有：像素 36 条只能证明"画面没变"，证明不了"命令流没变"——绑到另一个内容
+// 相同的组、或两个 pass 的顺序局部互换，像素都可能是绿的。这里把每个视图**实际录到**
+// 的 `(pass, 组名序列)` 按顺序收成一行，由快照用例逐项固定（见 `tests/command_flow.rs`）。
+//
+// 默认关闭：只在用例里 `start_command_flow()` 之后才写，稳态渲染没有额外开销。
+
+static COMMAND_FLOW_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static COMMAND_FLOW: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// **BS-0**：开始记录命令流（清空旧记录，之后的每个视图追加一行）。
+///
+/// 只影响诊断，不改变录制：打开它前后像素必须逐位相同。
+pub fn start_command_flow() {
+    COMMAND_FLOW.lock().expect("命令流槽位").clear();
+    COMMAND_FLOW_ON.store(true, Ordering::Relaxed);
+}
+
+/// **BS-0**：取走命令流（一次调用一行，按视图顺序）并关闭记录。
+pub fn take_command_flow() -> Vec<String> {
+    COMMAND_FLOW_ON.store(false, Ordering::Relaxed);
+    std::mem::take(&mut *COMMAND_FLOW.lock().expect("命令流槽位"))
+}
+
 /// **B17**：离屏目标的代数。新一次播放会换一张离屏纹理，`Player` 取用时比对它并重建 `Targets`
 /// （见 [`forget_targets`]）——只比较"有没有外部目标"会漏掉"换了一张"。
 static TARGET_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -810,7 +835,14 @@ fn note_pass(schedule: &mut crate::passes::PassSchedule, slot: &mut Option<crate
 }
 
 /// BN-3：一帧结束时核对"计划里的 pass 都被记录过"。
+///
+/// **BS-0**：核对前把本视图的命令流收进 [`take_command_flow`] 的槽位（只在
+/// [`start_command_flow`] 打开时；默认关，不产生每帧开销）。
 fn finish_schedule(schedule: crate::passes::PassSchedule, slot: Option<crate::passes::ScheduleError>) -> Result<(), String> {
+    if COMMAND_FLOW_ON.load(Ordering::Relaxed) {
+        let mut sink = COMMAND_FLOW.lock().expect("命令流槽位");
+        sink.push(schedule.command_flow().join(" > "));
+    }
     if let Some(error) = slot {
         return Err(format!("pass 调度与声明不一致：{error}"));
     }

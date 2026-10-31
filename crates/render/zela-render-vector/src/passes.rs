@@ -878,6 +878,36 @@ impl PassSchedule {
         &self.skipped
     }
 
+    /// **BS-0**：本帧记录下来的命令流（按声明序，逐项固定成字符串）。
+    ///
+    /// 这是"命令流快照"的原料：像素只能证明结果相同，证明不了"绑的是同一批组、
+    /// pass 还是同一个顺序"。格式只由记录事实产生，不申报期望值：
+    ///
+    /// - 记录过的 pass：`名字[组1,组2]`（组名按 `note_bind` 的出现顺序；没绑过 ⇒ `名字[]`）；
+    /// - 逃生舱手写的 pass：`名字(raw)`；
+    /// - 显式跳过的 pass：`名字(-)`。
+    ///
+    /// 同一名字的多子 pass（阴影每层）会在组名里出现多次，这正是"录了几个 wgpu pass"。
+    pub fn command_flow(&self) -> Vec<String> {
+        let mut flow = Vec::new();
+        for decl in self.plan {
+            if self.recorded.contains(&decl.name) {
+                let groups: Vec<&str> = self
+                    .bound
+                    .iter()
+                    .filter(|(pass, _)| *pass == decl.name)
+                    .map(|(_, group)| *group)
+                    .collect();
+                flow.push(format!("{}[{}]", decl.name, groups.join(",")));
+            } else if self.raw_recorded.contains(&decl.name) {
+                flow.push(format!("{}(raw)", decl.name));
+            } else if self.skipped.contains(&decl.name) {
+                flow.push(format!("{}(-)", decl.name));
+            }
+        }
+        flow
+    }
+
     /// 记录过的 pass 里**没有接入绑定记账**的那些（BP-2 / BP-4 的 escape 清单）。
     ///
     /// 它们照常通过顺序与完整性校验，但不参与"声明 vs 实际"比对 —— 名单本身就是账。

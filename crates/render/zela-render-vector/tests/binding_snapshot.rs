@@ -5,9 +5,14 @@
 //
 //   1. 每个 `set_bind_group` 的**实参表达式**逐字节不变 —— 改造只允许在它下一行
 //      加 `note_bind`，不许调整实参；
-//   2. 每个帧级绑定的下一行就是它的记账，且记账里的组名映射回**同一个组号**。
+//   2. 帧级绑定的下一行就是它的记账，且记账里的组名映射回**同一个组号**。
 //
 // 为什么不能只靠像素：绑错一个"内容相同的另一个组"不会改像素。
+//
+// **BR-4 / BS-0 更新**：绑定从 `encode_frame` 的直写搬进了节点（`RasterNode` /
+// `SlabsNode` / `ShadowNode` / `AtlasNode` / `OcclusionDepthNode`），实参因此变成
+// 节点的字段（`group` / `self.group` / `self.lighting`）。这里同步改成按**节点内**
+// 的实参形态固定；每个节点的 `execute` 仍保持"绑定下一行就是记账"。
 
 use zela_render_vector::passes::RASTER_GROUPS;
 
@@ -19,27 +24,23 @@ fn count(source: &str, needle: &str) -> usize {
     source.matches(needle).count()
 }
 
-/// 实参快照：改造前（BP-2 提交）与 BP-3 之后必须逐条相同。
+/// 实参快照：改造前（BP-2 提交）与 BR-4 之后必须逐条相同。
 #[test]
 fn set_bind_group_arguments_are_pinned() {
-    let render: [(&str, usize); 10] = [
-        // 帧级固定（已接入记账）
-        ("set_bind_group(0, buffers.group.as_ref(), &slot)", 8),
-        ("set_bind_group(3, lighting_group, &[])", 4),
-        ("set_bind_group(3, &buffers.shadow_maps.group, &[])", 1),
-        ("set_bind_group(2, append, &[])", 1),
-        // BP-4：白图改为从收敛后的 `ImageGroups` 取（名字寻址），不再是 `Keyed` 的下标
+    let render: [(&str, usize); 9] = [
+        // 节点内的帧级固定绑定（组号在左，实参是节点字段）
+        ("pass.set_bind_group(0, group, &self.slot);", 5), // RasterNode / Slabs / OcclusionDepth / Shadow / Atlas
+        ("pass.set_bind_group(3, group, &[]);", 1),        // RasterNode: lighting
+        ("pass.set_bind_group(1, group, &[]);", 1),        // RasterNode: images
+        ("pass.set_bind_group(2, group, &[]);", 2),        // RasterNode: list + 合成精灵（后者是 escape）
+        ("pass.set_bind_group(2, self.group, &[]);", 1),   // SlabsNode: slabs 组（escape）
+        ("pass.set_bind_group(3, self.lighting, &[]);", 1), // AtlasNode: lighting
+        // escape：codegen 的现场构造组
+        ("pass.set_bind_group(0, &group, &[]);", 2),
+        // escape：per-draw 的图集组
+        ("pass.set_bind_group(1, white, &[]);", 2),
         (
-            "set_bind_group(1, self.image_groups.white().expect(\"the white image group\"), &[])",
-            1,
-        ),
-        // escape：per-iteration / 现场构造 / 参数传递 / per-draw
-        ("set_bind_group(2, &s.groups[1], &[])", 1),
-        ("set_bind_group(2, &s.groups[0], &[])", 1),
-        ("set_bind_group(0, &group, &[])", 2),
-        ("set_bind_group(1, white, &[])", 2),
-        (
-            "set_bind_group(1, self.image_groups.get(draw.texture).unwrap_or(white), &[])",
+            "pass.set_bind_group(1, self.image_groups.get(draw.texture).unwrap_or(white), &[]);",
             1,
         ),
     ];
@@ -53,7 +54,7 @@ fn set_bind_group_arguments_are_pinned() {
 
     let vector: [(&str, usize); 9] = [
         ("set_bind_group(0, &scene, &[])", 5),
-        ("set_bind_group(0, &group, &[])", 1),
+        ("set_bind_group(0, group, &[])", 1),
         ("set_bind_group(3, read, &[])", 1),
         ("set_bind_group(1, &images, &[])", 2),
         ("set_bind_group(2, &write, &[])", 1),
@@ -81,6 +82,9 @@ fn quoted(line: &str) -> Vec<&str> {
 }
 
 /// 帧级绑定的下一行必须是记账，且记账名映射回同一个组号。
+///
+/// 记账的 pass 名可以是字面量（`"slabs"`），也可以是节点的 `self.name` ——
+/// 两者都算"归属明确"，这里只校验**组名 → 组号**这一半。
 #[test]
 fn frame_level_binds_are_ledgered_next_line() {
     let lines: Vec<&str> = RENDER.lines().collect();
@@ -97,10 +101,12 @@ fn frame_level_binds_are_ledgered_next_line() {
             .trim()
             .parse()
             .expect("组号必须是字面量");
-        // escape：实参随循环变量 / 现场构造 / 闭包入参 / per-draw 变化
-        let escape = line.contains("&s.groups[")
-            || line.contains("(0, &group,")
-            || line.contains("(1, white,")
+        // escape：实参随 per-pass / per-draw 变化，或是一次性构造
+        let previous = index.checked_sub(1).and_then(|i| lines.get(i)).copied().unwrap_or("");
+        let escape = previous.contains("s.group") // 合成精灵的 slabs 组
+            || line.contains("self.group")       // slabs 自己的组
+            || line.contains("(0, &group,")      // codegen 的现场构造组
+            || line.contains("(1, white,")       // per-draw 的白图
             || line.contains("image_groups.get");
         let next = lines.get(index + 1).copied().unwrap_or("");
         if escape {
@@ -112,20 +118,18 @@ fn frame_level_binds_are_ledgered_next_line() {
             continue;
         }
         let names = quoted(next);
-        assert_eq!(
-            names.len(),
-            2,
-            "帧级绑定的下一行应是 note_bind(\"pass\", \"组\")：\n  绑定：{line}\n  下一行：{next}"
+        assert!(
+            !names.is_empty(),
+            "帧级绑定的下一行应是 note_bind(pass, \"组\")：\n  绑定：{line}\n  下一行：{next}"
         );
+        let group_name = names.last().expect("组名");
         assert_eq!(
-            RASTER_GROUPS.group_of(names[1]),
+            RASTER_GROUPS.group_of(group_name),
             Some(group),
-            "记账名 {:?} 映射不到组 {group}（{:?}）",
-            names[1],
-            names
+            "记账名 {group_name:?} 映射不到组 {group}（{names:?}）"
         );
         ledgered += 1;
     }
-    assert_eq!(ledgered, 15, "帧级固定绑定应全部接入记账");
-    assert_eq!(escapes, 7, "escape 点应保持 7 处（2 codegen + 2 slabs + 2 白图 + 1 per-draw）");
+    assert_eq!(ledgered, 9, "节点内的帧级固定绑定应全部接入记账");
+    assert_eq!(escapes, 7, "escape 点应保持 7 处（2 codegen + 1 合成精灵 + 1 slabs + 2 白图 + 1 per-draw）");
 }
