@@ -1830,11 +1830,42 @@
 
 ---
 
+## BT. 程序化材质与 SDF（2026-10-31）
+
+> 计划《程序化材质与SDF_执行计划》。目标：三个 Demo —— 2D 程序化材质（透明度）、
+> 2D 解析 SDF、3D 程序化材质。前置核实见 `docs/research/BT_前置核实.md`（BT-0）。
+> 红线：像素 36 条逐位不变（新 Demo 只新增条目）· 结构 22 件不变 · 覆盖 72/72 · 每阶段单独 commit。
+> 本段按阶段记账；**未兑现项写触发条件，不写成「已关闭」**。
+>
+> 新 Demo 的像素基线：本机 `ZELA_RECORD_DEVICE` 为空（不是录制设备），
+> 三个脚本在 `dispositions.txt` 里记 `exempt: …像素基线待录（录制设备）`，
+> 判据由**像素级单测**承担（见各条证据）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BT-01 | `SlotType::Vec4` 缺失 —— SDF 透明度与 `Fill.color` 的共用缺口 | ze-comb / ze-func / ze-render-ir / pod | **已关闭** | `SlotType::Vec4` + `of()` / `from_channel()` / `layout` / `store`、`Literal::Vec4`（含 serde 往返）、`Vec4Of`（CPU eval / typed / WGSL 三路同源，带 `typed_equivalence` 用例）、`ShaderParamKind::Vec4`（std140 对齐 16）、`ChannelType::Vec4` 全链路映射。`MathApi` / `LIBRARY_VERSION` 升到 `25`、指纹同步；manifest 的 payload 按新版本重算。BD-03（`Fill.color` 缺 Vec4 映射）由本条关闭。判据：像素 36 项 ok 36 / DIFF 0。 |
+| BT-02 | 颜色画布的 alpha 被程序标签占用（覆盖率没有通道） | zela-render-vector | **已关闭** | 标签搬到自己的 `R32Uint` 纹理（组 1 新增 `shader_tags`，`IMAGE_SLOTS` 24 → 25，槽位快照用例追加第 25 项）；`FRAG_TAIL` 的颜色画布 alpha 改写成覆盖率（本阶段恒 1.0），`shaded_fill` 改按 `shader_tags` 判等，`fs_nearest` 同步补 24。专门用例 `overlapping_fragment_programs_claim_their_own_pixels`：两个包围盒重叠的逐片元程序各自认领自己写下的像素；把读端改回颜色画布 alpha 时该用例会红（已实测）。命令流快照的口径：BS-0 记的是**组名**粒度，`vector composite` 仍是 `[scene, images]`（资源粒度新增 `shader_tags` 记在 `IMAGE_SLOTS`）。判据：像素 36 项 ok 36 / DIFF 0。 |
+| BT-03 | 手写 WGSL 没有第二条入口，也无法解释"被忽略"的是哪一类 | pod / 渲染 | **已关闭** | `ShaderPaint.hand_written`（进 payload，旧 payload 缺字段读作 `false`）+ `FEATURE_SHADER_WRITTEN`：路由理由把「手写 WGSL（仅 vector）」与「着色 codegen」分开，文案改为「wgpu 已忽略…」。POD 新增 `expr.shader_source { object, source, fragment }`，契约必须含 `struct Params` 与 `fn eval`、返回类型只有 `vec3`/`vec4`（声明参数显式拒绝，避免读到零）；`MathApi` / `LIBRARY_VERSION` 升到 `26`、指纹同步，manifest 的 23 条 payload 重算。判据：`handwritten_wgsl_matches_the_expression_product`（`emit_wgsl` 产物 vs 手写源码**渲染逐位相同**）+ 路由理由用例。BN-07（作者可编程缺完整 pass 生成）不因此关闭，但本入口是它的实用替代。 |
+| BT-04 | 着色器给的透明度不生效（被记录 alpha 覆盖） | zela-render-vector | **已关闭** | `ShaderFill.rgba` 选 `FRAG_TAIL_RGBA`（alpha 写画布），`painted` 用「着色器覆盖率 × 记录 alpha」并统一预乘；"有程序"的标志从 alpha 拆成 `Shaded { claimed, color }`（否则 SDF 边缘 alpha < 0.5 会被误判成未认领）。vec4 出口**强制**走逐片元通道（派生事实，不是开关）。新增 `cap_shader_alpha.lua`（不透明 / 半透明 / 逐像素渐变三组同几何对照）。判据：`shader_alpha_reaches_the_output`（alpha = 0.5 时中央 ≈128，而不是 255）。 |
+| BT-05 | 2D 解析 SDF 与覆盖抗锯齿（BI-02 的 SDF 那一半） | 渲染 / Demo | **部分关闭** | 新增 `cap_sdf.lua`：用现有算子（`Length` / `Min` / `Max` / `Scale` / `Smoothstep`）在**像素空间**构造圆 SDF，三个圆分别演示 min 并、max 交、`max(outer, -inner)` 差；覆盖率 `1 - smoothstep(-0.5, 0.5, d)`，不用 `fwidth`（BT-0 §0.1：像素空间 |∇d| = 1）。判据 `sdf_edges_are_antialiased_and_the_width_does_not_scale`：32px / 96px 两个尺寸的部分覆盖像素数随**周长**增长（比值 2.0–4.0；若边缘随尺寸放大，比值会接近面积比 ≈7.7）。**仍记账**：3D raymarch SDF（需要循环 + 逐片元深度，与 BI-02 的后半段同源）。 |
+| BT-06 | 逐片元入口没有 per-pixel 3D 属性（`world_pos` / `normal`） | 渲染 / codegen | **记账** | BT-0 核实：着色内建只有 5 个 vec2（`center` / `size` / `fragment.pos2` / `fragment.local` / `fragment.uv`），两条入口尾部只声明这 5 个 `var<private>`；组 1 有颜色 / 深度采样但没有法线 G-buffer，逐片元绑定（Params / 颜色画布 / 标签 / `ZelaFrag`）读不到对象缓冲与 `FrameUniform.inverse`。⇒ 3D 视图的程序化材质只能走**屏幕空间**（`cap_shader_3d.lua` 即此形态；`fragment_material_varies_with_position_in_a_3d_frame` 用 `View3` 锁定 uv 随位置变化）。触发条件：给逐片元入口加 per-pixel 3D 属性（需要新绑定点：对象缓冲或 G-buffer），属于另一批。 |
+| BT-07 | 手写 WGSL 不支持**外部注入参数** | 渲染 / codegen | **记账** | 契约只允许 `Params` 里放占位字段（`_unused: u32`），声明别的字段在装配期**显式报错**而不是读到零；需要参数的作者仍走 `expr.shader`（参数表 + `shader_value` 供给）。触发条件：手写着色器需要 `time` / 对象字段等注入时，复用 `expr.shader` 的参数表与 `shader_value` 的取值链（`ShaderPaint.params` 已是同一形状）。 |
+| BT-08 | `AaModel::Sdf`（顶点采样图集路线）与本批的解析 SDF 是两条路 | 渲染 / 顶点 | **已记录** | 本批只做**逐片元解析** SDF（BT-05）；`ze-vertex/src/aa.rs` 的 `AaModel::Sdf` 是"attrib0 = 图集 UV、场值从纹理采样"的 msdf 路线，机制已备、零消费者。两者不互相替代：前者逐像素求值、无需烘焙；后者需要 msdf 图集。不接、不构成门禁失败；将来接它时应先有烘焙管线。 |
+
+**BT 段小计**：已关闭 4 · 部分关闭 1 · 记账 2 · 已记录 1。
+> 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 37/37 · docs 通过。
+> 新 Demo 的像素基线**没有**在本机录制（`ZELA_RECORD_DEVICE` 为空）⇒ 三条 `exempt` 指向 GAPS 本条；
+> 它们的判据是像素级单测（BT-02/04/05/06 各自一条），不是"看一眼没问题"。
+> 判据说明：本批的红线是"已有作品逐位不变"，新增能力由**新**用例与新 Demo 承担；
+> 手写入口的"后端零分支"由 `handwritten_wgsl_matches_the_expression_product` 用两段不同源码的对拍固定。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BS**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BS 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BT**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BT 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

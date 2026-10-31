@@ -77,15 +77,16 @@ pub static DEMOS: &[Demo] = &[
     lua!("expr_read", "通道读端与值分支", "expr_read.lua"),
     lua!("sine_trace", "小球画正弦", "sine_trace.lua"),
     lua!("cap_codegen", "着色codegen", "cap_codegen.lua"),
-    lua!("cap_shader_alpha", "着色透明度", "cap_shader_alpha.lua"),
-    lua!("cap_sdf", "SDF隐式形状", "cap_sdf.lua"),
-    lua!("cap_shader_3d", "3D着色材质", "cap_shader_3d.lua"),
     lua!("cap_stroke_width", "线宽通道", "cap_stroke_width.lua"),
     lua!("cap_parent_inherit", "Parent继承", "cap_parent_inherit.lua"),
     lua!("cap_plot", "函数图像", "cap_plot.lua"),
     lua!("cap_path_follow", "路径跟随", "cap_path_follow.lua"),
     lua!("cap_text_group", "文字组", "cap_text_group.lua"),
     lua!("cap_sequence", "时序", "cap_sequence.lua"),
+    // BT 批（顺序与 manifest 末尾一致）
+    lua!("cap_shader_alpha", "着色透明度", "cap_shader_alpha.lua"),
+    lua!("cap_sdf", "SDF隐式形状", "cap_sdf.lua"),
+    lua!("cap_shader_3d", "3D着色材质", "cap_shader_3d.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。
