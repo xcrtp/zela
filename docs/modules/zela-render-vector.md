@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-notion`、`ze-render-ir`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：13 个 · 15903 行
+- 源文件：13 个 · 16073 行
 
 ### 文件清单
 
@@ -21,15 +21,15 @@
 | `src/bloom.rs` | 140 | A 3D view's bloom (`Camera.bloom`): the glow a lens and a sensor spread around the light they take in, which keeps |
 | `src/dispatch.rs` | 452 | `workgroup_size` 的单一来源，以及 dispatch 形状的描述。 |
 | `src/environment.rs` | 817 | Environments: light from all around a 3D view, a picture of its surroundings (an equirectangular Radiance image, |
-| `src/lib.rs` | 148 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
+| `src/lib.rs` | 150 | `zela-render-vector` — 矢量后端（移植自 manimgx 的 `rust/engine`，SHA 见 `UPSTREAM.md`）。 |
 | `src/mesh.rs` | 105 | A mesh prepared for drawing or recording. Geometry is evaluated in its input precision; |
-| `src/nodes.rs` | 435 | Typed Pass 节点（BR 批）。 |
+| `src/nodes.rs` | 501 | Typed Pass 节点（BR 批）。 |
 | `src/occlusion.rs` | 161 | A 3D view's ambient occlusion (`Camera.ambient_occlusion`): how much of the light from all around reaches the |
-| `src/passes.rs` | 1869 | pass 声明化与资源槽位（BN 批）。 |
-| `src/render.rs` | 5238 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
+| `src/passes.rs` | 1905 | pass 声明化与资源槽位（BN 批）。 |
+| `src/render.rs` | 5277 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
 | `src/scene.rs` | 1069 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
-| `src/vector.rs` | 1747 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
+| `src/vector.rs` | 1774 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -86,6 +86,8 @@ graph LR
 | `src/nodes.rs` | `pub struct ExecuteContext<'a>` |
 | `src/nodes.rs` | `pub struct RenderParts<'a>` |
 | `src/nodes.rs` | `pub trait PassNode` |
+| `src/nodes.rs` | `pub fn record_optional(` |
+| `src/nodes.rs` | `pub enum Stage` |
 | `src/nodes.rs` | `pub fn record_compute(` |
 | `src/nodes.rs` | `pub fn record_render(` |
 | `src/passes.rs` | `pub enum ImageKind` |
@@ -111,6 +113,8 @@ graph LR
 | `src/render.rs` | `pub fn take_overflow_totals() -> OverflowTotals` |
 | `src/render.rs` | `pub struct ShadowTotals` |
 | `src/render.rs` | `pub fn take_shadow_totals() -> ShadowTotals` |
+| `src/render.rs` | `pub fn start_command_flow()` |
+| `src/render.rs` | `pub fn take_command_flow() -> Vec<String>` |
 | `src/render.rs` | `pub fn set_shadow_state(on: bool)` |
 | `src/render.rs` | `pub fn set_sample_override(samples: u32)` |
 | `src/render.rs` | `pub fn set_skip(mask: u32)` |

@@ -1790,13 +1790,13 @@
 |---|---|---|---|---|
 | BR-01 | 计划表只被"选出来做校验"，没有代码遍历它驱动录制 | zela-render-vector | **已关闭** | 新增 `nodes` 模块：`AnyPass`（`Render` / `Compute` 两个变体 + 共有的 `set_bind_group` + `record_raw` 逃生舱）、`PassNode`（`prepare` 拿 `&mut PrepareContext`（含 encoder），`execute` 拿 `&ExecuteContext`（只含 device / queue）—— 两阶段签名不同才能绕开 `begin_*_pass` 的 `&mut encoder` 借用）、`record_compute`（`schedule.begin(name)` 自动报数 → `begin_compute_pass` → `execute`）。3 条用例：按声明序执行并 `finish` 通过 / 顺序不符 `OutOfOrder` 且不执行 / 表外节点 `Undeclared`。 |
 | BR-02 | compute 类 pass 的两个接入点 | zela-render-vector | **已关闭** | `bloom` 拆成 `write_params`（prepare：写 uniform）与 `record`（execute：逐级 spread / down / up + show），由 `BloomNode` 驱动；`occlusion` 同样拆开（`write_params` 写 16 个参数、`record` 做 linearize → 深度金字塔 → sao → blur_h / blur_v），由 `OcclusionNode` 驱动。两处的 `begin_compute_pass` 与 `note_pass` 都不再手写：顺序与报数由 `record_compute` 给出；没有内容时仍走 `step(..., false)`（遮蔽的跳过从闭包前移到 `None` 分支，避免重复报数）。判据：像素 36 项 ok 36 / DIFF 0（3D 作品里泛光与遮蔽都是必测项）。 |
-| BR-03 | 其余 compute pass 仍在 `encode_frame` 手写 | zela-render-vector | **记账** | 已接管：`bloom` / `occlusion`（见 BR-02）、`base depth`（`BaseDepthNode`：`vector::resolve_depth` 拆成 `depth_group`（prepare，建/复用 `base_depth` 纹理与绑定组，需 `PrepareContext.device`）与 `record_depth`（execute，设管线 + 按 entry 派发）；两个调用点都改由节点驱动，跳过分支仍 `step(..., false)`）、`environment`（`EnvironmentNode`：`Prefilter::run` 拆成 `prepare`（建纹理 / 组 / 参数、写图片）与 `record`（按 `steps` 逐个设管线 / 组 / 派发），报数接 `ENVIRONMENT_PLAN`；它仍是自己的 encoder + `submit`，因为一帧只在首次显示环境时跑）。待迁移：vector 的 flatten / composite / keep / slab bounds（都在 `Vector::encode` 内，见 BR-05）。触发条件：按 `BloomNode` / `OcclusionNode` / `BaseDepthNode` 的同一形态逐个接；每个都用像素 36 + 绑定 / 派发快照验收。 |
-| BR-04 | render 类 8 个 pass 未节点化 | zela-render-vector | **已关闭** | 8 个 pass 全部改成节点，逐个 commit、每步跑像素 36：`base` / `opaque` / `append` / `composite sprites` 走 `RasterNode`（附件委托 `Canvas::parts`——与手写路径**同一个函数**，MSAA / 深度 / MRT 不可能分叉；差异全是字段：`color` / `depth` / `into` / `light` / 四个组 / `steps` / `sprites`）；`slabs` 走 `SlabsNode`（附件是自建 slabs 纹理的逐层视图、无深度；录之前先跑 slab bounds，正好落在 `prepare`）；`occlusion depth` 走 `OcclusionDepthNode`（只看深度的 pass + `after` 里补路径的 `Out::Opaque`）；`shadow` 走 `ShadowNode`（`passes()` = 层数，每层一个子 pass、`after(i)` 补该层路径的 `Out::Depth`）；`atlas raster` 走 `AtlasNode`（`passes()` = 组数，第 i 组画图集、`after(i)` 合成该组——组间图集会被覆盖，必须交错）。驱动为此新增三项：`passes()`（一个逻辑 pass 录几个 wgpu pass）、`parts_at(i)` / `execute_at(i)`（按子 pass 取附件与录制）、`after(i)`（第 i 个 pass 之后的 encoder 工作），`execute` 降为单 pass 节点的便利入口。两处语义修正记在案：① 没有附件的子 pass 不跳 `after`（纯路径视图没有光栅对象，但该组照样要合成）；② 管线族查表移进 `execute_at`（纯路径视图可能还没建 `(samples, 无光)` 那一族）。仍未接管：`vector composite`（纯记账、无 wgpu pass；它的内容是 `vector::encode`，归 BR-05）。 |
-| BR-05 | `Vector::encode` 拿不到 `&mut PassSchedule`（BP-05 的另一面） | zela-render-vector | **记账** | 它 10 个参数，内部还有 5 处 `begin_compute_pass`；接入要么改签名（5 个调用点），要么让它吃 `&mut PassContext`。这与 BP-05（绑定记账）同一堵墙：两者应一起解。触发条件：需要校验 `vector composite` 的 `atlas` / `base_depth` 绑定，或要新增 vector 子 pass 时。 |
-| BR-06 | 驱动循环尚未接管顺序（`encode_frame` 仍手写 `note_pass` 序列） | zela-render-vector | **记账** | 前提是 BR-03 / BR-04 / BR-05 全部迁移完：现在 `encode_frame` 的 pass 序列与视图数据（`Drawing` 变体、有无链表 / slabs、阴影层数）耦合，驱动只能接管"声明里已有、且输入齐备"的那些。计划的目标判据"追加 no-op pass 只新增文件 + 数组一行"依赖这一步。触发条件：BR-03/04/05 关闭后，把 `note_pass` 序列换成 `for decl in plan` 驱动。 |
-| BR-07 | 命令流快照（pass 名 + 组名 + dispatch 三元组） | 门禁 | **记账** | 已有的 `tests/binding_snapshot.rs`（实参逐字节 + 记账名 → 组号）与 `tests/dispatch_snapshot.rs`（新旧算法等价）覆盖了"绑定"与"派发"两维；**没有**按 pass 串起来的命令流快照（节点迁移后跑一次、把 `(pass, 组, dispatch)` 序列固定下来）。触发条件：BR-04 开始迁移 render 类时补（那时才有多节点串联的序列可比）。 |
+| BR-03 | 其余 compute pass 仍在 `encode_frame` 手写 | zela-render-vector | **已关闭** | 已接管：`bloom` / `occlusion`（见 BR-02）、`base depth`（`BaseDepthNode`：`vector::resolve_depth` 拆成 `depth_group`（prepare，建/复用 `base_depth` 纹理与绑定组，需 `PrepareContext.device`）与 `record_depth`（execute，设管线 + 按 entry 派发）；两个调用点都改由节点驱动，跳过分支仍 `step(..., false)`）、`environment`（`EnvironmentNode`：`Prefilter::run` 拆成 `prepare`（建纹理 / 组 / 参数、写图片）与 `record`（按 `steps` 逐个设管线 / 组 / 派发），报数接 `ENVIRONMENT_PLAN`；它仍是自己的 encoder + `submit`，因为一帧只在首次显示环境时跑）。**BS 批收尾**：vector 的 flatten / composite / keep / slab bounds 仍住在 `Vector::encode` 内部（形状不拆，见 BS 计划 §4「明确不做」），但它们已由节点驱动 —— `slabs` 在 `SlabsNode::prepare`、`occlusion depth` / `shadow` 在各自 `after`、合成在 `VectorCompositeNode::run`，且 BS-1 起这些绑定全部进入 `check_bindings`。`encode_frame` 里不再有任何手写 compute pass。 |
+| BR-04 | render 类 8 个 pass 未节点化 | zela-render-vector | **已关闭** | 8 个 pass 全部改成节点，逐个 commit、每步跑像素 36：`base` / `opaque` / `append` / `composite sprites` 走 `RasterNode`（附件委托 `Canvas::parts`——与手写路径**同一个函数**，MSAA / 深度 / MRT 不可能分叉；差异全是字段：`color` / `depth` / `into` / `light` / 四个组 / `steps` / `sprites`）；`slabs` 走 `SlabsNode`（附件是自建 slabs 纹理的逐层视图、无深度；录之前先跑 slab bounds，正好落在 `prepare`）；`occlusion depth` 走 `OcclusionDepthNode`（只看深度的 pass + `after` 里补路径的 `Out::Opaque`）；`shadow` 走 `ShadowNode`（`passes()` = 层数，每层一个子 pass、`after(i)` 补该层路径的 `Out::Depth`）；`atlas raster` 走 `AtlasNode`（`passes()` = 组数，第 i 组画图集、`after(i)` 合成该组——组间图集会被覆盖，必须交错）。驱动为此新增三项：`passes()`（一个逻辑 pass 录几个 wgpu pass）、`parts_at(i)` / `execute_at(i)`（按子 pass 取附件与录制）、`after(i)`（第 i 个 pass 之后的 encoder 工作），`execute` 降为单 pass 节点的便利入口。两处语义修正记在案：① 没有附件的子 pass 不跳 `after`（纯路径视图没有光栅对象，但该组照样要合成）；② 管线族查表移进 `execute_at`（纯路径视图可能还没建 `(samples, 无光)` 那一族）。`vector composite` 在 BR-4 里仍是纯记账（它的内容是 `vector::encode`），BS-2 起由 `VectorCompositeNode` 接管（见 BS-03）。 |
+| BR-05 | `Vector::encode` 拿不到 `&mut PassSchedule`（BP-05 的另一面） | zela-render-vector | **已关闭** | BS-1 给 `encode` 加了 `ledger: Option<(&'static str, &mut PassSchedule)>`：内部 6 处 `set_bind_group` 的下一行就地 `note_bind`（`scene` / `images`），于是 vector 子 pass 第一次进入 `check_bindings`（此前 `bound.is_empty()` ⇒ 静默跳过，即验收报告里的 P4）。记账写成自由函数 `ledger_bind`（不是闭包）：`accumulate` / `nearest` 两个嵌套 recorder 要把它当参数传，闭包捕获 `&mut schedule` 会互斥。`None` 的调用点是**条件读**的 escape：`shadow` / `occlusion depth` 的 `nearest` 读图集与逐对象程序，但视图没有路径时整个 pass 不起 —— `PassDecl` 没有条件语义，声明里写 `atlas` 会让"没路径的帧"被误报少绑；`slabs` 的 bounds 同理。组名取 `RASTER_GROUPS` 的 `scene` / `images`（组 0 资源表因此取光栅与矢量两组 layout 的并集）。 |
+| BR-06 | 驱动循环尚未接管顺序（`encode_frame` 仍手写 `note_pass` 序列） | zela-render-vector | **已关闭** | BS-3 加 `PassNode::enabled()` + `record_optional`（`Some` 且 enabled ⇒ 录制，否则显式 `step(name, false)`）；BS-4 把光栅两张计划与矢量计划都改成 `for decl in plan { match decl.name { … } }`，节点在循环里懒构造（只读本帧算好的 canvas / draws / base / 光照组 / 遮挡组，不读前面 pass 的录制结果）。`note_pass` 与 `Canvas::pass` 因无调用点而删除。终检自动化：`tests/command_flow.rs` 的 `every_declared_pass_has_a_branch`（每条声明在驱动里都有分支）与 `only_the_vector_composite_takes_the_manual_escape`（`manual()` 只有一处实现）。判据：像素 36 ok 36 / DIFF 0（含 demo3d 的分层 / 链表 / slabs 路径）；命令流快照逐项不变。 |
+| BR-07 | 命令流快照（pass 名 + 组名 + dispatch 三元组） | 门禁 | **已关闭** | BS-0 新增 `PassSchedule::command_flow()`（按声明序给出 `名字[组…]` / `名字(raw)` / `名字(-)`），`render.rs` 在 `finish_schedule` 里收进进程级槽位（默认关，只在用例 `start_command_flow()` 后写）。`tests/command_flow.rs` 固定两条真实序列：`VECTOR_PLAN` = `atlas raster[] > vector composite[]`；`RASTER_PLAN` = `shadow[] > occlusion depth(-) > occlusion(-) > base[scene,lighting] > base depth[] > vector composite[scene,images] > bloom(-)`。BS-1 前后唯一的变化正是 `vector composite` 从 `[]` 变成 `[scene,images]`（那次提交里显式更新）；BS-2/3/4 的搬运一条都没动它。 |
 
-**BR 段小计**：已关闭 3 · 记账 4。
+**BR 段小计**：已关闭 7 · 记账 0。
 > 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过。
 > 判据说明：BR-2/3 的验收不是"代码看起来搬家了"，而是 ① `nodes` 的三条驱动用例
 > （顺序 / `OutOfOrder` / `Undeclared`）② 每个 pass 接管后像素 36 项逐位不变
@@ -1806,11 +1806,35 @@
 
 ---
 
+## BS. 驱动接管与 vector 合成节点化（2026-10-31）
+
+> 计划《BS_驱动接管与vector合成节点化_执行计划》。目标：把 `encode_frame` 里剩下的
+> "逐 pass 手写驱动"换成"按 `PassPlan` 推进的循环"，并补上唯一没有节点的 pass
+> （`vector composite`）。本段是 BR-05 / BR-06 / BR-07 的兑现点。
+> 红线：像素 36 条逐位不变 · 结构 22 件不变 · 每阶段单独 commit · 不重录。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BS-01 | 没有按 pass 串起来的命令流快照（BR-07） | 门禁 | **已关闭** | `PassSchedule::command_flow()` 按声明序给出 `名字[组…]` / `名字(raw)` / `名字(-)`；`render.rs` 在 `finish_schedule` 里收进进程级槽位（默认关，`start_command_flow()` 才写，稳态零开销）。`tests/command_flow.rs` 固定 VECTOR_PLAN 与 RASTER_PLAN 两条真实序列，并修好 BR-4 遗留的 `binding_snapshot.rs`（它固定的是源码实参，节点化后实参变成节点字段）。 |
+| BS-02 | `Vector::encode` 拿不到调度（BR-05 / BP-05） | zela-render-vector | **已关闭** | `encode` 增加 `ledger: Option<(&'static str, &mut PassSchedule)>`，内部 6 处 `set_bind_group` 下一行 `note_bind`；`PassNode::after` 增加 `ExecuteContext` 让"夹在子 pass 之间的 recorder"也能记账。`RASTER_GROUPS` 组 0 的资源表取光栅与矢量两种 layout 的并集（同组号只能有一个名字）。条件读的 `nearest`（阴影 / 遮蔽深度的图集读）不记账，记作 escape。 |
+| BS-03 | `vector composite` 还没有节点（BR-05 的另一半） | zela-render-vector | **已关闭** | `VectorCompositeNode`：一个声明、按 group 起 1–4 个 compute pass。`PassNode` 新增 `manual()` / `run()` 逃生舱（`execute` 拿到的 `AnyPass` 已借走 encoder，塞不进数量随数据变化的 pass）。3D / 光栅视图的合成由它驱动；2D 纯矢量视图的合成仍留在 `AtlasNode::after`（必须与图集子 pass 交错，否则多组视图的合成会读到下一组的图集），记账为 escape。 |
+| BS-04 | 跳过的十处手写分支（BR-06 的一半） | zela-render-vector | **已关闭** | `PassNode::enabled()`（默认 true）替代"本帧有没有内容"的散落判断；驱动统一为 `record_optional`：`Some` 且 enabled ⇒ 录制，否则显式 `step(name, false)`（**不允许假装跑了**）。`RasterNode` / `BaseDepthNode` 增加 `present` 字段。 |
+| BS-05 | 驱动循环未接管顺序（BR-06 的另一半） | zela-render-vector | **已关闭** | 光栅两张计划与矢量计划都改成 `for decl in plan { match decl.name { … } }`；节点在循环里懒构造，只读本帧算好的数据（canvas / draws / base / 光照组 / 遮挡组），不读前面 pass 的录制结果。`note_pass` 与 `Canvas::pass` 因无调用点而删除。新增 pass = 一条声明 + 一个分支。 |
+| BS-06 | 终检（"加 pass 只改声明"缺自动判据） | 门禁 | **已关闭** | `tests/command_flow.rs` 两条终检：`every_declared_pass_has_a_branch`（三条计划里每条声明在驱动里都有分支）与 `only_the_vector_composite_takes_the_manual_escape`（`manual()` 只允许一处实现，逃生舱不变正门）。xtask 两处登记（`main.rs` 的 `## BS.` 前缀与 `BS-` 条目识别）已加。 |
+
+**BS 段小计**：已关闭 6 · 记账 0。
+> 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · docs 通过 · 命令流快照逐项固定。
+> 与既有记账的关系：BR-05 ← BS-02 + BS-03；BR-06 ← BS-04 + BS-05；BR-07 ← BS-01；
+> BP-05 由 BS-02 一并关闭。`CODEGEN_PLAN` 与 `ENVIRONMENT_PLAN` 按计划不动
+> （codegen 留 `record_raw` 逃生舱，environment 有自己的 encoder + submit）。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BR**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BR 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BS**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BS 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
