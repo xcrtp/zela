@@ -432,56 +432,104 @@ impl crate::nodes::PassNode for EnvironmentNode<'_> {
     }
 }
 
-/// **BR-4**：`base` 节点 —— 第一个由 [`crate::nodes::record_render`] 驱动的 render pass。
+/// 一个光栅节点要画的步骤（`draw` 的阶段，或一组精灵）。
+#[derive(Clone, Copy)]
+enum RasterStep {
+    Draw(Phase),
+    Sprites,
+}
+
+/// base：要么一次画完，要么（有精灵时）不透明 → 精灵 → 覆层（与手写路径同序）。
+const BASE_STEPS: &[RasterStep] = &[RasterStep::Draw(Phase::All)];
+const BASE_SPRITE_STEPS: &[RasterStep] = &[RasterStep::Draw(Phase::Opaque), RasterStep::Sprites, RasterStep::Draw(Phase::Overlay)];
+const OPAQUE_STEPS: &[RasterStep] = &[RasterStep::Draw(Phase::Opaque)];
+const APPEND_STEPS: &[RasterStep] = &[RasterStep::Draw(Phase::SeeThrough)];
+const COMPOSITE_STEPS: &[RasterStep] = &[RasterStep::Sprites, RasterStep::Draw(Phase::Overlay)];
+
+/// 一组要画的精灵：范围、管线，以及（合成时）绑在组 2 的 slabs 组。
+struct Sprites<'a> {
+    range: &'a Range<u32>,
+    pipeline: &'a wgpu::RenderPipeline,
+    group: Option<&'a wgpu::BindGroup>,
+}
+
+/// **BR-4**：一个由 [`crate::nodes::record_render`] 驱动的光栅 pass
+/// （base / opaque / append / composite sprites）。
 ///
 /// 附件由 [`Canvas::parts`] 给出（与手写路径**同一个函数**，所以 MSAA / 深度 / MRT 的
-/// 形状不可能分叉）；绘制与绑定逐行来自原手写路径，因此像素不变。
-struct BaseNode<'a> {
+/// 形状不可能分叉）；各 pass 的差异（绑哪些组、画哪些步骤）全是**字段**，不是分支。
+struct RasterNode<'a> {
+    name: &'static str,
     canvas: &'a Canvas,
     color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>,
     depth: Depth,
-    base: Option<&'a wgpu::TextureView>,
-    base_light: Option<&'a wgpu::TextureView>,
+    into: Option<&'a wgpu::TextureView>,
+    light: Option<&'a wgpu::TextureView>,
+    scene: Option<&'a wgpu::BindGroup>,
+    lighting: Option<&'a wgpu::BindGroup>,
+    images: Option<&'a wgpu::BindGroup>,
+    list: Option<&'a wgpu::BindGroup>,
     player: &'a Player,
     pipelines: &'a Pipelines,
     indices: &'a wgpu::Buffer,
     draws: &'a [Draw],
     offset: u32,
-    sprites: &'a Range<u32>,
     slot: [u32; 1],
-    scene: Option<&'a wgpu::BindGroup>,
-    lighting: &'a wgpu::BindGroup,
+    steps: &'a [RasterStep],
+    sprites: Option<Sprites<'a>>,
 }
 
-impl crate::nodes::PassNode for BaseNode<'_> {
+impl crate::nodes::PassNode for RasterNode<'_> {
     fn name(&self) -> &'static str {
-        "base"
+        self.name
     }
 
     fn prepare(&mut self, _ctx: &mut crate::nodes::PrepareContext<'_>) {}
 
     fn parts(&self) -> Option<crate::nodes::RenderParts<'_>> {
-        Some(self.canvas.parts(self.color, self.depth, self.base, self.base_light).0)
+        Some(self.canvas.parts(self.color, self.depth, self.into, self.light).0)
     }
 
     fn execute(&self, ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
         let Some(pass) = pass.as_render() else { return };
-        if self.base_light.is_some() {
+        if self.light.is_some() {
             // Ordinary paint contributes no lit coverage, even before this pass's first material mesh.
             pass.set_blend_constant(wgpu::Color::TRANSPARENT);
         }
-        pass.set_bind_group(0, self.scene, &self.slot);
-        ctx.schedule.note_bind("base", "scene");
-        pass.set_bind_group(3, self.lighting, &[]);
-        ctx.schedule.note_bind("base", "lighting");
-        if self.sprites.is_empty() {
-            self.player.draw(pass, self.pipelines, self.indices, self.draws, self.offset, Phase::All);
-        } else {
-            // the sprites over everything else but what is fixed in the frame
-            self.player.draw(pass, self.pipelines, self.indices, self.draws, self.offset, Phase::Opaque);
-            pass.set_pipeline(&self.pipelines.sprites);
-            pass.draw(6 * self.sprites.start..6 * self.sprites.end, 0..1);
-            self.player.draw(pass, self.pipelines, self.indices, self.draws, self.offset, Phase::Overlay);
+        if let Some(group) = self.scene {
+            pass.set_bind_group(0, group, &self.slot);
+            ctx.schedule.note_bind(self.name, "scene");
+        }
+        if let Some(group) = self.lighting {
+            pass.set_bind_group(3, group, &[]);
+            ctx.schedule.note_bind(self.name, "lighting");
+        }
+        if let Some(group) = self.images {
+            pass.set_bind_group(1, group, &[]);
+            ctx.schedule.note_bind(self.name, "images");
+        }
+        if let Some(group) = self.list {
+            pass.set_bind_group(2, group, &[]);
+            ctx.schedule.note_bind(self.name, "list");
+        }
+        for step in self.steps {
+            match step {
+                RasterStep::Draw(phase) => {
+                    self.player.draw(pass, self.pipelines, self.indices, self.draws, self.offset, *phase);
+                }
+                RasterStep::Sprites => {
+                    let Some(s) = self.sprites.as_ref() else {
+                        panic!("这个 pass 的步骤里有精灵");
+                    };
+                    if let Some(group) = s.group {
+                        pass.set_bind_group(2, group, &[]);
+                    }
+                    if !s.range.is_empty() {
+                        pass.set_pipeline(s.pipeline);
+                        pass.draw(6 * s.range.start..6 * s.range.end, 0..1);
+                    }
+                }
+            }
         }
     }
 }
@@ -4036,21 +4084,25 @@ impl Player {
                         let has_base = rasterized || plan.is_none();
                         if has_base {
                             // BR-4：base 由 `record_render` 驱动（附件来自 `Canvas::parts`）。
-                            let mut node = BaseNode {
+                            let mut node = RasterNode {
+                                name: "base",
                                 canvas,
                                 color: Some((cleared, true)),
                                 depth: if plan.is_some() { Depth::Kept } else { Depth::Fresh },
-                                base: base.as_ref(),
-                                base_light: base_light.as_ref(),
+                                into: base.as_ref(),
+                                light: base_light.as_ref(),
+                                scene: buffers.group.as_ref(),
+                                lighting: Some(lighting_group),
+                                images: None,
+                                list: None,
                                 player: self,
                                 pipelines,
                                 indices,
                                 draws,
                                 offset: *offset,
-                                sprites,
                                 slot,
-                                scene: buffers.group.as_ref(),
-                                lighting: lighting_group,
+                                steps: if sprites.is_empty() { BASE_STEPS } else { BASE_SPRITE_STEPS },
+                                sprites: (!sprites.is_empty()).then(|| Sprites { range: sprites, pipeline: &pipelines.sprites, group: None }),
                             };
                             let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
                             let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
@@ -4082,35 +4134,75 @@ impl Player {
                     }
                     let appends = &pipelines.appends;
                     // the opaque layers, their samples and depth kept
-                    note_pass(&mut schedule, &mut schedule_error, "opaque", true);
-                    {
-                        let mut pass = canvas.pass(&mut encoder, Some((cleared, false)), Depth::Kept, base.as_ref(), base_light.as_ref());
-                        pass.set_bind_group(0, buffers.group.as_ref(), &slot);
-                        schedule.note_bind("opaque", "scene");
-                        pass.set_bind_group(3, lighting_group, &[]);
-                        schedule.note_bind("opaque", "lighting");
-                        self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Opaque);
+                    // （BR-4：opaque 由 `record_render` 驱动。）
+                    let mut node = RasterNode {
+                        name: "opaque",
+                        canvas,
+                        color: Some((cleared, false)),
+                        depth: Depth::Kept,
+                        into: base.as_ref(),
+                        light: base_light.as_ref(),
+                        scene: buffers.group.as_ref(),
+                        lighting: Some(lighting_group),
+                        images: None,
+                        list: None,
+                        player: self,
+                        pipelines,
+                        indices,
+                        draws,
+                        offset: *offset,
+                        slot,
+                        steps: OPAQUE_STEPS,
+                        sprites: None,
+                    };
+                    let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                    let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                    if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "opaque") {
+                        if schedule_error.is_none() {
+                            schedule_error = Some(error);
+                        }
                     }
                     let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
                     let colors = attached.msaa.as_ref().or(base.as_ref()).expect("base samples");
                     let [_, y, _, h] = *listed;
                     let listed = lists.filter(|_| *listing).map(|l| vector::Listed { heads: &l.heads, nodes: &l.nodes, rows: [y, y + h], samples, colors, depths: &attached.depth_only, lights: attached.msaa_light.as_ref().or(base_light.as_ref()) });
                     // the listed see-through layers appended to the lists (only in their rows are heads cleared and read)
-                    note_pass(&mut schedule, &mut schedule_error, "append", listed.is_some());
                     if let Some(l) = &listed {
                         let row = canvas.width as u64 * 4;
                         if h > 0 {
                             encoder.clear_buffer(l.heads, y as u64 * row, Some(h as u64 * row));
                         }
                         let append = &attached.append.as_ref().expect("the appends' group").1;
-                        let mut pass = canvas.pass(&mut encoder, None, Depth::Read, None, None);
-                        pass.set_bind_group(0, buffers.group.as_ref(), &slot);
-                        schedule.note_bind("append", "scene");
-                        pass.set_bind_group(3, lighting_group, &[]);
-                        schedule.note_bind("append", "lighting");
-                        pass.set_bind_group(2, append, &[]);
-                        schedule.note_bind("append", "list");
-                        self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::SeeThrough);
+                        // BR-4：append 由 `record_render` 驱动（只读深度，不绑颜色）。
+                        let mut node = RasterNode {
+                            name: "append",
+                            canvas,
+                            color: None,
+                            depth: Depth::Read,
+                            into: None,
+                            light: None,
+                            scene: buffers.group.as_ref(),
+                            lighting: Some(lighting_group),
+                            images: None,
+                            list: Some(append),
+                            player: self,
+                            pipelines,
+                            indices,
+                            draws,
+                            offset: *offset,
+                            slot,
+                            steps: APPEND_STEPS,
+                            sprites: None,
+                        };
+                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                        if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "append") {
+                            if schedule_error.is_none() {
+                                schedule_error = Some(error);
+                            }
+                        }
+                    } else {
+                        note_pass(&mut schedule, &mut schedule_error, "append", false);
                     }
                     // the sprites among its other see-through layers: the depths of each pixel's nearest found (its
                     // paths' and its listed fragments'), then each sprite blended into the slab between them it lies in
@@ -4130,23 +4222,38 @@ impl Player {
                     // the sprites behind no other see-through layer blended into the base, depth tested against the
                     // opaque depth kept for them (and kept again, with the samples, for the composite), and what is
                     // fixed in the frame drawn over them; then the composite
-                    note_pass(&mut schedule, &mut schedule_error, "composite sprites", true);
-                    let mut pass = canvas.pass(&mut encoder, Some((wgpu::LoadOp::Load, true)), Depth::Shared, base.as_ref(), base_light.as_ref());
-                    pass.set_bind_group(0, buffers.group.as_ref(), &slot);
-                    schedule.note_bind("composite sprites", "scene");
-                    pass.set_bind_group(3, lighting_group, &[]);
-                    schedule.note_bind("composite sprites", "lighting");
-                    pass.set_bind_group(1, self.image_groups.white().expect("the white image group"), &[]);
-                    schedule.note_bind("composite sprites", "images");
-                    match slabs {
-                        Some(s) => {
-                            pass.set_bind_group(2, &s.groups[0], &[]);
-                            draw_sprites(&mut pass, &appends.sprites, sprites);
+                    // BR-4：composite sprites 由 `record_render` 驱动（深度共享、精灵组可选）。
+                    let white = self.image_groups.white().expect("the white image group");
+                    let mut node = RasterNode {
+                        name: "composite sprites",
+                        canvas,
+                        color: Some((wgpu::LoadOp::Load, true)),
+                        depth: Depth::Shared,
+                        into: base.as_ref(),
+                        light: base_light.as_ref(),
+                        scene: buffers.group.as_ref(),
+                        lighting: Some(lighting_group),
+                        images: Some(white),
+                        list: None,
+                        player: self,
+                        pipelines,
+                        indices,
+                        draws,
+                        offset: *offset,
+                        slot,
+                        steps: COMPOSITE_STEPS,
+                        sprites: Some(match slabs {
+                            Some(s) => Sprites { range: sprites, pipeline: &appends.sprites, group: Some(&s.groups[0]) },
+                            None => Sprites { range: sprites, pipeline: &pipelines.sprites, group: None },
+                        }),
+                    };
+                    let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                    let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                    if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "composite sprites") {
+                        if schedule_error.is_none() {
+                            schedule_error = Some(error);
                         }
-                        None => draw_sprites(&mut pass, &pipelines.sprites, sprites),
                     }
-                    self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Overlay);
-                    drop(pass);
                     // 这条分支里深度解析是无条件的（与上面的 `if base.is_some()` 不同）。
                     let mut node = BaseDepthNode { vector: &mut gpu.vector, depth: &attached.depth_only, samples, size: [canvas.width, canvas.height], group: None, k: 0 };
                     let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
