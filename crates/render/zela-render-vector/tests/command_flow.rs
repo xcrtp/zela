@@ -106,6 +106,7 @@ fn raster_plan_flow_is_pinned() {
         texture: None,
     };
     let view = View3 {
+        raytrace: false,
         frame: (4.0, 4.0),
         center: [0.0, 0.0, 0.0],
         axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -134,9 +135,10 @@ fn raster_plan_flow_is_pinned() {
         flows,
         vec![
             "shadow[] > occlusion depth(-) > occlusion(-) > base[scene,lighting] \
+             > raytrace(-) > raytrace composite(-) \
              > base depth[] > vector composite[scene,images] > bloom(-)"
         ],
-        "RASTER_PLAN 的命令流变了：没有阴影投射者 / 遮蔽源 / 泛光时，三步都必须显式跳过（`(-)`），\
+        "RASTER_PLAN 的命令流变了：没有阴影投射者 / 遮蔽源 / 泛光 / 光追时，四步都必须显式跳过（`(-)`），\
          不能静默消失；`vector composite` 的组名由 BS-1 的 encode 记账给出"
     );
 }

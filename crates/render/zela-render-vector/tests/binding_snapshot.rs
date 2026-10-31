@@ -27,14 +27,17 @@ fn count(source: &str, needle: &str) -> usize {
 /// 实参快照：改造前（BP-2 提交）与 BR-4 之后必须逐条相同。
 #[test]
 fn set_bind_group_arguments_are_pinned() {
-    let render: [(&str, usize); 9] = [
+    let render: [(&str, usize); 11] = [
         // 节点内的帧级固定绑定（组号在左，实参是节点字段）
         ("pass.set_bind_group(0, group, &self.slot);", 5), // RasterNode / Slabs / OcclusionDepth / Shadow / Atlas
         ("pass.set_bind_group(3, group, &[]);", 1),        // RasterNode: lighting
         ("pass.set_bind_group(1, group, &[]);", 1),        // RasterNode: images
         ("pass.set_bind_group(2, group, &[]);", 2),        // RasterNode: list + 合成精灵（后者是 escape）
-        ("pass.set_bind_group(2, self.group, &[]);", 1),   // SlabsNode: slabs 组（escape）
-        ("pass.set_bind_group(3, self.lighting, &[]);", 1), // AtlasNode: lighting
+        ("pass.set_bind_group(2, self.group, &[]);", 2),   // SlabsNode + RayTraceNode（后者是 escape：组 2 是光追自己的组）
+        ("pass.set_bind_group(3, self.lighting, &[]);", 2), // AtlasNode + RayTraceNode（后者是 escape）
+        // **BV-3 / BV-4**：光追的组 0（scene）与合成读的像（组 1）—— 都是 escape（见用例末尾）
+        ("pass.set_bind_group(0, self.scene, &self.slot);", 1),
+        ("pass.set_bind_group(1, self.image, &[]);", 1),
         // escape：codegen 的现场构造组
         ("pass.set_bind_group(0, &group, &[]);", 2),
         // escape：per-draw 的图集组
@@ -104,7 +107,8 @@ fn frame_level_binds_are_ledgered_next_line() {
         // escape：实参随 per-pass / per-draw 变化，或是一次性构造
         let previous = index.checked_sub(1).and_then(|i| lines.get(i)).copied().unwrap_or("");
         let escape = previous.contains("s.group") // 合成精灵的 slabs 组
-            || line.contains("self.group")       // slabs 自己的组
+            || line.contains("self.group")       // slabs 自己的组 / 光追自己的组（组 2）
+            || line.contains("self.image")       // 光追合成的像（组 1；声明词汇里还没登记）
             || line.contains("(0, &group,")      // codegen 的现场构造组
             || line.contains("(1, white,")       // per-draw 的白图
             || line.contains("image_groups.get");
@@ -130,6 +134,6 @@ fn frame_level_binds_are_ledgered_next_line() {
         );
         ledgered += 1;
     }
-    assert_eq!(ledgered, 9, "节点内的帧级固定绑定应全部接入记账");
-    assert_eq!(escapes, 7, "escape 点应保持 7 处（2 codegen + 1 合成精灵 + 1 slabs + 2 白图 + 1 per-draw）");
+    assert_eq!(ledgered, 11, "节点内的帧级固定绑定应全部接入记账（含光追的 scene / lighting）");
+    assert_eq!(escapes, 9, "escape 点应保持 9 处（2 codegen + 1 合成精灵 + 1 slabs + 2 白图 + 1 per-draw + 光追自己的组 + 光追的像）");
 }

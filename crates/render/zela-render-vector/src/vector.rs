@@ -215,7 +215,7 @@ fn stretch_at(x: &[f32; 4], y: &[f32; 4], w: &[f32; 4], [px, py]: [f32; 2], ww: 
 }
 
 /// The inverse of a projection (rows), as the shader takes a matrix (columns); a view that has none (singular), 0.
-fn inverse(rows: &super::Mat4) -> [[f32; 4]; 4] {
+pub(crate) fn inverse(rows: &super::Mat4) -> [[f32; 4]; 4] {
     let mut a: [[f64; 8]; 4] = std::array::from_fn(|i| std::array::from_fn(|j| if j < 4 { rows[i][j] as f64 } else if j - 4 == i { 1.0 } else { 0.0 }));
     for c in 0..4 {
         let p = (c..4).max_by(|&x, &y| a[x][c].abs().total_cmp(&a[y][c].abs())).expect("a row");

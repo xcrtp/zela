@@ -394,6 +394,29 @@ pub const RASTER_PLAN: PassPlan = &[
         dispatch: Dispatch::Draw,
         enabled_when: EnabledWhen::ALWAYS,
     },
+    // **BV-3 / BV-4**：光追（brute-force 遍历 + 把结果叠回 base）。数据缺席时显式跳过。
+    PassDecl {
+        name: "raytrace",
+        kind: PassStage::Compute,
+        inputs: &["instances", "vertices", "indices", "extras", "ranges"],
+        outputs: &["raytrace"],
+        entry: "raytrace",
+        dispatch: Dispatch::Tiles {
+            group: GroupSize::Literal(8),
+        },
+        enabled_when: EnabledWhen::ALWAYS,
+    },
+    PassDecl {
+        name: "raytrace composite",
+        kind: PassStage::Render,
+        inputs: &["raytrace"],
+        // `base` 是后端内部的中间目标（不在声明词汇里）：写它不声明成 output，
+        // 否则所有在它之前读 `base` 的 pass 都会被"无生产者"判红。
+        outputs: &[],
+        entry: "fs_blit",
+        dispatch: Dispatch::Draw,
+        enabled_when: EnabledWhen::ALWAYS,
+    },
     PassDecl {
         name: "base depth",
         kind: PassStage::Compute,
@@ -512,6 +535,29 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
         inputs: &["instances", "rows", "sprites", "base"],
         outputs: &["view"],
         entry: "vs_stroke",
+        dispatch: Dispatch::Draw,
+        enabled_when: EnabledWhen::ALWAYS,
+    },
+    // **BV-3 / BV-4**：光追（brute-force 遍历 + 把结果叠回 base）。数据缺席时显式跳过。
+    PassDecl {
+        name: "raytrace",
+        kind: PassStage::Compute,
+        inputs: &["instances", "vertices", "indices", "extras", "ranges"],
+        outputs: &["raytrace"],
+        entry: "raytrace",
+        dispatch: Dispatch::Tiles {
+            group: GroupSize::Literal(8),
+        },
+        enabled_when: EnabledWhen::ALWAYS,
+    },
+    PassDecl {
+        name: "raytrace composite",
+        kind: PassStage::Render,
+        inputs: &["raytrace"],
+        // `base` 是后端内部的中间目标（不在声明词汇里）：写它不声明成 output，
+        // 否则所有在它之前读 `base` 的 pass 都会被"无生产者"判红。
+        outputs: &[],
+        entry: "fs_blit",
         dispatch: Dispatch::Draw,
         enabled_when: EnabledWhen::ALWAYS,
     },
@@ -1800,6 +1846,8 @@ mod tests {
         "environment", "shader_programs", "shader_colors", "slab_bounds", "base_samples",
         "base_sample_depths", "stroke_depths_in", "base", "base_light", "list_heads",
         "list_nodes", "list_appended",
+        // **BV-2 / BV-3**：光追读的三组顶点数组与范围表（都由帧前上传提供）。
+        "vertices", "indices", "extras", "ranges",
     ];
 
     /// 内置提供者 + 帧前资源 ⇒ 协商成功。

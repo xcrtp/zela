@@ -556,6 +556,64 @@ impl crate::nodes::PassNode for EnvironmentNode<'_> {
     }
 }
 
+/// **BV-3**：光追 pass（brute-force；一次 compute dispatch）。
+///
+/// 组 0 = 场景（与光栅同一份）、组 2 = 光追自身（参数 / 范围表 / 输出）、组 3 = 光照。
+struct RayTraceNode<'a> {
+    scene: &'a wgpu::BindGroup,
+    slot: [u32; 1],
+    group: &'a wgpu::BindGroup,
+    lighting: &'a wgpu::BindGroup,
+    pipeline: &'a wgpu::ComputePipeline,
+    dispatch: [u32; 3],
+}
+
+impl crate::nodes::PassNode for RayTraceNode<'_> {
+    fn name(&self) -> &'static str {
+        "raytrace"
+    }
+
+    fn prepare(&mut self, _ctx: &mut crate::nodes::PrepareContext<'_>) {}
+
+    fn execute(&self, ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        let Some(pass) = pass.as_compute() else { return };
+        pass.set_pipeline(self.pipeline);
+        pass.set_bind_group(0, self.scene, &self.slot);
+        ctx.schedule.note_bind("raytrace", "scene");
+        pass.set_bind_group(2, self.group, &[]);
+        pass.set_bind_group(3, self.lighting, &[]);
+        ctx.schedule.note_bind("raytrace", "lighting");
+        pass.dispatch_workgroups(self.dispatch[0], self.dispatch[1], 1);
+    }
+}
+
+/// **BV-4**：把光追结果按预乘 alpha 叠进 base（全屏三角形；未命中的像素 alpha = 0）。
+struct RayTraceBlitNode<'a> {
+    target: &'a wgpu::TextureView,
+    image: &'a wgpu::BindGroup,
+    pipeline: &'a wgpu::RenderPipeline,
+}
+
+impl crate::nodes::PassNode for RayTraceBlitNode<'_> {
+    fn name(&self) -> &'static str {
+        "raytrace composite"
+    }
+
+    fn prepare(&mut self, _ctx: &mut crate::nodes::PrepareContext<'_>) {}
+
+    fn parts(&self) -> Option<crate::nodes::RenderParts<'_>> {
+        let color = wgpu::RenderPassColorAttachment { view: self.target, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } };
+        Some(crate::nodes::RenderParts { colors: vec![Some(color)], depth: None })
+    }
+
+    fn execute(&self, _ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        let Some(pass) = pass.as_render() else { return };
+        pass.set_pipeline(self.pipeline);
+        pass.set_bind_group(1, self.image, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
 /// 一个光栅节点要画的步骤（`draw` 的阶段，或一组精灵）。
 #[derive(Clone, Copy)]
 enum RasterStep {
@@ -1135,7 +1193,10 @@ pub(crate) const VIEW_FLOATS: usize = 44; // projection, overlay (column-major),
 pub(crate) const VIEW_LIGHTING: usize = VIEW_FLOATS + 4;
 const LIGHTS: usize = 8;
 pub(crate) const VIEW_OCCLUSION: usize = VIEW_LIGHTING + 8 + 16 * LIGHTS; // its ambient occlusion: how much (0: none), how far
-pub(crate) const VIEW_LENGTH: usize = VIEW_OCCLUSION + 4;
+/// **BV-3**：`view[VIEW_RAYTRACE] > 0.5` ⇒ 这个视图要跑光追（其余三个浮点保留）。
+/// 布局在末尾追加，既有 44+ 的偏移一个不动。
+pub(crate) const VIEW_RAYTRACE: usize = VIEW_OCCLUSION + 4;
+pub(crate) const VIEW_LENGTH: usize = VIEW_RAYTRACE + 4;
 
 type Mat4 = [[f32; 4]; 4]; // rows
 pub(crate) type Mat34 = [[f32; 4]; 3];
@@ -2452,6 +2513,75 @@ struct Pipelines {
     sprites: wgpu::RenderPipeline, // a 3D view's see-through points, blended in the order listed
     mesh: wgpu::RenderPipeline,
     appends: Appends,
+    /// **BV-4**：把光追结果（组 1 的 `image`）按预乘 alpha 叠进 base 的全屏三角形。
+    blit: wgpu::RenderPipeline,
+}
+
+// ─── BV-3：光追 ────────────────────────────────────────────────────────────
+
+/// 每视图一份的光追参数（与 `views` 同槽位；`RAY_STRIDE` 是 uniform 动态偏移的对齐粒度）。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct RayParams {
+    inverse: [[f32; 4]; 4], // clip -> world（列主序，与 `vector.wgsl` 的 Frame.inverse 同口径）
+    eye: [f32; 4],
+    toward: [f32; 4],
+    size: [f32; 4],
+    _pad: [f32; 4],
+}
+
+const RAY_STRIDE: u64 = 256;
+
+impl RayParams {
+    fn of(camera: &Camera, [width, height]: [u32; 2]) -> Self {
+        Self {
+            inverse: vector::inverse(&camera.projection),
+            eye: camera.eye,
+            toward: [camera.toward[0], camera.toward[1], camera.toward[2], 0.0],
+            size: [width as f32, height as f32, 0.0, 0.0],
+            _pad: [0.0; 4],
+        }
+    }
+}
+
+/// **BV-3**：光追的 compute 管线与它自己的绑定布局（组 2：参数 / 范围表 / 输出目标）。
+///
+/// 组 0 复用光栅的 scene 布局、组 3 复用 lighting 布局 —— 光追与光栅读的是**同一份**
+/// 顶点 / 实例 / 法线 / 光照，不复制资源。
+struct RayTrace {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+}
+
+impl RayTrace {
+    fn new(device: &wgpu::Device, raster: &RasterLayouts) -> Self {
+        let source = [include_str!("light.wgsl"), include_str!("raytrace.wgsl")].concat();
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("raytrace"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        let compute = wgpu::ShaderStages::COMPUTE;
+        let buffer = |binding, ty| wgpu::BindGroupLayoutEntry { binding, visibility: compute, ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None }, count: None };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("raytrace"),
+            entries: &[
+                buffer(0, wgpu::BufferBindingType::Uniform),
+                buffer(1, wgpu::BufferBindingType::Storage { read_only: true }),
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: compute, ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: wgpu::TextureFormat::Rgba32Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("raytrace"),
+            bind_group_layouts: &[Some(&raster.scene), None, Some(&layout), Some(&raster.shadows)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("raytrace"),
+            layout: Some(&pipeline_layout),
+            module: &module,
+            entry_point: Some("raytrace"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Self { layout, pipeline }
+    }
 }
 
 /// A 3D view's listed see-through layers, each appending its fragments to the lists once (see
@@ -2489,6 +2619,7 @@ pub struct Gpu {
     occlusion: Option<occlusion::Occlusion>, // a 3D view's ambient occlusion's passes, made when a view first has it
     no_occlusion: TrackedView,         // what a view without it binds in its place: 1x1
     bloom: Option<bloom::Bloom>,             // a 3D view's bloom's passes, made when a view first has it
+    raytrace: Option<RayTrace>,              // **BV-3**：光追的 compute 管线（首个请求光追的视图时建）
     blend: [Option<wgpu::ShaderModule>; 2], // single/multisample texture forms (the shadow passes share either)
     shadow_passes: HashMap<usize, wgpu::RenderPipeline>, // by the light's slot in its view, made when first cast
     /// **阶段 2**：着色 codegen 的 compute 管线（按生成的 WGSL 摘要缓存）与它们的绑定布局。
@@ -2860,7 +2991,7 @@ impl Gpu {
             instance: wgpu::Instance::default(),
             #[cfg(feature = "player")]
             adapter: adapter.clone(),
-            device, queue, raster, image_layout, sampler, pipelines: HashMap::new(), max_samples, vector, shadow_compare, dfg, linear, no_environment, prefilter: None, occlusion: None, no_occlusion, bloom: None, blend: [None, None], shadow_passes: HashMap::new(), fill_layout, fill_pipelines: HashMap::new(), players: HashMap::new() })
+            device, queue, raster, image_layout, sampler, pipelines: HashMap::new(), max_samples, vector, shadow_compare, dfg, linear, no_environment, prefilter: None, occlusion: None, no_occlusion, bloom: None, raytrace: None, blend: [None, None], shadow_passes: HashMap::new(), fill_layout, fill_pipelines: HashMap::new(), players: HashMap::new() })
     }
 
     /// **阶段 2**：把一段生成 WGSL 的颜色写进 `words`（对象 / 实例缓冲的 `u32` 视图）
@@ -2878,6 +3009,15 @@ impl Gpu {
         }
         Self::encode_fill_impl(&self.device, &self.queue, &self.fill_layout, &mut self.fill_pipelines, encoder, words, word_base, word_base, 1, program)
     }
+    /// **BV-3**：光追的管线（首次有视图请求光追时建；组 0 / 组 3 复用光栅的两张布局）。
+    fn raytrace(&mut self) -> &RayTrace {
+        if self.raytrace.is_none() {
+            let built = RayTrace::new(&self.device, &self.raster);
+            self.raytrace = Some(built);
+        }
+        self.raytrace.as_ref().expect("raytrace")
+    }
+
     /// **阶段 2**：装配一段生成 WGSL 的 compute 管线（同 `source` ⇒ 同管线）。
     fn fill_pipeline_impl<'a>(
         device: &wgpu::Device,
@@ -3242,12 +3382,26 @@ impl Gpu {
                 slabs,
             }
         };
+        // BV-4：光追结果叠进 base —— 全屏三角形、无深度、预乘 alpha（组 1 的 image 是光追目标）。
+        let blit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[None, Some(&self.image_layout)], immediate_size: 0 });
+        let blit = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("blit"),
+            layout: Some(&blit_layout),
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_blit"), compilation_options: Default::default(), buffers: &[] },
+            fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some("fs_blit"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: COLOR, blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })] }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         let pipelines = Pipelines {
             stroke: [stroke("vs_stroke", "fs_stroke"), stroke("vs_stroke", "fs_stroke_gradient")],
             points: p("vs_points", Some("fs_points"), Stencil::Ignore, true, true),
             sprites: p("vs_sprites", Some("fs_points"), Stencil::Ignore, false, true),
             mesh: p("vs_mesh", Some("fs_mesh"), Stencil::Ignore, true, true),
             appends,
+            blit,
         };
         self.pipelines.insert((samples, light), pipelines);
     }
@@ -3326,6 +3480,8 @@ pub(crate) struct Canvas {
     pub(crate) raster: Option<Attachments>,
     occluded: Option<occlusion::Occluded>, // where a 3D view's ambient occlusion is found, once it has some
     bloomed: Option<bloom::Bloomed>,       // where a 3D view's glow is made, once it has some
+    /// **BV-3**：这个视图的光追结果（`Canvas::target` 按描述符申请；合成 pass 采样它）。
+    raytrace: Option<TrackedView>,
     /// **BU-3 / BV-1**：按描述符申请的中间目标（同描述符复用）。新增一个中间目标只需要
     /// `Canvas::target(desc)` —— 不再加字段、不加 `Attachments` 成员、也不加 `RenderTargetId` 变体。
     targets: TargetPool,
@@ -3501,7 +3657,7 @@ impl Canvas {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let color = counted_texture(&gpu.device, &wgpu::TextureDescriptor { label: None, size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: COLOR, usage, view_formats: &[] });
-        Self { width, height, color: color.view(&Default::default()), raster: None, occluded: None, bloomed: None, targets: TargetPool::new() }
+        Self { width, height, color: color.view(&Default::default()), raster: None, occluded: None, bloomed: None, raytrace: None, targets: TargetPool::new() }
     }
 
     /// B15（乙）：画布的颜色由调用方给（同一 view 承载合成输出），不再另建纹理。
@@ -3510,7 +3666,7 @@ impl Canvas {
     /// `RENDER_ATTACHMENT | STORAGE_BINDING | TEXTURE_BINDING`（公共入口会显式校验）。
     fn covered(view: &wgpu::TextureView, width: u32, height: u32) -> Self {
         // BU-1：外部目标不是本 crate 分配的 ⇒ 没有租约可记（持有量只算自己的分配）。
-        Self { width, height, color: TrackedView::untracked(view.clone()), raster: None, occluded: None, bloomed: None, targets: TargetPool::new() }
+        Self { width, height, color: TrackedView::untracked(view.clone()), raster: None, occluded: None, bloomed: None, raytrace: None, targets: TargetPool::new() }
     }
 
     /// **BU-3**：按描述符取一个中间目标（同描述符复用同一张纹理；新描述符就新建一张）。
@@ -3819,6 +3975,8 @@ enum Drawing {
         plan: Option<vector::Plan>,
         shadows: Vec<shadow::Shadow>, // the maps its lights cast
         cast: Vec<vector::Plan>,      // its paths seen from each (none: it has none)
+        /// **BV-3**：这个视图要光追时，它的相机参数（`view.pixels.w` = 1 为开关）。
+        ray: Option<RayParams>,
     },
     Vector(vector::Plan, Vec<(u32, Vec<Draw>)>),
 }
@@ -3854,6 +4012,9 @@ pub(crate) struct Player {
     /// 与程序表。`views` 装、`encode_frame` 取走（不跨帧残留）。
     fills: Vec<(u32, u32)>,
     programs: Vec<ShaderFill>,
+    /// **BV-3**：每个视图一份光追参数（`RAY_STRIDE` 对齐，按视图槽位取）。
+    ray_params: Option<TrackedBuffer>,
+    ray_slots: usize,
 }
 
 // pixels, light, toward, eye, lighting; the lights (`light.wgsl`), each its 16 floats from the view and its shadow map's
@@ -4177,6 +4338,11 @@ impl Player {
             buffers.slots = slots;
             buffers.views = view_buffer(buffers.slots);
             rebind = true;
+        }
+        // BV-3：光追参数（每视图一份；与 `views` 同槽位、同长度）。
+        if self.ray_slots < views {
+            self.ray_slots = views;
+            self.ray_params = Some(counted_buffer(device, &wgpu::BufferDescriptor { label: Some("ray params"), size: views as u64 * RAY_STRIDE, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false }));
         }
         if buffers.room < sprites {
             buffers.room = room;
@@ -4550,7 +4716,9 @@ impl Player {
                 }
                 // its glow, spread from its lit content's light (without any, there is none to spread)
                 let glow = bloom_of(&f.view).filter(|_| light || plan.as_ref().is_some_and(|p| p.lit));
-                Drawing::Raster { offset, draws, listed, sprites: sprites_here, lists, slabs, light, glow, plan, shadows, cast }
+                // BV-3：`view[VIEW_RAYTRACE]` 是"这个视图要光追"的开关（0 = 不跑；见 `view_3d` 的打包）。
+                let ray = (f.view[VIEW_RAYTRACE] > 0.5).then(|| RayParams::of(&camera, [f.width, f.height]));
+                Drawing::Raster { offset, draws, listed, sprites: sprites_here, lists, slabs, light, glow, plan, shadows, cast, ray }
             } else {
                 let background = [0, 1, 2, 3].map(|k| f.view[VIEW_FLOATS + k]);
                 let plan = gpu.vector.plan(&self.store, &camera, &f.records, &self.order(&camera, &f.records)?, background, if f.key == 0 { fills.as_slice() } else { &[] }, if f.key == 0 { programs.as_slice() } else { &[] })?;
@@ -4603,12 +4771,18 @@ impl Player {
         let mut need = [0u32; 2];
         for (f, d) in frames.iter().zip(&drawings) {
             match d {
-                Drawing::Raster { light, glow, slabs, .. } => {
+                Drawing::Raster { light, glow, slabs, ray, .. } => {
                     let light = *light && skipping() & SKIP_LIGHT == 0;
                     let canvas = if f.key == 0 { &mut self.targets.as_mut().expect("targets").frame } else { self.canvas_mut(f.key).expect("canvas") };
                     canvas.attach(gpu, samples, light);
                     if *slabs {
                         canvas.attach_slabs(gpu, samples);
+                    }
+                    // BV-3：要光追的视图按描述符申请一张 `Rgba32Float` storage 目标（`Canvas::target` 的第一个真消费者）。
+                    if ray.is_some() && canvas.raytrace.is_none() {
+                        let desc = TargetDesc::new("raytrace", canvas.width, canvas.height, wgpu::TextureFormat::Rgba32Float, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING);
+                        let target = canvas.target(gpu, desc);
+                        canvas.raytrace = Some(target);
                     }
                     // and where its ambient occlusion is found, if it has some
                     if skipping() & SKIP_AO == 0 && occlusion_of(&f.view).is_some() && canvas.occluded.is_none() {
@@ -4720,6 +4894,14 @@ impl Player {
         gpu.queue.write_buffer(&buffers.instances, 0, bytemuck::cast_slice(&instances));
         gpu.queue.write_buffer(&buffers.ranges, 0, bytemuck::cast_slice(&ranges));
         gpu.queue.write_buffer(&buffers.sprites, 0, bytemuck::cast_slice(&sprites));
+        // BV-3：要光追的视图写它们自己的相机参数（与 `views` 同槽位）。
+        if let Some(params) = self.ray_params.as_ref() {
+            for (i, d) in drawings.iter().enumerate() {
+                if let Drawing::Raster { ray: Some(ray), .. } = d {
+                    gpu.queue.write_buffer(params, i as u64 * RAY_STRIDE, bytemuck::bytes_of(ray));
+                }
+            }
+        }
         // view i's raster passes draw with slot i: its pixels (a 2D view's: the raster atlas's),
         // light, toward
         let mut views = vec![0u8; frames.len() * VIEW_STRIDE];
@@ -4761,7 +4943,11 @@ impl Player {
             let canvas = if f.key == 0 { &targets.frame } else { self.canvas_of(f.key).expect("canvas") };
             let slot = [(i * VIEW_STRIDE) as u32];
             match d {
-                Drawing::Raster { offset, draws, listed, sprites, lists: listing, slabs, light, glow, plan, shadows, cast } => {
+                Drawing::Raster { offset, draws, listed, sprites, lists: listing, slabs, light, glow, plan, shadows, cast, ray } => {
+                    // BV-3：惰性建光追管线（必须在下面借 `gpu.pipelines` 之前）。
+                    if ray.is_some() && gpu.raytrace.is_none() {
+                        let _ = gpu.raytrace();
+                    }
                     // B18 排查：`skip=lit` 强制无光管线（单目标，无 MRT 的 light）。
                     let light = *light && skipping() & SKIP_LIGHT == 0;
                     // BN-3：本帧走哪张计划由数据决定（有无链表 / slabs）；**顺序**由声明给出。
@@ -4813,6 +4999,31 @@ impl Player {
                         }
                     }
                     let slabs = attached.slabs.as_ref().filter(|_| *slabs);
+                    // **BV-3 / BV-4**：光追的组与像（只有要光追的视图才有；缺席时两个 pass 显式跳过）。
+                    let raytracing = ray.is_some() && canvas.raytrace.is_some() && gpu.raytrace.is_some();
+                    let ray_group = raytracing.then(|| {
+                        let layout = &gpu.raytrace.as_ref().expect("raytrace").layout;
+                        let params = self.ray_params.as_ref().expect("ray params");
+                        gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("raytrace"),
+                            layout,
+                            entries: &[
+                                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: params, offset: (i as u64) * RAY_STRIDE, size: wgpu::BufferSize::new(size_of::<RayParams>() as u64) }) },
+                                wgpu::BindGroupEntry { binding: 1, resource: buffers.ranges.as_entire_binding() },
+                                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(canvas.raytrace.as_ref().expect("raytrace target")) },
+                            ],
+                        })
+                    });
+                    let ray_image = canvas.raytrace.as_ref().map(|target| {
+                        gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("raytrace image"),
+                            layout: &gpu.image_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(target) },
+                                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&gpu.sampler) },
+                            ],
+                        })
+                    });
                     /// 构造一个节点（可能是 `None`）并交给驱动：报数 / 跳过都由 `record_optional` 负责。
                     macro_rules! drive {
                         ($node:expr, $name:literal, $stage:expr) => {{
@@ -4904,6 +5115,29 @@ impl Player {
                                     present: rasterized || plan.is_none(),
                                 }),
                                 "base",
+                                crate::nodes::Stage::Render
+                            ),
+                            // **BV-3**：光追（只有声明了光追的视图才有；缺席时显式跳过）。
+                            "raytrace" => drive!(
+                                ray_group.as_ref().zip(self.ray_params.as_ref()).map(|(group, _)| RayTraceNode {
+                                    scene: buffers.group.as_ref().expect("the scene group"),
+                                    slot,
+                                    group,
+                                    lighting: lighting_group,
+                                    pipeline: &gpu.raytrace.as_ref().expect("raytrace").pipeline,
+                                    dispatch: [canvas.width.div_ceil(8), canvas.height.div_ceil(8), 1],
+                                }),
+                                "raytrace",
+                                crate::nodes::Stage::Compute
+                            ),
+                            // **BV-4**：把光追结果叠进 base（没有 base 时就是视图本身）。
+                            "raytrace composite" => drive!(
+                                ray_image.as_ref().map(|image| RayTraceBlitNode {
+                                    target: &**base.as_ref().unwrap_or(&canvas.color),
+                                    image,
+                                    pipeline: &pipelines.blit,
+                                }),
+                                "raytrace composite",
                                 crate::nodes::Stage::Render
                             ),
                             "opaque" => drive!(
@@ -5349,6 +5583,8 @@ impl Player {
             environment_generation: 0,
             fills: Vec::new(),
             programs: Vec::new(),
+            ray_params: None,
+            ray_slots: 0,
         }
     }
 

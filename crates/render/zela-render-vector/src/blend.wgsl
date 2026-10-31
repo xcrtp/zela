@@ -599,3 +599,20 @@ fn fs_mesh_with_light(in: Shaded) -> Base {
     }
     return painted(unlit(in, texel));
 }
+
+// ── BV-4：把光追结果混进 base ────────────────────────────────────────────────
+// 全屏三角形（无顶点缓冲），组 1 的 `image` 是光追的目标（rgba32float，预乘：rgb + 覆盖 alpha）。
+// 片元按预乘 alpha 叠在 base 上：未命中的像素 alpha = 0 ⇒ 完全不影响底图。
+
+@vertex
+fn vs_blit(@builtin(vertex_index) v: u32) -> @builtin(position) vec4<f32> {
+    let x = f32((v << 1u) & 2u) * 2.0 - 1.0;
+    let y = f32(v & 2u) * 2.0 - 1.0;
+    return vec4<f32>(x, y, 0.0, 1.0);
+}
+
+@fragment
+fn fs_blit(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
+    let uv = at.xy / vec2<f32>(textureDimensions(image));
+    return textureSampleLevel(image, image_sampler, uv, 0.0);
+}

@@ -15,7 +15,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::render::{Record, Upload, VIEW_LENGTH, VIEW_LIGHTING, VIEW_OCCLUSION};
+use crate::render::{Record, Upload, VIEW_LENGTH, VIEW_LIGHTING, VIEW_OCCLUSION, VIEW_RAYTRACE};
 
 // ─── PH Step 3：自定义环境（宿主上传） ─────────────────────────────────────
 
@@ -648,6 +648,8 @@ impl Light {
 /// 由它算出三个轴即可；本 crate 不做轨道角（phi/theta/gamma）的约定。
 #[derive(Debug, Clone, PartialEq)]
 pub struct View3 {
+    /// **BV-3**：这个视图跑光追（brute-force；见 docs/research/BV_前置核实.md）。
+    pub raytrace: bool,
     /// 相机画幅（世界单位）。
     pub frame: (f32, f32),
     /// 画幅中心（世界坐标）。
@@ -752,6 +754,8 @@ fn view_3d(v: &View3) -> Vec<f32> {
     // 不要再往 `VIEW_LIGHTING` 里挤 —— 那 8 个槽（eye / 灯数 / 曝光 / tone / bloom）已满。
     out[VIEW_OCCLUSION + 2] = v.bloom_threshold.max(0.0);
     out[VIEW_OCCLUSION + 3] = v.bloom_radius.max(0.0);
+    // **BV-3**：光追开关放在追加的槽位上（上面那 8 个已满，不再往里挤）。
+    out[VIEW_RAYTRACE] = if v.raytrace { 1.0 } else { 0.0 };
     out
 }
 
@@ -2306,7 +2310,7 @@ mod tests {
     /// 投影矩阵（列主序）、`three_d`、`toward`/bias、eye、灯数、tone、bloom、AO、灯槽。
     #[test]
     fn view3_lays_out_the_same_slots_as_the_upstream_packer() {
-        let view = View3 {
+        let view = View3 { raytrace: false,
             frame: (8.0, 6.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -2549,7 +2553,7 @@ mod tests {
                 intensity: 1.0,
             });
         }
-        View3 {
+        View3 { raytrace: false,
             frame: (4.0, 4.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -2672,7 +2676,7 @@ mod tests {
             second: None,
             texture: None,
         };
-        let view = |tone: ze_render_ir::ToneCurve| View3 {
+        let view = |tone: ze_render_ir::ToneCurve| View3 { raytrace: false,
             frame: (4.0, 4.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -3408,7 +3412,7 @@ mod tests {
             texture: None,
         };
         let frame = |environment: u32| {
-            let view = View3 {
+            let view = View3 { raytrace: false,
                 frame: (4.0, 4.0),
                 center: [0.0, 0.0, 0.0],
                 axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -3768,7 +3772,7 @@ mod tests {
         let declaration = vec![red.clone(), green.clone(), blue.clone()];
         // 表达式聚簇：红/蓝同组（expr 0，min z = −1），绿单独（expr 1，z = 0）。
         let clustered = vec![red, blue, green];
-        let view = View3 {
+        let view = View3 { raytrace: false,
             frame: (4.0, 4.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],

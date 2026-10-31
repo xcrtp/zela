@@ -216,6 +216,7 @@ pub fn view3(
         .map(|AmbientOcclusion { radius, intensity }| (intensity, radius));
 
     Ok(View3 {
+        raytrace: false, // BV-3：光追开关（脚本层的入口见 GAPS 的 BV 段）
         frame: (frame_w, frame_h),
         center: [camera.target.x, camera.target.y, camera.target.z],
         axes: [
