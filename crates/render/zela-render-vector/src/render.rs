@@ -2791,7 +2791,7 @@ impl Gpu {
         let bounds = entry(0, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false });
         let lists = depth.map(|depth| layout("append", &[written(0), written(1), written(2), depth]));
         let slabs = depth.map(|depth| [layout("slab bounds", &[bounds]), layout("slab bounds and depth", &[bounds, depth])]);
-        let raster = RasterLayouts { scene: layout("scene", &[view, storage(1), storage(2), storage(4), storage(5), storage(6), storage(7)]), lists, slabs, shadows };
+        let raster = RasterLayouts { scene: layout("scene", &[view, storage(1), storage(2), storage(3), storage(4), storage(5), storage(6), storage(7)]), lists, slabs, shadows };
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("image"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -3649,6 +3649,9 @@ struct Buffers {
     slots: usize,        // views it has room for
     instances: TrackedBuffer,
     capacity: usize,
+    /// **BV-2**：每个实例的 `(index_offset, index_count)`（光追遍历用；与 `instances` 等长）。
+    /// 光栅化不需要它（draw call 自带区间）⇒ 不动 `Instance` 布局。
+    ranges: TrackedBuffer,
     sprites: TrackedBuffer, // the frame's sprites, view after view (see `Player::sprites`)
     room: usize,           // sprites it has room for
     group: Option<wgpu::BindGroup>, // the raster pipeline's
@@ -3860,7 +3863,8 @@ const VIEW_STRIDE: usize = 1280; // VIEW_BYTES, at the widest alignment a unifor
 /// The raster pipeline's scene bind group: the views, the store's arrays, the frame's objects and a 3D view's sprites.
 fn scene_group(gpu: &Gpu, b: &Buffers) -> wgpu::BindGroup {
     let view = wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &b.views, offset: 0, size: wgpu::BufferSize::new(VIEW_BYTES) });
-    let resources = [(0, view), (1, b.statics[0].as_entire_binding()), (2, b.statics[1].as_entire_binding()), (4, b.instances.as_entire_binding()), (5, b.statics[3].as_entire_binding()), (6, b.statics[4].as_entire_binding()), (7, b.sprites.as_entire_binding())];
+    // BV-2：binding 3 = indices（只读 storage；光追按三角形下标遍历）。它是 index buffer，也同样绑得上。
+    let resources = [(0, view), (1, b.statics[0].as_entire_binding()), (2, b.statics[1].as_entire_binding()), (3, b.statics[2].as_entire_binding()), (4, b.instances.as_entire_binding()), (5, b.statics[3].as_entire_binding()), (6, b.statics[4].as_entire_binding()), (7, b.sprites.as_entire_binding())];
     let entries: Vec<wgpu::BindGroupEntry> = resources.into_iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding, resource }).collect();
     gpu.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("scene"), layout: &gpu.raster.scene, entries: &entries })
 }
@@ -3870,6 +3874,12 @@ fn whole(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     wgpu::BindGroupEntry { binding, resource: buffer.as_entire_binding() }
 }
 
+/// 一条 store 数组的**分配上限**。
+///
+/// **BV-2**：indices 仍按 index buffer 的口径分配（`max_buffer_size`），但它同时绑成
+/// 组 0 binding 3（只读 storage，光追遍历要读三角形）⇒ **绑定**另有一条上限
+/// `max_storage_buffer_binding_size`，由 `Player::prepare` 显式检查（给出我们的名字，
+/// 而不是等 wgpu 在建组时报）。
 fn store_limit(limits: &wgpu::Limits, array: usize) -> u64 {
     if array == 2 { limits.max_buffer_size } else { limits.max_storage_buffer_binding_size.min(limits.max_buffer_size) }
 }
@@ -4110,18 +4120,29 @@ impl Player {
         let dirty = std::mem::take(&mut self.store.dirty);
         let s = &self.store;
         let arrays = s.arrays();
+        // BV-2：indices 绑成组 0 binding 3（只读 storage）⇒ 整条索引缓冲必须装进一次绑定。
+        // 分配上限仍是 index buffer 的（`max_buffer_size`）；这里是绑定多出来的一条硬约束。
+        if arrays[2].len() as u64 > limits.max_storage_buffer_binding_size {
+            return Err(format!(
+                "indices require {} bytes, but a storage binding allows {} (the ray-tracing pass reads them)",
+                arrays[2].len(),
+                limits.max_storage_buffer_binding_size
+            ));
+        }
         // (the passes read them as storage buffers; the indices are an index buffer too)
         let storage = wgpu::BufferUsages::STORAGE;
         let buffer = |size: u64| counted_buffer(device, &wgpu::BufferDescriptor { label: Some("store"), size, usage: storage | wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let instances = |capacity: usize| counted_buffer(device, &wgpu::BufferDescriptor { label: Some("instances"), size: (capacity * size_of::<Instance>()) as u64, usage: storage | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let view_buffer = |slots: usize| counted_buffer(device, &wgpu::BufferDescriptor { label: Some("views"), size: (slots * VIEW_STRIDE) as u64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let sprite_buffer = |room: usize| counted_buffer(device, &wgpu::BufferDescriptor { label: Some("sprites"), size: (room * size_of::<[u32; 2]>()) as u64, usage: storage | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        // BV-2：每个实例的 (index_offset, index_count)，与 `instances` 同容量。
+        let range_buffer = |capacity: usize| counted_buffer(device, &wgpu::BufferDescriptor { label: Some("instance ranges"), size: (capacity * size_of::<[u32; 2]>()) as u64, usage: storage | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let mut rebind = false;
         let buffers = self.buffers.get_or_insert_with(|| {
             let (views, instances, sprites, statics) = (view_buffer(slots), instances(capacity), sprite_buffer(room), [(); 7].map(|_| buffer(1024)));
             rebind = true;
             let shadow_maps = ShadowMaps::new(gpu, 1, 1, (None, &gpu.no_environment));
-            Buffers { views, slots, instances, capacity, sprites, room, group: None, statics, sent: [0; 7], generation: s.generation, shadow_maps }
+            Buffers { views, slots, instances, capacity, ranges: range_buffer(capacity), sprites, room, group: None, statics, sent: [0; 7], generation: s.generation, shadow_maps }
         });
         if buffers.generation != s.generation {
             buffers.sent = [0; 7];
@@ -4149,6 +4170,7 @@ impl Player {
         if buffers.capacity < count {
             buffers.capacity = capacity;
             buffers.instances = instances(buffers.capacity);
+            buffers.ranges = range_buffer(buffers.capacity);
             rebind = true;
         }
         if buffers.slots < views {
@@ -4679,9 +4701,24 @@ impl Player {
             buffers.shadow_maps.group = ShadowMaps::bind(gpu, &buffers.shadow_maps.array, &cube, &gpu.no_occlusion);
             buffers.shadow_maps.environment = shown;
         }
+        // BV-2：每个实例的 (index_offset, index_count)，与 `instances` **同序**（遍历顺序 = 实例序）。
+        // 光栅化不需要它（draw call 自带区间）；光追按它找每个实例的三角形段。
+        let mut ranges: Vec<[u32; 2]> = Vec::with_capacity(instances.len());
+        for d in &drawings {
+            match d {
+                Drawing::Raster { draws, .. } => ranges.extend(draws.iter().map(|draw| [draw.fill.start, draw.fill.len() as u32])),
+                Drawing::Vector(_, groups) => {
+                    for (_, draws) in groups {
+                        ranges.extend(draws.iter().map(|draw| [draw.fill.start, draw.fill.len() as u32]));
+                    }
+                }
+            }
+        }
+        assert_eq!(ranges.len(), instances.len(), "范围表必须与实例一一对应");
         let buffers = self.buffers.as_ref().expect("buffers");
         let targets = self.targets.as_ref().expect("targets");
         gpu.queue.write_buffer(&buffers.instances, 0, bytemuck::cast_slice(&instances));
+        gpu.queue.write_buffer(&buffers.ranges, 0, bytemuck::cast_slice(&ranges));
         gpu.queue.write_buffer(&buffers.sprites, 0, bytemuck::cast_slice(&sprites));
         // view i's raster passes draw with slot i: its pixels (a 2D view's: the raster atlas's),
         // light, toward
@@ -5780,6 +5817,47 @@ mod buffer_contract {
             assert_eq!(canvas.targets.len(), 2, "两个描述符 ⇒ 两个目标");
         })
         .unwrap();
+    }
+
+    /// **BV-2**：范围表与 draw call 的 index range 逐项相同（纯数据，不需要 GPU）。
+    ///
+    /// 两个网格（各 6 个下标）⇒ 两段 6 长的三角形区间；点云没有三角形 ⇒ `(0, 0)`。
+    #[test]
+    fn instance_ranges_match_the_draw_index_ranges() {
+        let mut player = Player::new(64, 64, 1);
+        let quad = [[0.0f32, 0.0, 0.5, 0.0], [1.0, 0.0, 0.5, 0.0], [1.0, 1.0, 0.5, 0.0], [0.0, 1.0, 0.5, 0.0]];
+        let extras = [[0.0f32, 0.0, 1.0, 0.0]; 4];
+        player.store.add_mesh(1, &quad, &extras, &[0, 1, 2, 0, 2, 3], 0, 0);
+        player.store.add_mesh(2, &quad, &extras, &[0, 1, 2, 0, 2, 3], 0, 0);
+        player.store.add_points(3, &[[0.0, 0.0, 0.5, 0.0]; 8]);
+        let mut view = vec![0.0f32; VIEW_LENGTH];
+        for at in [0, 16] {
+            for i in 0..4 {
+                view[at + i * 5] = 1.0;
+            }
+        }
+        view[32..36].copy_from_slice(&[64.0, 64.0, 32.0, 1.0]);
+        let camera = Camera::new(&view);
+        let mut ranges = Vec::new();
+        for key in [1u64, 2, 3] {
+            let mut record: Record = Zeroable::zeroed();
+            record.key1 = key;
+            record.params[0] = 0.0;
+            record.params[1] = 2.0; // 全场显示（`shown` 按 reveal 窗口切）
+            record.m1 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+            let (_, draw) = player.instance(&camera, &record, None, 0).expect("a mesh or point cloud");
+            ranges.push([draw.fill.start, draw.fill.len() as u32]);
+        }
+        assert_eq!(ranges[0], [0, 6], "第一个网格的 6 个下标");
+        assert_eq!(ranges[1], [6, 6], "第二个网格接着排");
+        assert_eq!(ranges[2][1], 0, "点云没有三角形（count = 0）");
+        for (k, [start, count]) in ranges.iter().enumerate().take(2) {
+            let segment = &player.store.indices[*start as usize..(*start + *count) as usize];
+            assert_eq!(segment.len() % 3, 0, "范围必须落在三角形边界上");
+            let shape = &player.store.shapes[&(k as u64 + 1)];
+            let end = shape.base as usize + shape.count as usize;
+            assert!(segment.iter().all(|&index| (index as usize) < end), "下标必须指向本形状的顶点");
+        }
     }
 
     /// **BU-A**：驱逐发生与否，像素逐位相同。

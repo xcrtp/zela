@@ -7,6 +7,8 @@
 
 @group(0) @binding(1) var<storage, read> vertices: array<vec4<f32>>;
 @group(0) @binding(2) var<storage, read> links: array<vec2<u32>>;
+// BV-2：三角形下标（光栅化用 index buffer 的同一批数据；光追按三角形遍历要读它）。
+@group(0) @binding(3) var<storage, read> indices: array<u32>;
 @group(0) @binding(4) var<storage, read> instances: array<Instance>;
 @group(0) @binding(5) var<storage, read> rows: array<vec4<f32>>;
 @group(0) @binding(6) var<storage, read> extras: array<vec4<f32>>; // mesh vertex: normal xyz, u
