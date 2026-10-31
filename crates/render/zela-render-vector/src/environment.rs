@@ -435,7 +435,10 @@ impl Prefilter {
     /// level of the result the source's light averaged over the GGX lobe of its roughness (`SAMPLES` importance samples,
     /// each read from the source's mip whose texels match the sample's solid angle, Krivanek and Colbert's filtered
     /// importance sampling, but none coarser than `COARSEST`), level 0 the source's own.
-    pub(crate) fn run(&self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, env: &Environment) -> wgpu::TextureView {
+    ///
+    /// **BR-3**：拆成 prepare（建纹理 / 组 / 参数、写图片，见 [`Prefilter::prepare`]）与 execute
+    /// （按步设管线 / 组 / 派发，见 [`Prefilter::record`]）。
+    pub(crate) fn prepare(&self, device: &wgpu::Device, queue: &wgpu::Queue, env: &Environment) -> Prefiltered {
         let size = wgpu::Extent3d { width: env.width, height: env.height, depth_or_array_layers: 1 };
         let picture = crate::render::counted_texture(device, &wgpu::TextureDescriptor { label: Some("environment picture"), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Uint, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
         queue.write_texture(picture.as_image_copy(), &env.rgbe, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * env.width), rows_per_image: Some(env.height) }, size);
@@ -462,7 +465,7 @@ impl Prefilter {
         let picture_view = picture.create_view(&Default::default());
         let sources: Vec<wgpu::TextureView> = (0..mips).map(|mip| level(&source, mip)).collect();
         let outs: Vec<wgpu::TextureView> = (0..LEVELS).map(|l| level(&out, l)).collect();
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("environment"), timestamp_writes: None });
+        let mut steps = Vec::with_capacity(1 + (mips - 1) as usize + LEVELS as usize);
         // BO-2：每个 entry 的除数由 `@workgroup_size` 查表给出（三个 entry 都是 8×8×1，六面）。
         let cube = |side: u32, entry: &'static str| {
             groups_for(
@@ -480,15 +483,9 @@ impl Prefilter {
             buffer
         };
         let scale = uniform([0.0, 0.0, 0.0, 0.0, 1.0 / env.unit, 0.0, 0.0, 0.0]);
-        pass.set_pipeline(&self.to_cube.1);
-        pass.set_bind_group(0, &bind(&self.to_cube.0, &[(0, view(&picture_view)), (1, view(&sources[0])), (3, scale.as_entire_binding())]), &[]);
-        let [x, y, z] = cube(SIDE, "to_cube");
-        pass.dispatch_workgroups(x, y, z);
+        steps.push((0, bind(&self.to_cube.0, &[(0, view(&picture_view)), (1, view(&sources[0])), (3, scale.as_entire_binding())]), cube(SIDE, "to_cube")));
         for mip in 1..mips {
-            pass.set_pipeline(&self.halve.1);
-            pass.set_bind_group(0, &bind(&self.halve.0, &[(4, view(&sources[mip as usize - 1])), (1, view(&sources[mip as usize]))]), &[]);
-            let [x, y, z] = cube(SIDE >> mip, "halve");
-            pass.dispatch_workgroups(x, y, z);
+            steps.push((1, bind(&self.halve.0, &[(4, view(&sources[mip as usize - 1])), (1, view(&sources[mip as usize]))]), cube(SIDE >> mip, "halve")));
         }
         // the levels: the GGX lobe's average of the source
         let source_cube = source.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
@@ -497,14 +494,31 @@ impl Prefilter {
             let perceptual = 1.0 - (1.0 - t).sqrt(); // l = (LEVELS - 1) r (2 - r)
             let samples: u32 = if l == 0 { 1 } else { SAMPLES };
             let buffer = uniform([perceptual * perceptual, samples as f32, (SIDE * SIDE) as f32, (SIDE / COARSEST).ilog2() as f32, 1.0, 0.0, 0.0, 0.0]);
-            pass.set_pipeline(&self.prefilter.1);
-            pass.set_bind_group(0, &bind(&self.prefilter.0, &[(5, view(&source_cube)), (1, view(&outs[l as usize])), (2, wgpu::BindingResource::Sampler(&self.sampler)), (3, buffer.as_entire_binding())]), &[]);
-            let [x, y, z] = cube(SIDE >> l, "prefilter");
-            pass.dispatch_workgroups(x, y, z);
+            steps.push((2, bind(&self.prefilter.0, &[(5, view(&source_cube)), (1, view(&outs[l as usize])), (2, wgpu::BindingResource::Sampler(&self.sampler)), (3, buffer.as_entire_binding())]), cube(SIDE >> l, "prefilter")));
         }
-        drop(pass);
-        out.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() })
+        let cube = out.create_view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
+        Prefiltered { steps, cube }
     }
+
+    /// **BR-3**：录制 prepare 给出的每一步（顺序即 `steps` 的顺序）。
+    pub(crate) fn record(&self, pass: &mut wgpu::ComputePass<'_>, p: &Prefiltered) {
+        for (k, group, [x, y, z]) in &p.steps {
+            pass.set_pipeline(match k {
+                0 => &self.to_cube.1,
+                1 => &self.halve.1,
+                _ => &self.prefilter.1,
+            });
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(*x, *y, *z);
+        }
+    }
+}
+
+#[cfg(feature = "render")]
+/// **BR-3**：`Prefilter::prepare` 的产物 —— 每一步（管线号 / 组 / 派发）与最终立方体。
+pub(crate) struct Prefiltered {
+    steps: Vec<(u8, wgpu::BindGroup, [u32; 3])>,
+    pub(crate) cube: wgpu::TextureView,
 }
 
 #[cfg(test)]
@@ -612,7 +626,12 @@ mod tests {
             let prefilter = Prefilter::new(&gpu.device);
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
             let start = std::time::Instant::now();
-            let cube = prefilter.run(&gpu.device, &gpu.queue, &mut encoder, env);
+            // BR-3：与生产路径同一形态 —— prepare 建资源，record 录制。
+            let prepared = prefilter.prepare(&gpu.device, &gpu.queue, env);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("environment"), timestamp_writes: None });
+            prefilter.record(&mut pass, &prepared);
+            drop(pass);
+            let Prefiltered { cube, .. } = prepared;
             gpu.queue.submit(Some(encoder.finish()));
             gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
             let took = start.elapsed();

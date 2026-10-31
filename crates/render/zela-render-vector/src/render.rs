@@ -399,6 +399,39 @@ impl crate::nodes::PassNode for BaseDepthNode<'_> {
     }
 }
 
+/// **BR-3**：环境预滤波节点（`environment` 声明）。
+///
+/// 它是**一帧只在首次显示环境时**跑的一次性 pass，因此用自己的 encoder + `submit`；
+/// 但录制顺序 / 报数仍由 `record_compute` 与 `ENVIRONMENT_PLAN` 给出。
+struct EnvironmentNode<'a> {
+    prefilter: &'a environment::Prefilter,
+    env: &'a environment::Environment,
+    prepared: Option<environment::Prefiltered>,
+}
+
+impl EnvironmentNode<'_> {
+    /// prepare 产出的立方体（`execute` 之后才可用）。
+    fn cube(&self) -> &wgpu::TextureView {
+        &self.prepared.as_ref().expect("environment prepare").cube
+    }
+}
+
+impl crate::nodes::PassNode for EnvironmentNode<'_> {
+    fn name(&self) -> &'static str {
+        "environment"
+    }
+
+    fn prepare(&mut self, ctx: &mut crate::nodes::PrepareContext<'_>) {
+        self.prepared = Some(self.prefilter.prepare(ctx.device, ctx.queue, self.env));
+    }
+
+    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        if let crate::nodes::AnyPass::Compute(pass) = pass {
+            self.prefilter.record(pass, self.prepared.as_ref().expect("environment prepare"));
+        }
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -3718,7 +3751,20 @@ impl Player {
             if env.cube.is_none() {
                 let prefilter = gpu.prefilter.get_or_insert_with(|| environment::Prefilter::new(&gpu.device));
                 let mut encoder = gpu.device.create_command_encoder(&Default::default());
-                env.cube = Some(prefilter.run(&gpu.device, &gpu.queue, &mut encoder, env));
+                // BR-3：环境预滤波由节点驱动（它有自己的 encoder / submit：一帧只在首次显示时跑）。
+                let mut schedule = crate::passes::PassSchedule::new(crate::passes::ENVIRONMENT_PLAN, skipping());
+                let mut schedule_error: Option<crate::passes::ScheduleError> = None;
+                let mut node = EnvironmentNode { prefilter, env, prepared: None };
+                let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
+                if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "environment") {
+                    if schedule_error.is_none() {
+                        schedule_error = Some(error);
+                    }
+                }
+                let cube = node.cube().clone();
+                finish_schedule(schedule, schedule_error)?;
+                env.cube = Some(cube);
                 gpu.queue.submit(Some(encoder.finish()));
                 env.rgbe = Vec::new(); // (its cube is what the frames read)
             }
