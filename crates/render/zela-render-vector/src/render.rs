@@ -720,6 +720,80 @@ impl crate::nodes::PassNode for ShadowNode<'_> {
     }
 }
 
+/// **BR-4**：2D 视图的光栅图集 pass（节点）。
+///
+/// 一个逻辑 pass、**每组一个 wgpu pass**（`passes()` = 组数）：第 `i` 组先把它的每个
+/// 光栅对象画进图集（视口 + 逐对象裁剪矩形），随后 `vector::encode` 的 `Out::Color`
+/// 读这张图集合成该组（`after(i)`）—— 组的图集位置会被下一组覆盖，所以两者必须交错。
+struct AtlasNode<'a> {
+    atlas: Option<&'a Canvas>,
+    groups: &'a [(u32, Vec<Draw>)],
+    plan: &'a vector::Plan,
+    raster_size: [u32; 2],
+    player: &'a Player,
+    pipelines: &'a HashMap<(u32, bool), Pipelines>,
+    samples: u32,
+    indices: &'a wgpu::Buffer,
+    scene: Option<&'a wgpu::BindGroup>,
+    lighting: &'a wgpu::BindGroup,
+    slot: [u32; 1],
+    target: &'a wgpu::TextureView,
+    maps: &'a wgpu::TextureView,
+    compare: &'a wgpu::Sampler,
+    dfg: &'a wgpu::TextureView,
+    linear: &'a wgpu::Sampler,
+    cube: &'a wgpu::TextureView,
+    occlusion: &'a wgpu::TextureView,
+    vector: &'a mut vector::Vector,
+    statics: [wgpu::BindingResource<'a>; 3],
+    fill_layout: &'a wgpu::BindGroupLayout,
+    fill_pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
+    fill_error: &'a mut Option<String>,
+}
+
+impl crate::nodes::PassNode for AtlasNode<'_> {
+    fn name(&self) -> &'static str {
+        "atlas raster"
+    }
+
+    fn prepare(&mut self, _ctx: &mut crate::nodes::PrepareContext<'_>) {}
+
+    fn passes(&self) -> usize {
+        self.groups.len()
+    }
+
+    fn parts_at(&self, index: usize) -> Option<crate::nodes::RenderParts<'_>> {
+        // 这一组没有光栅对象 ⇒ 不起 pass（该组照样走 `after` 的合成）。
+        let atlas = self.atlas.filter(|_| !self.groups[index].1.is_empty())?;
+        Some(atlas.parts(Some((clear([0.0; 4]), true)), Depth::Fresh, None, None).0)
+    }
+
+    fn execute_at(&self, index: usize, ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        let (offset, draws) = &self.groups[index];
+        let Some(pass) = pass.as_render() else { return };
+        pass.set_viewport(0.0, 0.0, self.raster_size[0] as f32, self.raster_size[1] as f32, 0.0, 1.0);
+        if let Some(group) = self.scene {
+            pass.set_bind_group(0, group, &self.slot);
+            ctx.schedule.note_bind(self.name(), "scene");
+        }
+        pass.set_bind_group(3, self.lighting, &[]);
+        ctx.schedule.note_bind(self.name(), "lighting");
+        let pipelines = &self.pipelines[&(self.samples, false)];
+        for (j, raster) in self.plan.groups[index].rasters.iter().enumerate() {
+            let [x, y, w, h] = raster.rect;
+            pass.set_scissor_rect(x, y, w, h);
+            self.player.draw(pass, pipelines, self.indices, &draws[j..j + 1], offset + j as u32, Phase::All);
+        }
+    }
+
+    fn after(&mut self, index: usize, ctx: &mut crate::nodes::PrepareContext<'_>) {
+        let atlas = self.atlas.filter(|_| !self.groups[index].1.is_empty());
+        let lighting = vector::Lighting { maps: self.maps, compare: self.compare, dfg: self.dfg, linear: self.linear, environment: self.cube, occlusion: self.occlusion };
+        let out = vector::Out::Color { rasters: atlas.map(|a| &a.color), target: self.target, base: None, light: None, listed: None, slabs: None, lighting, light_out: None };
+        self.vector.encode(ctx.device, ctx.queue, ctx.encoder, self.plan, index, &self.statics, out, self.fill_layout, self.fill_pipelines, self.fill_error);
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -4468,26 +4542,44 @@ impl Player {
                         crate::passes::RASTER_GROUPS,
                     );
                     let mut schedule_error: Option<crate::passes::ScheduleError> = None;
-                    note_pass(&mut schedule, &mut schedule_error, "atlas raster", groups.iter().any(|(_, draws)| !draws.is_empty()));
-                    for (g, (offset, draws)) in groups.iter().enumerate() {
-                        let atlas = self.rasters.as_ref().filter(|_| !draws.is_empty());
-                        if let Some(atlas) = atlas {
-                            let mut pass = atlas.pass(&mut encoder, Some((clear([0.0; 4]), true)), Depth::Fresh, None, None);
-                            pass.set_viewport(0.0, 0.0, plan.raster_size[0] as f32, plan.raster_size[1] as f32, 0.0, 1.0);
-                            pass.set_bind_group(0, buffers.group.as_ref(), &slot);
-                            schedule.note_bind("atlas raster", "scene");
-                            pass.set_bind_group(3, &buffers.shadow_maps.group, &[]);
-                            schedule.note_bind("atlas raster", "lighting");
-                            for (j, raster) in plan.groups[g].rasters.iter().enumerate() {
-                                let [x, y, w, h] = raster.rect;
-                                pass.set_scissor_rect(x, y, w, h);
-                                self.draw(&mut pass, &gpu.pipelines[&(samples, false)], indices, &draws[j..j + 1], offset + j as u32, Phase::All);
+                    // BR-4：atlas raster 由节点驱动（每组一个子 pass，中间夹该组的合成）。
+                    // 纯路径视图没有光栅对象（不起子 pass），但**这一组照样要合成** —— 所以
+                    // 节点无条件录，子 pass 的有无由 `parts_at` 按"这组有没有光栅对象"给出。
+                    {
+                        let mut node = AtlasNode {
+                            atlas: self.rasters.as_ref(),
+                            groups,
+                            plan,
+                            raster_size: plan.raster_size,
+                            player: self,
+                            // 管线族按 `(samples, 无光)` 查表 —— 纯路径视图可能还没建这一族，
+                            // 所以查表放在 `execute_at`（只有真要起图集 pass 时才发生）。
+                            pipelines: &gpu.pipelines,
+                            samples,
+                            indices,
+                            scene: buffers.group.as_ref(),
+                            lighting: &buffers.shadow_maps.group,
+                            slot,
+                            target: &canvas.color,
+                            maps: &buffers.shadow_maps.array,
+                            compare: &gpu.shadow_compare,
+                            dfg: &gpu.dfg,
+                            linear: &gpu.linear,
+                            cube: &cube,
+                            occlusion: &gpu.no_occlusion,
+                            vector: &mut gpu.vector,
+                            statics: buffers.vector_statics(),
+                            fill_layout: &gpu.fill_layout,
+                            fill_pipelines: &mut gpu.fill_pipelines,
+                            fill_error: &mut fill_error,
+                        };
+                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                        if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "atlas raster") {
+                            if schedule_error.is_none() {
+                                schedule_error = Some(error);
                             }
                         }
-                        let statics = buffers.vector_statics();
-                        let lighting = vector::Lighting { maps: &buffers.shadow_maps.array, compare: &gpu.shadow_compare, dfg: &gpu.dfg, linear: &gpu.linear, environment: &cube, occlusion: &gpu.no_occlusion };
-                        let out = vector::Out::Color { rasters: atlas.map(|a| &a.color), target: &canvas.color, base: None, light: None, listed: None, slabs: None, lighting, light_out: None };
-                        gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, out, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                     }
                     note_pass(&mut schedule, &mut schedule_error, "vector composite", !groups.is_empty());
                     finish_schedule(schedule, schedule_error)?;

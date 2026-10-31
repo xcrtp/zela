@@ -195,20 +195,21 @@ pub fn record_render(
     execute.schedule.begin(node.name())?;
     node.prepare(prepare);
     for index in 0..node.passes() {
-        let Some(parts) = node.parts_at(index) else {
-            continue;
-        };
-        let RenderParts { colors, depth } = parts;
-        let pass = prepare.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(label),
-            color_attachments: &colors,
-            depth_stencil_attachment: depth,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-            multiview_mask: None,
-        });
-        node.execute_at(index, execute, &mut AnyPass::Render(pass));
-        // pass 在这里结束（附件借的是节点自己的纹理视图）。
+        // 没有附件的子 pass 就不起 pass（例如某组没有光栅对象），但 `after` 照跑：
+        // 它是"这一组的 encoder 工作"，与 pass 有无是两件事。
+        if let Some(parts) = node.parts_at(index) {
+            let RenderParts { colors, depth } = parts;
+            let pass = prepare.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(label),
+                color_attachments: &colors,
+                depth_stencil_attachment: depth,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            node.execute_at(index, execute, &mut AnyPass::Render(pass));
+            // pass 在这里结束（附件借的是节点自己的纹理视图）。
+        }
         node.after(index, prepare);
     }
     Ok(())
