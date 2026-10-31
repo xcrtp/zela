@@ -80,3 +80,5 @@ cap_sequence    时序                 cap_sequence.lua     1dc47c14c4c155faf691
 cap_shader_alpha 着色透明度        cap_shader_alpha.lua 59d68e10467ffb45d50b4b5ad03ff21750de6f4c16242231c5c16d479bc6dc0c
 # BT-5 验收作品：2D 解析 SDF（min 并 / max 交 / max(a,-b) 差 + smoothstep 覆盖抗锯齿）。
 cap_sdf           SDF隐式形状        cap_sdf.lua          552916d3138f02399ba3ec9be84a51e3fac00cbde1d2116fe8b94ab457c00e1e
+# BT-6 验收作品：3D 视图里的程序化材质（屏幕空间内建 uv / pos2；world_pos / normal 已记账）。
+cap_shader_3d     3D着色材质         cap_shader_3d.lua    cf733daa816a51e2af16b58a7dd1612c2172c4ad33434eeba01ce76a5add234d

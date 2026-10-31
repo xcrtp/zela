@@ -2260,6 +2260,48 @@ mod tests {
         );
     }
 
+    /// **BT-6 判据**：3D 视图里的逐片元材质随屏幕位置变化（屏幕空间内建）。
+    ///
+    /// BT-0 已核实逐片元入口没有 per-pixel `world_pos` / `normal`，所以这里证明的是
+    /// **屏幕空间**内建在 3D 帧里可用：同一块平面（z = 0）上，颜色由 `uv` 决定。
+    #[test]
+    fn fragment_material_varies_with_position_in_a_3d_frame() {
+        use crate::ShaderFill;
+        let view = lit_view(None, 0.0, None, true);
+        let source = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec4<f32> {\n    return vec4<f32>(zela_uv.x, zela_uv.y, 0.5, 1.0);\n}\n";
+        let mut path = FilledPath::polygon(
+            &[
+                [-1.0, -1.0, 0.0],
+                [1.0, -1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [-1.0, 1.0, 0.0],
+            ],
+            [0.0, 0.0, 1.0, 1.0],
+        );
+        path.shader = Some(ShaderFill {
+            source: source.to_string(),
+            params: Vec::new(),
+            fragment: true,
+            rgba: true,
+        });
+        let frame = render_3d(&view, &[path.into()]).expect("3D 渲染失败");
+        // frame = 4 世界单位、64px ⇒ 世界 ±1 = 像素 16..48。
+        let (left, right) = (pixel(&frame, 64, 20, 32), pixel(&frame, 64, 44, 32));
+        assert!(
+            left[0] + 40 < right[0],
+            "u 方向应随屏幕位置变化：{left:?} / {right:?}"
+        );
+        let (top, bottom) = (pixel(&frame, 64, 32, 20), pixel(&frame, 64, 32, 44));
+        assert!(
+            top[1] + 40 < bottom[1],
+            "v 方向应随屏幕位置变化：{top:?} / {bottom:?}"
+        );
+        assert!(
+            (left[2] as i32 - right[2] as i32).abs() <= 1,
+            "常量分量不应变化：{left:?} / {right:?}"
+        );
+    }
+
     /// **B6 Step 1.2**：3D view 的槽位布局与上游 `feed.py::view` 一致 ——
     /// 投影矩阵（列主序）、`three_d`、`toward`/bias、eye、灯数、tone、bloom、AO、灯槽。
     #[test]
