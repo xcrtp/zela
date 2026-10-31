@@ -173,6 +173,49 @@ pub trait PassNode {
 
     /// `manual()` 为真时由驱动调用（**驱动已完成 `begin` / `prepare`**）。
     fn run(&mut self, _prepare: &mut PrepareContext<'_>, _execute: &mut ExecuteContext<'_>) {}
+
+    /// **BS-3**：本帧这个 pass 有没有内容（默认有）。
+    ///
+    /// 由节点回答"要不要跑"，替代 `encode_frame` 里手写的
+    /// `if x.is_some() { … } else { note_pass(…, false) }`。
+    /// **不得静默降级**：没内容 ⇒ 驱动走 `step(name, false)`（显式声明跳过）。
+    fn enabled(&self) -> bool {
+        true
+    }
+}
+
+/// 驱动一个**可能没有内容**的 pass 节点（BS-3）。
+///
+/// - `node` 为 `None`（本帧连构造条件都不成立）或 `enabled() == false` ⇒ 显式跳过；
+/// - 否则按 `stage` 走 [`record_compute`] / [`record_render`]。
+///
+/// 这样调用点只剩一条形状，**"有没有内容"由节点或构造条件单独回答**，
+/// 不再散落成 `if … { record } else { note_pass(…, false) }` 的十份分支。
+pub fn record_optional(
+    node: Option<&mut dyn PassNode>,
+    prepare: &mut PrepareContext<'_>,
+    execute: &mut ExecuteContext<'_>,
+    name: &'static str,
+    label: &'static str,
+    stage: Stage,
+) -> Result<(), ScheduleError> {
+    match node {
+        Some(node) if node.enabled() => match stage {
+            Stage::Render => record_render(node, prepare, execute, label),
+            Stage::Compute => record_compute(node, prepare, execute, label),
+        },
+        _ => {
+            execute.schedule.step(name, false)?;
+            Ok(())
+        }
+    }
+}
+
+/// [`record_optional`] 的录制方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    Render,
+    Compute,
 }
 
 /// 驱动一个 **compute** pass：按声明序推进（`begin` 同时完成报数），
