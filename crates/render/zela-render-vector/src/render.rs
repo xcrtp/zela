@@ -829,6 +829,52 @@ impl crate::nodes::PassNode for AtlasNode<'_> {
     }
 }
 
+/// **BS-2**：矢量合成（`vector composite`）—— 一个声明、按 group 起 1–N 个 compute pass。
+///
+/// 每个 group 的 `vector::encode` 起 1–4 个 pass（flatten / composite / keep / slab bounds），
+/// 数量随数据变化 ⇒ 用 [`crate::nodes::PassNode::manual`] 的逃生舱：驱动完成 `begin` 之后
+/// 调 [`crate::nodes::PassNode::run`]，节点自己起 pass，绑定就地记账（BS-1）。
+struct VectorCompositeNode<'a> {
+    plan: &'a vector::Plan,
+    vector: &'a mut vector::Vector,
+    statics: [wgpu::BindingResource<'a>; 3],
+    target: &'a wgpu::TextureView,
+    light_out: Option<&'a wgpu::TextureView>,
+    base: Option<&'a wgpu::TextureView>,
+    base_light: Option<&'a wgpu::TextureView>,
+    listed: Option<&'a vector::Listed<'a>>,
+    slabs: Option<[&'a wgpu::TextureView; 2]>,
+    maps: &'a wgpu::TextureView,
+    compare: &'a wgpu::Sampler,
+    dfg: &'a wgpu::TextureView,
+    linear: &'a wgpu::Sampler,
+    cube: &'a wgpu::TextureView,
+    occlusion: &'a wgpu::TextureView,
+    fill_layout: &'a wgpu::BindGroupLayout,
+    fill_pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
+    fill_error: &'a mut Option<String>,
+}
+
+impl crate::nodes::PassNode for VectorCompositeNode<'_> {
+    fn name(&self) -> &'static str {
+        "vector composite"
+    }
+
+    fn prepare(&mut self, _ctx: &mut crate::nodes::PrepareContext<'_>) {}
+
+    fn manual(&self) -> bool {
+        true
+    }
+
+    fn run(&mut self, ctx: &mut crate::nodes::PrepareContext<'_>, execute: &mut crate::nodes::ExecuteContext<'_>) {
+        for g in 0..self.plan.groups.len() {
+            let lighting = vector::Lighting { maps: self.maps, compare: self.compare, dfg: self.dfg, linear: self.linear, environment: self.cube, occlusion: self.occlusion };
+            let out = vector::Out::Color { rasters: None, target: self.target, base: self.base, light: self.base_light, listed: self.listed, slabs: self.slabs, lighting, light_out: self.light_out };
+            self.vector.encode(ctx.device, ctx.queue, ctx.encoder, self.plan, g, &self.statics, out, self.fill_layout, self.fill_pipelines, self.fill_error, Some(("vector composite", &mut *execute.schedule)));
+        }
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -4344,14 +4390,37 @@ impl Player {
                             note_pass(schedule, schedule_error, "bloom", false);
                             return;
                         };
-                        note_pass(schedule, schedule_error, "vector composite", true);
+                        // BS-2：合成由 `VectorCompositeNode` 驱动（一个声明、按 group 起 pass）。
                         let statics = buffers.vector_statics();
                         let (target, light_out) = bloomed.map_or((&canvas.color, None), |(b, _)| (&b.paint, Some(&b.light)));
-                        for g in 0..plan.groups.len() {
-                            let lighting = vector::Lighting { maps: &buffers.shadow_maps.array, compare: &gpu.shadow_compare, dfg: &gpu.dfg, linear: &gpu.linear, environment: &cube, occlusion };
-                            let slabs = slabs.map(|s| [&s.bounds, &s.slabs]);
-                            let out = vector::Out::Color { rasters: None, target, base: base.as_ref(), light: base_light.as_ref(), listed, slabs, lighting, light_out };
-                            vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out, fill_layout, fill_pipelines, fill_error, Some(("vector composite", &mut *schedule)));
+                        {
+                            let mut node = VectorCompositeNode {
+                                plan,
+                                vector,
+                                statics,
+                                target,
+                                light_out,
+                                base: base.as_ref(),
+                                base_light: base_light.as_ref(),
+                                listed,
+                                slabs: slabs.map(|s| [&s.bounds, &s.slabs]),
+                                maps: &buffers.shadow_maps.array,
+                                compare: &gpu.shadow_compare,
+                                dfg: &gpu.dfg,
+                                linear: &gpu.linear,
+                                cube: &cube,
+                                occlusion,
+                                fill_layout,
+                                fill_pipelines,
+                                fill_error,
+                            };
+                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder };
+                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut *schedule };
+                            if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "vector composite") {
+                                if schedule_error.is_none() {
+                                    *schedule_error = Some(error);
+                                }
+                            }
                         }
                         match (bloomed, bloom) {
                             (Some((b, glow)), Some(bloom)) => {

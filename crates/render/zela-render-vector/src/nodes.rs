@@ -158,6 +158,21 @@ pub trait PassNode {
     /// **BS-1**：多了 [`ExecuteContext`] —— 夹在中间的 recorder 也要就地 `note_bind`，
     /// 否则它绑的组进不了"声明 vs 实际"的比对（BP-05）。
     fn after(&mut self, _index: usize, _prepare: &mut PrepareContext<'_>, _execute: &mut ExecuteContext<'_>) {}
+
+    /// **BS-2（逃生舱）**：节点自己起 pass（**数量由数据决定**时用）。
+    ///
+    /// `execute` 拿到的是已开始的 `AnyPass`，`encoder` 已被它借走 ⇒ 节点内部不能再起新
+    /// pass。而一个 group 的 `vector::encode` 会起 1–4 个 compute pass（flatten / composite /
+    /// keep / slab bounds），数量随数据变化 —— 这种形状没法用 `execute` 表达。
+    ///
+    /// 默认 `false` ⇒ 走驱动的自动 `begin`。开着它的节点必须在 GAPS 记账并写明理由
+    /// （终检断言实现者只有 `VectorCompositeNode` 一个）。
+    fn manual(&self) -> bool {
+        false
+    }
+
+    /// `manual()` 为真时由驱动调用（**驱动已完成 `begin` / `prepare`**）。
+    fn run(&mut self, _prepare: &mut PrepareContext<'_>, _execute: &mut ExecuteContext<'_>) {}
 }
 
 /// 驱动一个 **compute** pass：按声明序推进（`begin` 同时完成报数），
@@ -172,6 +187,11 @@ pub fn record_compute(
 ) -> Result<(), ScheduleError> {
     execute.schedule.begin(node.name())?;
     node.prepare(prepare);
+    if node.manual() {
+        // 逃生舱（BS-2）：pass 的数量 / 形状由数据决定，节点自己起（`vector::encode`）。
+        node.run(prepare, execute);
+        return Ok(());
+    }
     let pass = prepare
         .encoder
         .begin_compute_pass(&wgpu::ComputePassDescriptor {
