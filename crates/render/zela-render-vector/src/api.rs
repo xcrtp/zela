@@ -2200,6 +2200,66 @@ mod tests {
         );
     }
 
+    /// **BT-5 判据**：像素空间 SDF 的边缘是**真抗锯齿**，且放大时边缘宽度恒定。
+    ///
+    /// 程序：圆 SDF（在对象包围盒的像素坐标里）+ `smoothstep(-0.5, 0.5, d)`，
+    /// 返回 vec4（w = 覆盖率）。同一个程序渲染两个尺寸（32px 与 96px 的方框）：
+    /// - 边缘必须有中间值（不是全 0 / 全 1 的二值）；
+    /// - 两个尺寸的过渡像素数相差不超过 1（`|∇d| = 1` ⇒ 边缘恒 1 像素）。
+    #[test]
+    fn sdf_edges_are_antialiased_and_the_width_does_not_scale() {
+        use crate::ShaderFill;
+        let source = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec4<f32> {\n    let half = 0.5 * zela_size;\n    let q = zela_local - half;\n    let r = 0.42 * min(zela_size.x, zela_size.y);\n    let d = length(q) - r;\n    let a = smoothstep(-0.5, 0.5, d);\n    return vec4<f32>(0.85, 0.25, 0.20, 1.0 - a);\n}\n";
+        let render = |side: f64| {
+            let half = (side / 2.0) as f32;
+            let mut square = FilledPath::polygon(
+                &[
+                    [-(half as f64), -(half as f64), 0.0],
+                    [half as f64, -(half as f64), 0.0],
+                    [half as f64, half as f64, 0.0],
+                    [-(half as f64), half as f64, 0.0],
+                ],
+                [0.0, 0.0, 1.0, 1.0],
+            );
+            square.shader = Some(ShaderFill {
+                source: source.to_string(),
+                params: Vec::new(),
+                fragment: true,
+                rgba: true,
+            });
+            match render_2d(160, 160, 1, [0.0, 0.0, 0.0, 1.0], &[square.into()]) {
+                Ok(frame) => frame,
+                Err(error) => panic!("矢量后端起不来：{error}"),
+            }
+        };
+        // 中间值像素 = 既不是背景黑、也不是内部满色（红通道在两者之间）。
+        // 1 像素宽的边缘 ⇒ 部分覆盖像素数 ∝ 周长（∝ 半径）；
+        // 若边缘宽度随尺寸放大，它会 ∝ 面积（∝ 半径²）—— 两者比值差一个量级。
+        let partial = |frame: &[u8], inside: u8| {
+            frame
+                .chunks_exact(4)
+                .filter(|px| px[0] > 2 && px[0] + 8 < inside)
+                .count()
+        };
+        let (small, large) = (render(32.0), render(96.0));
+        let inside_small = pixel(&small, 160, 80, 80)[0];
+        let inside_large = pixel(&large, 160, 80, 80)[0];
+        assert!(inside_small > 200, "小尺寸中心应满色：{inside_small}");
+        assert!(inside_large > 200, "大尺寸中心应满色：{inside_large}");
+        assert_eq!(pixel(&small, 160, 2, 2), [0, 0, 0, 255], "角落应是背景");
+        let (n_small, n_large) = (partial(&small, inside_small), partial(&large, inside_large));
+        assert!(
+            n_small >= 10 && n_large >= 10,
+            "边缘必须有中间值（真抗锯齿）：小 {n_small} · 大 {n_large}"
+        );
+        // 尺寸比：包围盒含 AA 边距（小 ≈ 36px、大 ≈ 100px）⇒ 周长比 ≈ 2.8。
+        let ratio = n_large as f64 / n_small as f64;
+        assert!(
+            (2.0..4.0).contains(&ratio),
+            "部分覆盖像素应随周长增长（边缘宽度恒定），实测比值 {ratio:.2}（小 {n_small} · 大 {n_large}）"
+        );
+    }
+
     /// **B6 Step 1.2**：3D view 的槽位布局与上游 `feed.py::view` 一致 ——
     /// 投影矩阵（列主序）、`three_d`、`toward`/bias、eye、灯数、tone、bloom、AO、灯槽。
     #[test]
