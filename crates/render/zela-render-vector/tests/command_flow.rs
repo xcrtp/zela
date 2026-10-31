@@ -27,6 +27,45 @@ fn flow(run: impl FnOnce()) -> Vec<String> {
     take_command_flow()
 }
 
+/// **BS-4 终检**：计划里声明过的每个 pass 都有对应的驱动分支。
+///
+/// `encode_frame` 已改成 `for decl in plan { match decl.name { … } }`（光栅两张计划与
+/// 矢量计划都是）。所以"加一个 pass"最少要两步：加一条声明 + 加一个分支 —— 漏掉分支
+/// 会在运行时 panic，这里把它提前到测试里。反向也成立：驱动里不允许出现计划外的分支。
+#[test]
+fn every_declared_pass_has_a_branch() {
+    use zela_render_vector::passes::{RASTER_LAYERED_PLAN, RASTER_PLAN, VECTOR_PLAN};
+
+    let render = include_str!("../src/render.rs");
+    for (name, plan) in [
+        ("RASTER_PLAN", RASTER_PLAN),
+        ("RASTER_LAYERED_PLAN", RASTER_LAYERED_PLAN),
+        ("VECTOR_PLAN", VECTOR_PLAN),
+    ] {
+        for decl in plan {
+            let arm = format!("\"{}\" =>", decl.name);
+            assert!(
+                render.contains(&arm),
+                "{name} 声明了 pass {:?}，但 encode_frame 的驱动循环里没有 {arm} 分支",
+                decl.name
+            );
+        }
+    }
+}
+
+/// **BS-4 终检（2）**：`manual()` 逃生舱只有一个实现者（`VectorCompositeNode`）。
+///
+/// 逃生舱一旦变成正门，"加一个 pass"就不再是"声明 + 分支"了。这里把"只有一处"固定下来。
+#[test]
+fn only_the_vector_composite_takes_the_manual_escape() {
+    let render = include_str!("../src/render.rs");
+    assert_eq!(
+        render.matches("fn manual(&self) -> bool").count(),
+        1,
+        "`manual()` 只允许 VectorCompositeNode 实现（其余节点走 execute / execute_at）"
+    );
+}
+
 /// 纯矢量视图（`VECTOR_PLAN`）：一个填充方块。
 #[test]
 fn vector_plan_flow_is_pinned() {

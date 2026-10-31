@@ -887,21 +887,6 @@ impl crate::nodes::PassNode for VectorCompositeNode<'_> {
     }
 }
 
-/// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
-///
-/// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
-/// encoder 半途丢弃，错误也更难归因。
-///
-/// `present == false` 表示本帧这一步没有内容（没有阴影投射者、没有遮蔽源…）——
-/// 走 `step` 的**显式跳过**分支，既不静默、也不会在帧末被误报成缺失。
-fn note_pass(schedule: &mut crate::passes::PassSchedule, slot: &mut Option<crate::passes::ScheduleError>, name: &'static str, present: bool) {
-    if slot.is_none() {
-        if let Err(error) = schedule.step(name, present) {
-            *slot = Some(error);
-        }
-    }
-}
-
 /// BN-3：一帧结束时核对"计划里的 pass 都被记录过"。
 ///
 /// **BS-0**：核对前把本视图的命令流收进 [`take_command_flow`] 的槽位（只在
@@ -3177,34 +3162,14 @@ impl Canvas {
         attached.slabs = Some(Slabs { bounds, layers, slabs, groups });
     }
 
-    /// A raster pass over it: its color loaded as `color` says, and resolved into the image, or `into`
-    /// another (a 3D view's base, for its composite) — with multisamples only the resolved image is
-    /// kept, the samples stay on tile — or its samples kept; none for the appends, which only read
-    /// depth.
-    /// (`light`: a view with lit meshes keeps their light apart, in this target and its samples: `blend.wgsl`'s `Base`.)
-    fn pass<'e>(&'e self, encoder: &'e mut wgpu::CommandEncoder, color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>, depth: Depth, into: Option<&'e wgpu::TextureView>, light: Option<&'e wgpu::TextureView>) -> wgpu::RenderPass<'e> {
-        let (parts, blend) = self.parts(color, depth, into, light);
-        let crate::nodes::RenderParts { colors, depth } = parts;
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("raster"),
-            color_attachments: &colors,
-            depth_stencil_attachment: depth,
-            occlusion_query_set: None,
-            timestamp_writes: None,
-            multiview_mask: None,
-        });
-        if blend {
-            // Ordinary paint contributes no lit coverage, even before this pass's first material mesh.
-            pass.set_blend_constant(wgpu::Color::TRANSPARENT);
-        }
-        pass
-    }
-
-    /// [`Self::pass`] 的**附件部分**（BR-4）：附件是 "一个 pass 是什么" 的一部分，
+    /// **BR-4**：一个光栅 pass 的**附件部分**。附件是 "一个 pass 是什么" 的一部分，
     /// 所以搬进节点 —— 节点持 `&self`，`PassNode::parts` 直接委托到这里。
     ///
     /// 返回 `(附件, 是否要设透明混合常量)`：后者必须在 `begin_render_pass` 之后设，
     /// 驱动不解释它，由节点在 `execute` 里做。
+    ///
+    /// （`color`：`Some((load, resolve))` 与手写路径同参；`into` 是另一个目标 ——
+    /// 3D 视图的 base，给它的合成读。）
     fn parts<'a>(&'a self, color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>, depth: Depth, into: Option<&'a wgpu::TextureView>, light: Option<&'a wgpu::TextureView>) -> (crate::nodes::RenderParts<'a>, bool) {
         let attached = self.raster.as_ref().expect("the raster pipeline's attachments");
         let target = into.unwrap_or(&self.color);
@@ -4300,88 +4265,21 @@ impl Player {
                     // B18 排查：`skip=lit` 强制无光管线（单目标，无 MRT 的 light）。
                     let light = *light && skipping() & SKIP_LIGHT == 0;
                     // BN-3：本帧走哪张计划由数据决定（有无链表 / slabs）；**顺序**由声明给出。
+                    let layered = *listing || *slabs;
+                    let plan_kind = if layered { crate::passes::RASTER_LAYERED_PLAN } else { crate::passes::RASTER_PLAN };
                     let mut schedule = crate::passes::PassSchedule::with_groups(
-                        if *listing || *slabs { crate::passes::RASTER_LAYERED_PLAN } else { crate::passes::RASTER_PLAN },
+                        plan_kind,
                         skipping(),
                         crate::passes::RASTER_GROUPS,
                     );
                     let mut schedule_error: Option<crate::passes::ScheduleError> = None;
-                    // 阴影是**一个**逻辑 pass（层数由数据决定，0 层也记录 —— 顺序位置固定）。
-                    // BR-4：its lights' shadow maps first: its meshes' depth seen from each, then its paths' where nearer
-                    {
-                        let mut node = ShadowNode {
-                            shadows,
-                            pipelines: &gpu.shadow_passes,
-                            layers: &buffers.shadow_maps.layers,
-                            cast,
-                            scene: buffers.group.as_ref(),
-                            slot,
-                            indices,
-                            draws,
-                            offset: *offset,
-                            vector: &mut gpu.vector,
-                            statics: buffers.vector_statics(),
-                            fill_layout: &gpu.fill_layout,
-                            fill_pipelines: &mut gpu.fill_pipelines,
-                            fill_error: &mut fill_error,
-                        };
-                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                        if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "shadow") {
-                            if schedule_error.is_none() {
-                                schedule_error = Some(error);
-                            }
-                        }
-                    }
                     // its ambient occlusion: its opaque depth (its opaque meshes', then its opaque paths' where nearer),
                     // then how much of the light from all around reaches each pixel's surface; its lit passes read it
                     let occluded = if skipping() & SKIP_AO != 0 { None } else { canvas.occluded.as_ref().zip(occlusion_of(&f.view)) };
-                    // BR-4：遮蔽深度由节点驱动（没有遮蔽源时显式跳过）。
-                    let own_lighting = match occluded {
-                        Some((o, (amount, radius))) => {
-                        let occlusion = gpu.occlusion.as_ref().expect("the occlusion's passes");
-                        {
-                            let mut node = OcclusionDepthNode {
-                                view: &o.depth,
-                                pipeline: &occlusion.depth,
-                                scene: buffers.group.as_ref(),
-                                slot,
-                                indices,
-                                draws,
-                                offset: *offset,
-                                vector: &mut gpu.vector,
-                                plan: plan.as_ref(),
-                                statics: buffers.vector_statics(),
-                                fill_layout: &gpu.fill_layout,
-                                fill_pipelines: &mut gpu.fill_pipelines,
-                                fill_error: &mut fill_error,
-                            };
-                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                            if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "occlusion depth") {
-                                if schedule_error.is_none() {
-                                    schedule_error = Some(error);
-                                }
-                            }
-                        }
-                        // BR-3：遮蔽的 compute 由节点驱动（顺序与报数都由 `record_compute` 给出）。
-                        let mut node = OcclusionNode { occlusion, occluded: o, projection: Camera::new(&f.view).projection, amount, radius };
-                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                        if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "occlusion") {
-                            if schedule_error.is_none() {
-                                schedule_error = Some(error);
-                            }
-                        }
-                        Some(ShadowMaps::bind(gpu, &buffers.shadow_maps.array, &cube, &o.out))
-                        }
-                        None => {
-                            note_pass(&mut schedule, &mut schedule_error, "occlusion depth", false);
-                            note_pass(&mut schedule, &mut schedule_error, "occlusion", false);
-                            None
-                        }
-                    };
-                    let lighting_group = own_lighting.as_ref().unwrap_or(&buffers.shadow_maps.group);
+                    // 遮蔽的绑定组与纹理（`occlusion` 的 compute 在循环里跑，但它产出的组 / 纹理
+                    // 是 CPU 侧对象，创建顺序无关 —— 所以可以在循环前算好，节点只借它们）。
+                    let occlusion_maps = occluded.map(|(o, _)| ShadowMaps::bind(gpu, &buffers.shadow_maps.array, &cube, &o.out));
+                    let lighting_group = occlusion_maps.as_ref().unwrap_or(&buffers.shadow_maps.group);
                     let occlusion = occluded.map_or(&gpu.no_occlusion, |(o, _)| &o.out);
                     // the base: the view over the background, or (where its paths lie over and under it) a layer of
                     // its own, in a texture of its own; none where it has nothing to rasterize (its paths are the view)
@@ -4395,153 +4293,18 @@ impl Player {
                     // listed fragments; then, where it glows, its glow spread from the light it leaves, and its pixels
                     // shown with it
                     let bloomed = if skipping() & SKIP_BLOOM != 0 { None } else { canvas.bloomed.as_ref().zip(*glow) };
-                    let layered = |encoder: &mut wgpu::CommandEncoder, vector: &mut vector::Vector, bloom: Option<&bloom::Bloom>, listed: Option<&vector::Listed>, slabs: Option<&Slabs>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>, schedule: &mut crate::passes::PassSchedule, schedule_error: &mut Option<crate::passes::ScheduleError>| {
-                        let Some(plan) = plan else {
-                            // 没有路径计划 ⇒ 合成与泛光两步都没有内容（显式跳过）。
-                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder };
-                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut *schedule };
-                            for (name, stage) in [("vector composite", crate::nodes::Stage::Compute), ("bloom", crate::nodes::Stage::Compute)] {
-                                if let Err(error) = crate::nodes::record_optional(None, &mut prepare, &mut execute, name, name, stage) {
-                                    if schedule_error.is_none() {
-                                        *schedule_error = Some(error);
-                                    }
-                                }
-                            }
-                            return;
-                        };
-                        // BS-2：合成由 `VectorCompositeNode` 驱动（一个声明、按 group 起 pass）。
-                        let statics = buffers.vector_statics();
-                        let (target, light_out) = bloomed.map_or((&canvas.color, None), |(b, _)| (&b.paint, Some(&b.light)));
-                        {
-                            let mut node = VectorCompositeNode {
-                                plan,
-                                vector,
-                                statics,
-                                target,
-                                light_out,
-                                base: base.as_ref(),
-                                base_light: base_light.as_ref(),
-                                listed,
-                                slabs: slabs.map(|s| [&s.bounds, &s.slabs]),
-                                maps: &buffers.shadow_maps.array,
-                                compare: &gpu.shadow_compare,
-                                dfg: &gpu.dfg,
-                                linear: &gpu.linear,
-                                cube: &cube,
-                                occlusion,
-                                fill_layout,
-                                fill_pipelines,
-                                fill_error,
-                            };
-                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder };
-                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut *schedule };
-                            if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "vector composite") {
-                                if schedule_error.is_none() {
-                                    *schedule_error = Some(error);
-                                }
-                            }
-                        }
-                        // BS-3：泛光有没有内容由节点/构造条件给出（`None` ⇒ 显式跳过）。
-                        let mut node = match (bloomed, bloom) {
-                            (Some((b, glow)), Some(bloom)) => {
-                                let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
-                                Some(BloomNode { bloom, bloomed: b, glow, tone })
-                            }
-                            (Some(_), None) => panic!("the bloom's passes"),
-                            _ => None,
-                        };
-                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder };
-                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut *schedule };
-                        if let Err(error) = crate::nodes::record_optional(node.as_mut().map(|node| node as &mut dyn crate::nodes::PassNode), &mut prepare, &mut execute, "bloom", "bloom", crate::nodes::Stage::Compute) {
-                            if schedule_error.is_none() {
-                                *schedule_error = Some(error);
-                            }
-                        }
-                    };
-                    if !(*listing || *slabs) {
-                        // BS-3：`base` / `base depth` 的"本帧有没有内容"由节点自己回答，
-                        // 调用点只剩一条形状（没内容 ⇒ 驱动显式 `step(name, false)`）。
-                        let has_base = rasterized || plan.is_none();
-                        {
-                            let mut node = RasterNode {
-                                name: "base",
-                                canvas,
-                                color: Some((cleared, true)),
-                                depth: if plan.is_some() { Depth::Kept } else { Depth::Fresh },
-                                into: base.as_ref(),
-                                light: base_light.as_ref(),
-                                scene: buffers.group.as_ref(),
-                                lighting: Some(lighting_group),
-                                images: None,
-                                list: None,
-                                player: self,
-                                pipelines,
-                                indices,
-                                draws,
-                                offset: *offset,
-                                slot,
-                                steps: if sprites.is_empty() { BASE_STEPS } else { BASE_SPRITE_STEPS },
-                                sprites: (!sprites.is_empty()).then(|| Sprites { range: sprites, pipeline: &pipelines.sprites, group: None }),
-                                present: has_base,
-                            };
-                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                            if let Err(error) = crate::nodes::record_optional(Some(&mut node), &mut prepare, &mut execute, "base", "base", crate::nodes::Stage::Render) {
-                                if schedule_error.is_none() {
-                                    schedule_error = Some(error);
-                                }
-                            }
-                        }
-                        {
-                            let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
-                            let mut node = BaseDepthNode { vector: &mut gpu.vector, depth: &attached.depth_only, samples, size: [canvas.width, canvas.height], group: None, k: 0, present: base.is_some() };
-                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                            if let Err(error) = crate::nodes::record_optional(Some(&mut node), &mut prepare, &mut execute, "base depth", "base depth", crate::nodes::Stage::Compute) {
-                                if schedule_error.is_none() {
-                                    schedule_error = Some(error);
-                                }
-                            }
-                        }
-                        layered(&mut encoder, &mut gpu.vector, gpu.bloom.as_ref(), None, None, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
-                        finish_schedule(schedule, schedule_error)?;
-                        continue;
-                    }
-                    let appends = &pipelines.appends;
-                    // the opaque layers, their samples and depth kept
-                    // （BR-4：opaque 由 `record_render` 驱动。）
-                    let mut node = RasterNode {
-                        name: "opaque",
-                        canvas,
-                        color: Some((cleared, false)),
-                        depth: Depth::Kept,
-                        into: base.as_ref(),
-                        light: base_light.as_ref(),
-                        scene: buffers.group.as_ref(),
-                        lighting: Some(lighting_group),
-                        images: None,
-                        list: None,
-                        player: self,
-                        pipelines,
-                        indices,
-                        draws,
-                        offset: *offset,
-                        slot,
-                        steps: OPAQUE_STEPS,
-                        sprites: None,
-                        present: true,
-                    };
-                    let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                    let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                    if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "opaque") {
-                        if schedule_error.is_none() {
-                            schedule_error = Some(error);
-                        }
-                    }
                     let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
-                    let colors = attached.msaa.as_ref().or(base.as_ref()).expect("base samples");
+                    let appends = &pipelines.appends;
+                    // 合成读的（目标 / 离开的光）：只与泛光状态有关，与 pass 顺序无关。
+                    let (target, light_out) = bloomed.map_or((&canvas.color, None), |(b, _)| (&b.paint, Some(&b.light)));
+                    // 链表视图才有 `Listed`；非分层计划里不构造（否则会要求 base samples）。
                     let [_, y, _, h] = *listed;
-                    let listed = lists.filter(|_| *listing).map(|l| vector::Listed { heads: &l.heads, nodes: &l.nodes, rows: [y, y + h], samples, colors, depths: &attached.depth_only, lights: attached.msaa_light.as_ref().or(base_light.as_ref()) });
+                    let listed = if *listing {
+                        let colors = attached.msaa.as_ref().or(base.as_ref()).expect("base samples");
+                        lists.filter(|_| *listing).map(|l| vector::Listed { heads: &l.heads, nodes: &l.nodes, rows: [y, y + h], samples, colors, depths: &attached.depth_only, lights: attached.msaa_light.as_ref().or(base_light.as_ref()) })
+                    } else {
+                        None
+                    };
                     // the listed see-through layers appended to the lists (only in their rows are heads cleared and read)
                     if let Some(l) = &listed {
                         let row = canvas.width as u64 * 4;
@@ -4549,114 +4312,248 @@ impl Player {
                             encoder.clear_buffer(l.heads, y as u64 * row, Some(h as u64 * row));
                         }
                     }
-                    {
-                        let append = attached.append.as_ref().map(|(_, group)| group);
-                        // BR-4 / BS-3：append 由 `record_render` 驱动（只读深度，不绑颜色）；
-                        // 没有链表内容时 `present = false` ⇒ 驱动显式跳过。
-                        let mut node = RasterNode {
-                            name: "append",
-                            canvas,
-                            color: None,
-                            depth: Depth::Read,
-                            into: None,
-                            light: None,
-                            scene: buffers.group.as_ref(),
-                            lighting: Some(lighting_group),
-                            images: None,
-                            list: append,
-                            player: self,
-                            pipelines,
-                            indices,
-                            draws,
-                            offset: *offset,
-                            slot,
-                            steps: APPEND_STEPS,
-                            sprites: None,
-                            present: listed.is_some(),
-                        };
-                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                        if let Err(error) = crate::nodes::record_optional(Some(&mut node), &mut prepare, &mut execute, "append", "append", crate::nodes::Stage::Render) {
-                            if schedule_error.is_none() {
-                                schedule_error = Some(error);
-                            }
-                        }
-                    }
-                    // the sprites among its other see-through layers: the depths of each pixel's nearest found (its
-                    // paths' and its listed fragments'), then each sprite blended into the slab between them it lies in
                     let slabs = attached.slabs.as_ref().filter(|_| *slabs);
-                    {
-                        // BS-3：没有 slabs 的视图（`None`）由驱动显式跳过，不再单独写一条分支。
-                        let mut node = slabs.map(|s| SlabsNode {
-                            layers: &s.layers,
-                            scene: buffers.group.as_ref(),
-                            slot,
-                            group: &s.groups[1],
-                            pipeline: &appends.slabs,
-                            sprites,
-                            vector: &mut gpu.vector,
-                            plan: plan.as_ref().expect("a plan: its paths', or its lists'"),
-                            statics: buffers.vector_statics(),
-                            listed: listed.as_ref(),
-                            bounds: &s.bounds,
-                            fill_layout: &gpu.fill_layout,
-                            fill_pipelines: &mut gpu.fill_pipelines,
-                            fill_error: &mut fill_error,
-                        });
-                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                        if let Err(error) = crate::nodes::record_optional(node.as_mut().map(|node| node as &mut dyn crate::nodes::PassNode), &mut prepare, &mut execute, "slabs", "slabs", crate::nodes::Stage::Render) {
-                            if schedule_error.is_none() {
-                                schedule_error = Some(error);
+                    /// 构造一个节点（可能是 `None`）并交给驱动：报数 / 跳过都由 `record_optional` 负责。
+                    macro_rules! drive {
+                        ($node:expr, $name:literal, $stage:expr) => {{
+                            let mut node = $node;
+                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                            if let Err(error) = crate::nodes::record_optional(node.as_mut().map(|node| node as &mut dyn crate::nodes::PassNode), &mut prepare, &mut execute, $name, $name, $stage) {
+                                if schedule_error.is_none() {
+                                    schedule_error = Some(error);
+                                }
                             }
+                        }};
+                    }
+                    // **BS-4**：顺序来自声明 —— 逐个 pass 构造节点并驱动。每个节点只读本帧
+                    // 算好的数据（canvas / draws / base / 光照组…），不读前面 pass 的录制结果，
+                    // 所以可以在循环里懒构造。**新增 pass = 一条声明 + 一个分支。**
+                    for decl in plan_kind {
+                        match decl.name {
+                            "shadow" => drive!(
+                                Some(ShadowNode {
+                                    shadows,
+                                    pipelines: &gpu.shadow_passes,
+                                    layers: &buffers.shadow_maps.layers,
+                                    cast,
+                                    scene: buffers.group.as_ref(),
+                                    slot,
+                                    indices,
+                                    draws,
+                                    offset: *offset,
+                                    vector: &mut gpu.vector,
+                                    statics: buffers.vector_statics(),
+                                    fill_layout: &gpu.fill_layout,
+                                    fill_pipelines: &mut gpu.fill_pipelines,
+                                    fill_error: &mut fill_error,
+                                }),
+                                "shadow",
+                                crate::nodes::Stage::Render
+                            ),
+                            "occlusion depth" => drive!(
+                                occluded.map(|(o, _)| OcclusionDepthNode {
+                                    view: &o.depth,
+                                    pipeline: &gpu.occlusion.as_ref().expect("the occlusion's passes").depth,
+                                    scene: buffers.group.as_ref(),
+                                    slot,
+                                    indices,
+                                    draws,
+                                    offset: *offset,
+                                    vector: &mut gpu.vector,
+                                    plan: plan.as_ref(),
+                                    statics: buffers.vector_statics(),
+                                    fill_layout: &gpu.fill_layout,
+                                    fill_pipelines: &mut gpu.fill_pipelines,
+                                    fill_error: &mut fill_error,
+                                }),
+                                "occlusion depth",
+                                crate::nodes::Stage::Render
+                            ),
+                            "occlusion" => drive!(
+                                occluded.map(|(o, (amount, radius))| OcclusionNode {
+                                    occlusion: gpu.occlusion.as_ref().expect("the occlusion's passes"),
+                                    occluded: o,
+                                    projection: Camera::new(&f.view).projection,
+                                    amount,
+                                    radius,
+                                }),
+                                "occlusion",
+                                crate::nodes::Stage::Compute
+                            ),
+                            "base" => drive!(
+                                Some(RasterNode {
+                                    name: "base",
+                                    canvas,
+                                    color: Some((cleared, true)),
+                                    depth: if plan.is_some() { Depth::Kept } else { Depth::Fresh },
+                                    into: base.as_ref(),
+                                    light: base_light.as_ref(),
+                                    scene: buffers.group.as_ref(),
+                                    lighting: Some(lighting_group),
+                                    images: None,
+                                    list: None,
+                                    player: self,
+                                    pipelines,
+                                    indices,
+                                    draws,
+                                    offset: *offset,
+                                    slot,
+                                    steps: if sprites.is_empty() { BASE_STEPS } else { BASE_SPRITE_STEPS },
+                                    sprites: (!sprites.is_empty()).then(|| Sprites { range: sprites, pipeline: &pipelines.sprites, group: None }),
+                                    present: rasterized || plan.is_none(),
+                                }),
+                                "base",
+                                crate::nodes::Stage::Render
+                            ),
+                            "opaque" => drive!(
+                                Some(RasterNode {
+                                    name: "opaque",
+                                    canvas,
+                                    color: Some((cleared, false)),
+                                    depth: Depth::Kept,
+                                    into: base.as_ref(),
+                                    light: base_light.as_ref(),
+                                    scene: buffers.group.as_ref(),
+                                    lighting: Some(lighting_group),
+                                    images: None,
+                                    list: None,
+                                    player: self,
+                                    pipelines,
+                                    indices,
+                                    draws,
+                                    offset: *offset,
+                                    slot,
+                                    steps: OPAQUE_STEPS,
+                                    sprites: None,
+                                    present: true,
+                                }),
+                                "opaque",
+                                crate::nodes::Stage::Render
+                            ),
+                            "append" => drive!(
+                                Some(RasterNode {
+                                    name: "append",
+                                    canvas,
+                                    color: None,
+                                    depth: Depth::Read,
+                                    into: None,
+                                    light: None,
+                                    scene: buffers.group.as_ref(),
+                                    lighting: Some(lighting_group),
+                                    images: None,
+                                    list: attached.append.as_ref().map(|(_, group)| group),
+                                    player: self,
+                                    pipelines,
+                                    indices,
+                                    draws,
+                                    offset: *offset,
+                                    slot,
+                                    steps: APPEND_STEPS,
+                                    sprites: None,
+                                    present: listed.is_some(),
+                                }),
+                                "append",
+                                crate::nodes::Stage::Render
+                            ),
+                            "slabs" => drive!(
+                                slabs.map(|s| SlabsNode {
+                                    layers: &s.layers,
+                                    scene: buffers.group.as_ref(),
+                                    slot,
+                                    group: &s.groups[1],
+                                    pipeline: &appends.slabs,
+                                    sprites,
+                                    vector: &mut gpu.vector,
+                                    plan: plan.as_ref().expect("a plan: its paths', or its lists'"),
+                                    statics: buffers.vector_statics(),
+                                    listed: listed.as_ref(),
+                                    bounds: &s.bounds,
+                                    fill_layout: &gpu.fill_layout,
+                                    fill_pipelines: &mut gpu.fill_pipelines,
+                                    fill_error: &mut fill_error,
+                                }),
+                                "slabs",
+                                crate::nodes::Stage::Render
+                            ),
+                            "composite sprites" => drive!(
+                                Some(RasterNode {
+                                    name: "composite sprites",
+                                    canvas,
+                                    color: Some((wgpu::LoadOp::Load, true)),
+                                    depth: Depth::Shared,
+                                    into: base.as_ref(),
+                                    light: base_light.as_ref(),
+                                    scene: buffers.group.as_ref(),
+                                    lighting: Some(lighting_group),
+                                    images: Some(self.image_groups.white().expect("the white image group")),
+                                    list: None,
+                                    player: self,
+                                    pipelines,
+                                    indices,
+                                    draws,
+                                    offset: *offset,
+                                    slot,
+                                    steps: COMPOSITE_STEPS,
+                                    sprites: Some(match slabs {
+                                        Some(s) => Sprites { range: sprites, pipeline: &appends.sprites, group: Some(&s.groups[0]) },
+                                        None => Sprites { range: sprites, pipeline: &pipelines.sprites, group: None },
+                                    }),
+                                    present: true,
+                                }),
+                                "composite sprites",
+                                crate::nodes::Stage::Render
+                            ),
+                            "base depth" => drive!(
+                                Some(BaseDepthNode {
+                                    vector: &mut gpu.vector,
+                                    depth: &attached.depth_only,
+                                    samples,
+                                    size: [canvas.width, canvas.height],
+                                    group: None,
+                                    k: 0,
+                                    // 非分层计划：只在有 base 时解析；分层计划：无条件（与手写路径一致）。
+                                    present: base.is_some() || layered,
+                                }),
+                                "base depth",
+                                crate::nodes::Stage::Compute
+                            ),
+                            "vector composite" => drive!(
+                                plan.as_ref().map(|plan| VectorCompositeNode {
+                                    plan,
+                                    vector: &mut gpu.vector,
+                                    statics: buffers.vector_statics(),
+                                    target,
+                                    light_out,
+                                    base: base.as_ref(),
+                                    base_light: base_light.as_ref(),
+                                    listed: listed.as_ref(),
+                                    slabs: slabs.map(|s| [&s.bounds, &s.slabs]),
+                                    maps: &buffers.shadow_maps.array,
+                                    compare: &gpu.shadow_compare,
+                                    dfg: &gpu.dfg,
+                                    linear: &gpu.linear,
+                                    cube: &cube,
+                                    occlusion,
+                                    fill_layout: &gpu.fill_layout,
+                                    fill_pipelines: &mut gpu.fill_pipelines,
+                                    fill_error: &mut fill_error,
+                                }),
+                                "vector composite",
+                                crate::nodes::Stage::Compute
+                            ),
+                            "bloom" => drive!(
+                                match (bloomed, gpu.bloom.as_ref()) {
+                                    (Some((b, glow)), Some(bloom)) => Some(BloomNode { bloom, bloomed: b, glow, tone: f.view[VIEW_LIGHTING + 6].round() as u32 }),
+                                    (Some(_), None) => panic!("the bloom's passes"),
+                                    _ => None,
+                                },
+                                "bloom",
+                                crate::nodes::Stage::Compute
+                            ),
+                            other => panic!("计划里的 pass 没有对应的节点：{other}"),
                         }
                     }
-                    // the sprites behind no other see-through layer blended into the base, depth tested against the
-                    // opaque depth kept for them (and kept again, with the samples, for the composite), and what is
-                    // fixed in the frame drawn over them; then the composite
-                    // BR-4：composite sprites 由 `record_render` 驱动（深度共享、精灵组可选）。
-                    let white = self.image_groups.white().expect("the white image group");
-                    let mut node = RasterNode {
-                        name: "composite sprites",
-                        canvas,
-                        color: Some((wgpu::LoadOp::Load, true)),
-                        depth: Depth::Shared,
-                        into: base.as_ref(),
-                        light: base_light.as_ref(),
-                        scene: buffers.group.as_ref(),
-                        lighting: Some(lighting_group),
-                        images: Some(white),
-                        list: None,
-                        player: self,
-                        pipelines,
-                        indices,
-                        draws,
-                        offset: *offset,
-                        slot,
-                        steps: COMPOSITE_STEPS,
-                        sprites: Some(match slabs {
-                            Some(s) => Sprites { range: sprites, pipeline: &appends.sprites, group: Some(&s.groups[0]) },
-                            None => Sprites { range: sprites, pipeline: &pipelines.sprites, group: None },
-                        }),
-                        present: true,
-                    };
-                    let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                    let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                    if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "composite sprites") {
-                        if schedule_error.is_none() {
-                            schedule_error = Some(error);
-                        }
-                    }
-                    // 这条分支里深度解析是无条件的（与上面的 `if base.is_some()` 不同）。
-                    let mut node = BaseDepthNode { vector: &mut gpu.vector, depth: &attached.depth_only, samples, size: [canvas.width, canvas.height], group: None, k: 0, present: true };
-                    let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                    let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                    if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "base depth") {
-                        if schedule_error.is_none() {
-                            schedule_error = Some(error);
-                        }
-                    }
-                    layered(&mut encoder, &mut gpu.vector, gpu.bloom.as_ref(), listed.as_ref(), slabs, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
                     finish_schedule(schedule, schedule_error)?;
                 }
                 Drawing::Vector(plan, groups) => {
@@ -4670,46 +4567,60 @@ impl Player {
                         crate::passes::RASTER_GROUPS,
                     );
                     let mut schedule_error: Option<crate::passes::ScheduleError> = None;
-                    // BR-4：atlas raster 由节点驱动（每组一个子 pass，中间夹该组的合成）。
-                    // 纯路径视图没有光栅对象（不起子 pass），但**这一组照样要合成** —— 所以
-                    // 节点无条件录，子 pass 的有无由 `parts_at` 按"这组有没有光栅对象"给出。
-                    {
-                        let mut node = AtlasNode {
-                            atlas: self.rasters.as_ref(),
-                            groups,
-                            plan,
-                            raster_size: plan.raster_size,
-                            player: self,
-                            // 管线族按 `(samples, 无光)` 查表 —— 纯路径视图可能还没建这一族，
-                            // 所以查表放在 `execute_at`（只有真要起图集 pass 时才发生）。
-                            pipelines: &gpu.pipelines,
-                            samples,
-                            indices,
-                            scene: buffers.group.as_ref(),
-                            lighting: &buffers.shadow_maps.group,
-                            slot,
-                            target: &canvas.color,
-                            maps: &buffers.shadow_maps.array,
-                            compare: &gpu.shadow_compare,
-                            dfg: &gpu.dfg,
-                            linear: &gpu.linear,
-                            cube: &cube,
-                            occlusion: &gpu.no_occlusion,
-                            vector: &mut gpu.vector,
-                            statics: buffers.vector_statics(),
-                            fill_layout: &gpu.fill_layout,
-                            fill_pipelines: &mut gpu.fill_pipelines,
-                            fill_error: &mut fill_error,
-                        };
-                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-                        if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "atlas raster") {
-                            if schedule_error.is_none() {
-                                schedule_error = Some(error);
+                    // **BS-4**：顺序来自声明（两张计划都按 `for decl in plan` 驱动）。
+                    for decl in crate::passes::VECTOR_PLAN {
+                        match decl.name {
+                            // BR-4：atlas raster 由节点驱动（每组一个子 pass，中间夹该组的合成）。
+                            // 纯路径视图没有光栅对象（不起子 pass），但**这一组照样要合成** —— 所以
+                            // 节点无条件录，子 pass 的有无由 `parts_at` 按"这组有没有光栅对象"给出。
+                            "atlas raster" => {
+                                let mut node = AtlasNode {
+                                    atlas: self.rasters.as_ref(),
+                                    groups,
+                                    plan,
+                                    raster_size: plan.raster_size,
+                                    player: self,
+                                    // 管线族按 `(samples, 无光)` 查表 —— 纯路径视图可能还没建这一族，
+                                    // 所以查表放在 `execute_at`（只有真要起图集 pass 时才发生）。
+                                    pipelines: &gpu.pipelines,
+                                    samples,
+                                    indices,
+                                    scene: buffers.group.as_ref(),
+                                    lighting: &buffers.shadow_maps.group,
+                                    slot,
+                                    target: &canvas.color,
+                                    maps: &buffers.shadow_maps.array,
+                                    compare: &gpu.shadow_compare,
+                                    dfg: &gpu.dfg,
+                                    linear: &gpu.linear,
+                                    cube: &cube,
+                                    occlusion: &gpu.no_occlusion,
+                                    vector: &mut gpu.vector,
+                                    statics: buffers.vector_statics(),
+                                    fill_layout: &gpu.fill_layout,
+                                    fill_pipelines: &mut gpu.fill_pipelines,
+                                    fill_error: &mut fill_error,
+                                };
+                                let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                                let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                                if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "atlas raster") {
+                                    if schedule_error.is_none() {
+                                        schedule_error = Some(error);
+                                    }
+                                }
                             }
+                            // 合成本身在 `AtlasNode::after` 里（必须与图集子 pass 交错，否则多组
+                            // 视图的合成会读到下一组的图集），这里只报数 —— 显式跳过仍写 `step(_, false)`。
+                            "vector composite" => {
+                                if let Err(error) = schedule.step("vector composite", !groups.is_empty()) {
+                                    if schedule_error.is_none() {
+                                        schedule_error = Some(error);
+                                    }
+                                }
+                            }
+                            other => panic!("计划里的 pass 没有对应的节点：{other}"),
                         }
                     }
-                    note_pass(&mut schedule, &mut schedule_error, "vector composite", !groups.is_empty());
                     finish_schedule(schedule, schedule_error)?;
                 }
             }
