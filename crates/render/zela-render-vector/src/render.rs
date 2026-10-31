@@ -652,6 +652,74 @@ impl crate::nodes::PassNode for OcclusionDepthNode<'_> {
     }
 }
 
+/// **BR-4**：投影光源的阴影 pass（节点）。
+///
+/// 一个逻辑 pass、**每盏灯一个 wgpu pass**（`passes()` = 层数）：
+/// 第 `i` 层先由栅格管线写网格深度（`execute_at(i)`），随后 `vector::encode` 用
+/// `Out::Depth` 把路径补进同一张（`after(i)`）。层数 0 时一个 wgpu pass 都不起，
+/// 但声明序的位置照记 —— 与手写路径一致。
+struct ShadowNode<'a> {
+    shadows: &'a [shadow::Shadow],
+    pipelines: &'a HashMap<usize, wgpu::RenderPipeline>,
+    layers: &'a [wgpu::TextureView],
+    cast: &'a [vector::Plan],
+    scene: Option<&'a wgpu::BindGroup>,
+    slot: [u32; 1],
+    indices: &'a wgpu::Buffer,
+    draws: &'a [Draw],
+    offset: u32,
+    vector: &'a mut vector::Vector,
+    statics: [wgpu::BindingResource<'a>; 3],
+    fill_layout: &'a wgpu::BindGroupLayout,
+    fill_pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
+    fill_error: &'a mut Option<String>,
+}
+
+impl crate::nodes::PassNode for ShadowNode<'_> {
+    fn name(&self) -> &'static str {
+        "shadow"
+    }
+
+    fn prepare(&mut self, _ctx: &mut crate::nodes::PrepareContext<'_>) {}
+
+    fn passes(&self) -> usize {
+        self.shadows.len()
+    }
+
+    fn parts_at(&self, index: usize) -> Option<crate::nodes::RenderParts<'_>> {
+        // 每个光源一张图：Clear(1.0)（标准 Z：远的更远）、Store（路径补深度要读它）。
+        Some(crate::nodes::RenderParts {
+            colors: Vec::new(),
+            depth: Some(wgpu::RenderPassDepthStencilAttachment { view: &self.layers[index], depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
+        })
+    }
+
+    fn execute_at(&self, index: usize, ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        let Some(pass) = pass.as_render() else { return };
+        let Some(pipeline) = self.pipelines.get(&self.shadows[index].light) else { return };
+        pass.set_pipeline(pipeline);
+        if let Some(group) = self.scene {
+            pass.set_bind_group(0, group, &self.slot);
+            ctx.schedule.note_bind(self.name(), "scene");
+        }
+        pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
+        for (k, draw) in self.draws.iter().enumerate() {
+            if draw.kind == Kind::Mesh && !draw.overlay && !draw.fill.is_empty() {
+                let k = self.offset + k as u32;
+                pass.draw_indexed(draw.fill.clone(), 0, k..k + 1);
+            }
+        }
+    }
+
+    fn after(&mut self, index: usize, ctx: &mut crate::nodes::PrepareContext<'_>) {
+        if let Some(plan) = self.cast.get(index) {
+            for g in 0..plan.groups.len() {
+                self.vector.encode(ctx.device, ctx.queue, ctx.encoder, plan, g, &self.statics, vector::Out::Depth(&self.layers[index]), self.fill_layout, self.fill_pipelines, self.fill_error);
+            }
+        }
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -4065,32 +4133,29 @@ impl Player {
                     );
                     let mut schedule_error: Option<crate::passes::ScheduleError> = None;
                     // 阴影是**一个**逻辑 pass（层数由数据决定，0 层也记录 —— 顺序位置固定）。
-                    note_pass(&mut schedule, &mut schedule_error, "shadow", true);
-                    // its lights' shadow maps first: its meshes' depth seen from each, then its paths' where nearer
-                    for (layer, s) in shadows.iter().enumerate() {
-                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("shadow"),
-                            color_attachments: &[],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &buffers.shadow_maps.layers[layer], depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }), stencil_ops: None }),
-                            occlusion_query_set: None,
-                            timestamp_writes: None,
-                            multiview_mask: None,
-                        });
-                        pass.set_pipeline(&gpu.shadow_passes[&s.light]);
-                        pass.set_bind_group(0, buffers.group.as_ref(), &slot);
-                        schedule.note_bind("shadow", "scene");
-                        pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-                        for (k, draw) in draws.iter().enumerate() {
-                            if draw.kind == Kind::Mesh && !draw.overlay && !draw.fill.is_empty() {
-                                let k = *offset + k as u32;
-                                pass.draw_indexed(draw.fill.clone(), 0, k..k + 1);
-                            }
-                        }
-                        drop(pass);
-                        if let Some(plan) = cast.get(layer) {
-                            let statics = buffers.vector_statics();
-                            for g in 0..plan.groups.len() {
-                                gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, vector::Out::Depth(&buffers.shadow_maps.layers[layer]), &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
+                    // BR-4：its lights' shadow maps first: its meshes' depth seen from each, then its paths' where nearer
+                    {
+                        let mut node = ShadowNode {
+                            shadows,
+                            pipelines: &gpu.shadow_passes,
+                            layers: &buffers.shadow_maps.layers,
+                            cast,
+                            scene: buffers.group.as_ref(),
+                            slot,
+                            indices,
+                            draws,
+                            offset: *offset,
+                            vector: &mut gpu.vector,
+                            statics: buffers.vector_statics(),
+                            fill_layout: &gpu.fill_layout,
+                            fill_pipelines: &mut gpu.fill_pipelines,
+                            fill_error: &mut fill_error,
+                        };
+                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                        if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "shadow") {
+                            if schedule_error.is_none() {
+                                schedule_error = Some(error);
                             }
                         }
                     }
