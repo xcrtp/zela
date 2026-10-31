@@ -189,15 +189,14 @@ fn check_declared_type(channel: &ChannelRef, value: &Value) -> Result<(), EvalEr
 /// **阶段 1（Path 迁移）**：`AnimValue::Path` 不再报"不支持读"，而是走
 /// `ze-func::layout` 的**慢路径**编码成 `Value::Bytes { ty = "zela.Path" }`。
 /// 路径是变长结构、没有 Layout ⇒ 零拷贝不适用（硬约束 4 的安全缺省）。
-fn anim_to_value(channel: &ChannelRef, value: &AnimValue) -> Result<Value, EvalError> {
+fn anim_to_value(_channel: &ChannelRef, value: &AnimValue) -> Result<Value, EvalError> {
     match value {
         AnimValue::Scalar(value) => Ok(Value::f64(*value as f64)),
         AnimValue::Vec2(value) => Ok(Value::vec2([value.x, value.y])),
         AnimValue::Vec3(value) => Ok(Value::vec3([value.x, value.y, value.z])),
-        AnimValue::Color(_) => Err(EvalError::UnsupportedValue {
-            channel: channel.clone(),
-            kind: "color",
-        }),
+        // **BT-1（BD-03）**：`Color` 现在有表达式层表示（四维向量）。此前它只能报"不支持"，
+        // 因为 `SlotType` / `Literal` / 算子都到 `Vec3` 为止。
+        AnimValue::Color(value) => Ok(Value::vec4(*value)),
         AnimValue::Path(path) => Ok(Value::Bytes(encode_path_value(path))),
     }
 }
@@ -469,20 +468,14 @@ mod tests {
         );
     }
 
-    /// **阶段 1**：`Color` 仍然没有表达式层表示（显式点名）；`Path` 已迁移为
-    /// `Bytes + zela.Path`，读端编码、写端解码，**往返一致**。
+    /// **阶段 1 / BT-1**：`Path` 迁移为 `Bytes + zela.Path`（读端编码、写端解码，
+    /// **往返一致**）；`Color` 自 BT-1 起读成四维向量（BD-03 关闭）。
     #[test]
-    fn color_is_unsupported_but_path_round_trips_through_bytes() {
+    fn color_reads_as_vec4_but_path_round_trips_through_bytes() {
         let channel = ChannelRef::new("zela.scene", "Shape.fill");
-        let err = anim_to_value(&channel, &AnimValue::Color([0.1, 0.2, 0.3, 1.0]))
-            .expect_err("Color 不支持读");
-        assert_eq!(
-            err,
-            EvalError::UnsupportedValue {
-                channel: channel.clone(),
-                kind: "color",
-            }
-        );
+        let color = anim_to_value(&channel, &AnimValue::Color([0.1, 0.2, 0.3, 1.0]))
+            .expect("Color 可读");
+        assert_eq!(color, ze_comb::Value::vec4([0.1, 0.2, 0.3, 1.0]));
 
         let points = [
             ze_notion::Vec2::new(0.0, 0.0),

@@ -28,7 +28,7 @@ pub fn monomorphizer() -> &'static MathMonomorphizer {
 
 impl ze_comb::OpResolver for MathMonomorphizer {
     fn resolve(&self, op: &OpRef, args: &[SlotType]) -> Option<TypedCall> {
-        use SlotType::{Bool, F64, Vec2, Vec3};
+        use SlotType::{Bool, F64, Vec2, Vec3, Vec4};
 
         if op.namespace != crate::LIBRARY_NAMESPACE {
             return None;
@@ -79,6 +79,11 @@ impl ze_comb::OpResolver for MathMonomorphizer {
             ("clamp", [F64, F64, F64]) => (TypedOp::F64x3ToF64(instances::clamp), F64),
             ("vec2", [F64, F64]) => (TypedOp::F64xF64ToVec2(instances::vec2_of), Vec2),
             ("vec3", [F64, F64, F64]) => (TypedOp::F64x3ToVec3(instances::vec3_of), Vec3),
+            // **BT-1**：`vec4` 构造器与 `w` 分量（其余算子暂不对 Vec4 开口）。
+            ("vec4", [F64, F64, F64, F64]) => {
+                (TypedOp::F64x4ToVec4(instances::vec4_of), Vec4)
+            }
+            ("w", [Vec4]) => (TypedOp::Vec4ToF64(instances::w_of_vec4), F64),
             ("x", [Vec2]) => (TypedOp::Vec2ToF64(instances::x_of_vec2), F64),
             ("x", [Vec3]) => (TypedOp::Vec3ToF64(instances::x_of_vec3), F64),
             ("y", [Vec2]) => (TypedOp::Vec2ToF64(instances::y_of_vec2), F64),
@@ -287,6 +292,16 @@ mod instances {
 
     pub fn vec3_of(x: f64, y: f64, z: f64) -> [f32; 3] {
         [x as f32, y as f32, z as f32]
+    }
+
+    /// **BT-1**：`vec4(r, g, b, a)`。
+    pub fn vec4_of(x: f64, y: f64, z: f64, w: f64) -> [f32; 4] {
+        [x as f32, y as f32, z as f32, w as f32]
+    }
+
+    /// **BT-1**：`w(v)`。
+    pub fn w_of_vec4(v: [f32; 4]) -> f64 {
+        f64::from(v[3])
     }
 
     pub fn x_of_vec2(v: [f32; 2]) -> f64 {

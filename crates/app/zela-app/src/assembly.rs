@@ -328,6 +328,8 @@ impl PodAssembly {
                                     ze_comb::SlotType::I64 => ze_render_ir::ShaderParamKind::I32,
                                     ze_comb::SlotType::Vec2 => ze_render_ir::ShaderParamKind::Vec2,
                                     ze_comb::SlotType::Vec3 => ze_render_ir::ShaderParamKind::Vec3,
+                                    // **BT-1**：四维出口（`rgba`）。
+                                    ze_comb::SlotType::Vec4 => ze_render_ir::ShaderParamKind::Vec4,
                                     ze_comb::SlotType::Bool => ze_render_ir::ShaderParamKind::F32,
                                 },
                                 offset: param.offset,

@@ -133,6 +133,8 @@ pub enum ShaderParamKind {
     I32,
     Vec2,
     Vec3,
+    /// **BT-1**：四维参数（`rgba`）。
+    Vec4,
     Mat4,
 }
 
@@ -142,7 +144,7 @@ impl ShaderParamKind {
         match self {
             Self::F32 | Self::I32 => 4,
             Self::Vec2 => 8,
-            Self::Vec3 | Self::Mat4 => 16,
+            Self::Vec3 | Self::Vec4 | Self::Mat4 => 16,
         }
     }
 
@@ -152,6 +154,7 @@ impl ShaderParamKind {
             Self::F32 | Self::I32 => 4,
             Self::Vec2 => 8,
             Self::Vec3 => 12,
+            Self::Vec4 => 16,
             Self::Mat4 => 64,
         }
     }
@@ -238,6 +241,15 @@ mod tests {
     fn default_paint_has_no_feature_bits() {
         assert_eq!(PathOptions::default().feature_bits(), 0);
         assert_eq!(PathOptions::feature_names(0), "无");
+    }
+
+    /// **BT-1**：四维参数的 std140 对齐 / 大小（与 `Vec3` 同对齐、比它多 4 字节）。
+    #[test]
+    fn vec4_param_is_std140_aligned() {
+        assert_eq!(ShaderParamKind::Vec4.align(), 16);
+        assert_eq!(ShaderParamKind::Vec4.size(), 16);
+        assert_eq!(ShaderParamKind::Vec3.align(), 16);
+        assert_eq!(ShaderParamKind::Vec3.size(), 12);
     }
 
     /// 每个字段各自对应一位，且名字顺序固定（可 diff）。

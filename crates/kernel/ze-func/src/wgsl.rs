@@ -74,6 +74,9 @@ impl WgslBackend for MathWgsl {
             "clamp" => format!("clamp({}, {}, {})", args[0], args[1], args[2]),
             "vec2" => format!("vec2<f32>({}, {})", args[0], args[1]),
             "vec3" => format!("vec3<f32>({}, {}, {})", args[0], args[1], args[2]),
+            // **BT-1**：四维构造器与第四分量。
+            "vec4" => format!("vec4<f32>({}, {}, {}, {})", args[0], args[1], args[2], args[3]),
+            "w" => format!("({}).w", args[0]),
             "x" => format!("({}).x", args[0]),
             "y" => format!("({}).y", args[0]),
             "z" => format!("({}).z", args[0]),
@@ -235,6 +238,9 @@ mod tests {
                         }
                         TypeSpec::Struct { name, .. } if *name == "zela.Vec2" => SlotType::Vec2,
                         TypeSpec::Struct { name, .. } if *name == "zela.Vec3" => SlotType::Vec3,
+                        // **BT-1**：`vec4` / `w` 的签名用具体类型（不是 `Vector` 变量），
+                        // 所以这里只要认它，门禁就会覆盖这两个新算子。
+                        TypeSpec::Struct { name, .. } if *name == "zela.Vec4" => SlotType::Vec4,
                         _ => return None,
                     };
                     types.push(ty);

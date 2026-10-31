@@ -211,7 +211,7 @@ fn sin_samples() -> Vec<ze_notion::Vec2> {
 }
 
 /// 函子库身份（与 `ze_pod_func::LIBRARY_VERSION` 同步；作品层不依赖 Pod 层）。
-const MATH_LIBRARY_VERSION: &str = "24";
+const MATH_LIBRARY_VERSION: &str = "25";
 
 fn library() -> LibraryRef {
     LibraryRef {

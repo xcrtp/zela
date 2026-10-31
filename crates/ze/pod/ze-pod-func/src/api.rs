@@ -36,6 +36,8 @@ pub enum ChannelTypeSpec {
     Bool,
     Vec2,
     Vec3,
+    /// **BT-1**：四维（`rgba`）。
+    Vec4,
 }
 
 /// 一条**通道引用**（提案 #6）：`namespace` + `name` + `ty` 是数据。
@@ -280,6 +282,16 @@ pub struct Vec3OfSpec {
     pub x: Handle,
     pub y: Handle,
     pub z: Handle,
+}
+
+/// **BT-1**：`vec4(r, g, b, a)` —— 四个标量合成一个 `Vec4`（`a` 是透明度）。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.Vec4Of")]
+pub struct Vec4OfSpec {
+    pub x: Handle,
+    pub y: Handle,
+    pub z: Handle,
+    pub w: Handle,
 }
 
 /// `x(v)` / `y(v)` / `z(v)`：向量分量访问（`z` 对 `Vec2` 显式报错）。
@@ -616,7 +628,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "24",
+    version = "25",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -675,6 +687,9 @@ pub struct MathApi<'a> {
     /// `vec3(x, y, z)`：三个标量合成 `Vec3`。
     pub vec3: fn(&'a dyn Pod, spec: Vec3OfSpec) -> Handle,
 
+    /// **BT-1**：`vec4(r, g, b, a)`：四个标量合成 `Vec4`（`a` 是透明度）。
+    pub vec4: fn(&'a dyn Pod, spec: Vec4OfSpec) -> Handle,
+
     /// `x(v)`：向量 x 分量。
     pub x: fn(&'a dyn Pod, spec: ComponentSpec) -> Handle,
 
@@ -683,6 +698,9 @@ pub struct MathApi<'a> {
 
     /// `z(v)`：向量 z 分量（`Vec2` 上显式报错）。
     pub z: fn(&'a dyn Pod, spec: ComponentSpec) -> Handle,
+
+    /// **BT-1**：`w(v)`：`Vec4` 的第四分量（其余维度上显式报错）。
+    pub w: fn(&'a dyn Pod, spec: ComponentSpec) -> Handle,
 
     /// `rotate3(v, axis, angle)`：罗德里格斯旋转（`Curve::Orbit` 的算子化形态）。
     pub rotate3: fn(&'a dyn Pod, spec: Rotate3Spec) -> Handle,
@@ -925,9 +943,9 @@ pub struct MathApi<'a> {
 /// **加算子的代价（实测）**：新增算子必然改 `signatures()` ⇒ 必须递增 version ⇒
 /// `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**（像素不变）。第 BB 批
 /// 因此把 28 个算子**一次**加完、只 bump 一次（`@21 → @22`），而不是分五批 bump 五次。
-pub const MATH_API_VERSION: &str = "24";
+pub const MATH_API_VERSION: &str = "25";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 5_434_256_126_357_669_687;
+pub const MATH_API_FINGERPRINT: u64 = 4_642_708_175_479_784_670;
 
 /// **糖层能力**（第 BB 批，阶段 4）：装配期展开成 `zela.math` 的 core 算子组合。
 ///

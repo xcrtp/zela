@@ -154,6 +154,7 @@ fn literal_to_value(literal: &Literal) -> Option<Value> {
         Literal::Text(value) => Value::text(value.clone()),
         Literal::Vec2(value) => Value::vec2(*value),
         Literal::Vec3(value) => Value::vec3(*value),
+        Literal::Vec4(value) => Value::vec4(*value),
     })
 }
 
@@ -168,8 +169,11 @@ fn value_to_literal(value: &Value) -> Option<Literal> {
                 Literal::Vec2(value)
             } else if let Some(value) = scalar.as_vec3() {
                 Literal::Vec3(value)
+            } else if let Some(value) = scalar.as_vec4() {
+                // **BT-1**：`Vec4` 现在有字面量形态（可逆）。
+                Literal::Vec4(value)
             } else {
-                // `Vec4` / `F32` 标量等尚无字面量形态 ⇒ 显式拒绝（不静默改类型）。
+                // `F32` 标量等尚无字面量形态 ⇒ 显式拒绝（不静默改类型）。
                 return None;
             }
         }

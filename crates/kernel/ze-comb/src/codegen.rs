@@ -158,6 +158,7 @@ pub fn wgsl_type(ty: SlotType) -> &'static str {
         SlotType::Bool => "bool",
         SlotType::Vec2 => "vec2<f32>",
         SlotType::Vec3 => "vec3<f32>",
+        SlotType::Vec4 => "vec4<f32>",
     }
 }
 
@@ -295,6 +296,13 @@ fn literal(value: &Literal) -> Result<(String, SlotType), CodegenError> {
             finite_f32(f64::from(*y))?,
             finite_f32(f64::from(*z))?
         ),
+        Literal::Vec4([x, y, z, w]) => format!(
+            "vec4<f32>({}, {}, {}, {})",
+            finite_f32(f64::from(*x))?,
+            finite_f32(f64::from(*y))?,
+            finite_f32(f64::from(*z))?,
+            finite_f32(f64::from(*w))?
+        ),
         Literal::Text(text) => {
             return Err(CodegenError::UnsupportedLiteral {
                 value: format!("text:{text}"),
@@ -322,11 +330,12 @@ fn slot_of(value: &Literal) -> SlotType {
         Literal::Bool(_) => SlotType::Bool,
         Literal::Vec2(_) => SlotType::Vec2,
         Literal::Vec3(_) => SlotType::Vec3,
+        Literal::Vec4(_) => SlotType::Vec4,
         Literal::Text(_) => SlotType::F64, // 不可达：`literal` 已显式拒绝
     }
 }
 
-/// `ChannelType` → 槽类型；不能进 WGSL 的组合（`Vec4` / `Bytes` / `Unknown`）⇒ `None`。
+/// `ChannelType` → 槽类型；不能进 WGSL 的组合（`Bytes` / `Unknown`）⇒ `None`。
 pub fn slot_of_channel(ty: ChannelType) -> Option<SlotType> {
     match ty {
         ChannelType::Number => Some(SlotType::F64),
@@ -334,7 +343,8 @@ pub fn slot_of_channel(ty: ChannelType) -> Option<SlotType> {
         ChannelType::Bool => Some(SlotType::Bool),
         ChannelType::Vec2 => Some(SlotType::Vec2),
         ChannelType::Vec3 => Some(SlotType::Vec3),
-        ChannelType::Vec4 | ChannelType::Bytes | ChannelType::Unknown => None,
+        ChannelType::Vec4 => Some(SlotType::Vec4),
+        ChannelType::Bytes | ChannelType::Unknown => None,
     }
 }
 
@@ -479,7 +489,8 @@ mod tests {
     fn channel_types_map_to_slots() {
         assert_eq!(slot_of_channel(ChannelType::Number), Some(SlotType::F64));
         assert_eq!(slot_of_channel(ChannelType::Vec3), Some(SlotType::Vec3));
-        assert_eq!(slot_of_channel(ChannelType::Vec4), None);
+        // **BT-1**：`Vec4` 现在能进 WGSL（此前是 `None`）。
+        assert_eq!(slot_of_channel(ChannelType::Vec4), Some(SlotType::Vec4));
         assert_eq!(slot_of_channel(ChannelType::Bytes), None);
         assert_eq!(slot_of_channel(ChannelType::Unknown), None);
     }

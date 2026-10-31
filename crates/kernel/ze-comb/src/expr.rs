@@ -190,6 +190,8 @@ pub enum Literal {
     Text(String),
     Vec2([f32; 2]),
     Vec3([f32; 3]),
+    /// **BT-1**：四维字面量（`rgba`）。
+    Vec4([f32; 4]),
 }
 
 impl From<f32> for Literal {
@@ -246,6 +248,12 @@ impl From<[f32; 3]> for Literal {
     }
 }
 
+impl From<[f32; 4]> for Literal {
+    fn from(value: [f32; 4]) -> Self {
+        Literal::Vec4(value)
+    }
+}
+
 impl Literal {
     /// 实数标量视图（`F32` / `F64` / `I32`）。
     ///
@@ -259,7 +267,8 @@ impl Literal {
             | Literal::Bool(_)
             | Literal::Text(_)
             | Literal::Vec2(_)
-            | Literal::Vec3(_) => None,
+            | Literal::Vec3(_)
+            | Literal::Vec4(_) => None,
         }
     }
 }

@@ -34,7 +34,7 @@ use crate::api::{
     BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
     PlotSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
     ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
-    Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec,
+    Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec, Vec4OfSpec,
     // 第 BB 批（算子扩充）：WGSL 标准库算子
     AbsSpec, AcosSpec, AsinSpec, Atan2Spec, AtanSpec, CeilSpec, CrossSpec, DegreesSpec, DotSpec,
     Exp2Spec, ExpSpec, FaceforwardSpec, FloorSpec, InverseSqrtSpec, Log2Spec, LogSpec, MaxSpec,
@@ -72,7 +72,7 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// `23`：**动画层阶段 1** 新增 `plot_x`（逐元素自变量通道）与 `plot`（装配期采样成折线）。
 /// `24`：**动画层阶段 2** 方法目录新增 `Reveal.point_at` / `Reveal.tangent_at`
 /// （按归一化弧长取点 / 切线；`METHOD_SIGNATURES` 变 ⇒ 版本必须递增）。
-pub const LIBRARY_VERSION: &str = "24";
+pub const LIBRARY_VERSION: &str = "25";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -225,6 +225,13 @@ impl ExprPod {
             HANDLE,
             vec3_ctor,
         );
+        // **BT-1**：四维构造器与第四分量。
+        registry.register_fn1_named::<Vec4OfSpec, Handle>(
+            "zela.math::vec4",
+            "zela.math.Vec4Of",
+            HANDLE,
+            vec4_ctor,
+        );
         registry.register_fn1_named::<ComponentSpec, Handle>(
             "zela.math::x",
             "zela.math.Component",
@@ -242,6 +249,12 @@ impl ExprPod {
             "zela.math.Component",
             HANDLE,
             component_z_ctor,
+        );
+        registry.register_fn1_named::<ComponentSpec, Handle>(
+            "zela.math::w",
+            "zela.math.Component",
+            HANDLE,
+            component_w_ctor,
         );
         registry.register_fn1_named::<Rotate3Spec, Handle>(
             "zela.math::rotate3",
@@ -610,6 +623,9 @@ impl Pod for ExprPod {
             "clamp" => Box::new(clamp_ctor(self, arg::<ClampSpec>(args, 0)?.clone())),
             "vec2" => Box::new(vec2_ctor(self, arg::<Vec2OfSpec>(args, 0)?.clone())),
             "vec3" => Box::new(vec3_ctor(self, arg::<Vec3OfSpec>(args, 0)?.clone())),
+            // **BT-1**：四维构造器与第四分量（名派发与注册表同源）。
+            "vec4" => Box::new(vec4_ctor(self, arg::<Vec4OfSpec>(args, 0)?.clone())),
+            "w" => Box::new(component_w_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
             "x" => Box::new(component_x_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
             "y" => Box::new(component_y_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
             "z" => Box::new(component_z_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
@@ -1037,6 +1053,11 @@ fn vec3_ctor(pod: &dyn Pod, spec: Vec3OfSpec) -> Handle {
     call3(pod, "vec3", spec.x, spec.y, spec.z)
 }
 
+/// **BT-1**：`vec4(r, g, b, a)`。
+fn vec4_ctor(pod: &dyn Pod, spec: Vec4OfSpec) -> Handle {
+    call_args(pod, "vec4", &[spec.x, spec.y, spec.z, spec.w])
+}
+
 fn component_x_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
     call1(pod, "x", spec.v)
 }
@@ -1047,6 +1068,11 @@ fn component_y_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
 
 fn component_z_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
     call1(pod, "z", spec.v)
+}
+
+/// **BT-1**：`w(v)`。
+fn component_w_ctor(pod: &dyn Pod, spec: ComponentSpec) -> Handle {
+    call1(pod, "w", spec.v)
 }
 
 fn rotate3_ctor(pod: &dyn Pod, spec: Rotate3Spec) -> Handle {
@@ -1282,6 +1308,8 @@ fn channel_type_of(ty: ChannelTypeSpec) -> ChannelType {
         ChannelTypeSpec::Bool => ChannelType::Bool,
         ChannelTypeSpec::Vec2 => ChannelType::Vec2,
         ChannelTypeSpec::Vec3 => ChannelType::Vec3,
+        // **BT-1**：四维（`rgba`）。
+        ChannelTypeSpec::Vec4 => ChannelType::Vec4,
     }
 }
 
@@ -1393,6 +1421,8 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
             ze_comb::SlotType::I64 => (ze_comb::SlotType::I64, 4, 4),
             ze_comb::SlotType::Vec2 => (ze_comb::SlotType::Vec2, 8, 8),
             ze_comb::SlotType::Vec3 => (ze_comb::SlotType::Vec3, 16, 12),
+            // **BT-1**：四维参数（std140：对齐 16、大小 16）。
+            ze_comb::SlotType::Vec4 => (ze_comb::SlotType::Vec4, 16, 16),
             ze_comb::SlotType::Bool => {
                 push_binding_error(this, "着色 codegen 不支持 Bool 参数（uniform 里没有 bool）".to_string());
                 return;

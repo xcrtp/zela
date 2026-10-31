@@ -407,6 +407,8 @@ fn channel_type_of_spec(ty: crate::api::ChannelTypeSpec) -> ChannelType {
         ChannelTypeSpec::Bool => ChannelType::Bool,
         ChannelTypeSpec::Vec2 => ChannelType::Vec2,
         ChannelTypeSpec::Vec3 => ChannelType::Vec3,
+        // **BT-1**：四维通道（`Color` 的 `rgba`）。
+        ChannelTypeSpec::Vec4 => ChannelType::Vec4,
     }
 }
 
@@ -586,6 +588,8 @@ fn literal_type(value: &Literal) -> Result<ChannelType, TypeError> {
         Literal::Bool(_) => Ok(ChannelType::Bool),
         Literal::Vec2(_) => Ok(ChannelType::Vec2),
         Literal::Vec3(_) => Ok(ChannelType::Vec3),
+        // **BT-1**：四维字面量有类型了（此前只能靠表达式构造）。
+        Literal::Vec4(_) => Ok(ChannelType::Vec4),
         Literal::Text(_) => Err(TypeError::new(
             "文本字面量不能作为动画值（没有通道接受 string）",
         )),

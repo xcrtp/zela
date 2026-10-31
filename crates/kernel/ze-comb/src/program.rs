@@ -1032,6 +1032,7 @@ pub(crate) fn literal_value(literal: &Literal) -> Value {
         Literal::Text(value) => Value::text(value.clone()),
         Literal::Vec2(value) => Value::vec2(*value),
         Literal::Vec3(value) => Value::vec3(*value),
+        Literal::Vec4(value) => Value::vec4(*value),
     }
 }
 

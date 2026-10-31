@@ -252,6 +252,27 @@ pub fn vec3(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     ]))
 }
 
+/// **BT-1**：`vec4(r, g, b, a)` —— 四个标量合成 `Vec4`（`a` 是透明度）。
+pub fn vec4(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    Ok(Value::vec4([
+        number(op, args, 0)? as f32,
+        number(op, args, 1)? as f32,
+        number(op, args, 2)? as f32,
+        number(op, args, 3)? as f32,
+    ]))
+}
+
+/// **BT-1**：`w(v)` —— `Vec4` 的第四分量。
+///
+/// 只认 `Vec4`（签名 `W_VEC4` 也只声明了这一种）：`Vec2` / `Vec3` 上调用是显式错误，
+/// 与 `z(Vec2)` 同口径，不做隐式补零。
+pub fn w(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+    match args.first().and_then(Value::as_vec4) {
+        Some(v) => Ok(Value::f64(f64::from(v[3]))),
+        None => Err(EvalError::op(op, "第 0 个实参不是 Vec4（w 只取四维向量的分量）")),
+    }
+}
+
 /// 分量访问的公共实现（`x` / `y` / `z` 只差 `index`）。
 fn component(op: &OpRef, args: &[Value], index: usize) -> Result<Value, EvalError> {
     if let Some(v) = args.first().and_then(Value::as_vec2) {

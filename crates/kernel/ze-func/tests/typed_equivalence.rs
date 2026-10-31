@@ -66,6 +66,11 @@ fn v3(x: f32, y: f32, z: f32) -> Expr {
     pure([x, y, z])
 }
 
+/// **BT-1**：四维字面量。
+fn v4(x: f32, y: f32, z: f32, w: f32) -> Expr {
+    pure([x, y, z, w])
+}
+
 #[test]
 fn every_operator_matches_across_evaluators() {
     let cases: Vec<(&str, Expr)> = vec![
@@ -177,6 +182,10 @@ fn every_operator_matches_across_evaluators() {
         ("and", call("and", vec![pure(true), pure(false)])),
         ("or", call("or", vec![pure(true), pure(false)])),
         ("not", call("not", vec![pure(true)])),
+        // ─── BT-1：四维出口（Vec4）三路同源 ────────────────────────────────
+        ("vec4", call("vec4", vec![pure(0.25), pure(0.5), pure(0.75), pure(1.0)])),
+        ("w/vec4", call("w", vec![v4(0.1, 0.2, 0.3, 0.4)])),
+        ("vec4/literal", v4(0.5, 0.25, 0.125, 1.0)),
     ];
     for (label, expr) in cases {
         assert_same(&expr, label);
@@ -244,4 +253,22 @@ fn root_type_is_static() {
 
     let program = TypedProgram::compile(&pure(true), ze_func::monomorphizer()).unwrap();
     assert_eq!(program.root_type(), SlotType::Bool);
+
+    // **BT-1**：四维也走快路径（此前 `root_type` 只能是 Vec3 及以下）。
+    let program = TypedProgram::compile(&v4(0.0, 0.0, 0.0, 1.0), ze_func::monomorphizer()).unwrap();
+    assert_eq!(program.root_type(), SlotType::Vec4);
+    let program =
+        TypedProgram::compile(&call("vec4", vec![pure(0.0), pure(0.0), pure(0.0), pure(1.0)]),
+            ze_func::monomorphizer())
+        .unwrap();
+    assert_eq!(program.root_type(), SlotType::Vec4);
+}
+
+/// **BT-1**：`Literal::Vec4` 进出 payload（序列化往返）逐位一致。
+#[test]
+fn vec4_literal_round_trips_through_json() {
+    let literal = Literal::Vec4([0.25, 0.5, 0.75, 1.0]);
+    let text = serde_json::to_string(&literal).expect("可序列化");
+    let back: Literal = serde_json::from_str(&text).expect("可反序列化");
+    assert_eq!(back, literal);
 }

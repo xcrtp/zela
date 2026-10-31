@@ -51,6 +51,10 @@ pub fn channel_type_variant(spec: &ze_pod_core::TypeSpec) -> &'static str {
         TypeSpec::Struct {
             name: "zela.Vec3", ..
         } => "Vec3",
+        // **BT-1**：四维类型（`rgba`）。
+        TypeSpec::Struct {
+            name: "zela.Vec4", ..
+        } => "Vec4",
         _ => "Unknown",
     }
 }

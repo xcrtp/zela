@@ -37,10 +37,12 @@ pub enum SlotType {
     Bool,
     Vec2,
     Vec3,
+    /// **BT-1**：四维向量（`rgba`）。此前 `Vec4` 值只能走慢路径。
+    Vec4,
 }
 
 impl SlotType {
-    /// 运行期值 → 槽类型（`Bytes` / `Text` / `Iter` / `Stream` / `Vec4` ⇒ `None`，走慢路径）。
+    /// 运行期值 → 槽类型（`Bytes` / `Text` / `Iter` / `Stream` ⇒ `None`，走慢路径）。
     pub fn of(value: &Value) -> Option<Self> {
         match value {
             Value::Scalar(scalar) => match (scalar.ty(), scalar.dim()) {
@@ -48,6 +50,7 @@ impl SlotType {
                 (ScalarKind::I64, 1) => Some(Self::I64),
                 (ScalarKind::F32, 2) => Some(Self::Vec2),
                 (ScalarKind::F32, 3) => Some(Self::Vec3),
+                (ScalarKind::F32, 4) => Some(Self::Vec4),
                 _ => None,
             },
             Value::Bool(_) => Some(Self::Bool),
@@ -63,7 +66,8 @@ impl SlotType {
             ChannelType::Bool => Some(Self::Bool),
             ChannelType::Vec2 => Some(Self::Vec2),
             ChannelType::Vec3 => Some(Self::Vec3),
-            ChannelType::Unknown | ChannelType::Vec4 | ChannelType::Bytes => None,
+            ChannelType::Vec4 => Some(Self::Vec4),
+            ChannelType::Unknown | ChannelType::Bytes => None,
         }
     }
 
@@ -75,6 +79,7 @@ impl SlotType {
             Self::Bool => "bool",
             Self::Vec2 => "vec2",
             Self::Vec3 => "vec3",
+            Self::Vec4 => "vec4",
         }
     }
 }
@@ -94,6 +99,7 @@ pub struct SlotLayout {
     pub bool: u32,
     pub vec2: u32,
     pub vec3: u32,
+    pub vec4: u32,
 }
 
 /// 按类型分区的值池（SoA）。
@@ -106,6 +112,7 @@ pub struct Slots {
     bools: Vec<bool>,
     vec2: Vec<[f32; 2]>,
     vec3: Vec<[f32; 3]>,
+    vec4: Vec<[f32; 4]>,
 }
 
 impl Slots {
@@ -116,6 +123,7 @@ impl Slots {
             bools: vec![false; layout.bool as usize],
             vec2: vec![[0.0; 2]; layout.vec2 as usize],
             vec3: vec![[0.0; 3]; layout.vec3 as usize],
+            vec4: vec![[0.0; 4]; layout.vec4 as usize],
         }
     }
 
@@ -126,6 +134,7 @@ impl Slots {
             SlotType::Bool => Value::Bool(self.bools[root.index as usize]),
             SlotType::Vec2 => Value::vec2(self.vec2[root.index as usize]),
             SlotType::Vec3 => Value::vec3(self.vec3[root.index as usize]),
+            SlotType::Vec4 => Value::vec4(self.vec4[root.index as usize]),
         }
     }
 }
@@ -172,6 +181,10 @@ pub enum TypedOp {
     /// `faceforward`：三个同维向量。
     Vec2x3ToVec2(fn([f32; 2], [f32; 2], [f32; 2]) -> [f32; 2]),
     Vec3x3ToVec3(fn([f32; 3], [f32; 3], [f32; 3]) -> [f32; 3]),
+    /// **BT-1**：`vec4(r, g, b, a)` 构造器。
+    F64x4ToVec4(fn(f64, f64, f64, f64) -> [f32; 4]),
+    /// **BT-1**：`w(v)` 取第四分量（与 `x` / `y` / `z` 同形）。
+    Vec4ToF64(fn([f32; 4]) -> f64),
 }
 
 impl TypedOp {
@@ -351,6 +364,17 @@ impl TypedOp {
                     slots.vec3[args[2].index as usize],
                 );
             }
+            Self::F64x4ToVec4(f) => {
+                slots.vec4[out.index as usize] = f(
+                    slots.f64[args[0].index as usize],
+                    slots.f64[args[1].index as usize],
+                    slots.f64[args[2].index as usize],
+                    slots.f64[args[3].index as usize],
+                );
+            }
+            Self::Vec4ToF64(f) => {
+                slots.f64[out.index as usize] = f(slots.vec4[args[0].index as usize]);
+            }
         }
     }
 }
@@ -379,6 +403,8 @@ pub enum TypedStep {
     ConstBool(SlotRef, bool),
     ConstVec2(SlotRef, [f32; 2]),
     ConstVec3(SlotRef, [f32; 3]),
+    /// **BT-1**：四维字面量（`Literal::Vec4`）。
+    ConstVec4(SlotRef, [f32; 4]),
     Channel(SlotRef, ChannelRef),
     Call {
         out: SlotRef,
@@ -399,7 +425,8 @@ impl TypedProgram {
     /// 尝试把表达式编译成单态程序；任何一环不支持 ⇒ `None`（调用方回落）。
     ///
     /// 不支持（本阶段）：`Read` / `Method` / `Select` / `NatRec` 等非逐点节点、
-    /// 类型未知的通道、`Bytes` / `Text` / `Iter` / `Stream` / `Vec4` 值。
+    /// 类型未知的通道、`Bytes` / `Text` / `Iter` / `Stream` 值。
+    /// **BT-1** 起 `Vec4` 也走快路径。
     pub fn compile(expr: &Expr, resolver: &dyn OpResolver) -> Option<Self> {
         let defs = crate::expr::definitions(expr);
         let mut builder = Builder {
@@ -427,6 +454,7 @@ impl TypedProgram {
                 TypedStep::ConstBool(out, value) => slots.bools[out.index as usize] = *value,
                 TypedStep::ConstVec2(out, value) => slots.vec2[out.index as usize] = *value,
                 TypedStep::ConstVec3(out, value) => slots.vec3[out.index as usize] = *value,
+                TypedStep::ConstVec4(out, value) => slots.vec4[out.index as usize] = *value,
                 TypedStep::Channel(out, channel) => {
                     let value = mono.read(channel)?;
                     store(&mut slots, *out, channel, &value)?;
@@ -486,6 +514,10 @@ fn store(
             Some(value) => slots.vec3[out.index as usize] = value,
             None => return Err(mismatched(value)),
         },
+        SlotType::Vec4 => match value.as_vec4() {
+            Some(value) => slots.vec4[out.index as usize] = value,
+            None => return Err(mismatched(value)),
+        },
     }
     Ok(())
 }
@@ -506,6 +538,7 @@ impl<'a> Builder<'a> {
             SlotType::Bool => &mut self.layout.bool,
             SlotType::Vec2 => &mut self.layout.vec2,
             SlotType::Vec3 => &mut self.layout.vec3,
+            SlotType::Vec4 => &mut self.layout.vec4,
         };
         let index = *counter;
         *counter += 1;
@@ -584,6 +617,10 @@ impl<'a> Builder<'a> {
             Literal::Vec3(value) => {
                 let out = self.alloc(SlotType::Vec3);
                 (out, TypedStep::ConstVec3(out, *value))
+            }
+            Literal::Vec4(value) => {
+                let out = self.alloc(SlotType::Vec4);
+                (out, TypedStep::ConstVec4(out, *value))
             }
             // 文本是 `Bytes + zela.Text`（阶段 2）：没有专用槽 ⇒ 回落。
             Literal::Text(_) => return None,

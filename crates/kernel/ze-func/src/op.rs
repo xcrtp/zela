@@ -111,6 +111,12 @@ const VEC3: &TypeSpec = &TypeSpec::Struct {
     layout: None,
     fields: &[],
 };
+/// **BT-1**：四维向量（`rgba`）。
+const VEC4: &TypeSpec = &TypeSpec::Struct {
+    name: "zela.Vec4",
+    layout: None,
+    fields: &[],
+};
 
 /// `mix(a, b, t)`：`(T, T, F64) → T`，`T ∈ Num | Vector`。
 const MIX_NUM: OpSig = OpSig {
@@ -144,6 +150,23 @@ const TO_VEC2: OpSig = OpSig {
 const TO_VEC3: OpSig = OpSig {
     params: &[F64, F64, F64],
     ret: VEC3,
+    vars: NO_VARS,
+    variadic: false,
+};
+/// **BT-1**：`vec4(r, g, b, a)`（显式构造，不做隐式提升）。
+const TO_VEC4: OpSig = OpSig {
+    params: &[F64, F64, F64, F64],
+    ret: VEC4,
+    vars: NO_VARS,
+    variadic: false,
+};
+/// **BT-1**：`w(v)` —— 四维向量的第四分量。
+///
+/// 不复用 [`COMPONENT`] 的 `VEC_A`：那会把 `x` / `y` / `z` 一并放宽到 `Vec4`，
+/// 本批不需要（也不在本批的验证范围内）。
+const W_VEC4: OpSig = OpSig {
+    params: &[VEC4],
+    ret: F64,
     vars: NO_VARS,
     variadic: false,
 };
@@ -410,6 +433,9 @@ math_ops! {
     clamp: "zela.math.Clamp", [CLAMP], 9, 9;
     vec2: "zela.math.Vec2Of", [TO_VEC2], 9, 9;
     vec3: "zela.math.Vec3Of", [TO_VEC3], 9, 9;
+    // ─── BT-1：四维出口（Vec4）──────────────────────────────────────────
+    vec4: "zela.math.Vec4Of", [TO_VEC4], 25, 25;
+    w: "zela.math.Component", [W_VEC4], 25, 25;
     x: "zela.math.Component", [COMPONENT], 9, 9;
     y: "zela.math.Component", [COMPONENT], 9, 9;
     z: "zela.math.Component", [COMPONENT], 9, 9;
