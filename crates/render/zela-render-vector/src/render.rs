@@ -329,7 +329,7 @@ impl crate::nodes::PassNode for BloomNode<'_> {
         self.bloom.write_params(ctx.queue, self.bloomed, self.glow, self.tone);
     }
 
-    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+    fn execute(&self, _ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
         if let crate::nodes::AnyPass::Compute(pass) = pass {
             self.bloom.record(pass, self.bloomed);
         }
@@ -355,7 +355,7 @@ impl crate::nodes::PassNode for OcclusionNode<'_> {
             .write_params(ctx.queue, self.occluded, &self.projection, self.amount, self.radius);
     }
 
-    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+    fn execute(&self, _ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
         if let crate::nodes::AnyPass::Compute(pass) = pass {
             self.occlusion.record(pass, self.occluded);
         }
@@ -386,7 +386,7 @@ impl crate::nodes::PassNode for BaseDepthNode<'_> {
         self.k = k;
     }
 
-    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+    fn execute(&self, _ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
         if let crate::nodes::AnyPass::Compute(pass) = pass {
             self.vector.record_depth(
                 pass,
@@ -425,9 +425,63 @@ impl crate::nodes::PassNode for EnvironmentNode<'_> {
         self.prepared = Some(self.prefilter.prepare(ctx.device, ctx.queue, self.env));
     }
 
-    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+    fn execute(&self, _ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
         if let crate::nodes::AnyPass::Compute(pass) = pass {
             self.prefilter.record(pass, self.prepared.as_ref().expect("environment prepare"));
+        }
+    }
+}
+
+/// **BR-4**：`base` 节点 —— 第一个由 [`crate::nodes::record_render`] 驱动的 render pass。
+///
+/// 附件由 [`Canvas::parts`] 给出（与手写路径**同一个函数**，所以 MSAA / 深度 / MRT 的
+/// 形状不可能分叉）；绘制与绑定逐行来自原手写路径，因此像素不变。
+struct BaseNode<'a> {
+    canvas: &'a Canvas,
+    color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>,
+    depth: Depth,
+    base: Option<&'a wgpu::TextureView>,
+    base_light: Option<&'a wgpu::TextureView>,
+    player: &'a Player,
+    pipelines: &'a Pipelines,
+    indices: &'a wgpu::Buffer,
+    draws: &'a [Draw],
+    offset: u32,
+    sprites: &'a Range<u32>,
+    slot: [u32; 1],
+    scene: Option<&'a wgpu::BindGroup>,
+    lighting: &'a wgpu::BindGroup,
+}
+
+impl crate::nodes::PassNode for BaseNode<'_> {
+    fn name(&self) -> &'static str {
+        "base"
+    }
+
+    fn prepare(&mut self, _ctx: &mut crate::nodes::PrepareContext<'_>) {}
+
+    fn parts(&self) -> Option<crate::nodes::RenderParts<'_>> {
+        Some(self.canvas.parts(self.color, self.depth, self.base, self.base_light).0)
+    }
+
+    fn execute(&self, ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        let Some(pass) = pass.as_render() else { return };
+        if self.base_light.is_some() {
+            // Ordinary paint contributes no lit coverage, even before this pass's first material mesh.
+            pass.set_blend_constant(wgpu::Color::TRANSPARENT);
+        }
+        pass.set_bind_group(0, self.scene, &self.slot);
+        ctx.schedule.note_bind("base", "scene");
+        pass.set_bind_group(3, self.lighting, &[]);
+        ctx.schedule.note_bind("base", "lighting");
+        if self.sprites.is_empty() {
+            self.player.draw(pass, self.pipelines, self.indices, self.draws, self.offset, Phase::All);
+        } else {
+            // the sprites over everything else but what is fixed in the frame
+            self.player.draw(pass, self.pipelines, self.indices, self.draws, self.offset, Phase::Opaque);
+            pass.set_pipeline(&self.pipelines.sprites);
+            pass.draw(6 * self.sprites.start..6 * self.sprites.end, 0..1);
+            self.player.draw(pass, self.pipelines, self.indices, self.draws, self.offset, Phase::Overlay);
         }
     }
 }
@@ -2720,7 +2774,30 @@ impl Canvas {
     /// kept, the samples stay on tile — or its samples kept; none for the appends, which only read
     /// depth.
     /// (`light`: a view with lit meshes keeps their light apart, in this target and its samples: `blend.wgsl`'s `Base`.)
-    fn pass<'e>(&self, encoder: &'e mut wgpu::CommandEncoder, color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>, depth: Depth, into: Option<&wgpu::TextureView>, light: Option<&wgpu::TextureView>) -> wgpu::RenderPass<'e> {
+    fn pass<'e>(&'e self, encoder: &'e mut wgpu::CommandEncoder, color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>, depth: Depth, into: Option<&'e wgpu::TextureView>, light: Option<&'e wgpu::TextureView>) -> wgpu::RenderPass<'e> {
+        let (parts, blend) = self.parts(color, depth, into, light);
+        let crate::nodes::RenderParts { colors, depth } = parts;
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("raster"),
+            color_attachments: &colors,
+            depth_stencil_attachment: depth,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        if blend {
+            // Ordinary paint contributes no lit coverage, even before this pass's first material mesh.
+            pass.set_blend_constant(wgpu::Color::TRANSPARENT);
+        }
+        pass
+    }
+
+    /// [`Self::pass`] 的**附件部分**（BR-4）：附件是 "一个 pass 是什么" 的一部分，
+    /// 所以搬进节点 —— 节点持 `&self`，`PassNode::parts` 直接委托到这里。
+    ///
+    /// 返回 `(附件, 是否要设透明混合常量)`：后者必须在 `begin_render_pass` 之后设，
+    /// 驱动不解释它，由节点在 `execute` 里做。
+    fn parts<'a>(&'a self, color: Option<(wgpu::LoadOp<wgpu::Color>, bool)>, depth: Depth, into: Option<&'a wgpu::TextureView>, light: Option<&'a wgpu::TextureView>) -> (crate::nodes::RenderParts<'a>, bool) {
         let attached = self.raster.as_ref().expect("the raster pipeline's attachments");
         let target = into.unwrap_or(&self.color);
         // a target's attachment: its samples, resolved into it, or it alone; resolved, its samples are dropped (but where
@@ -2746,19 +2823,8 @@ impl Canvas {
             Depth::Read => (None, None),
             Depth::Shared => (Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }), stencil),
         };
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("raster"),
-            color_attachments: &colors,
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment { view: &attached.depth, depth_ops, stencil_ops }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-            multiview_mask: None,
-        });
-        if light.is_some() {
-            // Ordinary paint contributes no lit coverage, even before this pass's first material mesh.
-            pass.set_blend_constant(wgpu::Color::TRANSPARENT);
-        }
-        pass
+        let depth = Some(wgpu::RenderPassDepthStencilAttachment { view: &attached.depth, depth_ops, stencil_ops });
+        (crate::nodes::RenderParts { colors, depth }, light.is_some())
     }
 }
 
@@ -3756,8 +3822,8 @@ impl Player {
                 let mut schedule_error: Option<crate::passes::ScheduleError> = None;
                 let mut node = EnvironmentNode { prefilter, env, prepared: None };
                 let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
-                if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "environment") {
+                let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "environment") {
                     if schedule_error.is_none() {
                         schedule_error = Some(error);
                     }
@@ -3898,8 +3964,8 @@ impl Player {
                         // BR-3：遮蔽的 compute 由节点驱动（顺序与报数都由 `record_compute` 给出）。
                         let mut node = OcclusionNode { occlusion, occluded: o, projection: Camera::new(&f.view).projection, amount, radius };
                         let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                        let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
-                        if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "occlusion") {
+                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                        if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "occlusion") {
                             if schedule_error.is_none() {
                                 schedule_error = Some(error);
                             }
@@ -3955,8 +4021,8 @@ impl Player {
                                 let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
                                 let mut node = BloomNode { bloom, bloomed: b, glow, tone };
                                 let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder };
-                                let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
-                                if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, schedule, "bloom") {
+                                let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut *schedule };
+                                if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "bloom") {
                                     if schedule_error.is_none() {
                                         *schedule_error = Some(error);
                                     }
@@ -3968,29 +4034,41 @@ impl Player {
                     };
                     if !(*listing || *slabs) {
                         let has_base = rasterized || plan.is_none();
-                        note_pass(&mut schedule, &mut schedule_error, "base", has_base);
                         if has_base {
-                            let mut pass = canvas.pass(&mut encoder, Some((cleared, true)), if plan.is_some() { Depth::Kept } else { Depth::Fresh }, base.as_ref(), base_light.as_ref());
-                            pass.set_bind_group(0, buffers.group.as_ref(), &slot);
-                            schedule.note_bind("base", "scene");
-                            pass.set_bind_group(3, lighting_group, &[]);
-                            schedule.note_bind("base", "lighting");
-                            if sprites.is_empty() {
-                                self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::All);
-                            } else {
-                                // the sprites over everything else but what is fixed in the frame
-                                self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Opaque);
-                                draw_sprites(&mut pass, &pipelines.sprites, sprites);
-                                self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Overlay);
+                            // BR-4：base 由 `record_render` 驱动（附件来自 `Canvas::parts`）。
+                            let mut node = BaseNode {
+                                canvas,
+                                color: Some((cleared, true)),
+                                depth: if plan.is_some() { Depth::Kept } else { Depth::Fresh },
+                                base: base.as_ref(),
+                                base_light: base_light.as_ref(),
+                                player: self,
+                                pipelines,
+                                indices,
+                                draws,
+                                offset: *offset,
+                                sprites,
+                                slot,
+                                scene: buffers.group.as_ref(),
+                                lighting: lighting_group,
+                            };
+                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                            if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "base") {
+                                if schedule_error.is_none() {
+                                    schedule_error = Some(error);
+                                }
                             }
+                        } else {
+                            note_pass(&mut schedule, &mut schedule_error, "base", false);
                         }
                         // BR-3：base depth 由节点驱动（`base.is_some()` 为假时显式跳过）。
                         if base.is_some() {
                             let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
                             let mut node = BaseDepthNode { vector: &mut gpu.vector, depth: &attached.depth_only, samples, size: [canvas.width, canvas.height], group: None, k: 0 };
                             let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                            let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
-                            if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "base depth") {
+                            let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                            if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "base depth") {
                                 if schedule_error.is_none() {
                                     schedule_error = Some(error);
                                 }
@@ -4072,8 +4150,8 @@ impl Player {
                     // 这条分支里深度解析是无条件的（与上面的 `if base.is_some()` 不同）。
                     let mut node = BaseDepthNode { vector: &mut gpu.vector, depth: &attached.depth_only, samples, size: [canvas.width, canvas.height], group: None, k: 0 };
                     let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-                    let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
-                    if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "base depth") {
+                    let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                    if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &mut execute, "base depth") {
                         if schedule_error.is_none() {
                             schedule_error = Some(error);
                         }
