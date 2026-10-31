@@ -110,11 +110,18 @@ impl Bloom {
 
     /// A view's glow, once its composite has left its paint and light in `b`: its `Glow` (the share of
     /// its light spread, the brightness threshold, 0 to 1), `tone` its tone mapping (1: AgX).
-    pub(crate) fn encode(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, b: &Bloomed, glow: super::Glow, tone: u32) {
+    ///
+    /// **BR-3**：拆成"写参数"（prepare）与"录制"（execute）两半，由 `PassNode` 驱动；
+    /// 参数上传仍在 pass 开始之前（`PrepareContext` 有 encoder 与 queue）。
+    pub(crate) fn write_params(&self, queue: &wgpu::Queue, b: &Bloomed, glow: super::Glow, tone: u32) {
         let levels = b.sizes.len() - 1;
         let params: [u32; 4] = [glow.strength.to_bits(), (glow.strength / levels as f32).to_bits(), tone, glow.threshold.to_bits()];
         queue.write_buffer(&b.params, 0, bytemuck::cast_slice(&params));
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("bloom"), timestamp_writes: None });
+    }
+
+    /// 录一次泛光：逐级 `spread` / `down` / `up`，最后 `show`。
+    pub(crate) fn record(&self, pass: &mut wgpu::ComputePass<'_>, b: &Bloomed) {
+        let levels = b.sizes.len() - 1;
         let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], entry: &'static str| {
             pass.set_pipeline(&self.passes[k]);
             pass.set_bind_group(0, group, &[]);

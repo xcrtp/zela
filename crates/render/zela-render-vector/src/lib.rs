@@ -38,6 +38,8 @@ mod render;
 pub mod passes;
 /// BO 批：`workgroup_size` 的单一来源与 dispatch 形状。
 pub mod dispatch;
+/// BR 批：Typed Pass 节点（`PassNode` / `AnyPass` / 驱动）。
+pub mod nodes;
 
 pub mod api;
 pub use api::{

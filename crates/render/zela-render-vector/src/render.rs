@@ -309,6 +309,33 @@ fn skipping() -> u32 {
     SKIP.load(Ordering::Relaxed)
 }
 
+/// **BR-3**：泛光节点 —— 第一个由 [`crate::nodes::record_compute`] 驱动的 pass。
+///
+/// 状态（管线、层级、组）都在 `bloom::Bloom` / `Bloomed` 里，节点只借它们；
+/// 参数上传在 prepare（encoder 还没被 pass 借走），录制在 execute。
+struct BloomNode<'a> {
+    bloom: &'a bloom::Bloom,
+    bloomed: &'a bloom::Bloomed,
+    glow: Glow,
+    tone: u32,
+}
+
+impl crate::nodes::PassNode for BloomNode<'_> {
+    fn name(&self) -> &'static str {
+        "bloom"
+    }
+
+    fn prepare(&mut self, ctx: &mut crate::nodes::PrepareContext<'_>) {
+        self.bloom.write_params(ctx.queue, self.bloomed, self.glow, self.tone);
+    }
+
+    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        if let crate::nodes::AnyPass::Compute(pass) = pass {
+            self.bloom.record(pass, self.bloomed);
+        }
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -3783,7 +3810,7 @@ impl Player {
                     // listed fragments; then, where it glows, its glow spread from the light it leaves, and its pixels
                     // shown with it
                     let bloomed = if skipping() & SKIP_BLOOM != 0 { None } else { canvas.bloomed.as_ref().zip(*glow) };
-                    let layered = |encoder: &mut wgpu::CommandEncoder, vector: &mut vector::Vector, listed: Option<&vector::Listed>, slabs: Option<&Slabs>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>, schedule: &mut crate::passes::PassSchedule, schedule_error: &mut Option<crate::passes::ScheduleError>| {
+                    let layered = |encoder: &mut wgpu::CommandEncoder, vector: &mut vector::Vector, bloom: Option<&bloom::Bloom>, listed: Option<&vector::Listed>, slabs: Option<&Slabs>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>, schedule: &mut crate::passes::PassSchedule, schedule_error: &mut Option<crate::passes::ScheduleError>| {
                         let Some(plan) = plan else {
                             // 没有路径计划 ⇒ 合成与泛光两步都没有内容（显式跳过）。
                             note_pass(schedule, schedule_error, "vector composite", false);
@@ -3799,12 +3826,22 @@ impl Player {
                             let out = vector::Out::Color { rasters: None, target, base: base.as_ref(), light: base_light.as_ref(), listed, slabs, lighting, light_out };
                             vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out, fill_layout, fill_pipelines, fill_error);
                         }
-                        if let Some((b, glow)) = bloomed {
-                            note_pass(schedule, schedule_error, "bloom", true);
-                            let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
-                            gpu.bloom.as_ref().expect("the bloom's passes").encode(&gpu.queue, encoder, b, glow, tone);
-                        } else {
-                            note_pass(schedule, schedule_error, "bloom", false);
+                        match (bloomed, bloom) {
+                            (Some((b, glow)), Some(bloom)) => {
+                                // BR-3：第一个接入节点驱动的 pass —— 顺序由 `record_compute`
+                                // 按声明推进（不再手写 `note_pass`）。
+                                let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
+                                let mut node = BloomNode { bloom, bloomed: b, glow, tone };
+                                let mut prepare = crate::nodes::PrepareContext { queue: &gpu.queue, encoder };
+                                let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
+                                if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, schedule, "bloom") {
+                                    if schedule_error.is_none() {
+                                        *schedule_error = Some(error);
+                                    }
+                                }
+                            }
+                            (Some(_), None) => panic!("the bloom's passes"),
+                            _ => note_pass(schedule, schedule_error, "bloom", false),
                         }
                     };
                     if !(*listing || *slabs) {
@@ -3830,7 +3867,7 @@ impl Player {
                             let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
                             gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
                         }
-                        layered(&mut encoder, &mut gpu.vector, None, None, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
+                        layered(&mut encoder, &mut gpu.vector, gpu.bloom.as_ref(), None, None, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
                         finish_schedule(schedule, schedule_error)?;
                         continue;
                     }
@@ -3904,7 +3941,7 @@ impl Player {
                     // 这条分支里深度解析是无条件的（与上面的 `if base.is_some()` 不同）。
                     note_pass(&mut schedule, &mut schedule_error, "base depth", true);
                     gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
-                    layered(&mut encoder, &mut gpu.vector, listed.as_ref(), slabs, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
+                    layered(&mut encoder, &mut gpu.vector, gpu.bloom.as_ref(), listed.as_ref(), slabs, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
                     finish_schedule(schedule, schedule_error)?;
                 }
                 Drawing::Vector(plan, groups) => {
