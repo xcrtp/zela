@@ -3454,7 +3454,13 @@ fn json_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// 批量对拍的 worker 数 = 本机可用并行度（显式写进命令行，不靠被测程序的默认值）。
+///
+/// `ZELA_BATCH_WORKERS` 可覆盖（BU-A 的判别装置要串行跑：并行的每帧计数器会彼此交错，
+/// 观测产物因此不可逐字节对比；串行是"同一输入必同一输出"的唯一口径）。
 fn batch_workers() -> usize {
+    if let Some(value) = env::var("ZELA_BATCH_WORKERS").ok().and_then(|value| value.parse().ok()) {
+        return value;
+    }
     std::thread::available_parallelism()
         .map(|value| value.get())
         .unwrap_or(1)

@@ -33,6 +33,8 @@ ze-render-ir = { path = "../../kernel/ze-render-ir" }
 # BN 批：pass 计划的环检测与校验复用纯拓扑算法（第三个消费者）。
 # ze-graph-core 只认「节点 id + 边」，不认识渲染概念，分层不变量不变。
 ze-graph-core = { path = "../../kernel/ze-graph-core" }
+# BU-2：资源系统接入（句柄表 + 代数 + 延迟销毁 + 容量驱逐）。kernel 层、纯 std ⇒ 不违反分层。
+ze-resource = { path = "../../kernel/ze-resource" }
 
 [features]
 # 本 crate 即矢量渲染色；`render` 默认开启（保留上游 `#[cfg(feature = "render")]` 标注）。
@@ -49,8 +51,5 @@ export = []
 futures-channel = "0.3"
 
 [dev-dependencies]
-# BQ-01 的编译探针：证明「含 GpuHandle 的 ResourceCache 可以放进 Gpu」（BP-07 的阻塞已解除）。
-# 只用于测试断言，不进生产依赖图。
-ze-resource = { path = "../../kernel/ze-resource" }
 # **BT-3**：手写 WGSL 与表达式产物的渲染对拍要现场生成产物（只进测试依赖）。
 ze-comb = { path = "../../kernel/ze-comb" }

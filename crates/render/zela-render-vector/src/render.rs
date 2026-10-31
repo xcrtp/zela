@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
+use ze_resource::{GpuHandle, ResourceCache, ResourceKey};
 
 use crate::{CameraFrame, check_key, environment, mesh::Mesh, read};
 // BO-2：compute 的 dispatch 参数统一由 `dispatch` 按 entry 查表求出。
@@ -1162,13 +1163,17 @@ type Keyed<V> = HashMap<u64, V, BuildHasherDefault<Identity>>;
 
 /// 纹理 / 相机视图的采样组：key → `BindGroup`（key 0 是白图）。
 ///
-/// # 为什么不是 `ze_resource::ResourceCache`
+/// # 与 `ze_resource::ResourceCache` 的分工（BU-2 改写）
 ///
-/// kernel 的缓存用 `GpuHandle = Box<dyn Any>`，**故意不施加 `Send`/`Sync`**（红线 3）。
-/// 而 native 的 `Gpu` 放在 `static OnceLock<Mutex<Gpu>>` 里（`with_gpu`），
-/// `Mutex<T>: Sync` 要求 `T: Send` ⇒ 组一旦以 `GpuHandle` 形式存进来，`Gpu` 就不再 `Send`。
-/// 所以本批的收敛停在**类型化封装**：白图按名字取（[`Self::white`]）、纹理按 key 取，
-/// 原来散在各处的 `image_groups[&0]` / `.get(&key)` / `.insert` / `.remove` 全部走这里。
+/// **旧的否决理由已失效**：BP-4 当时说「`GpuHandle` 故意不施加 `Send`，而 `Gpu` 在
+/// `static OnceLock<Mutex<Gpu>>` 里 ⇒ 存进来 `Gpu` 就不再 `Send`」。BQ-01 已按平台拆箱
+/// （native `Box<dyn Any + Send>`，wasm 不变），编译探针断言过 `ResourceCache<()>: Send`
+/// —— 所以"不能接入"这个结论现在是**错的**，见 [`Player::res`] 里真正的接入。
+///
+/// 这里仍留类型化封装，是因为这层的东西**不是弱引用**：组是本帧记录直接绑定的强引用，
+/// 按容量驱逐会让下一帧找不到组（它没有"按需重建"的入口，重建要 `device`）。
+/// 弱引用、可重建的那类（相机画布、光栅图集）因此走 [`Player::res`]；两层的判据不同，
+/// 不是"同一件事的第二份实现"。
 ///
 /// 生命周期仍由 wgpu 自己的引用计数保证（`BindGroup` 被提交中的命令缓冲引用时不会释放）。
 struct ImageGroups {
@@ -1208,6 +1213,43 @@ impl ImageGroups {
     fn remove(&mut self, key: u64) {
         self.groups.remove(&key);
     }
+}
+
+// ─── BU-2：弱引用 GPU 资源缓存（容量驱逐 + 3 帧延迟销毁）──────────────────
+//
+// 进这里的只有**弱引用**：缓存层持有、丢了能按需重建的东西（相机画布、光栅图集）。
+// 强引用（帧内 pass 声明直接绑定的目标 / 组）留在各自的字段里，不参与容量驱逐。
+//
+// 三件事都借 kernel 的 `ResourceCache`：
+// - 句柄表 + 代数（`GpuResourceId`）：同 key 重建换 slot，旧 id 立即失效；
+// - **延迟销毁**：被驱逐 / 换掉的句柄进 graveyard，3 次 submit 后才真正 drop（周期是常量）；
+// - **容量驱逐**（`evict_to_fit`）：超出预算时按 LRU 逐出，**本帧用过的**（idle = 0）不动。
+
+/// 相机画布的键类型（`ResourceKey::Content` 的 `type_id`；与图像等其它内容键不会撞）。
+struct CameraCanvas;
+/// 光栅图集的键类型。**`ResourceKey::Named` 的第一个生产消费者**（BU-2）。
+struct RasterAtlas;
+/// 光栅图集的稳定名字。
+const RASTER_ATLAS: &str = "raster atlas";
+
+/// 弱引用条目的元数据：占多少字节（容量驱逐的唯一依据）。
+#[derive(Clone, Copy, Default)]
+struct ResMeta {
+    bytes: usize,
+}
+
+/// 相机画布 + 光栅图集的容量预算（字节）：超出即按 LRU 驱逐上一帧不再用的条目。
+///
+/// `ZELA_RESOURCE_BUDGET` 可覆盖（单位字节）。把它压到 0 就是 BU-A 的判别装置：
+/// 每帧都驱逐、下一帧重建，而像素 / 结构指纹 / 观测产物必须逐字节不变。
+const RESOURCE_BUDGET: usize = 256 * 1024 * 1024;
+
+/// 本次进程的容量预算（环境变量覆盖默认值）。
+fn resource_budget() -> usize {
+    std::env::var("ZELA_RESOURCE_BUDGET")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(RESOURCE_BUDGET)
 }
 
 /// One object as the shader reads it (368 bytes).
@@ -3473,7 +3515,7 @@ struct Buffers {
     room: usize,           // sprites it has room for
     group: Option<wgpu::BindGroup>, // the raster pipeline's
     statics: [TrackedBuffer; 7], // vertices, links, indices, rows, extras; control points, curve ranges
-    sizes: [u64; 7],            // their capacities, bytes
+    /// BU-2：容量直接问缓冲本身（`Buffer::size`），不再手抄一份 `sizes` 数组。
     sent: [usize; 7],           // bytes of the store's arrays they hold
     generation: u64,            // the store's packing they hold
     shadow_maps: ShadowMaps,
@@ -3649,8 +3691,11 @@ pub(crate) struct Player {
     opaque_images: Keyed<()>, // images with no pixel less than opaque
     environments: HashMap<u32, environment::Environment>, // by the id its views' lights give it (`add_environment`)
     image_groups: ImageGroups,
-    canvases: Keyed<Canvas>,
-    rasters: Option<Canvas>, // the raster atlas (see `vector`)
+    /// **BU-2**：弱引用缓存（相机画布 + 光栅图集）：句柄表 + 代数 + 3 帧延迟销毁 + 容量驱逐。
+    /// 相机画布的 key 见 [`CameraCanvas`]，光栅图集是 [`RASTER_ATLAS`]（`ResourceKey::Named`）。
+    res: ResourceCache<ResMeta>,
+    /// 相机画布 + 光栅图集的容量预算（字节；`ZELA_RESOURCE_BUDGET` 覆盖）。
+    budget: usize,
     buffers: Option<Buffers>,
     pub(crate) targets: Option<Targets>,
     #[cfg(feature = "export")]
@@ -3938,7 +3983,7 @@ impl Player {
             let (views, instances, sprites, statics) = (view_buffer(slots), instances(capacity), sprite_buffer(room), [(); 7].map(|_| buffer(1024)));
             rebind = true;
             let shadow_maps = ShadowMaps::new(gpu, 1, 1, (None, &gpu.no_environment));
-            Buffers { views, slots, instances, capacity, sprites, room, group: None, statics, sizes: [1024; 7], sent: [0; 7], generation: s.generation, shadow_maps }
+            Buffers { views, slots, instances, capacity, sprites, room, group: None, statics, sent: [0; 7], generation: s.generation, shadow_maps }
         });
         if buffers.generation != s.generation {
             buffers.sent = [0; 7];
@@ -3951,9 +3996,9 @@ impl Player {
             }
         }
         for (k, bytes) in arrays.iter().enumerate() {
-            if bytes.len() as u64 > buffers.sizes[k] {
-                buffers.sizes[k] = rooms[k];
-                buffers.statics[k] = buffer(buffers.sizes[k]);
+            // BU-2：容量问缓冲本身（wgpu 的 `Buffer::size`），不再自存一份 `sizes` 数组。
+            if bytes.len() as u64 > buffers.statics[k].size() {
+                buffers.statics[k] = buffer(rooms[k]);
                 buffers.sent[k] = 0;
                 rebind = true;
             }
@@ -4032,11 +4077,37 @@ impl Player {
         self.targets.as_ref().expect("the targets")
     }
 
+    /// **BU-2**：相机画布的缓存键（内容寻址：同一 `key` 是同一张视图）。
+    fn camera_key(key: u64) -> ResourceKey {
+        ResourceKey::content::<CameraCanvas>(key)
+    }
+
+    /// **BU-2**：光栅图集的缓存键（名字寻址：单件中间目标，`ResourceKey::Named` 的首个生产消费者）。
+    fn atlas_key() -> ResourceKey {
+        ResourceKey::named::<RasterAtlas>(RASTER_ATLAS, 1)
+    }
+
+    /// A camera's canvas, if cached.
+    fn canvas_of(&self, key: u64) -> Option<&Canvas> {
+        self.res.get(Self::camera_key(key)).and_then(|handle| handle.downcast_ref::<Canvas>())
+    }
+
+    /// A camera's canvas, if cached (mutable).
+    fn canvas_mut(&mut self, key: u64) -> Option<&mut Canvas> {
+        let rk = Self::camera_key(key);
+        self.res.mark_used(&rk);
+        self.res.get_mut(rk).and_then(|handle| handle.downcast_mut::<Canvas>())
+    }
+
     /// A camera's view as a texture: its canvas, (re)made at the size asked for, sampled under `key`.
     fn canvas(&mut self, gpu: &Gpu, key: u64, width: u32, height: u32) {
-        if self.canvases.get(&key).is_some_and(|c| c.width == width && c.height == height) {
+        let rk = Self::camera_key(key);
+        if self.canvas_of(key).is_some_and(|c| c.width == width && c.height == height) {
+            self.res.mark_used(&rk);
             return;
         }
+        // 同键换了尺寸 ⇒ 旧画布交给 graveyard（3 次 submit 后才 drop），不在这里就地释放。
+        self.res.remove(rk);
         let canvas = Canvas::new(gpu, width.max(1), height.max(1));
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera view"),
@@ -4047,7 +4118,8 @@ impl Player {
             ],
         });
         self.image_groups.insert(key, group);
-        self.canvases.insert(key, canvas);
+        let bytes = (canvas.width as usize) * (canvas.height as usize) * 4;
+        self.res.insert_handle(rk, ResMeta { bytes }, GpuHandle::new(canvas));
     }
 
     /// A view's records in draw order: with a 3D camera, lit objects far to near first (CE's
@@ -4210,6 +4282,12 @@ impl Player {
     }
 
     fn encode_frame(&mut self, gpu: &mut Gpu, frames: &[Frame], target: Option<&wgpu::TextureView>) -> Result<(wgpu::CommandEncoder, bool, bool), String> {
+        // BU-2：推进弱引用缓存的帧钟（收割 3 帧前排进 graveyard 的句柄），
+        // 并把本帧的相机画布记为"在用"（容量驱逐不动 idle = 0 的条目）。
+        self.res.begin_frame();
+        for f in frames.iter().filter(|f| f.key != 0) {
+            self.res.mark_used(&Self::camera_key(f.key));
+        }
         let cap = SAMPLE_OVERRIDE.load(Ordering::Relaxed);
         let samples = self.samples.clamp(1, gpu.max_samples);
         let samples = if cap == 0 { samples } else { samples.min(cap).max(1) };
@@ -4367,7 +4445,7 @@ impl Player {
             match d {
                 Drawing::Raster { light, glow, slabs, .. } => {
                     let light = *light && skipping() & SKIP_LIGHT == 0;
-                    let canvas = if f.key == 0 { &mut self.targets.as_mut().expect("targets").frame } else { self.canvases.get_mut(&f.key).expect("canvas") };
+                    let canvas = if f.key == 0 { &mut self.targets.as_mut().expect("targets").frame } else { self.canvas_mut(f.key).expect("canvas") };
                     canvas.attach(gpu, samples, light);
                     if *slabs {
                         canvas.attach_slabs(gpu, samples);
@@ -4390,19 +4468,27 @@ impl Player {
             }
         }
         if need[1] > 0 {
-            if self.rasters.as_ref().is_none_or(|c| c.width < need[0] || c.height < need[1] || c.height > 2 * need[1] + 256) {
-                self.rasters = Some(Canvas::new(gpu, need[0], need[1].div_ceil(64) * 64));
+            // BU-2：图集走弱引用缓存（`ResourceKey::Named`）；尺寸不合适就换一张，旧的走延迟销毁。
+            let key = Self::atlas_key();
+            let fits = self.res.get(key).and_then(|handle| handle.downcast_ref::<Canvas>()).is_some_and(|c| c.width >= need[0] && c.height >= need[1] && c.height <= 2 * need[1] + 256);
+            if !fits {
+                self.res.remove(key);
+                let canvas = Canvas::new(gpu, need[0], need[1].div_ceil(64) * 64);
+                let bytes = (canvas.width as usize) * (canvas.height as usize) * 4;
+                self.res.insert_handle(key, ResMeta { bytes }, GpuHandle::new(canvas));
             }
-            self.rasters.as_mut().expect("raster atlas").attach(gpu, samples, false);
+            self.res.mark_used(&key);
+            self.res.get_mut(key).and_then(|handle| handle.downcast_mut::<Canvas>()).expect("raster atlas").attach(gpu, samples, false);
         }
         let composite: Vec<bool> = drawings.iter().map(|d| matches!(d, Drawing::Raster { lists: true, .. })).collect();
         let composited = composite.contains(&true);
         if composited {
-            let pixels = frames.iter().zip(&composite).filter(|(_, c)| **c).map(|(f, _)| if f.key == 0 { self.width as u64 * self.height as u64 } else { self.canvases[&f.key].width as u64 * self.canvases[&f.key].height as u64 }).max().unwrap_or(0);
+            let pixels = frames.iter().zip(&composite).filter(|(_, c)| **c).map(|(f, _)| if f.key == 0 { self.width as u64 * self.height as u64 } else { self.canvas_of(f.key).expect("canvas").width as u64 * self.canvas_of(f.key).expect("canvas").height as u64 }).max().unwrap_or(0);
             self.prepare_lists(gpu, pixels);
             let lists = self.lists.as_ref().expect("lists");
             for (f, _) in frames.iter().zip(&composite).filter(|(_, c)| **c) {
-                let canvas = if f.key == 0 { &mut self.targets.as_mut().expect("targets").frame } else { self.canvases.get_mut(&f.key).expect("canvas") };
+                // 直接借 `self.res`（不经过 `&mut self` 的方法）：这里同时还要借 `self.lists`。
+                let canvas = if f.key == 0 { &mut self.targets.as_mut().expect("targets").frame } else { self.res.get_mut(Self::camera_key(f.key)).and_then(|handle| handle.downcast_mut::<Canvas>()).expect("canvas") };
                 let attached = canvas.raster.as_mut().expect("attachments");
                 if attached.append.as_ref().is_none_or(|(generation, _)| *generation != lists.generation) {
                     let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -4490,7 +4576,7 @@ impl Player {
         }
         let indices = &buffers.statics[2];
         for (i, (f, d)) in frames.iter().zip(&drawings).enumerate() {
-            let canvas = if f.key == 0 { &targets.frame } else { &self.canvases[&f.key] };
+            let canvas = if f.key == 0 { &targets.frame } else { self.canvas_of(f.key).expect("canvas") };
             let slot = [(i * VIEW_STRIDE) as u32];
             match d {
                 Drawing::Raster { offset, draws, listed, sprites, lists: listing, slabs, light, glow, plan, shadows, cast } => {
@@ -4807,7 +4893,7 @@ impl Player {
                             // 节点无条件录，子 pass 的有无由 `parts_at` 按"这组有没有光栅对象"给出。
                             "atlas raster" => {
                                 let mut node = AtlasNode {
-                                    atlas: self.rasters.as_ref(),
+                                    atlas: self.res.get(Self::atlas_key()).and_then(|handle| handle.downcast_ref::<Canvas>()),
                                     groups,
                                     plan,
                                     raster_size: plan.raster_size,
@@ -4860,6 +4946,10 @@ impl Player {
         if let Some(error) = fill_error {
             return Err(error);
         }
+        // BU-2：帧末按容量驱逐（上一帧起不再用的相机画布 / 光栅图集；本帧用过的不动）。
+        self.res.evict_to_fit(self.budget, |_| false, |meta| meta.bytes);
+        // 这一帧的提交紧随其后（`pixels` / `render_to`）⇒ 在缓存里记一次 submit。
+        self.res.notify_submit();
         Ok((encoder, grouped, composited))
     }
 
@@ -5065,8 +5155,8 @@ impl Player {
             opaque_images: Keyed::default(),
             environments: HashMap::new(),
             image_groups: ImageGroups::new(),
-            canvases: Keyed::default(),
-            rasters: None,
+            res: ResourceCache::new(),
+            budget: resource_budget(),
             buffers: None,
             targets: None,
             #[cfg(feature = "export")]
@@ -5082,7 +5172,8 @@ impl Player {
 
     /// **B17 / AW-07**：逐帧复用前的复位（保留 GPU 纹理、数组容量与**几何前缀**）。
     ///
-    /// 保留的是 `canvases` / `image_groups` / `environments` / `lists` / `targets` / `buffers`，
+    /// 保留的是 `res`（相机画布 / 光栅图集，BU-2 起由弱引用缓存持有）/ `image_groups` / `environments` /
+    /// `lists` / `targets` / `buffers`，
     /// 以及 `store` 里上一帧用到的键（AW-07：同一键同一内容不再重传 ⇒ 稳态帧的几何上传为 0）。
     /// 上一帧之后不再出现的键在这里淘汰（`Store::retire`），字节在 `pack_if_worthwhile` 回收。
     ///
@@ -5524,5 +5615,73 @@ mod buffer_contract {
             }
             assert_eq!(image(&mut projected, gpu, &limits, 1), image(&mut reference, gpu, &gpu.device.limits(), 1));
         }).unwrap();
+    }
+
+    /// **BU-A**：驱逐发生与否，像素逐位相同。
+    ///
+    /// 两个 `Player` 画同一帧：一个从不驱逐，一个先把弱引用缓存清空（预算 0），
+    /// 让光栅图集在下一帧按需重建。两条路径的像素必须逐位相同 —— 这就是
+    /// 「驱逐决策被关在性能边界内」的硬判据（kernel 的 LRU 状态不得泄漏到输出）。
+    #[test]
+    fn evicting_a_target_and_rebuilding_it_preserves_pixels() {
+        fn player() -> Player {
+            let mut p = Player::new(64, 64, 4);
+            p.store.add_points(1, &[[0.0, 0.0, 0.5, 0.0]; 80]);
+            p.store.add_rows(11, &[[0.9, 0.2, 0.1, 1.0]; 80]);
+            p
+        }
+        fn image(p: &mut Player, gpu: &mut Gpu) -> Vec<u8> {
+            let view = |w: f32, h: f32| {
+                let mut v = vec![0.0; VIEW_LENGTH];
+                for at in [0, 16] {
+                    for i in 0..4 {
+                        v[at + i * 5] = 1.0;
+                    }
+                }
+                v[32..36].copy_from_slice(&[w, h, w / 2.0, 1.0]);
+                v[39] = 1.0;
+                v[42] = 1.0;
+                v[47] = 1.0;
+                v
+            };
+            let draw = |key: u64, w: u32, h: u32| {
+                let mut f = frame(key, 1);
+                (f.width, f.height) = (w, h);
+                f.view = view(w as f32, h as f32);
+                let r = &mut f.records[0];
+                r.m1 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+                r.fill = [1.0; 4];
+                r.params[1] = 80.0;
+                r.gradient_a[3] = 0.25;
+                f
+            };
+            // 相机视图（key 9）先画进它自己的画布，末帧（key 0）是读回的那张。
+            let frames = [draw(9, 32, 32), draw(0, 64, 64)];
+            let (mut encoder, _, _) = p.with_working_set(&gpu.device.limits(), &frames, |p| p.encode_frame(gpu, &frames, None)).unwrap();
+            let buffer = counted_buffer(&gpu.device, &wgpu::BufferDescriptor { label: None, size: 64 * 64 * 4, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo { texture: p.targets.as_ref().unwrap().frame.color.texture(), mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyBufferInfo { buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(256), rows_per_image: Some(64) } },
+                wgpu::Extent3d { width: 64, height: 64, depth_or_array_layers: 1 },
+            );
+            gpu.queue.submit(Some(encoder.finish()));
+            gpu.read_buffer(&buffer).unwrap()
+        }
+        with_gpu(|gpu| {
+            let (mut plain, mut evicted) = (player(), player());
+            plain.budget = usize::MAX;
+            evicted.budget = 0;
+            let expected = image(&mut plain, gpu);
+            assert!(expected.chunks_exact(4).any(|pixel| pixel[..3] != [0, 0, 0]), "这一帧必须真有内容");
+            assert_eq!(image(&mut evicted, gpu), expected);
+            assert!(evicted.res.len() > 0, "相机画布应进弱引用缓存");
+            // 推进两帧 ⇒ 上一帧的相机画布不在用（idle > 0）；预算 0 必须真的驱逐它，并走延迟销毁。
+            evicted.res.begin_frame();
+            evicted.res.begin_frame();
+            assert!(evicted.res.evict_to_fit(0, |_| false, |meta| meta.bytes) > 0, "预算 0 必须真的驱逐");
+            assert!(evicted.res.pending_destroy_count() > 0, "驱逐的句柄进 graveyard（3 帧后 drop）");
+            assert_eq!(image(&mut evicted, gpu), expected, "重建后的像素必须逐位相同");
+        })
+        .unwrap();
     }
 }
