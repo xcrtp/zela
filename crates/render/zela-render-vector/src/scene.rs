@@ -517,6 +517,8 @@ pub fn scene_records(
                     source: shader.source.clone(),
                     params: vec![0u8; shader.size as usize],
                     fragment: shader.fragment,
+                    // **BT-4**：vec4 出口（w = 着色器给的透明度）。
+                    rgba: shader.rgba,
                 });
                 out.push(PathRecord::Fill(path));
             }

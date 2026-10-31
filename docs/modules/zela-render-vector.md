@@ -11,13 +11,13 @@
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-notion`、`ze-render-ir`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：13 个 · 16237 行
+- 源文件：13 个 · 16322 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/api.rs` | 3653 | 宿主适配层：`FilledPath` → 上游 `Upload::path` + `Record::filled` → 离屏一帧。 |
+| `src/api.rs` | 3693 | 宿主适配层：`FilledPath` → 上游 `Upload::path` + `Record::filled` → 离屏一帧。 |
 | `src/bloom.rs` | 140 | A 3D view's bloom (`Camera.bloom`): the glow a lens and a sensor spread around the light they take in, which keeps |
 | `src/dispatch.rs` | 452 | `workgroup_size` 的单一来源，以及 dispatch 形状的描述。 |
 | `src/environment.rs` | 817 | Environments: light from all around a 3D view, a picture of its surroundings (an equirectangular Radiance image, |
@@ -26,8 +26,8 @@
 | `src/nodes.rs` | 501 | Typed Pass 节点（BR 批）。 |
 | `src/occlusion.rs` | 161 | A 3D view's ambient occlusion (`Camera.ambient_occlusion`): how much of the light from all around reaches the |
 | `src/passes.rs` | 1916 | pass 声明化与资源槽位（BN 批）。 |
-| `src/render.rs` | 5282 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
-| `src/scene.rs` | 1069 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
+| `src/render.rs` | 5325 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
+| `src/scene.rs` | 1071 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
 | `src/vector.rs` | 1790 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
 

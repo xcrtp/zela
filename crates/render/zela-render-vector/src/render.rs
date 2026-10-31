@@ -1073,6 +1073,9 @@ pub struct ShaderFill {
     /// **逐片元**：颜色随像素变（读了 `zela.shader.fragment.*`）⇒ 走颜色画布，
     /// 而不是"每对象一个填充色"的 compute 通道。
     pub fragment: bool,
+    /// **BT-4**：`eval` 返回 `vec4<f32>`（w = 着色器给的透明度），画布 alpha 写它；
+    /// 否则写 `vec3<f32>` 并把 alpha 记为 1.0（与 BT-2 之前逐位相同）。
+    pub rgba: bool,
 }
 
 /// `Object` / `Instance` 里 `paint.fill` 的字节偏移（写填充槽的唯一口径）。
@@ -1159,6 +1162,38 @@ fn zela_fill(@builtin(global_invocation_id) id: vec3<u32>) {
     zela_uv = zela_local / max(rect.zw, vec2<f32>(1.0));
     let c: vec3<f32> = eval(zela_params, 0u);
     textureStore(zela_out, pixel, vec4<f32>(c, 1.0));
+    textureStore(zela_tags, pixel, vec4<u32>(zela_frag.tag.x, 0u, 0u, 0u));
+}
+"#;
+
+/// **BT-4**：`eval` 返回 `vec4<f32>` 时的入口尾部 —— w 是**着色器给的透明度**，
+/// 原样写进颜色画布的 alpha（标签仍在 `zela_tags` 里，互不占用）。
+const FRAG_TAIL_RGBA: &str = r#"
+struct ZelaFrag { dispatch: vec4<f32>, rect: vec4<f32>, tag: vec4<u32> };
+@group(0) @binding(0) var<uniform> zela_params: Params;
+@group(0) @binding(1) var zela_out: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(2) var<uniform> zela_frag: ZelaFrag;
+@group(0) @binding(3) var zela_tags: texture_storage_2d<r32uint, write>;
+var<private> zela_center: vec2<f32>;
+var<private> zela_size: vec2<f32>;
+var<private> zela_pos2: vec2<f32>;
+var<private> zela_local: vec2<f32>;
+var<private> zela_uv: vec2<f32>;
+@compute @workgroup_size(8, 8)
+fn zela_fill(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (f32(id.x) >= zela_frag.dispatch.z || f32(id.y) >= zela_frag.dispatch.w) {
+        return;
+    }
+    let pixel = vec2<i32>(zela_frag.dispatch.xy) + vec2<i32>(id.xy);
+    let at = vec2<f32>(pixel) + vec2<f32>(0.5);
+    let rect = zela_frag.rect;
+    zela_center = rect.xy + 0.5 * rect.zw;
+    zela_size = rect.zw;
+    zela_pos2 = at;
+    zela_local = at - rect.xy;
+    zela_uv = zela_local / max(rect.zw, vec2<f32>(1.0));
+    let c: vec4<f32> = eval(zela_params, 0u);
+    textureStore(zela_out, pixel, c);
     textureStore(zela_tags, pixel, vec4<u32>(zela_frag.tag.x, 0u, 0u, 0u));
 }
 "#;
@@ -2612,6 +2647,10 @@ impl Gpu {
         if program.fragment {
             return Err("着色 codegen 的逐片元内建只支持解析路径（点云 / 网格没有颜色画布）".to_string());
         }
+        // **BT-4**：每对象一个颜色的通道只写 rgb ⇒ vec4 出口的 alpha 会静默丢掉。
+        if program.rgba {
+            return Err("着色 codegen 的 Vec4 出口只支持逐片元（颜色画布才有 alpha 通道）".to_string());
+        }
         Self::encode_fill_impl(&self.device, &self.queue, &self.fill_layout, &mut self.fill_pipelines, encoder, words, word_base, word_base, 1, program)
     }
     /// **阶段 2**：装配一段生成 WGSL 的 compute 管线（同 `source` ⇒ 同管线）。
@@ -2714,13 +2753,17 @@ impl Gpu {
         layout: &wgpu::BindGroupLayout,
         pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
         source: &str,
+        rgba: bool,
     ) -> Result<&'a wgpu::ComputePipeline, String> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         source.hash(&mut hasher);
+        // **BT-4**：尾部按返回类型二选一 ⇒ 缓存键必须带上它。
+        rgba.hash(&mut hasher);
         let key = hasher.finish();
         if !pipelines.contains_key(&key) {
-            let text = format!("{source}{FRAG_TAIL}");
+            let tail = if rgba { FRAG_TAIL_RGBA } else { FRAG_TAIL };
+            let text = format!("{source}{tail}");
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("frag codegen"),
                 source: wgpu::ShaderSource::Wgsl(text.into()),
@@ -2772,7 +2815,7 @@ impl Gpu {
         if x1 <= x0 || y1 <= y0 {
             return Ok(());
         }
-        let pipeline = Self::frag_pipeline_impl(device, layout, pipelines, &program.source)?;
+        let pipeline = Self::frag_pipeline_impl(device, layout, pipelines, &program.source, program.rgba)?;
         let params = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("frag params"),
             size: program.params.len().max(16) as u64,

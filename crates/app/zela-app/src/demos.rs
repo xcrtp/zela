@@ -77,6 +77,7 @@ pub static DEMOS: &[Demo] = &[
     lua!("expr_read", "通道读端与值分支", "expr_read.lua"),
     lua!("sine_trace", "小球画正弦", "sine_trace.lua"),
     lua!("cap_codegen", "着色codegen", "cap_codegen.lua"),
+    lua!("cap_shader_alpha", "着色透明度", "cap_shader_alpha.lua"),
     lua!("cap_stroke_width", "线宽通道", "cap_stroke_width.lua"),
     lua!("cap_parent_inherit", "Parent继承", "cap_parent_inherit.lua"),
     lua!("cap_plot", "函数图像", "cap_plot.lua"),

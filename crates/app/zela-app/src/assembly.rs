@@ -339,6 +339,8 @@ impl PodAssembly {
                         fragment: pending.fragment,
                         // **BT-3**：手写来源要一路带到 IR（路由理由按它区分）。
                         hand_written: pending.hand_written,
+                        // **BT-4**：vec4 出口（w = 着色器给的透明度）。
+                        rgba: pending.rgba,
                     },
                 )
                 .map_err(|error| BrokerError::Injection {

@@ -121,6 +121,11 @@ pub struct ShaderPaint {
     /// 后端**零分支** —— 两种来源到 `zela-render-vector` 时都只是 `source` 字符串。
     #[serde(default)]
     pub hand_written: bool,
+    /// **BT-4**：`eval` 返回 `vec4<f32>`（w 是**着色器给的透明度**），而不是 `vec3`。
+    ///
+    /// 只在逐片元通道里有意义（alpha 走颜色画布）；`fragment = false` 时装配期显式拒绝。
+    #[serde(default)]
+    pub rgba: bool,
 }
 
 /// 一个外部注入参数：通道名 + 槽类型 + 在 `Params` 里的字节偏移。
@@ -288,6 +293,7 @@ mod tests {
                 size: 0,
                 fragment: false,
                 hand_written: false,
+                rgba: false,
             }),
             ..Default::default()
         };
@@ -305,6 +311,7 @@ mod tests {
                 size: 0,
                 fragment: false,
                 hand_written: true,
+                rgba: false,
             }),
             ..Default::default()
         };
@@ -370,6 +377,7 @@ mod tests {
                 size: 0,
                 fragment: true,
                 hand_written: true,
+                rgba: false,
             }),
             ..Default::default()
         };

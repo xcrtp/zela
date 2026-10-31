@@ -2044,7 +2044,7 @@ mod tests {
             let source = format!(
                 "struct Params {{\n    _unused: u32,\n}}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {{\n    return vec3<f32>({color});\n}}\n"
             );
-            ShaderFill { source, params: Vec::new(), fragment: true }
+            ShaderFill { source, params: Vec::new(), fragment: true, rgba: false }
         };
         let blue = [0.0, 0.0, 1.0, 1.0];
         let mut left = FilledPath::polygon(
@@ -2145,6 +2145,7 @@ mod tests {
                 source: source.to_string(),
                 params: Vec::new(),
                 fragment: true,
+                rgba: false,
             });
             match render_2d(64, 64, 1, [0.0, 0.0, 0.0, 1.0], &[square.into()]) {
                 Ok(frame) => frame,
@@ -2158,6 +2159,45 @@ mod tests {
             pixel(&a, 64, 32, 32)
         );
         assert_eq!(a, b, "手写 WGSL 与表达式产物必须渲染逐位相同");
+    }
+
+    /// **BT-4 判据**：着色器给的 alpha 真的走到输出（不是被记录 alpha 覆盖）。
+    ///
+    /// 同一几何、同一红色：vec3 程序写 alpha 1.0（满覆盖），vec4 程序写 0.5。
+    /// 背景是黑 ⇒ 半透明像素的 R ≈ 128（若 alpha 仍被 `fill_of(o).a` 覆盖，会回到 255）。
+    #[test]
+    fn shader_alpha_reaches_the_output() {
+        use crate::ShaderFill;
+        let render = |source: &str, rgba: bool| {
+            let mut square = FilledPath::polygon(
+                &[
+                    [-32.0, -32.0, 0.0],
+                    [32.0, -32.0, 0.0],
+                    [32.0, 32.0, 0.0],
+                    [-32.0, 32.0, 0.0],
+                ],
+                [0.0, 0.0, 1.0, 1.0],
+            );
+            square.shader = Some(ShaderFill {
+                source: source.to_string(),
+                params: Vec::new(),
+                fragment: true,
+                rgba,
+            });
+            match render_2d(64, 64, 1, [0.0, 0.0, 0.0, 1.0], &[square.into()]) {
+                Ok(frame) => frame,
+                Err(error) => panic!("矢量后端起不来：{error}"),
+            }
+        };
+        let opaque = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {\n    return vec3<f32>(1.0, 0.0, 0.0);\n}\n";
+        let half = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec4<f32> {\n    return vec4<f32>(1.0, 0.0, 0.0, 0.5);\n}\n";
+        let full = pixel(&render(opaque, false), 64, 32, 32);
+        assert!(full[0] > 230, "不透明程序的中央应是满红：{full:?}");
+        let blended = pixel(&render(half, true), 64, 32, 32);
+        assert!(
+            (110..=145).contains(&blended[0]) && blended[1] < 10 && blended[2] < 10,
+            "alpha = 0.5 应把红压到约一半（不是被记录 alpha 覆盖）：{blended:?}"
+        );
     }
 
     /// **B6 Step 1.2**：3D view 的槽位布局与上游 `feed.py::view` 一致 ——

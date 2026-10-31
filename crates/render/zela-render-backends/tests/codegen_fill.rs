@@ -40,6 +40,7 @@ fn program() -> (ShaderFill, [f32; 3]) {
             source: emitted.source,
             params,
             fragment: false,
+            rgba: false,
         },
         [(TIME).sin(), 0.25, 0.5],
     )
@@ -168,6 +169,7 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
         source: emitted.source,
         params: Vec::new(),
         fragment: false,
+        rgba: false,
     };
     let frame = render(canvas_fill(Some(builtin)));
     let [cr, cg, _cb, _ca] = center(&frame);
@@ -196,6 +198,7 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
         source: emitted.source,
         params: Vec::new(),
         fragment: true,
+        rgba: false,
     };
     let first = render(canvas_fill(Some(fragment.clone())));
     let second = render(canvas_fill(Some(fragment)));

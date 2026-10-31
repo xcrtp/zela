@@ -143,6 +143,8 @@ pub struct PendingShader {
     pub fragment: bool,
     /// **BT-3**：来源是作者手写（不是表达式产物）；宿主据此在 `ShaderPaint` 上打标。
     pub hand_written: bool,
+    /// **BT-4**：`eval` 返回 `vec4`（w 是着色器给的透明度）；只在逐片元通道里有意义。
+    pub rgba: bool,
 }
 
 /// **动画层阶段 1**：一条待采样的函数图像（宿主在脚本结束后逐点求值并挂成折线）。
@@ -1393,11 +1395,11 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
             return;
         }
     };
-    if emitted.ret != ze_comb::SlotType::Vec3 {
+    if emitted.ret != ze_comb::SlotType::Vec3 && emitted.ret != ze_comb::SlotType::Vec4 {
         push_binding_error(
             this,
             format!(
-                "着色 codegen 的根表达式必须返回 Vec3（当前 {:?}；标量请用 `splat`）",
+                "着色 codegen 的根表达式必须返回 Vec3 或 Vec4（当前 {:?}；标量请用 `splat`）",
                 emitted.ret
             ),
         );
@@ -1447,9 +1449,13 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
     }
     let size = offset.div_ceil(16) * 16;
     // **阶段 3**：读了逐片元内建 ⇒ 颜色随像素变，后端改走逐像素通道。
-    let fragment = channels
-        .iter()
-        .any(|(qualified, _)| qualified.starts_with("zela.shader::fragment."));
+    // **BT-4**：Vec4 出口本身就要求走逐片元通道（alpha 只在颜色画布里有位置），
+    // 即使表达式是常量 —— 这是派生事实，不是作者的开关。
+    let rgba = emitted.ret == ze_comb::SlotType::Vec4;
+    let fragment = rgba
+        || channels
+            .iter()
+            .any(|(qualified, _)| qualified.starts_with("zela.shader::fragment."));
     this.shaders
         .lock()
         .expect("着色 codegen 表未被毒化")
@@ -1460,6 +1466,7 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
             size,
             fragment,
             hand_written: false,
+            rgba,
         });
 }
 
@@ -1474,6 +1481,8 @@ fn shader_source(pod: &dyn Pod, spec: ShaderSourceSpec) {
         push_binding_error(this, format!("手写 WGSL 不合契约：{message}"));
         return;
     }
+    // **BT-4**：返回 vec4 ⇒ w 是透明度，且**强制**走逐片元通道（alpha 只在颜色画布里有位置）。
+    let rgba = spec.source.contains("-> vec4<f32>");
     this.shaders
         .lock()
         .expect("着色 codegen 表未被毒化")
@@ -1482,8 +1491,9 @@ fn shader_source(pod: &dyn Pod, spec: ShaderSourceSpec) {
             source: spec.source,
             params: Vec::new(),
             size: 0,
-            fragment: spec.fragment,
+            fragment: spec.fragment || rgba,
             hand_written: true,
+            rgba,
         });
 }
 
@@ -1510,6 +1520,10 @@ fn validate_handwritten(source: &str) -> Result<(), String> {
     }
     if !source.contains("fn eval(") {
         return Err("缺少 `fn eval(p: Params, index: u32)`".to_string());
+    }
+    // **BT-4**：返回类型只有两种（尾部按它选 rgb / rgba 两种写回）。
+    if !source.contains("-> vec3<f32>") && !source.contains("-> vec4<f32>") {
+        return Err("`fn eval` 的返回类型必须是 vec3<f32> 或 vec4<f32>".to_string());
     }
     Ok(())
 }
@@ -2317,9 +2331,30 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert!(pending[0].hand_written, "手写来源必须打标");
         assert!(pending[0].fragment);
+        assert!(!pending[0].rgba, "vec3 返回不带透明度");
         assert_eq!(pending[0].source, source);
         assert_eq!(pending[0].size, 0, "本入口不注入参数");
         assert!(pending[0].params.is_empty());
+    }
+
+    /// **BT-4**：手写 WGSL 的 vec4 出口识别为 rgba，并**强制**走逐片元通道。
+    #[test]
+    fn handwritten_vec4_forces_the_fragment_channel() {
+        let this = pod();
+        let object = pure(&this, 1.0);
+        let rgba_source = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec4<f32> {\n    return vec4<f32>(1.0, 0.0, 0.0, 0.5);\n}\n";
+        shader_source(
+            &this,
+            ShaderSourceSpec {
+                object,
+                source: rgba_source.to_string(),
+                fragment: false,
+            },
+        );
+        let pending = this.take_shaders();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].rgba, "vec4 返回必须带 rgba");
+        assert!(pending[0].fragment, "vec4 出口必须走逐片元通道（派生，不是开关）");
     }
 
     /// **BT-3** 契约：缺 `struct Params` / 缺 `fn eval` / 声明了参数 ⇒ 显式报错。
