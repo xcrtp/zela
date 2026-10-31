@@ -160,10 +160,16 @@ const IMAGE_NAMES: [&str; 10] = [
     "shader_colors",
 ];
 
-/// 光栅视图的组名表（`RASTER_PLAN` / `RASTER_LAYERED_PLAN`）。
+/// 光栅视图的组名表（`RASTER_PLAN` / `RASTER_LAYERED_PLAN` / `VECTOR_PLAN`）。
 ///
 /// `resources` 只列声明会引用的名字：`scene_group` 还绑着 `views` / `vertices` / `links` /
 /// `extras`，但没有任何 `PassDecl.inputs` 引用它们。
+///
+/// **BS-1**：组 0 的资源表把**两种 layout** 的名字并在一起 —— 光栅 pass 绑实例缓冲
+/// （`instances` / `rows` / `sprites`），而同一张计划里的 `vector composite` 绑的是矢量的
+/// 控制点（`ctrl` / `subs` / `objects` / `tiles`）。两者组号相同（`@group(0)`）、layout 不同，
+/// 一张 `BindSymbols` 只能有一个名字 ⇒ 资源取并集，否则 `vector composite` 的记账会被
+/// 判成"多绑"。
 ///
 /// 组 3（`lighting`）的清单为空：光照是每个受光 pass 都绑的环境组，声明侧目前不描述
 /// 光照依赖 —— 空清单 ⇒ 不参与"多绑"判定（BP-4 记账）。
@@ -171,7 +177,7 @@ pub const RASTER_GROUPS: BindSymbols = BindSymbols::new(&[
     GroupSymbol {
         group: 0,
         name: "scene",
-        resources: &["instances", "rows", "sprites"],
+        resources: &["instances", "rows", "sprites", "ctrl", "subs", "objects", "tiles"],
     },
     GroupSymbol {
         group: 1,

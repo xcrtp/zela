@@ -1284,8 +1284,16 @@ impl Vector {
     ///
     /// **阶段 2**：`fill_layout` / `fill_pipelines` / `fill_error` 是宿主（`Gpu`）的着色
     /// codegen 缓存与错误槽 —— 本组里有 `FillSlot::Object` 时，在光栅之前跑 compute 写填充槽。
+    ///
+    /// **BS-1（BP-05）**：`ledger` 是"这几次绑定归哪个声明 pass"——本函数内部会起 1–4 个
+    /// compute / render pass（`flatten` / `accumulate` / `composite` / `slab bounds`），
+    /// 每次 `set_bind_group` 的下一行就地 `note_bind`，于是它们第一次进入
+    /// `check_bindings` 的校验范围。`None` 表示调用点自己记账（`SlabsNode` 的 bounds
+    /// 只读了图集，声明侧没有对应的 image 依赖）。
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn encode(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, plan: &Plan, g: usize, statics: &[wgpu::BindingResource<'_>; 3], out: Out<'_>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut std::collections::HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>) {
+    pub(crate) fn encode(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, plan: &Plan, g: usize, statics: &[wgpu::BindingResource<'_>; 3], out: Out<'_>, fill_layout: &wgpu::BindGroupLayout, fill_pipelines: &mut std::collections::HashMap<u64, wgpu::ComputePipeline>, fill_error: &mut Option<String>, ledger: Option<(&'static str, &mut crate::passes::PassSchedule)>) {
+        // 组名与 `PassSchedule` 的组名表同名（`RASTER_GROUPS` / `VECTOR_PLAN_GROUPS` 的 "scene" / "images"）。
+        let mut ledger = ledger;
         let group = &plan.groups[g];
         self.prepare_flatten(device, [group.fills, group.strokes]);
         let [w, h] = plan.size;
@@ -1410,7 +1418,7 @@ impl Vector {
         let view = wgpu::BindingResource::TextureView;
         let depth = if base.is_some() { &self.base_depth.as_ref().expect("base depth").0 } else { &self.far };
         let n = group.objects.len() as u32;
-        let accumulate = |encoder: &mut wgpu::CommandEncoder, read: &wgpu::BindGroup| {
+        let accumulate = |encoder: &mut wgpu::CommandEncoder, read: &wgpu::BindGroup, ledger: &mut Option<(&'static str, &mut crate::passes::PassSchedule)>| {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("accumulate"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: atlas, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })],
@@ -1420,6 +1428,7 @@ impl Vector {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &scene, &[]);
+            ledger_bind(ledger, "scene");
             pass.set_bind_group(3, read, &[]);
             for (pipeline, count) in [(&self.fill, group.fills), (&self.stroke, group.strokes)] {
                 if count > 0 {
@@ -1430,7 +1439,7 @@ impl Vector {
         };
         // a light's map, or a view's opaque depth (`view`): its paths' nearest depth over its meshes' (`images`: what
         // `fs_nearest` reads), where the group's objects are
-        let nearest = |encoder: &mut wgpu::CommandEncoder, map: &wgpu::TextureView, view: bool, images: &[(u32, wgpu::BindingResource)]| {
+        let nearest = |encoder: &mut wgpu::CommandEncoder, map: &wgpu::TextureView, view: bool, images: &[(u32, wgpu::BindingResource)], ledger: &mut Option<(&'static str, &mut crate::passes::PassSchedule)>| {
             let [x0, y0, x1, y1] = group.objects.iter().fold([w, h, 0, 0], |[x0, y0, x1, y1], o| {
                 let r = o.rect.map(|v| v as u32);
                 [x0.min(r[0]), y0.min(r[1]), x1.max(r[0] + r[2]).min(w), y1.max(r[1] + r[3]).min(h)]
@@ -1451,7 +1460,9 @@ impl Vector {
             pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
             pass.set_pipeline(&pipelines[view as usize]);
             pass.set_bind_group(0, &scene, &[]);
+            ledger_bind(ledger, "scene");
             pass.set_bind_group(1, &images, &[]);
+            ledger_bind(ledger, "images");
             pass.draw(0..3, 0..1);
         };
         let (fill_records, stroke_records, _) = self.records.as_ref().expect("records");
@@ -1477,11 +1488,12 @@ impl Vector {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("flatten"), timestamp_writes: None });
             pass.set_pipeline(pipeline.as_ref().expect("the required record producer"));
             pass.set_bind_group(0, &scene, &[]);
+            ledger_bind(&mut ledger, "scene");
             pass.set_bind_group(2, &write, &[]);
             pass.dispatch_workgroups(x, y, 1);
         }
         if n > 0 {
-            accumulate(encoder, &read);
+            accumulate(encoder, &read, &mut ledger);
         }
         match out {
             Out::Color { rasters, target, lighting, .. } => {
@@ -1512,7 +1524,9 @@ impl Vector {
                 let [composite, keep] = self.composite[key].as_ref().expect("the composite");
                 pass.set_pipeline(composite);
                 pass.set_bind_group(0, &scene, &[]);
+                ledger_bind(&mut ledger, "scene");
                 pass.set_bind_group(1, &images, &[]);
+                ledger_bind(&mut ledger, "images");
                 pass.dispatch_workgroups(tiles_x, tiles_y, 1);
                 pass.set_pipeline(keep);
                 // BO-2：`keep` 与 `composite` 同 tile 尺寸，但除数仍按自己的 entry 查（改其中一个即可发现）。
@@ -1540,15 +1554,28 @@ impl Vector {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("slab bounds"), timestamp_writes: None });
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &scene, &[]);
+                ledger_bind(&mut ledger, "scene");
                 pass.set_bind_group(1, &read, &[]);
+                ledger_bind(&mut ledger, "images");
                 pass.set_bind_group(2, &written, &[]);
                 // BO-2：`bound_slabs` 的除数按自己的 entry 查表（与 composite 同为 16）。
                 let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry("bound_slabs") }, Extent::px(w, h));
                 pass.dispatch_workgroups(x, y, 1);
             }
-            Out::Depth(map) => nearest(encoder, map, false, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))]),
-            Out::Opaque(map) => nearest(encoder, map, true, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))]),
+            Out::Depth(map) => nearest(encoder, map, false, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))], &mut ledger),
+            Out::Opaque(map) => nearest(encoder, map, true, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))], &mut ledger),
         }
+    }
+}
+
+/// **BS-1（BP-05）**：把"刚发生的这一次 `set_bind_group`"记进声明侧。
+///
+/// 独立成自由函数（而不是闭包）是因为 `encode` 里有几个嵌套的 recorder 闭包
+/// （`accumulate` / `nearest`）也要记账 —— 闭包捕获 `&mut schedule` 会互斥，
+/// 所以把它当参数传进去。`None` ⇒ 这次调用点自己记账（`SlabsNode` 的 bounds）。
+fn ledger_bind(ledger: &mut Option<(&'static str, &mut crate::passes::PassSchedule)>, group: &'static str) {
+    if let Some((pass, schedule)) = ledger.as_mut() {
+        schedule.note_bind(pass, group);
     }
 }
 

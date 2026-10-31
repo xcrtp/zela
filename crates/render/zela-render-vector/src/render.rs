@@ -589,7 +589,8 @@ impl crate::nodes::PassNode for SlabsNode<'_> {
 
     fn prepare(&mut self, ctx: &mut crate::nodes::PrepareContext<'_>) {
         // 每个像素最近的那几层的边界（`bound_slabs`），精灵据此落在两层之间。
-        self.vector.encode(ctx.device, ctx.queue, ctx.encoder, self.plan, 0, &self.statics, vector::Out::Bounds { out: self.bounds, listed: self.listed }, self.fill_layout, self.fill_pipelines, self.fill_error);
+        // slab bounds 只读了图集；声明侧（`slabs` 的 inputs）没有对应的 image 依赖 ⇒ 不记账。
+        self.vector.encode(ctx.device, ctx.queue, ctx.encoder, self.plan, 0, &self.statics, vector::Out::Bounds { out: self.bounds, listed: self.listed }, self.fill_layout, self.fill_pipelines, self.fill_error, None);
     }
 
     fn parts(&self) -> Option<crate::nodes::RenderParts<'_>> {
@@ -668,10 +669,12 @@ impl crate::nodes::PassNode for OcclusionDepthNode<'_> {
         }
     }
 
-    fn after(&mut self, _index: usize, ctx: &mut crate::nodes::PrepareContext<'_>) {
+    fn after(&mut self, _index: usize, ctx: &mut crate::nodes::PrepareContext<'_>, _execute: &mut crate::nodes::ExecuteContext<'_>) {
         if let Some(plan) = self.plan {
             for g in 0..plan.groups.len() {
-                self.vector.encode(ctx.device, ctx.queue, ctx.encoder, plan, g, &self.statics, vector::Out::Opaque(self.view), self.fill_layout, self.fill_pipelines, self.fill_error);
+                // `nearest` 读图集与逐对象程序 / 颜色，但那是**数据驱动的条件读**（这个视图
+                // 没有路径时整个 pass 不起）—— `PassDecl` 没有条件语义，所以不记账（escape）。
+                self.vector.encode(ctx.device, ctx.queue, ctx.encoder, plan, g, &self.statics, vector::Out::Opaque(self.view), self.fill_layout, self.fill_pipelines, self.fill_error, None);
             }
         }
     }
@@ -736,10 +739,11 @@ impl crate::nodes::PassNode for ShadowNode<'_> {
         }
     }
 
-    fn after(&mut self, index: usize, ctx: &mut crate::nodes::PrepareContext<'_>) {
+    fn after(&mut self, index: usize, ctx: &mut crate::nodes::PrepareContext<'_>, _execute: &mut crate::nodes::ExecuteContext<'_>) {
         if let Some(plan) = self.cast.get(index) {
             for g in 0..plan.groups.len() {
-                self.vector.encode(ctx.device, ctx.queue, ctx.encoder, plan, g, &self.statics, vector::Out::Depth(&self.layers[index]), self.fill_layout, self.fill_pipelines, self.fill_error);
+                // 同 `OcclusionDepthNode`：`nearest` 的图集读是条件读，不记账（escape）。
+                self.vector.encode(ctx.device, ctx.queue, ctx.encoder, plan, g, &self.statics, vector::Out::Depth(&self.layers[index]), self.fill_layout, self.fill_pipelines, self.fill_error, None);
             }
         }
     }
@@ -811,11 +815,17 @@ impl crate::nodes::PassNode for AtlasNode<'_> {
         }
     }
 
-    fn after(&mut self, index: usize, ctx: &mut crate::nodes::PrepareContext<'_>) {
+    /// 这一组的合成属于**声明里的 `vector composite`**（不是 `atlas raster`）：
+    /// 图集只是它的输入之一。
+    ///
+    /// **BS-1**：这里暂时传 `None` —— `vector composite` 的 `begin` 还在 `encode_frame`
+    /// 里、排在 `record_render` 之后，此刻 `note_bind` 会落进 `stray`。BS-2 把这段搬进
+    /// `VectorCompositeNode` 后，由驱动 `begin` 再记账。
+    fn after(&mut self, index: usize, ctx: &mut crate::nodes::PrepareContext<'_>, _execute: &mut crate::nodes::ExecuteContext<'_>) {
         let atlas = self.atlas.filter(|_| !self.groups[index].1.is_empty());
         let lighting = vector::Lighting { maps: self.maps, compare: self.compare, dfg: self.dfg, linear: self.linear, environment: self.cube, occlusion: self.occlusion };
         let out = vector::Out::Color { rasters: atlas.map(|a| &a.color), target: self.target, base: None, light: None, listed: None, slabs: None, lighting, light_out: None };
-        self.vector.encode(ctx.device, ctx.queue, ctx.encoder, self.plan, index, &self.statics, out, self.fill_layout, self.fill_pipelines, self.fill_error);
+        self.vector.encode(ctx.device, ctx.queue, ctx.encoder, self.plan, index, &self.statics, out, self.fill_layout, self.fill_pipelines, self.fill_error, None);
     }
 }
 
@@ -4341,7 +4351,7 @@ impl Player {
                             let lighting = vector::Lighting { maps: &buffers.shadow_maps.array, compare: &gpu.shadow_compare, dfg: &gpu.dfg, linear: &gpu.linear, environment: &cube, occlusion };
                             let slabs = slabs.map(|s| [&s.bounds, &s.slabs]);
                             let out = vector::Out::Color { rasters: None, target, base: base.as_ref(), light: base_light.as_ref(), listed, slabs, lighting, light_out };
-                            vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out, fill_layout, fill_pipelines, fill_error);
+                            vector.encode(&gpu.device, &gpu.queue, encoder, plan, g, &statics, out, fill_layout, fill_pipelines, fill_error, Some(("vector composite", &mut *schedule)));
                         }
                         match (bloomed, bloom) {
                             (Some((b, glow)), Some(bloom)) => {

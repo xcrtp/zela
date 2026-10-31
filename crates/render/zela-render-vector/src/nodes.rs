@@ -154,7 +154,10 @@ pub trait PassNode {
     /// 本逻辑 pass 里夹着别的 recorder 时用（例如阴影每层栅格之后、图集每组栅格之后，
     /// 再让 `vector::encode` 往同一张深度 / 同一张合成目标里写）。`prepare` 管"所有 pass
     /// 之前"，这里管"每个 pass 之后"。
-    fn after(&mut self, _index: usize, _ctx: &mut PrepareContext<'_>) {}
+    ///
+    /// **BS-1**：多了 [`ExecuteContext`] —— 夹在中间的 recorder 也要就地 `note_bind`，
+    /// 否则它绑的组进不了"声明 vs 实际"的比对（BP-05）。
+    fn after(&mut self, _index: usize, _prepare: &mut PrepareContext<'_>, _execute: &mut ExecuteContext<'_>) {}
 }
 
 /// 驱动一个 **compute** pass：按声明序推进（`begin` 同时完成报数），
@@ -210,7 +213,7 @@ pub fn record_render(
             node.execute_at(index, execute, &mut AnyPass::Render(pass));
             // pass 在这里结束（附件借的是节点自己的纹理视图）。
         }
-        node.after(index, prepare);
+        node.after(index, prepare, execute);
     }
     Ok(())
 }

@@ -95,9 +95,9 @@ fn raster_plan_flow_is_pinned() {
         flows,
         vec![
             "shadow[] > occlusion depth(-) > occlusion(-) > base[scene,lighting] \
-             > base depth[] > vector composite[] > bloom(-)"
+             > base depth[] > vector composite[scene,images] > bloom(-)"
         ],
         "RASTER_PLAN 的命令流变了：没有阴影投射者 / 遮蔽源 / 泛光时，三步都必须显式跳过（`(-)`），\
-         不能静默消失"
+         不能静默消失；`vector composite` 的组名由 BS-1 的 encode 记账给出"
     );
 }
