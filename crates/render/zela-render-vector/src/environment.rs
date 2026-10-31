@@ -403,6 +403,8 @@ pub(crate) struct Prefilter {
     halve: (wgpu::BindGroupLayout, wgpu::ComputePipeline),
     prefilter: (wgpu::BindGroupLayout, wgpu::ComputePipeline),
     sampler: wgpu::Sampler,
+    /// **BV-1**：源图 / 两级立方体 / 每级 mip 视图的目标池（同尺寸复用；租约跟着池走）。
+    targets: crate::render::TargetPool,
 }
 
 #[cfg(feature = "render")]
@@ -428,6 +430,7 @@ impl Prefilter {
             halve: make("halve", &[level, out(1)]),
             prefilter: make("prefilter", &[cube, out(1), sampler, params]),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor { label: Some("environment"), mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::MipmapFilterMode::Linear, ..Default::default() }),
+            targets: crate::render::TargetPool::new(),
         }
     }
 
@@ -438,33 +441,44 @@ impl Prefilter {
     ///
     /// **BR-3**：拆成 prepare（建纹理 / 组 / 参数、写图片，见 [`Prefilter::prepare`]）与 execute
     /// （按步设管线 / 组 / 派发，见 [`Prefilter::record`]）。
-    pub(crate) fn prepare(&self, device: &wgpu::Device, queue: &wgpu::Queue, env: &Environment) -> Prefiltered {
-        let size = wgpu::Extent3d { width: env.width, height: env.height, depth_or_array_layers: 1 };
-        let picture = crate::render::counted_texture(device, &wgpu::TextureDescriptor { label: Some("environment picture"), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8Uint, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
-        queue.write_texture(picture.as_image_copy(), &env.rgbe, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * env.width), rows_per_image: Some(env.height) }, size);
-        let cube = |label, mips| {
-            crate::render::counted_texture(device, &wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d { width: SIDE, height: SIDE, depth_or_array_layers: 6 },
-                mip_level_count: mips,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            })
-        };
+    pub(crate) fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, env: &Environment) -> Prefiltered {
+        // BV-1：源图 / 两级立方体 / 每级 mip 视图都按描述符从目标池申请（同一尺寸复用；租约由池持有）。
+        let picture = crate::render::TargetDesc::new(
+            "environment picture",
+            env.width,
+            env.height,
+            wgpu::TextureFormat::Rgba8Uint,
+            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        );
+        {
+            let texture = self.targets.texture(device, picture);
+            queue.write_texture(
+                texture.as_image_copy(),
+                &env.rgbe,
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * env.width), rows_per_image: Some(env.height) },
+                wgpu::Extent3d { width: env.width, height: env.height, depth_or_array_layers: 1 },
+            );
+        }
         let mips = SIDE.ilog2() + 1;
-        let (source, out) = (cube("environment source", mips), cube("environment", LEVELS));
-        let level = |t: &crate::render::TrackedTexture, mip: u32| t.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::D2Array), base_mip_level: mip, mip_level_count: Some(1), ..Default::default() });
+        let cube_desc = |label: &'static str, mips: u32| crate::render::TargetDesc {
+            label,
+            width: SIDE,
+            height: SIDE,
+            layers: 6,
+            mips,
+            samples: 1,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        };
+        let (source, out) = (cube_desc("environment source", mips), cube_desc("environment", LEVELS));
         let bind = |layout: &wgpu::BindGroupLayout, entries: &[(u32, wgpu::BindingResource)]| {
             let entries: Vec<wgpu::BindGroupEntry> = entries.iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding: *binding, resource: resource.clone() }).collect();
             device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
         };
         let view = wgpu::BindingResource::TextureView;
-        let picture_view = picture.view(&Default::default());
-        let sources: Vec<crate::render::TrackedView> = (0..mips).map(|mip| level(&source, mip)).collect();
-        let outs: Vec<crate::render::TrackedView> = (0..LEVELS).map(|l| level(&out, l)).collect();
+        let picture_view = self.targets.view(device, picture, crate::render::TargetView::default());
+        let sources: Vec<crate::render::TrackedView> = (0..mips).map(|mip| self.targets.view(device, source, crate::render::TargetView::array_mip(mip))).collect();
+        let outs: Vec<crate::render::TrackedView> = (0..LEVELS).map(|l| self.targets.view(device, out, crate::render::TargetView::array_mip(l))).collect();
         let mut steps = Vec::with_capacity(1 + (mips - 1) as usize + LEVELS as usize);
         // BO-2：每个 entry 的除数由 `@workgroup_size` 查表给出（三个 entry 都是 8×8×1，六面）。
         let cube = |side: u32, entry: &'static str| {
@@ -482,7 +496,7 @@ impl Prefilter {
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&params));
             buffer
         };
-        // BU-1：这些缓冲与源图只被 steps 的组引用 —— 租金跟着 `Prefiltered` 走。
+        // BU-1：这些参数缓冲只被 steps 的组引用 —— 租金跟着 `Prefiltered` 走。
         let mut held_buffers: Vec<crate::render::TrackedBuffer> = Vec::new();
         let scale = uniform([0.0, 0.0, 0.0, 0.0, 1.0 / env.unit, 0.0, 0.0, 0.0]);
         steps.push((0, bind(&self.to_cube.0, &[(0, view(&picture_view)), (1, view(&sources[0])), (3, scale.as_entire_binding())]), cube(SIDE, "to_cube")));
@@ -491,7 +505,7 @@ impl Prefilter {
             steps.push((1, bind(&self.halve.0, &[(4, view(&sources[mip as usize - 1])), (1, view(&sources[mip as usize]))]), cube(SIDE >> mip, "halve")));
         }
         // the levels: the GGX lobe's average of the source
-        let source_cube = source.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
+        let source_cube = self.targets.view(device, source, crate::render::TargetView::cube());
         for l in 0..LEVELS {
             let t = l as f32 / (LEVELS - 1) as f32;
             let perceptual = 1.0 - (1.0 - t).sqrt(); // l = (LEVELS - 1) r (2 - r)
@@ -500,11 +514,8 @@ impl Prefilter {
             steps.push((2, bind(&self.prefilter.0, &[(5, view(&source_cube)), (1, view(&outs[l as usize])), (2, wgpu::BindingResource::Sampler(&self.sampler)), (3, buffer.as_entire_binding())]), cube(SIDE >> l, "prefilter")));
             held_buffers.push(buffer);
         }
-        let cube = out.view(&wgpu::TextureViewDescriptor { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() });
-        let mut held_views = vec![picture_view, source_cube];
-        held_views.extend(sources.iter().cloned());
-        held_views.extend(outs.iter().cloned());
-        Prefiltered { steps, cube, _held: (held_views, held_buffers) }
+        let cube = self.targets.view(device, out, crate::render::TargetView::cube());
+        Prefiltered { steps, cube, _held: held_buffers }
     }
 
     /// **BR-3**：录制 prepare 给出的每一步（顺序即 `steps` 的顺序）。
@@ -526,9 +537,9 @@ impl Prefilter {
 pub(crate) struct Prefiltered {
     steps: Vec<(u8, wgpu::BindGroup, [u32; 3])>,
     pub(crate) cube: crate::render::TrackedView,
-    /// BU-1：源图 / 每级 mip / 参数缓冲只被 `steps` 的组引用（组自己会持有它们）。
+    /// BU-1：参数缓冲只被 `steps` 的组引用（组自己会持有它们）。
     /// 按住它们的租约，让持有量跟着 `Prefiltered` 走。
-    _held: (Vec<crate::render::TrackedView>, Vec<crate::render::TrackedBuffer>),
+    _held: Vec<crate::render::TrackedBuffer>,
 }
 
 #[cfg(test)]
@@ -633,7 +644,7 @@ mod tests {
     #[cfg(feature = "render")]
     fn prefiltered(env: &Environment) -> (Vec<Vec<u8>>, std::time::Duration) {
         crate::render::with_gpu(|gpu| {
-            let prefilter = Prefilter::new(&gpu.device);
+            let mut prefilter = Prefilter::new(&gpu.device);
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
             let start = std::time::Instant::now();
             // BR-3：与生产路径同一形态 —— prepare 建资源，record 录制。

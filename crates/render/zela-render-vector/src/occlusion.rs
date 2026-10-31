@@ -40,9 +40,6 @@ pub(crate) struct Occluded {
     params: super::TrackedBuffer,
     groups: Vec<wgpu::BindGroup>, // the distances, each level of the pyramid, the occlusion, its low-pass
     sizes: Vec<[u32; 2]>,         // the pyramid's levels, from the whole view's
-    /// BU-1：中间产物只被 `groups` 引用（bind group 自己会持有纹理）。按住它们的视图，
-    /// 让分配的租约跟着 `Occluded` 走 —— 否则持有量会提前减掉，读数是错的。
-    _held: Vec<super::TrackedView>,
 }
 
 impl Occlusion {
@@ -89,21 +86,28 @@ impl Occlusion {
     }
 
     /// Where a view of `size` finds its occlusion.
-    pub(crate) fn occluded(&self, device: &wgpu::Device, [width, height]: [u32; 2]) -> Occluded {
+    ///
+    /// **BV-1**：六张目标与金字塔的每级视图都按 [`super::TargetDesc`] / [`super::TargetView`] 从
+    /// 画布的目标池申请（同一张纹理复用；租约由池持有）。
+    pub(crate) fn occluded(&self, pool: &mut super::TargetPool, device: &wgpu::Device, [width, height]: [u32; 2]) -> Occluded {
         // the pyramid's levels: down to about 32 pixels across the view's longer side, 2 to 8 of them
         let levels = (32 - width.max(height).leading_zeros()).saturating_sub(5).clamp(2, 8);
         let sizes: Vec<[u32; 2]> = (0..levels).map(|l| [(width >> l).max(1), (height >> l).max(1)]).collect();
-        let texture = |label: &str, [w, h]: [u32; 2], levels: u32, format, usage| {
-            let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
-            super::counted_texture(device, &wgpu::TextureDescriptor { label: Some(label), size, mip_level_count: levels, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] })
-        };
         let written = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
-        let r32 = |label| texture(label, sizes[0], 1, wgpu::TextureFormat::R32Float, written).view(&Default::default());
-        let depth = texture("occlusion depth", sizes[0], 1, wgpu::TextureFormat::Depth32Float, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING).view(&Default::default());
-        let (distances, raw, horizontal, out) = (r32("distances"), r32("occlusion"), r32("occlusion across"), r32("occlusion low-passed"));
-        let pyramid = texture("distances' pyramid", sizes[1], levels - 1, wgpu::TextureFormat::R32Float, written);
-        let level: Vec<super::TrackedView> = (0..levels - 1).map(|l| pyramid.view(&wgpu::TextureViewDescriptor { base_mip_level: l, mip_level_count: Some(1), ..Default::default() })).collect();
-        let mips = pyramid.view(&Default::default());
+        let [w0, h0] = sizes[0];
+        let single = |pool: &mut super::TargetPool, label: &'static str, format| {
+            pool.view(device, super::TargetDesc::new(label, w0, h0, format, written), super::TargetView::default())
+        };
+        let depth = pool.view(
+            device,
+            super::TargetDesc::new("occlusion depth", w0, h0, wgpu::TextureFormat::Depth32Float, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING),
+            super::TargetView::default(),
+        );
+        let r32 = wgpu::TextureFormat::R32Float;
+        let (distances, raw, horizontal, out) = (single(pool, "distances", r32), single(pool, "occlusion", r32), single(pool, "occlusion across", r32), single(pool, "occlusion low-passed", r32));
+        let pyramid = super::TargetDesc { label: "distances' pyramid", width: sizes[1][0], height: sizes[1][1], layers: 1, mips: levels - 1, samples: 1, format: r32, usage: written };
+        let level: Vec<super::TrackedView> = (0..levels - 1).map(|l| pool.view(device, pyramid, super::TargetView::mip(l))).collect();
+        let mips = pool.view(device, pyramid, super::TargetView::default());
         let params = super::counted_buffer(device, &wgpu::BufferDescriptor { label: Some("occlusion"), size: 64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let bind = |k: usize, entries: &[(u32, wgpu::BindingResource)]| {
             let entries: Vec<wgpu::BindGroupEntry> = entries.iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding: *binding, resource: resource.clone() }).collect();
@@ -120,9 +124,7 @@ impl Occlusion {
         // the low-pass: across into its own image, then down into `out`
         groups.push(bind(3, &[(0, params.as_entire_binding()), (3, view(&distances)), (5, view(&raw)), (6, view(&horizontal))]));
         groups.push(bind(3, &[(0, params.as_entire_binding()), (3, view(&distances)), (5, view(&horizontal)), (6, view(&out))]));
-        let mut held = vec![distances.clone(), raw.clone(), horizontal.clone(), mips.clone()];
-        held.extend(level.iter().cloned());
-        Occluded { depth, out, params, groups, sizes, _held: held }
+        Occluded { depth, out, params, groups, sizes }
     }
 
     /// A view's occlusion, once its opaque depth is drawn: `projection` the view's (rows; a 3D view's: depth z / w =

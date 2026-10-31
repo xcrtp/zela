@@ -33,9 +33,6 @@ pub(crate) struct Bloomed {
     params: super::TrackedBuffer,
     groups: Vec<wgpu::BindGroup>, // the first level, each level after it, each added up (coarsest first), the view shown
     sizes: Vec<[u32; 2]>,         // the levels', and last the view's
-    /// BU-1：金字塔各级只被 `groups` 引用（bind group 自己会持有纹理）。按住它们的视图，
-    /// 让分配的租约跟着 `Bloomed` 走 —— 否则持有量会提前减掉，读数是错的。
-    _held: Vec<super::TrackedView>,
 }
 
 impl Bloom {
@@ -67,7 +64,10 @@ impl Bloom {
     ///
     /// **PB Step 2（V-02）**：`radius`（屏幕像素）决定金字塔的级数 —— 最粗一级的纹素约 `radius`
     /// 像素；`0` = 用满 `LEVELS`（旧行为）。级数仍受 `NARROWEST` 限制（再粗就没有细节可加）。
-    pub(crate) fn bloomed(&self, device: &wgpu::Device, smooth: &wgpu::Sampler, target: &wgpu::TextureView, [width, height]: [u32; 2], radius: f32) -> Bloomed {
+    ///
+    /// **BV-1**：paint / light / 金字塔各级不再是自建纹理，而是按 [`super::TargetDesc`] 从
+    /// 画布的 [`super::TargetPool`] 申请（同一张纹理按描述符复用；租约由池持有）。
+    pub(crate) fn bloomed(&self, pool: &mut super::TargetPool, device: &wgpu::Device, smooth: &wgpu::Sampler, target: &wgpu::TextureView, [width, height]: [u32; 2], radius: f32) -> Bloomed {
         let mut sizes = vec![[width.div_ceil(2), height.div_ceil(2)]];
         let wanted = if radius > 0.0 {
             let narrow = width.min(height).max(1) as f32;
@@ -82,15 +82,14 @@ impl Bloom {
             }
             sizes.push([w, h]);
         }
-        let image = |label: &str, [w, h]: [u32; 2], format| {
-            let size = wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 };
-            let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
-            super::counted_texture(device, &wgpu::TextureDescriptor { label: Some(label), size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage, view_formats: &[] }).view(&Default::default())
+        let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+        let image = |pool: &mut super::TargetPool, label: &'static str, [w, h]: [u32; 2], format| {
+            pool.view(device, super::TargetDesc::new(label, w, h, format, usage), super::TargetView::default())
         };
-        let (paint, light) = (image("bloom paint", [width, height], super::COLOR), image("bloom light", [width, height], super::RADIANCE));
+        let (paint, light) = (image(pool, "bloom paint", [width, height], super::COLOR), image(pool, "bloom light", [width, height], super::RADIANCE));
         // each level's share, and (but the coarsest's) the coarser levels added to it
-        let down: Vec<super::TrackedView> = sizes.iter().map(|&s| image("bloom level", s, super::RADIANCE)).collect();
-        let up: Vec<super::TrackedView> = sizes[..sizes.len() - 1].iter().map(|&s| image("bloom level added up", s, super::RADIANCE)).collect();
+        let down: Vec<super::TrackedView> = sizes.iter().map(|&s| image(pool, "bloom level", s, super::RADIANCE)).collect();
+        let up: Vec<super::TrackedView> = sizes[..sizes.len() - 1].iter().map(|&s| image(pool, "bloom level added up", s, super::RADIANCE)).collect();
         let params = super::counted_buffer(device, &wgpu::BufferDescriptor { label: Some("bloom"), size: 16, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let bind = |k: usize, entries: &[(u32, wgpu::BindingResource)]| {
             let entries: Vec<wgpu::BindGroupEntry> = entries.iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding: *binding, resource: resource.clone() }).collect();
@@ -108,8 +107,7 @@ impl Bloom {
         }
         groups.push(bind(2, &[(0, params.as_entire_binding()), (2, sampler.clone()), (5, view(&paint)), (6, view(&light)), (7, view(added(0))), (8, view(target))]));
         sizes.push([width, height]);
-        let held = down.iter().chain(up.iter()).cloned().collect();
-        Bloomed { paint, light, params, groups, sizes, _held: held }
+        Bloomed { paint, light, params, groups, sizes }
     }
 
     /// A view's glow, once its composite has left its paint and light in `b`: its `Glow` (the share of

@@ -528,7 +528,7 @@ impl crate::nodes::PassNode for BaseDepthNode<'_> {
 /// 它是**一帧只在首次显示环境时**跑的一次性 pass，因此用自己的 encoder + `submit`；
 /// 但录制顺序 / 报数仍由 `record_compute` 与 `ENVIRONMENT_PLAN` 给出。
 struct EnvironmentNode<'a> {
-    prefilter: &'a environment::Prefilter,
+    prefilter: &'a mut environment::Prefilter,
     env: &'a environment::Environment,
     prepared: Option<environment::Prefiltered>,
 }
@@ -3326,31 +3326,126 @@ pub(crate) struct Canvas {
     pub(crate) raster: Option<Attachments>,
     occluded: Option<occlusion::Occluded>, // where a 3D view's ambient occlusion is found, once it has some
     bloomed: Option<bloom::Bloomed>,       // where a 3D view's glow is made, once it has some
-    /// **BU-3**：按描述符申请的中间目标（同描述符复用）。新增一个中间目标只需要
+    /// **BU-3 / BV-1**：按描述符申请的中间目标（同描述符复用）。新增一个中间目标只需要
     /// `Canvas::target(desc)` —— 不再加字段、不加 `Attachments` 成员、也不加 `RenderTargetId` 变体。
-    targets: Vec<(TargetDesc, TrackedView)>,
+    targets: TargetPool,
 }
 
-/// **BU-3**：一个中间目标的描述（尺寸 / 层数 / 采样数 / 格式 / 用途 / 标签）。
+/// **BU-3**：一个中间目标的描述（尺寸 / 层数 / mip / 采样数 / 格式 / 用途 / 标签）。
 ///
 /// 这就是"加特效"与"加资源"之间的接缝：资源层只认描述符，特效层只描述自己要什么。
 /// 描述符相同 ⇒ 同一张纹理（复用）；不同 ⇒ 新建一张。**不做别名复用**（那要强制
 /// `LoadOp::Clear`，是独立风险项，见 GAPS）。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TargetDesc {
     pub(crate) label: &'static str,
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) layers: u32,
+    pub(crate) mips: u32,
     pub(crate) samples: u32,
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) usage: wgpu::TextureUsages,
 }
 
 impl TargetDesc {
-    /// 一张 2D 目标的常用形态（1 层；尺寸取自画布）。
+    /// 一张 2D 目标的常用形态（1 层、1 级 mip；尺寸取自画布）。
     pub(crate) fn new(label: &'static str, width: u32, height: u32, format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> Self {
-        Self { label, width, height, layers: 1, samples: 1, format, usage }
+        Self { label, width, height, layers: 1, mips: 1, samples: 1, format, usage }
+    }
+}
+
+/// **BV-1**：同一张目标纹理上的一个视图（数组层 / mip / 方面 / 维度）。
+///
+/// bloom 的金字塔、AO 的每级、环境的立方体与每级 mip 都是"一张纹理、多个视图"；
+/// 描述符只认纹理，视图在它上面再分一层。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TargetView {
+    pub(crate) dimension: Option<wgpu::TextureViewDimension>,
+    pub(crate) aspect: Option<wgpu::TextureAspect>,
+    pub(crate) base_mip: u32,
+    pub(crate) mip_count: Option<u32>,
+    pub(crate) base_layer: u32,
+    pub(crate) layer_count: Option<u32>,
+}
+
+impl TargetView {
+    /// 非立方体纹理的 cube 视图（环境预滤波把 2D×6 当立方体读）。
+    pub(crate) fn cube() -> Self {
+        Self { dimension: Some(wgpu::TextureViewDimension::Cube), ..Default::default() }
+    }
+    /// 一级 mip 的 2D 数组视图。
+    pub(crate) fn array_mip(mip: u32) -> Self {
+        Self { dimension: Some(wgpu::TextureViewDimension::D2Array), base_mip: mip, mip_count: Some(1), ..Default::default() }
+    }
+    /// 一级 mip 的 2D 视图。
+    pub(crate) fn mip(mip: u32) -> Self {
+        Self { base_mip: mip, mip_count: Some(1), ..Default::default() }
+    }
+}
+
+/// **BV-1**：中间目标池 —— 纹理按 [`TargetDesc`] 复用，视图按 `(desc, view)` 复用。
+///
+/// 池里的纹理与视图由池持有（租约因此跟着池走，`held_*` 读数不会提前减）。
+/// 池随宿主（`Canvas` / `Prefilter`）生死；换尺寸就是另一条描述符 ⇒ 另一张纹理。
+#[derive(Default)]
+pub(crate) struct TargetPool {
+    textures: Vec<(TargetDesc, TrackedTexture)>,
+    views: Vec<(TargetDesc, TargetView, TrackedView)>,
+}
+
+impl TargetPool {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// 取（必要时建）描述符对应的纹理。
+    pub(crate) fn texture(&mut self, device: &wgpu::Device, desc: TargetDesc) -> &TrackedTexture {
+        let at = match self.textures.iter().position(|(have, _)| *have == desc) {
+            Some(at) => at,
+            None => {
+                let texture = counted_texture(device, &wgpu::TextureDescriptor {
+                    label: Some(desc.label),
+                    size: wgpu::Extent3d { width: desc.width, height: desc.height, depth_or_array_layers: desc.layers },
+                    mip_level_count: desc.mips,
+                    sample_count: desc.samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: desc.format,
+                    usage: desc.usage,
+                    view_formats: &[],
+                });
+                self.textures.push((desc, texture));
+                self.textures.len() - 1
+            }
+        };
+        &self.textures[at].1
+    }
+
+    /// 取（必要时建）一个视图；返回克隆的视图（与池共享同一个分配租约）。
+    pub(crate) fn view(&mut self, device: &wgpu::Device, desc: TargetDesc, view: TargetView) -> TrackedView {
+        if let Some(at) = self.views.iter().position(|(have, want, _)| *have == desc && *want == view) {
+            return self.views[at].2.clone();
+        }
+        let texture = self.texture(device, desc);
+        let created = texture.view(&wgpu::TextureViewDescriptor {
+            label: None,
+            format: None,
+            dimension: view.dimension,
+            usage: None,
+            aspect: view.aspect.unwrap_or(wgpu::TextureAspect::All),
+            base_mip_level: view.base_mip,
+            mip_level_count: view.mip_count,
+            base_array_layer: view.base_layer,
+            array_layer_count: view.layer_count,
+        });
+        self.views.push((desc, view, created.clone()));
+        created
+    }
+
+    /// 已缓存的视图数（诊断 / 用例）。
+    #[allow(dead_code)]
+    pub(crate) fn len(&self) -> usize {
+        self.views.len()
     }
 }
 
@@ -3406,7 +3501,7 @@ impl Canvas {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let color = counted_texture(&gpu.device, &wgpu::TextureDescriptor { label: None, size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: COLOR, usage, view_formats: &[] });
-        Self { width, height, color: color.view(&Default::default()), raster: None, occluded: None, bloomed: None, targets: Vec::new() }
+        Self { width, height, color: color.view(&Default::default()), raster: None, occluded: None, bloomed: None, targets: TargetPool::new() }
     }
 
     /// B15（乙）：画布的颜色由调用方给（同一 view 承载合成输出），不再另建纹理。
@@ -3415,32 +3510,24 @@ impl Canvas {
     /// `RENDER_ATTACHMENT | STORAGE_BINDING | TEXTURE_BINDING`（公共入口会显式校验）。
     fn covered(view: &wgpu::TextureView, width: u32, height: u32) -> Self {
         // BU-1：外部目标不是本 crate 分配的 ⇒ 没有租约可记（持有量只算自己的分配）。
-        Self { width, height, color: TrackedView::untracked(view.clone()), raster: None, occluded: None, bloomed: None, targets: Vec::new() }
+        Self { width, height, color: TrackedView::untracked(view.clone()), raster: None, occluded: None, bloomed: None, targets: TargetPool::new() }
     }
 
     /// **BU-3**：按描述符取一个中间目标（同描述符复用同一张纹理；新描述符就新建一张）。
     ///
     /// 这是"新增一个中间目标"的唯一入口：调用方描述自己要什么，资源层负责建 / 复用。
     /// 不再需要加 `Canvas` 字段、`Attachments` 成员或 `RenderTargetId` 变体。
-    pub(crate) fn target(&mut self, gpu: &Gpu, desc: TargetDesc) -> &TrackedView {
-        let at = match self.targets.iter().position(|(have, _)| *have == desc) {
-            Some(at) => at,
-            None => {
-                let texture = counted_texture(&gpu.device, &wgpu::TextureDescriptor {
-                    label: Some(desc.label),
-                    size: wgpu::Extent3d { width: desc.width, height: desc.height, depth_or_array_layers: desc.layers },
-                    mip_level_count: 1,
-                    sample_count: desc.samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: desc.format,
-                    usage: desc.usage,
-                    view_formats: &[],
-                });
-                self.targets.push((desc, texture.view(&Default::default())));
-                self.targets.len() - 1
-            }
-        };
-        &self.targets[at].1
+    ///
+    /// 目前只有用例与 BV-3 / BV-4 的接缝在用（bloom / AO / 环境走的是池本身）。
+    #[allow(dead_code)]
+    pub(crate) fn target(&mut self, gpu: &Gpu, desc: TargetDesc) -> TrackedView {
+        self.target_view(gpu, desc, TargetView::default())
+    }
+
+    /// **BV-1**：同一张目标纹理上的指定视图（数组层 / mip / 方面）。
+    #[allow(dead_code)]
+    pub(crate) fn target_view(&mut self, gpu: &Gpu, desc: TargetDesc, view: TargetView) -> TrackedView {
+        self.targets.view(&gpu.device, desc, view)
     }
 
     /// Give it the raster pipeline's attachments (once).
@@ -4504,14 +4591,21 @@ impl Player {
                     // and where its ambient occlusion is found, if it has some
                     if skipping() & SKIP_AO == 0 && occlusion_of(&f.view).is_some() && canvas.occluded.is_none() {
                         let occlusion = gpu.occlusion.get_or_insert_with(|| occlusion::Occlusion::new(&gpu.device, gpu.blend[(samples > 1) as usize].as_ref().expect("the raster pipeline's shader"), &gpu.raster.scene));
-                        canvas.occluded = Some(occlusion.occluded(&gpu.device, [canvas.width, canvas.height]));
+                        // BV-1：AO 的六张目标与金字塔每级视图都从画布的目标池申请。
+                        let size = [canvas.width, canvas.height];
+                        let found = occlusion.occluded(&mut canvas.targets, &gpu.device, size);
+                        canvas.occluded = Some(found);
                     }
                     // and where its glow is made, if it has some
                     if skipping() & SKIP_BLOOM == 0 && glow.is_some() && canvas.bloomed.is_none() {
                         let bloom = gpu.bloom.get_or_insert_with(|| bloom::Bloom::new(&gpu.device));
                         // PB Step 2：半径决定金字塔级数（最粗一级的纹素 ≈ radius 像素）。
                         let radius = glow.as_ref().map_or(0.0, |g| g.radius);
-                        canvas.bloomed = Some(bloom.bloomed(&gpu.device, &gpu.linear, &canvas.color, [canvas.width, canvas.height], radius));
+                        // BV-1：paint / light / 金字塔各级都从画布的目标池申请。
+                        let target = canvas.color.clone();
+                        let size = [canvas.width, canvas.height];
+                        let built = bloom.bloomed(&mut canvas.targets, &gpu.device, &gpu.linear, &target, size, radius);
+                        canvas.bloomed = Some(built);
                     }
                 }
                 Drawing::Vector(plan, _) if rasters(d) => need = [need[0].max(plan.raster_size[0]), need[1].max(plan.raster_size[1])],
@@ -5678,11 +5772,11 @@ mod buffer_contract {
             let mut canvas = Canvas::new(gpu, 16, 8);
             let color = || TargetDesc::new("extra color", 16, 8, COLOR, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
             let radiance = || TargetDesc::new("extra radiance", 16, 8, RADIANCE, wgpu::TextureUsages::TEXTURE_BINDING);
-            let first = canvas.target(gpu, color()) as *const TrackedView;
-            let again = canvas.target(gpu, color()) as *const TrackedView;
-            assert_eq!(first, again, "同一描述符必须复用同一张纹理");
-            let other = canvas.target(gpu, radiance()) as *const TrackedView;
-            assert_ne!(first, other, "不同描述符必须是另一张纹理");
+            let first = canvas.target(gpu, color());
+            let again = canvas.target(gpu, color());
+            assert_eq!(first.texture(), again.texture(), "同一描述符必须复用同一张纹理");
+            let other = canvas.target(gpu, radiance());
+            assert_ne!(first.texture(), other.texture(), "不同描述符必须是另一张纹理");
             assert_eq!(canvas.targets.len(), 2, "两个描述符 ⇒ 两个目标");
         })
         .unwrap();
