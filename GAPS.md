@@ -1779,11 +1779,37 @@
 
 ---
 
+## BR. 打通渲染管线：Typed Pass 节点化（2026-10-31）
+
+> 计划《打通渲染管线_执行计划》。目标：把 vector 后端的"手写录制"变成"节点驱动录制"，
+> 兑现"加一个 pass 不改已有代码"。前置：BN / BO / BP 三批 + BQ（本批的阶段 1）。
+> 红线：像素 36 条逐位不变 · 结构 22 件不变 · 每阶段单独 commit · 不重录。
+> 本段按阶段记账；**未兑现项写触发条件，不写成「已关闭」**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BR-01 | 计划表只被"选出来做校验"，没有代码遍历它驱动录制 | zela-render-vector | **已关闭** | 新增 `nodes` 模块：`AnyPass`（`Render` / `Compute` 两个变体 + 共有的 `set_bind_group` + `record_raw` 逃生舱）、`PassNode`（`prepare` 拿 `&mut PrepareContext`（含 encoder），`execute` 拿 `&ExecuteContext`（只含 device / queue）—— 两阶段签名不同才能绕开 `begin_*_pass` 的 `&mut encoder` 借用）、`record_compute`（`schedule.begin(name)` 自动报数 → `begin_compute_pass` → `execute`）。3 条用例：按声明序执行并 `finish` 通过 / 顺序不符 `OutOfOrder` 且不执行 / 表外节点 `Undeclared`。 |
+| BR-02 | compute 类 pass 的第一个接入点 | zela-render-vector | **已关闭** | `bloom` 拆成 `write_params`（prepare：写 uniform）与 `record`（execute：逐级 spread / down / up + show），由 `BloomNode` + `record_compute` 驱动；`layered` 闭包不再手写 `begin_compute_pass` 与 `note_pass("bloom")`（跳过分支仍走 `step(..., false)`）。判据：像素 36 项 ok 36 / DIFF 0（泛光在 3D 作品里是必测项）。 |
+| BR-03 | 其余 compute pass 仍在 `encode_frame` 手写 | zela-render-vector | **记账** | 待迁移：`occlusion`（需把 `note_pass("occlusion")` 从闭包前移进 `Some` 分支，否则驱动会重复报数）、`environment`（目前**没有** `PassSchedule`，接入要先给它建一张调度）、`base depth` 与 vector 的 flatten / composite / slab bounds（都在 `Vector::encode` 内，见 BR-05）。触发条件：按 `BloomNode` 的同一形态逐个接；每个都用像素 36 + 绑定 / 派发快照验收。 |
+| BR-04 | render 类 8 个 pass 未节点化 | zela-render-vector | **记账** | shadow / occlusion depth / base / opaque / append / slabs / composite sprites / atlas raster 活在 `encode_frame` 的闭包与局部变量里。节点化要把**附件描述**也搬进节点（`Canvas::pass` 的 5 个调用点、`Depth::Fresh/Kept/Read/Shared`、MRT 的 light 附件），且同一份状态（`draws` / `canvas` / `pipelines`）要被多个节点借 ⇒ 先要有逐帧 payload 的形状。触发条件：`AnyPass::Render` 的驱动程序（与 `record_compute` 同形，但由节点提供附件）落地时。 |
+| BR-05 | `Vector::encode` 拿不到 `&mut PassSchedule`（BP-05 的另一面） | zela-render-vector | **记账** | 它 10 个参数，内部还有 5 处 `begin_compute_pass`；接入要么改签名（5 个调用点），要么让它吃 `&mut PassContext`。这与 BP-05（绑定记账）同一堵墙：两者应一起解。触发条件：需要校验 `vector composite` 的 `atlas` / `base_depth` 绑定，或要新增 vector 子 pass 时。 |
+| BR-06 | 驱动循环尚未接管顺序（`encode_frame` 仍手写 `note_pass` 序列） | zela-render-vector | **记账** | 前提是 BR-03 / BR-04 / BR-05 全部迁移完：现在 `encode_frame` 的 pass 序列与视图数据（`Drawing` 变体、有无链表 / slabs、阴影层数）耦合，驱动只能接管"声明里已有、且输入齐备"的那些。计划的目标判据"追加 no-op pass 只新增文件 + 数组一行"依赖这一步。触发条件：BR-03/04/05 关闭后，把 `note_pass` 序列换成 `for decl in plan` 驱动。 |
+| BR-07 | 命令流快照（pass 名 + 组名 + dispatch 三元组） | 门禁 | **记账** | 已有的 `tests/binding_snapshot.rs`（实参逐字节 + 记账名 → 组号）与 `tests/dispatch_snapshot.rs`（新旧算法等价）覆盖了"绑定"与"派发"两维；**没有**按 pass 串起来的命令流快照（节点迁移后跑一次、把 `(pass, 组, dispatch)` 序列固定下来）。触发条件：BR-04 开始迁移 render 类时补（那时才有多节点串联的序列可比）。 |
+
+**BR 段小计**：已关闭 2 · 记账 5。
+> 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过。
+> 判据说明：BR-2/3 的验收不是"代码看起来搬家了"，而是 ① `nodes` 的三条驱动用例
+> （顺序 / `OutOfOrder` / `Undeclared`）② 泛光接管后像素 36 项逐位不变。
+> 与既有记账的关系：BR-05 与 BP-05 是同一堵墙（`Vector::encode` 的签名），BR-06 的
+> "追加 no-op pass"判据挂在它后面；codegen 两 pass 按计划留逃生舱（`record_raw`）。
+
+---
+
 ## 统计与维护约定
 
 > **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BQ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BQ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> （**D–BR**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BR 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
