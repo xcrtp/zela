@@ -1862,11 +1862,44 @@
 
 ---
 
+## BU. 资源系统与可观测性专项治理（2026-10-31）
+
+> 计划《资源系统与可观测性专项治理_执行计划》。定位：专项治理 + 为光追留扩展点。
+> 前置核实见 `docs/research/BU_前置核实.md`（BU-0）。
+> 红线：像素 **39** 条逐位不变 · 结构一致 · 不许重录 · 每阶段单独 commit。
+> 本段按阶段记账；未兑现项写触发条件，不写成「已关闭」。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BU-01 | 资源计数只有"分配频次"，读起来是"当前持有"——泄漏与高频分配无法区分 | zela-render-vector | **已关闭** | 计数口改成**分配租约**：`counted_texture` 返回 `TrackedTexture`，由它派生的 `TrackedView` 共享同一个 `Arc<Lease>`，最后一个引用 drop 时才减持有量（16 处纹理创建里 15 处立刻丢弃 `Texture` 句柄，按句柄算会恒为 0）。旧 `RES_*` 改名 `ALLOC_*` 并注明"分配频次"；新增 `HELD_*` / `PEAK_*` 与 `HeldTotals`、`held_totals()`。只被绑定组引用的中间产物（bloom 金字塔、AO 各级、环境预滤波）把视图按住在所属结构里，否则持有量会提前减掉。判据：`held_does_not_raise_the_watermark_when_released`（1000 次"建了又放"不把高水位推过同时持有的最大值），像素 39 项 ok 39 / DIFF 0。 |
+| BU-02 | 资源缓存没有容量上限 ⇒ 没有背压 ⇒ 显存可以无限增长到 OOM | ze-resource / zela-render-vector | **已关闭** | kernel 的 `ResourceCache` 新增 `evict_to_fit(budget, keep, bytes_of)`：按 LRU（最久未用先走，同帧按 id 序）逐出，**本帧用过的（idle = 0）永不驱逐**（帧内强引用），`keep` 是调用方的额外强引用。vector 侧：相机画布 + 光栅图集进弱引用缓存，帧末按预算驱逐上一帧起不再用的条目；`ZELA_RESOURCE_BUDGET`（字节；0 = 每帧都驱逐）是判别开关。判据：`capacity_eviction_drops_the_least_recently_used_first` / `capacity_eviction_keeps_what_this_frame_uses` / `capacity_eviction_never_evicts_what_the_frame_keeps`。 |
+| BU-03 | 矢量后端换掉 / 丢弃的目标是**立即 drop**，命令缓冲可能还在飞 | zela-render-vector | **已关闭** | 接入 kernel 的 `DeferredDestroyer`（周期是常量 3，不改成"等 GPU 空闲"）：`ResourceCache::remove` / 驱逐 / 重建都把句柄送进 graveyard，3 次 submit 后才真正 drop；`Player::encode_frame` 帧首 `begin_frame()`、帧末 `notify_submit()`。判据：`close_releases_through_the_graveyard` + `evicting_a_target_and_rebuilding_it_preserves_pixels`（驱逐后 `pending_destroy_count() > 0`）。 |
+| BU-04 | `Buffers{sizes, sent, generation}` 是手写的容量判断（同一件事的第二份实现） | zela-render-vector | **已关闭** | 删掉 `sizes` 数组，容量直接问缓冲本身（`Buffer::size`）；可增长的弱引用目标（相机画布、光栅图集）改由 `ResourceCache` 持有，重建走同一条延迟销毁路径。`sent` / `generation` 保留 —— 那是"持久前缀只传增量"的上传记账（AW-07），与缓存无关。 |
+| BU-05 | `ResourceKey::Named` 零生产消费者 | ze-resource | **已关闭** | 光栅图集用 `ResourceKey::named::<RasterAtlas>("raster atlas", 1)`（单件中间目标，名字稳定）；相机画布用 `ResourceKey::content::<CameraCanvas>(key)`（同一相机键是同一张视图，与图像键的 `type_id` 不同、互不碰撞）。 |
+| BU-06 | `ImageGroups` 的「为什么不是 ResourceCache」理由已被 BQ-01 推翻 | zela-render-vector | **已关闭** | 注释改写：旧结论（`GpuHandle` 不 `Send` ⇒ 不能接入）明确标为失效；现在的分工是"组是本帧记录直接绑定的**强引用**，没有按需重建的入口（重建要 device）"，而弱引用、可重建的目标走 `Player::res`。两层判据不同，不是同一件事的两份实现。 |
+| BU-07 | 加一个中间目标 = 加 `Canvas` 字段 + `Attachments` 成员 + `RenderTargetId` 变体 | zela-render-vector | **部分关闭** | 接缝已建：`TargetDesc`（尺寸 / 层数 / 采样 / 格式 / 用途 / 标签）+ `Canvas::target(desc)`，同描述符复用、不同描述符新建。判据 `an_intermediate_target_is_requested_by_descriptor`：新增一个目标只落在"给一个描述符"上。**仍记账**：现有目标（color / msaa / depth / slabs / bloom / AO）没有迁到描述符上（迁会动像素路径，收益为零）；真消费者是光追的命中 / 辐照 / 历史帧。 |
+| BU-08 | 调度顺序写死在"声明序"，策略无法替换，身份也无处记录 | zela-render-vector | **部分关闭** | `SchedulePolicy`（`id()` + `order()`）+ `BuiltinOrder`（默认 = 声明序，五张计划 × 多个 `skip` 与现状逐位相同）；`PassSchedule` 由策略给出的执行序驱动，`command_flow()` 也按执行序固定；身份 `PASS_POLICY_ID` 进 `observe.jsonl` 的 `pass_policy`。判据：`the_default_policy_is_declaration_order` 与断言 BU-B 的 `the_same_declarations_and_policy_always_give_the_same_order`（1000 组随机声明，同一 `(decls, policy_id)` 两次逐位相同）。**仍记账**：没有第二个策略（真算法等有消费者时再实现）。 |
+| BU-09 | 同一 pass 既读又写同一资源没有静态校验（光追的累积缓冲会撞） | zela-render-vector | **已关闭** | `validate` 新增 ①b：`inputs ∩ outputs` 非空且未登记进 `passes::READ_WRITE` ⇒ `PlanError::ReadWriteConflict`（报错里带**我们的**资源名，不是 wgpu 的 usage scope）。为什么不一律红：`PassDecl` 是逻辑资源声明，一个声明聚合多个子 pass（bloom 读视图写回视图、append 追加链表、codegen 读实例写着色画布）—— 一律红会让五张真实计划全红。例外逐条登记，`read_write_registry_matches_the_real_plans` 保证表格与真实计划逐条对应（多一条 = 腐烂，少一条 = 红）。判据：`a_pass_reading_what_it_writes_is_red`。 |
+| BU-10 | `policy_id` 未进 ZSB payload（计划预期 26→27 + manifest 全量重算） | 产物 / 调度 | **记账** | 计划假定"调度身份进 payload 文本 ⇒ `LIBRARY_VERSION` 递增 ⇒ manifest 重算"。本实现把身份放在观测产物（`observe.jsonl` 的 `pass_policy`），`LIBRARY_VERSION` 仍是 26、manifest 未重算：ZSB payload 是场景数据（表达式库身份在里面），渲染器的调度身份即使放进 `Meta.render_params` 也不在 payload hash 里 —— 两种正确落点都不触发重算。硬把数学函子库版本提到 27 会给那个版本号塞进无关含义。触发条件：真要让 ZSB 自带调度身份时，加进 `Meta.render_params`（`#[serde(default)]`，旧产物仍可读），并按需补一条"回放前核对 policy"的检查。 |
+| BU-11 | 真别名复用（不同生命周期共用显存） | 渲染 / 资源 | **未执行** | 本批只做"按描述符按需申请"，不做 aliasing：真别名要强制 `LoadOp::Clear`，残留类错误"只在特定 pass 顺序下才复现"，是独立风险项（配两帧残留用例才可谈）。`TargetDesc` 已把"加目标"收敛成描述符，将来做别名只需换分配器。 |
+| BU-12 | 自动调度算法本身 / pass culling | 渲染 / 调度 | **未执行** | 只建接口与默认策略。pass culling 与 BS 批的"显式报 `(-)`"方向相反（不许假装跑了），不照搬 RDG 的剔除。触发条件：出现第二个策略的消费者（如光追的多趟降噪）时再实现。 |
+| BU-13 | `statics` 那 7 条缓冲的池化 | zela-render-vector | **未执行** | 它们是每帧重建的静态数据（AW-07 的持久前缀已把稳态上传降到 0），与"中间目标按需申请"是不同问题；本轮只删掉手写的 `sizes` 容量数组。 |
+| BU-14 | `RenderTargetDesc`（IR 层）的落地 | ze-render-ir | **未执行** | 仍零生产消费者，且探针早证出"比后端宽"；本批的 `TargetDesc` 是后端内部描述符，不退化成 IR 类型。 |
+| BU-15 | BU-A 的观测口径：并行 worker 的逐帧计数器不可比 | xtask / 观测 | **已记录** | `observe.jsonl` 的 `timings` 天然每次不同；并行 batch 里 `cache` / `geometry_upload` 这类进程级计数器会被多 worker 交错，逐字节对比无意义。判别装置因此固定为**串行口径**：`ZELA_BATCH_WORKERS=1` + `ZELA_RESOURCE_BUDGET`（0 / 默认）各跑一遍 `cargo verify --step hashes`。实测：两遍都是像素 39 项 ok 39 / DIFF 0、结构一致，`observe.jsonl` **除 `timings` 外逐字段相同**；驱逐本身由 `evicting_a_target_and_rebuilding_it_preserves_pixels` 证明"像素逐位相同"。 |
+
+**BU 段小计**：已关闭 7 · 部分关闭 2 · 记账 1 · 未执行 4 · 已记录 1。
+
+> 本段读数：像素 **39 项 ok 39 / DIFF 0** · 结构 25 件一致 · demo 37/37 · 覆盖 72/72 · docs 通过 · `cargo verify --full` 全绿（207.3s）。
+> `ze-resource` 从 dev-dependency 升为 vector 的生产依赖（kernel 层、纯 std，分层不变）；`architecture.json` 只登记 crate 归属，不记依赖边，无需改动。
+> 本批新增的用例：高水位语义、容量驱逐（三条）、`close` / 原地更新、元数据增长、驱逐后像素不变、描述符申请目标、默认策略与 BU-B 顺序、读-写冲突与登记表。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BT**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BT 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–BU**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BU 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
