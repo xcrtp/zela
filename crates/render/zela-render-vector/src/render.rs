@@ -3326,6 +3326,32 @@ pub(crate) struct Canvas {
     pub(crate) raster: Option<Attachments>,
     occluded: Option<occlusion::Occluded>, // where a 3D view's ambient occlusion is found, once it has some
     bloomed: Option<bloom::Bloomed>,       // where a 3D view's glow is made, once it has some
+    /// **BU-3**：按描述符申请的中间目标（同描述符复用）。新增一个中间目标只需要
+    /// `Canvas::target(desc)` —— 不再加字段、不加 `Attachments` 成员、也不加 `RenderTargetId` 变体。
+    targets: Vec<(TargetDesc, TrackedView)>,
+}
+
+/// **BU-3**：一个中间目标的描述（尺寸 / 层数 / 采样数 / 格式 / 用途 / 标签）。
+///
+/// 这就是"加特效"与"加资源"之间的接缝：资源层只认描述符，特效层只描述自己要什么。
+/// 描述符相同 ⇒ 同一张纹理（复用）；不同 ⇒ 新建一张。**不做别名复用**（那要强制
+/// `LoadOp::Clear`，是独立风险项，见 GAPS）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TargetDesc {
+    pub(crate) label: &'static str,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) layers: u32,
+    pub(crate) samples: u32,
+    pub(crate) format: wgpu::TextureFormat,
+    pub(crate) usage: wgpu::TextureUsages,
+}
+
+impl TargetDesc {
+    /// 一张 2D 目标的常用形态（1 层；尺寸取自画布）。
+    pub(crate) fn new(label: &'static str, width: u32, height: u32, format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> Self {
+        Self { label, width, height, layers: 1, samples: 1, format, usage }
+    }
 }
 
 /// The raster pipeline's multisamples and depth: they stay on tile, and only the resolved image
@@ -3380,7 +3406,7 @@ impl Canvas {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC;
         let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
         let color = counted_texture(&gpu.device, &wgpu::TextureDescriptor { label: None, size, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: COLOR, usage, view_formats: &[] });
-        Self { width, height, color: color.view(&Default::default()), raster: None, occluded: None, bloomed: None }
+        Self { width, height, color: color.view(&Default::default()), raster: None, occluded: None, bloomed: None, targets: Vec::new() }
     }
 
     /// B15（乙）：画布的颜色由调用方给（同一 view 承载合成输出），不再另建纹理。
@@ -3389,7 +3415,32 @@ impl Canvas {
     /// `RENDER_ATTACHMENT | STORAGE_BINDING | TEXTURE_BINDING`（公共入口会显式校验）。
     fn covered(view: &wgpu::TextureView, width: u32, height: u32) -> Self {
         // BU-1：外部目标不是本 crate 分配的 ⇒ 没有租约可记（持有量只算自己的分配）。
-        Self { width, height, color: TrackedView::untracked(view.clone()), raster: None, occluded: None, bloomed: None }
+        Self { width, height, color: TrackedView::untracked(view.clone()), raster: None, occluded: None, bloomed: None, targets: Vec::new() }
+    }
+
+    /// **BU-3**：按描述符取一个中间目标（同描述符复用同一张纹理；新描述符就新建一张）。
+    ///
+    /// 这是"新增一个中间目标"的唯一入口：调用方描述自己要什么，资源层负责建 / 复用。
+    /// 不再需要加 `Canvas` 字段、`Attachments` 成员或 `RenderTargetId` 变体。
+    pub(crate) fn target(&mut self, gpu: &Gpu, desc: TargetDesc) -> &TrackedView {
+        let at = match self.targets.iter().position(|(have, _)| *have == desc) {
+            Some(at) => at,
+            None => {
+                let texture = counted_texture(&gpu.device, &wgpu::TextureDescriptor {
+                    label: Some(desc.label),
+                    size: wgpu::Extent3d { width: desc.width, height: desc.height, depth_or_array_layers: desc.layers },
+                    mip_level_count: 1,
+                    sample_count: desc.samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: desc.format,
+                    usage: desc.usage,
+                    view_formats: &[],
+                });
+                self.targets.push((desc, texture.view(&Default::default())));
+                self.targets.len() - 1
+            }
+        };
+        &self.targets[at].1
     }
 
     /// Give it the raster pipeline's attachments (once).
@@ -5615,6 +5666,26 @@ mod buffer_contract {
             }
             assert_eq!(image(&mut projected, gpu, &limits, 1), image(&mut reference, gpu, &gpu.device.limits(), 1));
         }).unwrap();
+    }
+
+    /// **BU-3**：中间目标按描述符申请 —— 同一描述符复用、不同描述符新建。
+    ///
+    /// 这一条同时是判据：新增一个中间目标只落在"给一个描述符"上，
+    /// **不含** `Canvas` 字段、`Attachments` 成员或 `RenderTargetId` 变体的改动。
+    #[test]
+    fn an_intermediate_target_is_requested_by_descriptor() {
+        with_gpu(|gpu| {
+            let mut canvas = Canvas::new(gpu, 16, 8);
+            let color = || TargetDesc::new("extra color", 16, 8, COLOR, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
+            let radiance = || TargetDesc::new("extra radiance", 16, 8, RADIANCE, wgpu::TextureUsages::TEXTURE_BINDING);
+            let first = canvas.target(gpu, color()) as *const TrackedView;
+            let again = canvas.target(gpu, color()) as *const TrackedView;
+            assert_eq!(first, again, "同一描述符必须复用同一张纹理");
+            let other = canvas.target(gpu, radiance()) as *const TrackedView;
+            assert_ne!(first, other, "不同描述符必须是另一张纹理");
+            assert_eq!(canvas.targets.len(), 2, "两个描述符 ⇒ 两个目标");
+        })
+        .unwrap();
     }
 
     /// **BU-A**：驱逐发生与否，像素逐位相同。
