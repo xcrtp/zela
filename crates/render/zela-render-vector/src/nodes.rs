@@ -115,7 +115,10 @@ pub trait PassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext<'_>);
 
     /// 录：在已开始的 pass 上设管线 / 组 / 派发。
-    fn execute(&self, ctx: &mut ExecuteContext<'_>, pass: &mut AnyPass<'_>);
+    ///
+    /// 单 pass 的节点覆盖它；**多 pass 的节点**（[`Self::passes`] > 1）覆盖 [`Self::execute_at`]，
+    /// 这里留默认空实现即可（驱动只调 `execute_at`）。
+    fn execute(&self, _ctx: &mut ExecuteContext<'_>, _pass: &mut AnyPass<'_>) {}
 
     /// **render 类**节点的附件（compute 节点返回 `None`：默认实现）。
     ///
@@ -124,6 +127,34 @@ pub trait PassNode {
     fn parts(&self) -> Option<RenderParts<'_>> {
         None
     }
+
+    /// **一个逻辑 pass 要录几个 wgpu pass**（默认 1）。
+    ///
+    /// 有些逻辑 pass 的附件是**多张**、每次只能写一组（阴影的每层、光栅图集的每组），
+    /// 而且两个 wgpu pass 之间还夹着别的 recorder（`vector::encode`）。这些都是"一个
+    /// 逻辑 pass"的事实，所以由节点报数，驱动按序起 pass —— 而不是把逻辑 pass 拆成 N 个声明。
+    fn passes(&self) -> usize {
+        1
+    }
+
+    /// 第 `index` 个 wgpu pass 的附件（默认只有 0 号走 [`Self::parts`]）。
+    fn parts_at(&self, index: usize) -> Option<RenderParts<'_>> {
+        if index == 0 { self.parts() } else { None }
+    }
+
+    /// 第 `index` 个 wgpu pass 的录制（默认只有 0 号走 [`Self::execute`]）。
+    fn execute_at(&self, index: usize, ctx: &mut ExecuteContext<'_>, pass: &mut AnyPass<'_>) {
+        if index == 0 {
+            self.execute(ctx, pass);
+        }
+    }
+
+    /// 第 `index` 个 wgpu pass **结束之后**的 encoder 工作。
+    ///
+    /// 本逻辑 pass 里夹着别的 recorder 时用（例如阴影每层栅格之后、图集每组栅格之后，
+    /// 再让 `vector::encode` 往同一张深度 / 同一张合成目标里写）。`prepare` 管"所有 pass
+    /// 之前"，这里管"每个 pass 之后"。
+    fn after(&mut self, _index: usize, _ctx: &mut PrepareContext<'_>) {}
 }
 
 /// 驱动一个 **compute** pass：按声明序推进（`begin` 同时完成报数），
@@ -149,11 +180,12 @@ pub fn record_compute(
 }
 
 /// 驱动一个 **render** pass：按声明序推进（`begin` 同时完成报数），
-/// 然后取节点的附件 → `begin_render_pass` → `execute`。
+/// 然后逐个子 pass：取附件 → `begin_render_pass` → `execute_at` → `after`。
 ///
-/// 与 [`record_compute`] 唯一的差别是附件来自 `node.parts()`（BR-4）：
+/// 与 [`record_compute`] 的差别是附件来自 [`PassNode::parts_at`]（BR-4）：
 /// 驱动不认识 `Canvas` / `Depth`，只认 [`RenderParts`] —— 新增一个 render pass
-/// 不需要改驱动。
+/// 不需要改驱动。子 pass 数由 [`PassNode::passes`] 给出（默认 1）：阴影每层、
+/// 图集每组各起一个 wgpu pass，中间夹的 encoder 工作落在 [`PassNode::after`]。
 pub fn record_render(
     node: &mut dyn PassNode,
     prepare: &mut PrepareContext<'_>,
@@ -162,19 +194,23 @@ pub fn record_render(
 ) -> Result<(), ScheduleError> {
     execute.schedule.begin(node.name())?;
     node.prepare(prepare);
-    let parts = node
-        .parts()
-        .expect("render 节点必须给出附件（`PassNode::parts` 返回了 None）");
-    let RenderParts { colors, depth } = parts;
-    let pass = prepare.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &colors,
-        depth_stencil_attachment: depth,
-        occlusion_query_set: None,
-        timestamp_writes: None,
-        multiview_mask: None,
-    });
-    node.execute(execute, &mut AnyPass::Render(pass));
+    for index in 0..node.passes() {
+        let Some(parts) = node.parts_at(index) else {
+            continue;
+        };
+        let RenderParts { colors, depth } = parts;
+        let pass = prepare.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &colors,
+            depth_stencil_attachment: depth,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+            multiview_mask: None,
+        });
+        node.execute_at(index, execute, &mut AnyPass::Render(pass));
+        // pass 在这里结束（附件借的是节点自己的纹理视图）。
+        node.after(index, prepare);
+    }
     Ok(())
 }
 
