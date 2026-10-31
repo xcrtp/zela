@@ -76,7 +76,10 @@ impl<'a> AnyPass<'a> {
 }
 
 /// 一次 pass 之前的上下文（含 encoder：clear / copy / 上传都在这里做）。
+///
+/// `device` 用于 prepare 里**建资源**（目标纹理、绑定组）——BR-3 的 base depth 需要。
 pub struct PrepareContext<'a> {
+    pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub encoder: &'a mut wgpu::CommandEncoder,
 }
@@ -169,7 +172,7 @@ mod tests {
             let mut schedule = PassSchedule::new(PLAN, 0);
             let log = RefCell::new(Vec::new());
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { queue: &gpu.queue, encoder: &mut encoder };
+            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
             let execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue };
             record_compute(&mut Nop { name: "a", log: &log }, &mut prepare, &execute, &mut schedule, "a")
                 .expect("第一个");
@@ -190,7 +193,7 @@ mod tests {
             let mut schedule = PassSchedule::new(PLAN, 0);
             let log = RefCell::new(Vec::new());
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { queue: &gpu.queue, encoder: &mut encoder };
+            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
             let execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue };
             let error = record_compute(&mut Nop { name: "b", log: &log }, &mut prepare, &execute, &mut schedule, "b")
                 .unwrap_err();
@@ -208,7 +211,7 @@ mod tests {
             let mut schedule = PassSchedule::new(PLAN, 0);
             let log = RefCell::new(Vec::new());
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { queue: &gpu.queue, encoder: &mut encoder };
+            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
             let execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue };
             record_compute(&mut Nop { name: "a", log: &log }, &mut prepare, &execute, &mut schedule, "a")
                 .expect("计划内的唯一 pass");

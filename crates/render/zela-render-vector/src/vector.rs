@@ -1143,8 +1143,10 @@ impl Vector {
 
     /// A 3D view's base depth for its composite: `depth` (the raster pass's, `samples` per pixel) as its samples'
     /// nearest, one float a pixel.
-    pub(crate) fn resolve_depth(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, depth: &wgpu::TextureView, samples: u32, size: [u32; 2]) {
-        let (depth_layouts, depth_resolve) = (&self.depth_layouts, &self.depth_resolve);
+    ///
+    /// **BR-3**：拆成 prepare（建/复用目标纹理、建绑定组，见 [`Vector::depth_group`]）与 execute
+    /// （设管线 + 派发，见 [`Vector::record_depth`]）。
+    pub(crate) fn depth_group(&mut self, device: &wgpu::Device, depth: &wgpu::TextureView, samples: u32, size: [u32; 2]) -> (wgpu::BindGroup, usize) {
         if self.base_depth.as_ref().is_none_or(|(_, have)| *have != size) {
             self.base_depth = Some((image(device, "base depth", size, wgpu::TextureFormat::R32Float, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING), size));
         }
@@ -1152,12 +1154,16 @@ impl Vector {
         let k = if samples > 1 { 0 } else { 1 };
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("base depth"),
-            layout: &depth_layouts[k],
+            layout: &self.depth_layouts[k],
             entries: &[wgpu::BindGroupEntry { binding: k as u32, resource: wgpu::BindingResource::TextureView(depth) }, wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(out) }],
         });
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("base depth"), timestamp_writes: None });
-        pass.set_pipeline(&depth_resolve[k]);
-        pass.set_bind_group(0, &group, &[]);
+        (group, k)
+    }
+
+    /// **BR-3**：base depth 的录制侧 —— 设管线 / 组，按界面的像素数派发。
+    pub(crate) fn record_depth(&self, pass: &mut wgpu::ComputePass<'_>, group: &wgpu::BindGroup, k: usize, samples: u32, size: [u32; 2]) {
+        pass.set_pipeline(&self.depth_resolve[k]);
+        pass.set_bind_group(0, group, &[]);
         // BO-2：两个深度解析 entry 都是 16×16；除数按实际使用的那一个查表。
         let entry = if samples > 1 { "nearest_of_samples" } else { "single_sample" };
         let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry(entry) }, Extent::px(size[0], size[1]));

@@ -1790,7 +1790,7 @@
 |---|---|---|---|---|
 | BR-01 | 计划表只被"选出来做校验"，没有代码遍历它驱动录制 | zela-render-vector | **已关闭** | 新增 `nodes` 模块：`AnyPass`（`Render` / `Compute` 两个变体 + 共有的 `set_bind_group` + `record_raw` 逃生舱）、`PassNode`（`prepare` 拿 `&mut PrepareContext`（含 encoder），`execute` 拿 `&ExecuteContext`（只含 device / queue）—— 两阶段签名不同才能绕开 `begin_*_pass` 的 `&mut encoder` 借用）、`record_compute`（`schedule.begin(name)` 自动报数 → `begin_compute_pass` → `execute`）。3 条用例：按声明序执行并 `finish` 通过 / 顺序不符 `OutOfOrder` 且不执行 / 表外节点 `Undeclared`。 |
 | BR-02 | compute 类 pass 的两个接入点 | zela-render-vector | **已关闭** | `bloom` 拆成 `write_params`（prepare：写 uniform）与 `record`（execute：逐级 spread / down / up + show），由 `BloomNode` 驱动；`occlusion` 同样拆开（`write_params` 写 16 个参数、`record` 做 linearize → 深度金字塔 → sao → blur_h / blur_v），由 `OcclusionNode` 驱动。两处的 `begin_compute_pass` 与 `note_pass` 都不再手写：顺序与报数由 `record_compute` 给出；没有内容时仍走 `step(..., false)`（遮蔽的跳过从闭包前移到 `None` 分支，避免重复报数）。判据：像素 36 项 ok 36 / DIFF 0（3D 作品里泛光与遮蔽都是必测项）。 |
-| BR-03 | 其余 compute pass 仍在 `encode_frame` 手写 | zela-render-vector | **记账** | 已接管：`bloom` / `occlusion`（见 BR-02）。待迁移：`environment`（目前**没有** `PassSchedule`，接入要先给它建一张调度）、`base depth`（`vector::resolve_depth` 需要 `&mut Vector` 惰性建纹理，节点上下文还没有这个能力）、vector 的 flatten / composite / keep / slab bounds（都在 `Vector::encode` 内，见 BR-05）。触发条件：按 `BloomNode` / `OcclusionNode` 的同一形态逐个接；每个都用像素 36 + 绑定 / 派发快照验收。 |
+| BR-03 | 其余 compute pass 仍在 `encode_frame` 手写 | zela-render-vector | **记账** | 已接管：`bloom` / `occlusion`（见 BR-02）、`base depth`（`BaseDepthNode`：`vector::resolve_depth` 拆成 `depth_group`（prepare，建/复用 `base_depth` 纹理与绑定组，需 `PrepareContext.device`）与 `record_depth`（execute，设管线 + 按 entry 派发）；两个调用点（有无 listed/slabs 的两条分支）都改由节点驱动，跳过分支仍 `step(..., false)`）。待迁移：`environment`（目前**没有** `PassSchedule`，接入要先给它建一张调度）、vector 的 flatten / composite / keep / slab bounds（都在 `Vector::encode` 内，见 BR-05）。触发条件：按 `BloomNode` / `OcclusionNode` / `BaseDepthNode` 的同一形态逐个接；每个都用像素 36 + 绑定 / 派发快照验收。 |
 | BR-04 | render 类 8 个 pass 未节点化 | zela-render-vector | **记账** | shadow / occlusion depth / base / opaque / append / slabs / composite sprites / atlas raster 活在 `encode_frame` 的闭包与局部变量里。节点化要把**附件描述**也搬进节点（`Canvas::pass` 的 5 个调用点、`Depth::Fresh/Kept/Read/Shared`、MRT 的 light 附件），且同一份状态（`draws` / `canvas` / `pipelines`）要被多个节点借 ⇒ 先要有逐帧 payload 的形状。触发条件：`AnyPass::Render` 的驱动程序（与 `record_compute` 同形，但由节点提供附件）落地时。 |
 | BR-05 | `Vector::encode` 拿不到 `&mut PassSchedule`（BP-05 的另一面） | zela-render-vector | **记账** | 它 10 个参数，内部还有 5 处 `begin_compute_pass`；接入要么改签名（5 个调用点），要么让它吃 `&mut PassContext`。这与 BP-05（绑定记账）同一堵墙：两者应一起解。触发条件：需要校验 `vector composite` 的 `atlas` / `base_depth` 绑定，或要新增 vector 子 pass 时。 |
 | BR-06 | 驱动循环尚未接管顺序（`encode_frame` 仍手写 `note_pass` 序列） | zela-render-vector | **记账** | 前提是 BR-03 / BR-04 / BR-05 全部迁移完：现在 `encode_frame` 的 pass 序列与视图数据（`Drawing` 变体、有无链表 / slabs、阴影层数）耦合，驱动只能接管"声明里已有、且输入齐备"的那些。计划的目标判据"追加 no-op pass 只新增文件 + 数组一行"依赖这一步。触发条件：BR-03/04/05 关闭后，把 `note_pass` 序列换成 `for decl in plan` 驱动。 |
@@ -1799,7 +1799,8 @@
 **BR 段小计**：已关闭 2 · 记账 5。
 > 本段读数：像素 36 项 ok 36 / DIFF 0 · 结构 22 件一致 · 覆盖 72/72（豁免 0）· demo 34/34 · docs 通过。
 > 判据说明：BR-2/3 的验收不是"代码看起来搬家了"，而是 ① `nodes` 的三条驱动用例
-> （顺序 / `OutOfOrder` / `Undeclared`）② 泛光接管后像素 36 项逐位不变。
+> （顺序 / `OutOfOrder` / `Undeclared`）② 每个 pass 接管后像素 36 项逐位不变
+> （泛光、遮蔽、base depth 逐次验收）。
 > 与既有记账的关系：BR-05 与 BP-05 是同一堵墙（`Vector::encode` 的签名），BR-06 的
 > "追加 no-op pass"判据挂在它后面；codegen 两 pass 按计划留逃生舱（`record_raw`）。
 

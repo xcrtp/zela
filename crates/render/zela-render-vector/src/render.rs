@@ -362,6 +362,43 @@ impl crate::nodes::PassNode for OcclusionNode<'_> {
     }
 }
 
+/// **BR-3**：base depth 节点（`base depth` 声明）—— 第三个由节点驱动的 compute pass。
+///
+/// 它在 prepare 里建/复用目标纹理与绑定组（需要 `device`），录制在 execute；合成要读的
+/// `base_depth` 纹理因此仍在 `Vector` 里缓存（跨帧不重建）。
+struct BaseDepthNode<'a> {
+    vector: &'a mut vector::Vector,
+    depth: &'a wgpu::TextureView,
+    samples: u32,
+    size: [u32; 2],
+    group: Option<wgpu::BindGroup>,
+    k: usize,
+}
+
+impl crate::nodes::PassNode for BaseDepthNode<'_> {
+    fn name(&self) -> &'static str {
+        "base depth"
+    }
+
+    fn prepare(&mut self, ctx: &mut crate::nodes::PrepareContext<'_>) {
+        let (group, k) = self.vector.depth_group(ctx.device, self.depth, self.samples, self.size);
+        self.group = Some(group);
+        self.k = k;
+    }
+
+    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        if let crate::nodes::AnyPass::Compute(pass) = pass {
+            self.vector.record_depth(
+                pass,
+                self.group.as_ref().expect("base depth prepare"),
+                self.k,
+                self.samples,
+                self.size,
+            );
+        }
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -3814,7 +3851,7 @@ impl Player {
                         }
                         // BR-3：遮蔽的 compute 由节点驱动（顺序与报数都由 `record_compute` 给出）。
                         let mut node = OcclusionNode { occlusion, occluded: o, projection: Camera::new(&f.view).projection, amount, radius };
-                        let mut prepare = crate::nodes::PrepareContext { queue: &gpu.queue, encoder: &mut encoder };
+                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
                         let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
                         if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "occlusion") {
                             if schedule_error.is_none() {
@@ -3871,7 +3908,7 @@ impl Player {
                                 // 按声明推进（不再手写 `note_pass`）。
                                 let tone = f.view[VIEW_LIGHTING + 6].round() as u32;
                                 let mut node = BloomNode { bloom, bloomed: b, glow, tone };
-                                let mut prepare = crate::nodes::PrepareContext { queue: &gpu.queue, encoder };
+                                let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder };
                                 let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
                                 if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, schedule, "bloom") {
                                     if schedule_error.is_none() {
@@ -3901,10 +3938,19 @@ impl Player {
                                 self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Overlay);
                             }
                         }
-                        note_pass(&mut schedule, &mut schedule_error, "base depth", base.is_some());
+                        // BR-3：base depth 由节点驱动（`base.is_some()` 为假时显式跳过）。
                         if base.is_some() {
                             let attached = canvas.raster.as_ref().expect("the raster pipeline's attachments");
-                            gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
+                            let mut node = BaseDepthNode { vector: &mut gpu.vector, depth: &attached.depth_only, samples, size: [canvas.width, canvas.height], group: None, k: 0 };
+                            let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                            let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
+                            if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "base depth") {
+                                if schedule_error.is_none() {
+                                    schedule_error = Some(error);
+                                }
+                            }
+                        } else {
+                            note_pass(&mut schedule, &mut schedule_error, "base depth", false);
                         }
                         layered(&mut encoder, &mut gpu.vector, gpu.bloom.as_ref(), None, None, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
                         finish_schedule(schedule, schedule_error)?;
@@ -3978,8 +4024,14 @@ impl Player {
                     self.draw(&mut pass, pipelines, indices, draws, *offset, Phase::Overlay);
                     drop(pass);
                     // 这条分支里深度解析是无条件的（与上面的 `if base.is_some()` 不同）。
-                    note_pass(&mut schedule, &mut schedule_error, "base depth", true);
-                    gpu.vector.resolve_depth(&gpu.device, &mut encoder, &attached.depth_only, samples, [canvas.width, canvas.height]);
+                    let mut node = BaseDepthNode { vector: &mut gpu.vector, depth: &attached.depth_only, samples, size: [canvas.width, canvas.height], group: None, k: 0 };
+                    let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                    let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
+                    if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "base depth") {
+                        if schedule_error.is_none() {
+                            schedule_error = Some(error);
+                        }
+                    }
                     layered(&mut encoder, &mut gpu.vector, gpu.bloom.as_ref(), listed.as_ref(), slabs, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error, &mut schedule, &mut schedule_error);
                     finish_schedule(schedule, schedule_error)?;
                 }
