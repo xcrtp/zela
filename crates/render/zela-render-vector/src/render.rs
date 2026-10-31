@@ -534,6 +534,64 @@ impl crate::nodes::PassNode for RasterNode<'_> {
     }
 }
 
+/// **BR-4**：3D 视图的 slabs pass（节点）。
+///
+/// 与 [`RasterNode`] 有两处不同，所以单独一个节点而不是往里塞字段：
+/// - 附件不是 [`Canvas`]：是自建 slabs 纹理的逐层视图，且**没有深度**；
+/// - 录之前要先跑 slab bounds 的 compute（`vector::encode` 的 `Out::Bounds`）——
+///   这正是 [`crate::nodes::PassNode::prepare`] 的位置（`execute` 时 encoder 已被 pass 借走）。
+struct SlabsNode<'a> {
+    layers: &'a [wgpu::TextureView],
+    scene: Option<&'a wgpu::BindGroup>,
+    slot: [u32; 1],
+    group: &'a wgpu::BindGroup,
+    pipeline: &'a wgpu::RenderPipeline,
+    sprites: &'a Range<u32>,
+    vector: &'a mut vector::Vector,
+    plan: &'a vector::Plan,
+    statics: [wgpu::BindingResource<'a>; 3],
+    listed: Option<&'a vector::Listed<'a>>,
+    bounds: &'a wgpu::TextureView,
+    fill_layout: &'a wgpu::BindGroupLayout,
+    fill_pipelines: &'a mut HashMap<u64, wgpu::ComputePipeline>,
+    fill_error: &'a mut Option<String>,
+}
+
+impl crate::nodes::PassNode for SlabsNode<'_> {
+    fn name(&self) -> &'static str {
+        "slabs"
+    }
+
+    fn prepare(&mut self, ctx: &mut crate::nodes::PrepareContext<'_>) {
+        // 每个像素最近的那几层的边界（`bound_slabs`），精灵据此落在两层之间。
+        self.vector.encode(ctx.device, ctx.queue, ctx.encoder, self.plan, 0, &self.statics, vector::Out::Bounds { out: self.bounds, listed: self.listed }, self.fill_layout, self.fill_pipelines, self.fill_error);
+    }
+
+    fn parts(&self) -> Option<crate::nodes::RenderParts<'_>> {
+        let colors = self
+            .layers
+            .iter()
+            .map(|view| {
+                Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })
+            })
+            .collect();
+        Some(crate::nodes::RenderParts { colors, depth: None })
+    }
+
+    fn execute(&self, ctx: &mut crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        let Some(pass) = pass.as_render() else { return };
+        if let Some(group) = self.scene {
+            pass.set_bind_group(0, group, &self.slot);
+            ctx.schedule.note_bind("slabs", "scene");
+        }
+        pass.set_bind_group(2, self.group, &[]);
+        if !self.sprites.is_empty() {
+            pass.set_pipeline(self.pipeline);
+            pass.draw(6 * self.sprites.start..6 * self.sprites.end, 0..1);
+        }
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -3808,7 +3866,7 @@ impl Player {
         let mut need = [0u32; 2];
         for (f, d) in frames.iter().zip(&drawings) {
             match d {
-                Drawing::Raster { light, glow, slabs, plan, .. } => {
+                Drawing::Raster { light, glow, slabs, .. } => {
                     let light = *light && skipping() & SKIP_LIGHT == 0;
                     let canvas = if f.key == 0 { &mut self.targets.as_mut().expect("targets").frame } else { self.canvases.get_mut(&f.key).expect("canvas") };
                     canvas.attach(gpu, samples, light);
@@ -4035,13 +4093,6 @@ impl Player {
                     let background = if plan.is_some() { [0.0; 4] } else { [0, 1, 2, 3].map(|k| f.view[VIEW_FLOATS + k] as f64) };
                     let cleared = clear([background[0] * background[3], background[1] * background[3], background[2] * background[3], background[3]]);
                     let pipelines = &gpu.pipelines[&(samples, light)];
-                    // sprites, six vertices each, drawn with `pipeline`
-                    let draw_sprites = |pass: &mut wgpu::RenderPass, pipeline: &wgpu::RenderPipeline, range: &Range<u32>| {
-                        if !range.is_empty() {
-                            pass.set_pipeline(pipeline);
-                            pass.draw(6 * range.start..6 * range.end, 0..1);
-                        }
-                    };
                     // its composite: its paths in depth order with the base (its depth one float a pixel) and its
                     // listed fragments; then, where it glows, its glow spread from the light it leaves, and its pixels
                     // shown with it
@@ -4207,17 +4258,33 @@ impl Player {
                     // the sprites among its other see-through layers: the depths of each pixel's nearest found (its
                     // paths' and its listed fragments'), then each sprite blended into the slab between them it lies in
                     let slabs = attached.slabs.as_ref().filter(|_| *slabs);
-                    note_pass(&mut schedule, &mut schedule_error, "slabs", slabs.is_some());
                     if let Some(s) = slabs {
                         let plan = plan.as_ref().expect("a plan: its paths', or its lists'");
-                        let statics = buffers.vector_statics();
-                        gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, 0, &statics, vector::Out::Bounds { out: &s.bounds, listed: listed.as_ref() }, &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
-                        let targets: Vec<_> = s.layers.iter().map(|view| Some(wgpu::RenderPassColorAttachment { view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store } })).collect();
-                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor { label: Some("slabs"), color_attachments: &targets, depth_stencil_attachment: None, occlusion_query_set: None, timestamp_writes: None, multiview_mask: None });
-                        pass.set_bind_group(0, buffers.group.as_ref(), &slot);
-                        schedule.note_bind("slabs", "scene");
-                        pass.set_bind_group(2, &s.groups[1], &[]);
-                        draw_sprites(&mut pass, &appends.slabs, sprites);
+                        let mut node = SlabsNode {
+                            layers: &s.layers,
+                            scene: buffers.group.as_ref(),
+                            slot,
+                            group: &s.groups[1],
+                            pipeline: &appends.slabs,
+                            sprites,
+                            vector: &mut gpu.vector,
+                            plan,
+                            statics: buffers.vector_statics(),
+                            listed: listed.as_ref(),
+                            bounds: &s.bounds,
+                            fill_layout: &gpu.fill_layout,
+                            fill_pipelines: &mut gpu.fill_pipelines,
+                            fill_error: &mut fill_error,
+                        };
+                        let mut prepare = crate::nodes::PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
+                        let mut execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
+                        if let Err(error) = crate::nodes::record_render(&mut node, &mut prepare, &mut execute, "slabs") {
+                            if schedule_error.is_none() {
+                                schedule_error = Some(error);
+                            }
+                        }
+                    } else {
+                        note_pass(&mut schedule, &mut schedule_error, "slabs", false);
                     }
                     // the sprites behind no other see-through layer blended into the base, depth tested against the
                     // opaque depth kept for them (and kept again, with the samples, for the composite), and what is
