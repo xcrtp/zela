@@ -23,10 +23,12 @@
 // the depth of a non-planar path's strokes per pixel of their atlas (as `stroke_depths` keeps it)
 @group(1) @binding(9) var<storage, read> stroke_depths_in: array<u32>;
 
-// **阶段 3**：逐片元着色 —— 每个对象一个程序标签（0 = 没有逐片元程序），以及它的颜色画布
-// （rgb = 颜色，a = 标签；同一像素被另一个程序改写过就不认领，退回普通填充色）。
+// **阶段 3**：逐片元着色 —— 每个对象一个程序标签（0 = 没有逐片元程序），它的颜色画布
+// （rgb = 颜色，a = 覆盖率）与标签纹理（**BT-2**：同一像素被另一个程序改写过就不认领，
+// 退回普通填充色）。
 @group(1) @binding(22) var<storage, read> shader_programs: array<u32>;
 @group(1) @binding(23) var shader_colors: texture_2d<f32>;
+@group(1) @binding(24) var shader_tags: texture_2d<u32>;
 
 @group(3) @binding(0) var<storage, read> fill_in: array<Seg>;
 @group(3) @binding(1) var<storage, read> stroke_in: array<Seg>;

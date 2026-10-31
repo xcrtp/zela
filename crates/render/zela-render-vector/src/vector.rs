@@ -692,9 +692,12 @@ pub(crate) struct Vector {
     /// **阶段 3**：逐片元着色 —— 生成的 compute 管线（按 `source` 摘要缓存）与它的布局。
     frag_layout: wgpu::BindGroupLayout,
     frag_pipelines: std::collections::HashMap<u64, wgpu::ComputePipeline>,
-    /// 逐片元的颜色画布（`Rgba32Float`：rgb = 颜色，a = 程序标签），按视图尺寸建一次。
+    /// 逐片元的颜色画布（`Rgba32Float`：rgb = 颜色，a = 覆盖率），按视图尺寸建一次。
     colors: Option<(wgpu::TextureView, [u32; 2])>,
     no_colors: wgpu::TextureView, // 没有逐片元着色时绑定：1x1
+    /// **BT-2**：逐片元的程序标签（`R32Uint`，与颜色画布同尺寸），按视图尺寸建一次。
+    tags: Option<(wgpu::TextureView, [u32; 2])>,
+    no_tags: wgpu::TextureView, // 没有逐片元着色时绑定：1x1
     read_layout: wgpu::BindGroupLayout,
     fill: wgpu::RenderPipeline,
     stroke: wgpu::RenderPipeline,
@@ -733,7 +736,7 @@ impl Vector {
         // what its paths with a material are lit with: a 3D view's lights' shadow maps and their comparison, the DFG
         // table and its bilinear reads, its environment's cube, its ambient occlusion
         //
-        // BN-1：这 24 个 entry 由 `passes::IMAGE_SLOTS` 的**声明序**生成 —— 编号不再手写，
+        // BN-1：这组 entry 由 `passes::IMAGE_SLOTS` 的**声明序**生成 —— 编号不再手写，
         // 数组下标即 binding。名字与 `vector.wgsl` / `vector_buffers.wgsl` /
         // `vector_compute.wgsl` 的 `@group(1) @binding(n)` 一一对应。
         let image_layout = [false, true].map(|multisampled| {
@@ -758,19 +761,23 @@ impl Vector {
                         ImageKind::Sampler => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
                         ImageKind::Cube => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::Cube, multisampled: false }, count: None },
                         ImageKind::FloatArray => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false }, count: None },
+                        // **BT-2**：程序标签（`texture_2d<u32>`；写侧在它自己的 compute 组 0）。
+                        ImageKind::TextureUint => wgpu::BindGroupLayoutEntry { binding, visibility: composing, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
                     }
                 })
                 .collect();
             layout("vector images", &entries)
         });
         let read_layout = layout("records in", &[entry(0, vertex, read), entry(1, vertex, read), entry(2, fragment, rw)]);
-        // **阶段 3**：逐片元着色的绑定：Params（uniform）、颜色画布（storage texture）、入口参数（uniform）
+        // **阶段 3**：逐片元着色的绑定：Params（uniform）、颜色画布（storage texture）、
+        // 入口参数（uniform）、**BT-2** 的程序标签（`R32Uint` storage texture）。
         let frag_layout = layout(
             "frag codegen",
             &[
                 entry(0, compute, wgpu::BufferBindingType::Uniform),
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: compute, ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: wgpu::TextureFormat::Rgba32Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
                 entry(2, compute, wgpu::BufferBindingType::Uniform),
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: compute, ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: wgpu::TextureFormat::R32Uint, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
             ],
         );
         let pipeline_layout = |groups: &[Option<&wgpu::BindGroupLayout>]| device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: groups, immediate_size: 0 });
@@ -854,6 +861,8 @@ impl Vector {
             frag_pipelines: Default::default(),
             colors: None,
             no_colors: image(device, "no colors", [1, 1], wgpu::TextureFormat::Rgba32Float, wgpu::TextureUsages::TEXTURE_BINDING),
+            tags: None,
+            no_tags: image(device, "no tags", [1, 1], wgpu::TextureFormat::R32Uint, wgpu::TextureUsages::TEXTURE_BINDING),
             read_layout,
             fill,
             stroke,
@@ -1244,7 +1253,9 @@ impl Vector {
         // **阶段 3**：`fs_nearest` 也走 `painted` ⇒ 逐片元着色的两个绑定必须在这里
         let programs = wgpu::BindGroupLayoutEntry { binding: 22, visibility: fragment, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None };
         let colors = wgpu::BindGroupLayoutEntry { binding: 23, visibility: fragment, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("nearest"), entries: &[atlas, depths, programs, colors] });
+        // **BT-2**：标签挪到自己的 u32 纹理，`fs_nearest` 也按它认领颜色画布。
+        let tags = wgpu::BindGroupLayoutEntry { binding: 24, visibility: fragment, ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("nearest"), entries: &[atlas, depths, programs, colors, tags] });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&self.scene_layout), Some(&layout)], immediate_size: 0 });
         // a light's map (standard Z), a view's depth (reversed Z: nearer is greater)
         let pipelines = [(false, wgpu::CompareFunction::Less), (true, wgpu::CompareFunction::Greater)].map(|(view, compare)| {
@@ -1362,11 +1373,16 @@ impl Vector {
             if self.colors.as_ref().is_none_or(|(_, size)| *size != plan.size) {
                 self.colors = Some((image(device, "shader colors", plan.size, wgpu::TextureFormat::Rgba32Float, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING), plan.size));
             }
+            // **BT-2**：程序标签与颜色画布同尺寸、同生命周期（`R32Uint`：写侧 storage，读侧采样）。
+            if self.tags.as_ref().is_none_or(|(_, size)| *size != plan.size) {
+                self.tags = Some((image(device, "shader tags", plan.size, wgpu::TextureFormat::R32Uint, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING), plan.size));
+            }
             let colors = self.colors.as_ref().expect("shader colors").0.clone();
+            let tags = self.tags.as_ref().expect("shader tags").0.clone();
             for (object, program) in &fragment {
                 let rect = group.objects[*object as usize].rect;
                 let unit = &plan.programs[*program as usize];
-                if let Err(error) = super::Gpu::encode_frag_impl(device, queue, &self.frag_layout, &mut self.frag_pipelines, encoder, unit, rect, *program + 1, plan.size, &colors) {
+                if let Err(error) = super::Gpu::encode_frag_impl(device, queue, &self.frag_layout, &mut self.frag_pipelines, encoder, unit, rect, *program + 1, plan.size, &colors, &tags) {
                     fill_error.get_or_insert(error);
                 }
             }
@@ -1517,7 +1533,7 @@ impl Vector {
                 };
                 let images = bind(
                     &self.image_layout[kind],
-                    &[(0, view(atlas)), (1, view(rasters.unwrap_or(&self.empty))), (2, view(under)), (3, view(written)), (4, view(depth)), (5, heads.as_entire_binding()), (6, nodes.as_entire_binding()), (7, view(colors)), (8, view(sample_depths)), (9, depths.as_entire_binding()), (10, view(lighting.maps)), (11, wgpu::BindingResource::Sampler(lighting.compare)), (12, view(lighting.dfg)), (13, wgpu::BindingResource::Sampler(lighting.linear)), (14, self.crossings.0.as_entire_binding()), (15, view(lighting.environment)), (16, view(lighting.occlusion)), (17, view(light_in)), (18, view(lights)), (19, view(light_out)), (20, view(slabs.map_or(&self.empty, |s| s[0]))), (21, view(slabs.map_or(&self.no_slabs, |s| s[1]))), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))],
+                    &[(0, view(atlas)), (1, view(rasters.unwrap_or(&self.empty))), (2, view(under)), (3, view(written)), (4, view(depth)), (5, heads.as_entire_binding()), (6, nodes.as_entire_binding()), (7, view(colors)), (8, view(sample_depths)), (9, depths.as_entire_binding()), (10, view(lighting.maps)), (11, wgpu::BindingResource::Sampler(lighting.compare)), (12, view(lighting.dfg)), (13, wgpu::BindingResource::Sampler(lighting.linear)), (14, self.crossings.0.as_entire_binding()), (15, view(lighting.environment)), (16, view(lighting.occlusion)), (17, view(light_in)), (18, view(lights)), (19, view(light_out)), (20, view(slabs.map_or(&self.empty, |s| s[0]))), (21, view(slabs.map_or(&self.no_slabs, |s| s[1]))), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c))), (24, view(self.tags.as_ref().map_or(&self.no_tags, |(t, _)| t)))],
                 );
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("composite"), timestamp_writes: None });
                 // the pixels where the group lays something of its own, then (by a lean pass) the others
@@ -1562,8 +1578,8 @@ impl Vector {
                 let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry("bound_slabs") }, Extent::px(w, h));
                 pass.dispatch_workgroups(x, y, 1);
             }
-            Out::Depth(map) => nearest(encoder, map, false, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))], &mut ledger),
-            Out::Opaque(map) => nearest(encoder, map, true, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c)))], &mut ledger),
+            Out::Depth(map) => nearest(encoder, map, false, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c))), (24, view(self.tags.as_ref().map_or(&self.no_tags, |(t, _)| t)))], &mut ledger),
+            Out::Opaque(map) => nearest(encoder, map, true, &[(0, view(atlas)), (9, depths.as_entire_binding()), (22, self.groups[self.used - 1].programs.0.as_entire_binding()), (23, view(self.colors.as_ref().map_or(&self.no_colors, |(c, _)| c))), (24, view(self.tags.as_ref().map_or(&self.no_tags, |(t, _)| t)))], &mut ledger),
         }
     }
 }

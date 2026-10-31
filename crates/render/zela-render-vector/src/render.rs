@@ -1131,12 +1131,14 @@ pub(crate) struct ZelaFrag {
 }
 
 /// 逐片元着色的入口尾部：一个线程一个像素，写进 `Rgba32Float` 颜色画布
-/// （rgb = 颜色，a = 程序标签）。坐标与 `center` / `size` 同框架（视图像素，y 向下）。
+/// （rgb = 颜色，a = 覆盖率：**BT-2** 起恒 1.0）与 `R32Uint` 标签纹理（程序标签）。
+/// 坐标与 `center` / `size` 同框架（视图像素，y 向下）。
 const FRAG_TAIL: &str = r#"
 struct ZelaFrag { dispatch: vec4<f32>, rect: vec4<f32>, tag: vec4<u32> };
 @group(0) @binding(0) var<uniform> zela_params: Params;
 @group(0) @binding(1) var zela_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(2) var<uniform> zela_frag: ZelaFrag;
+@group(0) @binding(3) var zela_tags: texture_storage_2d<r32uint, write>;
 var<private> zela_center: vec2<f32>;
 var<private> zela_size: vec2<f32>;
 var<private> zela_pos2: vec2<f32>;
@@ -1156,7 +1158,8 @@ fn zela_fill(@builtin(global_invocation_id) id: vec3<u32>) {
     zela_local = at - rect.xy;
     zela_uv = zela_local / max(rect.zw, vec2<f32>(1.0));
     let c: vec3<f32> = eval(zela_params, 0u);
-    textureStore(zela_out, pixel, vec4<f32>(c, f32(zela_frag.tag.x)));
+    textureStore(zela_out, pixel, vec4<f32>(c, 1.0));
+    textureStore(zela_tags, pixel, vec4<u32>(zela_frag.tag.x, 0u, 0u, 0u));
 }
 "#;
 
@@ -2741,7 +2744,7 @@ impl Gpu {
     }
 
     /// **阶段 3**：跑一次"逐片元着色"的 compute pass：对象包围盒里的每个像素算一个颜色，
-    /// 写进颜色画布（rgb = 颜色，a = 程序标签；合成按标签认领）。
+    /// 写进颜色画布（rgb = 颜色，a = 覆盖率）与标签纹理（**BT-2**：合成按标签认领）。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn encode_frag_impl(
         device: &wgpu::Device,
@@ -2754,6 +2757,7 @@ impl Gpu {
         tag: u32,
         canvas: [u32; 2],
         out: &wgpu::TextureView,
+        tags: &wgpu::TextureView,
     ) -> Result<(), String> {
         if program.params.len() % 16 != 0 {
             return Err(format!(
@@ -2797,6 +2801,7 @@ impl Gpu {
                 wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(out) },
                 wgpu::BindGroupEntry { binding: 2, resource: target.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(tags) },
             ],
         });
         // BO-2：除数跟随生成着色器的 `@workgroup_size(8, 8, 1)`（生成源码不在 WORKGROUP 表里，

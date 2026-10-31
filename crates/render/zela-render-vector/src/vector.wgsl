@@ -1302,7 +1302,8 @@ fn before(a: Layer, b: Layer) -> bool {
 }
 
 // **阶段 3**：对象 o 的逐片元着色在像素 `up` 上的颜色（straight RGBA），或 `a = 0`（没有程序 / 标签不匹配）。
-// 颜色画布与视图像素一一对应（y 向下），标签由写它的 compute pass 盖上。
+// 颜色画布与视图像素一一对应（y 向下），标签由写它的 compute pass 盖进**自己的** u32 纹理
+// （**BT-2**：此前塞在颜色画布的 alpha 里，SDF 的覆盖率需要那个通道）。
 fn shaded_fill(o: u32, up: vec2<f32>) -> vec4<f32> {
     if (o >= arrayLength(&shader_programs)) {
         return vec4<f32>(0.0);
@@ -1312,10 +1313,11 @@ fn shaded_fill(o: u32, up: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(0.0);
     }
     let at = vec2<i32>(vec2<f32>(up.x, frame.size.y - up.y));
-    let c = textureLoad(shader_colors, at, 0);
-    if (abs(c.a - f32(tag)) >= 0.5) {
+    let stored = textureLoad(shader_tags, at, 0).x;
+    if (stored != tag) {
         return vec4<f32>(0.0);
     }
+    let c = textureLoad(shader_colors, at, 0);
     return vec4<f32>(c.rgb, 1.0);
 }
 

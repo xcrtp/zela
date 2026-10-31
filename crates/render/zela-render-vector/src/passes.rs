@@ -58,6 +58,11 @@ pub enum ImageKind {
     Sampler,
     /// 比较采样器。
     ComparisonSampler,
+    /// **BT-2**：无符号整数纹理（逐片元着色写下的程序标签）。
+    ///
+    /// 写侧是 compute 的 `texture_storage_2d<r32uint, write>`（在它自己的组 0 里），
+    /// 读侧是合成阶段的 `texture_2d<u32>`（组 1）—— 所以这里只需要"采样 u32"这一种。
+    TextureUint,
 }
 
 /// 一个组 1 槽位：名字 + 绑定种类。**数组下标即 binding 编号**。
@@ -83,7 +88,7 @@ impl ImageSlot {
 ///
 /// 名字取自 shader（`vector.wgsl` / `vector_buffers.wgsl` / `vector_compute.wgsl`），
 /// 不是新造的词。
-pub const IMAGE_SLOTS: [ImageSlot; 24] = [
+pub const IMAGE_SLOTS: [ImageSlot; 25] = [
     ImageSlot::new("atlas", ImageKind::Texture),
     ImageSlot::new("layers", ImageKind::Texture),
     ImageSlot::new("base", ImageKind::Texture),
@@ -126,6 +131,9 @@ pub const IMAGE_SLOTS: [ImageSlot; 24] = [
     ImageSlot::new("slabs", ImageKind::FloatArray),
     ImageSlot::new("shader_programs", ImageKind::BufferRead),
     ImageSlot::new("shader_colors", ImageKind::Texture),
+    // **BT-2**：逐片元着色的程序标签（此前塞在颜色画布的 alpha 里 —— SDF 的覆盖率
+    // 需要一个可用的 alpha 通道，所以标签挪到这张 u32 纹理）。
+    ImageSlot::new("shader_tags", ImageKind::TextureUint),
 ];
 
 /// 组 1 槽位总数（= 声明序分配的上界）。
@@ -147,7 +155,7 @@ pub fn image_slot(name: &str) -> u32 {
 /// 不是新造的词；这里只列**确实通过组 1 绑定**的那些：
 /// `layers` / `slab_bounds` / `slabs` 在声明里是渲染附件或由尚未接入记账的合成 pass 绑定，
 /// 列进来会让对应的渲染 pass 误报"少绑"（BP-4 接入 `vector.rs` 时再补）。
-const IMAGE_NAMES: [&str; 10] = [
+const IMAGE_NAMES: [&str; 11] = [
     "atlas",
     "base",
     "base_depth",
@@ -158,6 +166,8 @@ const IMAGE_NAMES: [&str; 10] = [
     "dfg_table",
     "shader_programs",
     "shader_colors",
+    // **BT-2**：程序标签搬到自己的 u32 纹理（不再借颜色画布的 alpha）。
+    "shader_tags",
 ];
 
 /// 光栅视图的组名表（`RASTER_PLAN` / `RASTER_LAYERED_PLAN` / `VECTOR_PLAN`）。
@@ -620,7 +630,7 @@ pub const CODEGEN_PLAN: PassPlan = &[
         name: "frag codegen",
         kind: PassStage::Compute,
         inputs: &["instances", "shader_programs", "shader_colors"],
-        outputs: &["shader_colors"],
+        outputs: &["shader_colors", "shader_tags"],
         entry: "frag codegen",
         // 生成着色器：`@workgroup_size` 由 codegen 拼进源码，不在 WORKGROUP 表里 ⇒ 字面量。
         dispatch: Dispatch::Tiles {
@@ -1241,10 +1251,10 @@ mod tests {
     /// 组 1 的编号逐项固定：值取自加本模块之前的 24 个手写 entry。
     ///
     /// 这条用例就是"重构前先固化现状"的那份快照 —— 槽位分配换成声明序之后，
-    /// 任何一项编号变化都会在这里红。
+    /// 任何一项编号变化都会在这里红。**BT-2** 只追加，末尾多出 `shader_tags`（24）。
     #[test]
     fn image_slots_are_pinned() {
-        let expected: [(&str, u32); 24] = [
+        let expected: [(&str, u32); 25] = [
             ("atlas", 0),
             ("layers", 1),
             ("base", 2),
@@ -1269,6 +1279,7 @@ mod tests {
             ("slabs", 21),
             ("shader_programs", 22),
             ("shader_colors", 23),
+            ("shader_tags", 24),
         ];
         for (name, slot) in expected {
             assert_eq!(image_slot(name), slot, "{name} 的槽位变了");

@@ -2028,6 +2028,73 @@ mod tests {
         assert!(corner[0] < 32, "角落应为背景：{corner:?}");
     }
 
+    /// **BT-2 风险 ①**：两个各有逐片元程序的对象，包围盒重叠时**各自只认领自己写下的像素**。
+    ///
+    /// 标签此前塞在颜色画布的 alpha 里（`alpha = f32(tag)`）。BT-2 把 alpha 改成覆盖率
+    /// （本阶段恒 1.0）后，若 `shaded_fill` 仍读 alpha，tag = 2 的程序就会被判成"不匹配"
+    /// 而退回记录填充色（蓝）—— 左边对象的 tag 是 1（`abs(1 - 1) < 0.5` 仍会被误判成匹配），
+    /// 所以只有"第二个程序"能暴露这条回归。断言：左区只显示自己的红、右区（tag = 2）只显示
+    /// 自己的绿、重叠处由后画的绿覆盖，三处都不得是蓝（记录填充色）。
+    #[test]
+    fn overlapping_fragment_programs_claim_their_own_pixels() {
+        use crate::ShaderFill;
+        let (w, h) = (128, 128);
+        let program = |color: &str| {
+            // 没有读端通道 ⇒ `Params` 留占位字段（与 `emit_wgsl` 的空参数形态一致）。
+            let source = format!(
+                "struct Params {{\n    _unused: u32,\n}}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {{\n    return vec3<f32>({color});\n}}\n"
+            );
+            ShaderFill { source, params: Vec::new(), fragment: true }
+        };
+        let blue = [0.0, 0.0, 1.0, 1.0];
+        let mut left = FilledPath::polygon(
+            &[
+                [-40.0, -20.0, 0.0],
+                [10.0, -20.0, 0.0],
+                [10.0, 20.0, 0.0],
+                [-40.0, 20.0, 0.0],
+            ],
+            blue,
+        );
+        left.shader = Some(program("1.0, 0.0, 0.0"));
+        let mut right = FilledPath::polygon(
+            &[
+                [-10.0, -20.0, 0.0],
+                [40.0, -20.0, 0.0],
+                [40.0, 20.0, 0.0],
+                [-10.0, 20.0, 0.0],
+            ],
+            blue,
+        );
+        right.shader = Some(program("0.0, 1.0, 0.0"));
+        let frame = match render_2d(
+            w,
+            h,
+            1,
+            [0.0, 0.0, 0.0, 1.0],
+            &[left.into(), right.into()],
+        ) {
+            Ok(frame) => frame,
+            Err(error) => panic!("矢量后端起不来：{error}"),
+        };
+        let is_blue = |px: [u8; 4]| px[2] > 200 && px[0] < 60 && px[1] < 60;
+        let left_only = pixel(&frame, w, 39, 64);
+        assert!(
+            left_only[0] > 200 && left_only[1] < 60 && !is_blue(left_only),
+            "左区应显示第一个程序的红：{left_only:?}"
+        );
+        let overlap = pixel(&frame, w, 64, 64);
+        assert!(
+            overlap[1] > 200 && overlap[0] < 60 && !is_blue(overlap),
+            "重叠处应由后画的第二个程序（tag = 2）认领：{overlap:?}"
+        );
+        let right_only = pixel(&frame, w, 89, 64);
+        assert!(
+            right_only[1] > 200 && !is_blue(right_only),
+            "右区应显示第二个程序的绿：{right_only:?}"
+        );
+    }
+
     /// **B6 Step 1.2**：3D view 的槽位布局与上游 `feed.py::view` 一致 ——
     /// 投影矩阵（列主序）、`three_d`、`toward`/bias、eye、灯数、tone、bloom、AO、灯槽。
     #[test]
