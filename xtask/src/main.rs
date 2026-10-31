@@ -3406,6 +3406,11 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     // `[native]` 条目已存在（上面的 wgpu 门禁），这里只补矢量证据。
     ("capability_gaps", Some("vector")),
     ("demo3d", Some("vector")),
+    // BT 批：三条新能力作品（着色透明度 / 2D SDF / 3D 屏幕空间材质）都只在矢量后端成立，
+    // 与上一条同理：不录 `[native]`（wgpu 会静默丢弃这些样式）。
+    ("cap_shader_alpha", Some("vector")),
+    ("cap_sdf", Some("vector")),
+    ("cap_shader_3d", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。
