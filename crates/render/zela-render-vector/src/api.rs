@@ -3448,6 +3448,80 @@ mod tests {
         );
     }
 
+    /// **BV-5**：光追开关的端到端判据（`View3.raytrace`）。
+    ///
+    /// 两件事必须同时成立，缺一都不算"pass 真的跑了"：
+    /// 1. **确定性**：同一输入两次渲染逐字节相同 —— brute-force 的遍历顺序只由
+    ///    `(实例下标, 三角形下标)` 决定，与线程调度无关；若有人改成按 `t` 排序，
+    ///    `t` 相等的平局就会让结果随调度漂移；
+    /// 2. **真的改写像素**：与 `raytrace = false` 的同帧不同（中央像素必须变）。
+    #[test]
+    fn raytrace_changes_the_frame_and_is_deterministic() {
+        let mesh = || MeshRecord {
+            positions: vec![
+                [-1.0, -1.0, 0.0],
+                [1.0, -1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [-1.0, 1.0, 0.0],
+            ],
+            uvs: None,
+            normals: None,
+            triangles: vec![0, 1, 2, 0, 2, 3],
+            fill: [0.8, 0.2, 0.2, 1.0],
+            model: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            material: Some([0.0, 0.6, 0.04]),
+            colors: None,
+            second: None,
+            texture: None,
+        };
+        let frame = |raytrace: bool| {
+            let view = View3 {
+                raytrace,
+                frame: (4.0, 4.0),
+                center: [0.0, 0.0, 0.0],
+                axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                zoom: 1.0,
+                focal: 8.0,
+                size: (64, 64),
+                background: [0.0, 0.0, 0.0, 1.0],
+                light_source: [0.0, 0.0, 1.0],
+                exposure: 1.0,
+                tone: Some(ze_render_ir::ToneCurve::Clip),
+                bloom: 0.0,
+                bloom_threshold: 0.0,
+                bloom_radius: 0.0,
+                ao: None,
+                lights: vec![Light::Sun {
+                    direction: [0.0, 0.0, 1.0],
+                    color: [1.0, 1.0, 1.0],
+                    intensity: 1.2,
+                    shadows: false,
+                }],
+            };
+            render_3d(&view, &[PathRecord::Mesh(mesh())]).expect("3D 渲染失败")
+        };
+        let off = frame(false);
+        let on = frame(true);
+        let again = frame(true);
+        assert_eq!(
+            on, again,
+            "同一输入两次渲染必须逐字节相同（遍历顺序只由下标决定）"
+        );
+        assert_ne!(on, off, "光追必须真的改写画面（否则 pass 没跑）");
+        let center = |f: &[u8]| pixel(f, 64, 32, 32);
+        assert_ne!(
+            center(&on),
+            center(&off),
+            "中央像素（网格正中）必须被光追改写：{:?} vs {:?}",
+            center(&on),
+            center(&off)
+        );
+    }
+
     /// **PH Step 3**：上传入口的错误必须显式（id 0 保留 / 字节数不符）。
     #[test]
     fn environment_upload_errors_are_explicit() {

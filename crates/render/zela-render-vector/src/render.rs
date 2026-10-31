@@ -2526,19 +2526,24 @@ struct RayParams {
     inverse: [[f32; 4]; 4], // clip -> world（列主序，与 `vector.wgsl` 的 Frame.inverse 同口径）
     eye: [f32; 4],
     toward: [f32; 4],
-    size: [f32; 4],
+    size: [f32; 4], // width, height, **实例数**, **本视图的实例基址**
     _pad: [f32; 4],
 }
 
 const RAY_STRIDE: u64 = 256;
 
 impl RayParams {
-    fn of(camera: &Camera, [width, height]: [u32; 2]) -> Self {
+    /// `instances`：本视图要遍历的实例数；`base`：它在 `instances` / `ranges` 里的起点。
+    ///
+    /// **BV-5（实测修正）**：两者都必须显式给 —— `ranges` 缓冲按**容量**分配（跨作品常驻），
+    /// 着色器里的 `arrayLength` 拿到的是容量而不是本帧写进去的条目数；迭代尾部会读到
+    /// 上一件作品残留的范围（实测：同一件作品与别的作品并发时像素不同）。
+    fn of(camera: &Camera, [width, height]: [u32; 2], base: u32, instances: u32) -> Self {
         Self {
             inverse: vector::inverse(&camera.projection),
             eye: camera.eye,
             toward: [camera.toward[0], camera.toward[1], camera.toward[2], 0.0],
-            size: [width as f32, height as f32, 0.0, 0.0],
+            size: [width as f32, height as f32, instances as f32, base as f32],
             _pad: [0.0; 4],
         }
     }
@@ -2564,7 +2569,7 @@ impl RayTrace {
             entries: &[
                 buffer(0, wgpu::BufferBindingType::Uniform),
                 buffer(1, wgpu::BufferBindingType::Storage { read_only: true }),
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: compute, ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: wgpu::TextureFormat::Rgba32Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: compute, ty: wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: wgpu::TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -2789,7 +2794,15 @@ fn sampled_shader(device: &wgpu::Device, label: &str, source: &str, multisampled
 }
 
 fn entry(binding: u32, ty: wgpu::BindingType) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT, ty, count: None }
+    // **BV-5**：`COMPUTE` 必须在可见性里 —— 光追 compute pass 复用**同一份** scene 组
+    // （view / vertices / indices / instances / extras）与 lighting 组（`reflected()` 的输入）。
+    // 可见性是校验门槛，不是行为开关：光栅管线多这一位不影响任何像素。
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
+        ty,
+        count: None,
+    }
 }
 
 fn storage(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -4717,7 +4730,7 @@ impl Player {
                 // its glow, spread from its lit content's light (without any, there is none to spread)
                 let glow = bloom_of(&f.view).filter(|_| light || plan.as_ref().is_some_and(|p| p.lit));
                 // BV-3：`view[VIEW_RAYTRACE]` 是"这个视图要光追"的开关（0 = 不跑；见 `view_3d` 的打包）。
-                let ray = (f.view[VIEW_RAYTRACE] > 0.5).then(|| RayParams::of(&camera, [f.width, f.height]));
+                let ray = (f.view[VIEW_RAYTRACE] > 0.5).then(|| RayParams::of(&camera, [f.width, f.height], offset, draws.len() as u32));
                 Drawing::Raster { offset, draws, listed, sprites: sprites_here, lists, slabs, light, glow, plan, shadows, cast, ray }
             } else {
                 let background = [0, 1, 2, 3].map(|k| f.view[VIEW_FLOATS + k]);
@@ -4778,9 +4791,12 @@ impl Player {
                     if *slabs {
                         canvas.attach_slabs(gpu, samples);
                     }
-                    // BV-3：要光追的视图按描述符申请一张 `Rgba32Float` storage 目标（`Canvas::target` 的第一个真消费者）。
+                    // BV-3：要光追的视图按描述符申请一张 storage 目标（`Canvas::target` 的第一个真消费者）。
+                    // **BV-5**：格式用 `Rgba16Float` 而不是 `Rgba32Float` —— 合成阶段要用**可过滤**的
+                    // 采样布局（`gpu.image_layout`）读它，而 `rgba32float` 不是可过滤格式（实测
+                    // 绑定期验证失败）；`rgba16float` 既可写又可过滤，动态范围对显示足够。
                     if ray.is_some() && canvas.raytrace.is_none() {
-                        let desc = TargetDesc::new("raytrace", canvas.width, canvas.height, wgpu::TextureFormat::Rgba32Float, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING);
+                        let desc = TargetDesc::new("raytrace", canvas.width, canvas.height, wgpu::TextureFormat::Rgba16Float, wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING);
                         let target = canvas.target(gpu, desc);
                         canvas.raytrace = Some(target);
                     }
@@ -5014,12 +5030,17 @@ impl Player {
                             ],
                         })
                     });
-                    let ray_image = canvas.raytrace.as_ref().map(|target| {
+                    // **BV-5（实测修正）**：合成组的条件与 `raytracing` **同一口径** ——
+                    // 此前它只看 `canvas.raytrace.is_some()`，而画布是**跨作品常驻**的
+                    // （player 按尺寸缓存）：跑过一次光追后，后面任何复用同一 player 的作品
+                    // 都会把**上一件的**光追结果叠进自己的 base（实测：fusion 的哈希随
+                    // 并发调度漂移，`--workers 2` 下 script != bundle）。
+                    let ray_image = raytracing.then(|| {
                         gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("raytrace image"),
                             layout: &gpu.image_layout,
                             entries: &[
-                                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(target) },
+                                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(canvas.raytrace.as_ref().expect("raytrace target")) },
                                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&gpu.sampler) },
                             ],
                         })

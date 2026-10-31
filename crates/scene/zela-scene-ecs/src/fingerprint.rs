@@ -42,8 +42,8 @@ use ze_render_ir::{
 use ze_scene_contract::{Group, LifetimeTracked, Name, Parent, ParentInherit, Visibility};
 use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
-    Path, Projection, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef, Transform,
-    ZOrder,
+    Path, Projection, RayTrace, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef,
+    Transform, ZOrder,
 };
 
 use crate::composer::Composer;

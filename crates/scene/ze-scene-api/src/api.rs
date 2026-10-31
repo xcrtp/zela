@@ -12,8 +12,8 @@
 use crate::types::{
     Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
     Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathFollow,
-    PathList, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, Stroke, Surface,
-    Text, Transform, Transform3D, Vec2, Vec3,
+    PathList, PathShape, PhaseAnim, Polyline, RayTrace, Reveal, RevealPath, SecondPaint, Stroke,
+    Surface, Text, Transform, Transform3D, Vec2, Vec3,
 };
 use ze_pod_core::Handle;
 use ze_pod_macro::capability;
@@ -36,9 +36,13 @@ use ze_pod_macro::capability;
 /// `@10 → @11`（提案 #6）：`clip` 的 `target` 从 `TargetKind` 枚举改为**地址字符串**。
 /// 旧名（`CircleRadius` / `RevealRange` / …）仍然接受，规范地址 `Circle.radius` /
 /// `Reveal.end` / … 同时可用；未知地址在装配期显式失败。
+///
+/// `@14 → @15`（BV-5）：新增 `ray_trace`（3D 视图的光追开关组件 `RayTrace`）。
+/// 它是一个**新类型**，既有作品不引用 ⇒ payload 逐位不变（`SceneScript` 只记录
+/// 实际挂上的组件）；只有用到它的作品才在产物里多一个 `RayTrace`。
 #[capability(
     namespace = "zela.scene",
-    version = "14",
+    version = "15",
     description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
     bindings
 )]
@@ -54,6 +58,10 @@ pub struct SceneApi<'a> {
 
     /// 构造 3D 相机组件（B1-D）。
     pub camera3d: fn(&'a dyn Pod, camera: Camera3D) -> Handle,
+
+    /// 构造 3D 视图的光追开关组件（BV-5）：挂在**同一个对象**上（与 `Camera3D` 同一实体），
+    /// 缺席 = 只光栅。仅矢量后端有光追 pass（wgpu 侧由路由显式拒绝）。
+    pub ray_trace: fn(&'a dyn Pod, ray_trace: RayTrace) -> Handle,
 
     /// 构造立方体网格组件（B1-D，**参数化**：只传半边长，顶点由宿主生成）。
     pub cube: fn(&'a dyn Pod, cube: Cube) -> Handle,
@@ -181,9 +189,14 @@ pub struct ContentApi<'a> {
 /// `@13 → @14`（动画层补全 · 阶段 2）：新增 `path_follow`（路径跟随组件）。
 /// 它进 `signatures()` ⇒ 指纹与版本一起动；既有作品不引用它 ⇒ 像素不变，
 /// 但 `zela.scene` 版本进产物 ⇒ payload 需重录（像素基线不动）。
-pub const SCENE_API_VERSION: &str = "14";
+///
+/// `@14 → @15`（BV-5）：新增 `ray_trace`（3D 视图的光追开关组件 `RayTrace`）。
+/// 指纹随 `signatures()` 一起动；**payload 不动** —— `SceneScript` 只记录实际挂上的
+/// 组件，既有作品不引用 `RayTrace` ⇒ 产物逐字节相同（与 `@13 → @14` 不同，那一版
+/// 改的是产物里出现的能力名）。
+pub const SCENE_API_VERSION: &str = "15";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 11_782_065_197_837_869_228;
+pub const SCENE_API_FINGERPRINT: u64 = 17_936_327_828_547_956_008;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

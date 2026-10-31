@@ -60,6 +60,17 @@ pub struct Camera3D {
     pub fov_y: f32,
 }
 
+/// **BV-5**：3D 视图的光追开关。挂在**同一个对象**上（与 `Camera3D` 同一实体），
+/// 缺席 ⇒ 该视图只光栅（既有作品的图层与像素逐位不变）。
+///
+/// 只对矢量后端有意义：wgpu 没有光追 pass，路由层会显式拒绝而不是静默丢弃。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PodType, SceneComponent)]
+#[pod_type(name = "zela.RayTrace")]
+pub struct RayTrace {
+    /// `false` ⇒ 不跑光追（与不挂组件同义；保留开关是为了能按条件关掉）。
+    pub enabled: bool,
+}
+
 /// 立方体网格参数（B1-D）。**参数化构造器**：只传半边长，不传顶点数组 ——
 /// 顶点由宿主侧 `wireframe_cube` / `solid_cube` 生成（B1-D 硬约束）。
 #[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
@@ -515,7 +526,7 @@ impl KeyframeInterp {
 mod tests {
     use super::*;
 
-    /// E 批验收：25 个组件的 `SceneComponent` 常量与既有 `register_fn1_named`
+    /// E 批验收：组件的 `SceneComponent` 常量与既有 `register_fn1_named`
     /// 手写字符串**逐字一致**（声明文件因此逐字节不变）。
     #[test]
     fn component_names_match_registered_ctors() {
@@ -527,6 +538,7 @@ mod tests {
         check::<Stroke>("stroke", "zela.Stroke");
         check::<Camera2D>("camera2d", "zela.Camera2D");
         check::<Camera3D>("camera3d", "zela.Camera3D");
+        check::<RayTrace>("ray_trace", "zela.RayTrace");
         check::<Cube>("cube", "zela.Cube");
         check::<Material3D>("material3d", "zela.Material3D");
         check::<Light>("light", "zela.Light");

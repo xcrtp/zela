@@ -19,7 +19,8 @@ use ze_scene_core::scene_script::{
 use ze_notion::{Color32, Quat, Rect2D, Vec2 as NotionVec2, Vec3 as NotionVec3};
 use ze_scene_core::object::{
     Arrow as NativeArrow, Axes2D as NativeAxes2D, Camera3D as NativeCamera3D, Circle as NativeCircle,
-    Framing2D, Path as NativePath, Projection, TickSpec, Transform as NativeTransform,
+    Framing2D, Path as NativePath, Projection, RayTrace as NativeRayTrace, TickSpec,
+    Transform as NativeTransform,
 };
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 use ze_render_ir::{FillSolid, MeasureSpace, Opacity as NativeOpacity, StrokeSolid};
@@ -33,9 +34,9 @@ use crate::RegisterSceneComponent;
 use crate::types::{
     Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
     Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
-    Path, PathFollow, PathShape, PhaseAnim, Polyline, Reveal, RevealPath, SecondPaint, ShaderVariant,
-    Stroke, Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D,
-    Vec2, Vec3,
+    Path, PathFollow, PathShape, PhaseAnim, Polyline, RayTrace, Reveal, RevealPath, SecondPaint,
+    ShaderVariant, Stroke, Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter,
+    Transform, Transform3D, Vec2, Vec3,
 };
 use ze_scene_core::components::{
     Light as NativeLight, Material3D as NativeMaterial3D, MorphShape as NativeMorphShape,
@@ -152,6 +153,8 @@ impl SceneServicePod {
         registry.register_component::<Camera2D>(scene_camera2d);
         // ── 3D（B1-D）──────────────────────────────────────────────────
         registry.register_component::<Camera3D>(scene_camera3d);
+        // BV-5：光追开关（挂在相机对象上；缺席 = 只光栅）。
+        registry.register_component::<RayTrace>(scene_ray_trace);
         registry.register_component::<Cube>(scene_cube);
         registry.register_component::<Material3D>(scene_material3d);
         registry.register_component::<Light>(scene_light);
@@ -516,6 +519,20 @@ fn scene_camera3d(pod: &dyn Pod, camera: Camera3D) -> Handle {
         .borrow_mut()
         .components
         .insert(vec![Box::new(native)])
+}
+
+/// **BV-5**：光追开关 → 核心组件（与 `Camera3D` 挂在同一对象上）。
+///
+/// 刻意**不改** `Camera3D` 的字段：那会改既有 12 个作品的 payload（字段进产物）。
+/// 新组件只在脚本显式引用时出现 ⇒ 既有作品产物逐位不变。
+fn scene_ray_trace(pod: &dyn Pod, ray_trace: RayTrace) -> Handle {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(NativeRayTrace {
+            enabled: ray_trace.enabled,
+        })])
 }
 
 fn scene_cube(pod: &dyn Pod, cube: Cube) -> Handle {

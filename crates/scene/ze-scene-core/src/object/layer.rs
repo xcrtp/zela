@@ -17,7 +17,11 @@ pub enum LayerKind {
     /// 2D 视口。
     Viewport2D { camera: Camera2D },
     /// 3D 视口。
-    Viewport3D { camera: Camera3D },
+    Viewport3D {
+        camera: Camera3D,
+        /// **BV-5**：该视口跑光追（由脚本组件 `RayTrace` 决定；缺席 ⇒ `false`）。
+        raytrace: bool,
+    },
     /// 内容纹理层：渲染到**独立纹理**，供 3D 材质采样。
     ContentTexture {
         /// 内容相机：`rect` 为**纹理矩形**（决定世界 → 纹理坐标的映射）。

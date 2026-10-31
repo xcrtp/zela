@@ -406,7 +406,7 @@ impl SceneCompositorCallback {
                         fit: None,
                     });
                 }
-                LayerKind::Viewport3D { camera } => {
+                LayerKind::Viewport3D { camera, .. } => {
                     // 离屏纹理按**物理像素**建（逻辑点 × ppp）。
                     let viewport = Viewport::new(
                         0,
@@ -690,7 +690,10 @@ mod tests {
         let layers = vec![
             SceneLayer {
                 id: VIEW_3D_LAYER,
-                kind: LayerKind::Viewport3D { camera },
+                kind: LayerKind::Viewport3D {
+                    camera,
+                    raytrace: false,
+                },
                 blend: LayerBlend::Alpha,
                 opacity: 1.0,
             },
@@ -875,7 +878,10 @@ mod tests {
         let layers = vec![
             SceneLayer {
                 id: VIEW_3D_LAYER,
-                kind: LayerKind::Viewport3D { camera },
+                kind: LayerKind::Viewport3D {
+                    camera,
+                    raytrace: false,
+                },
                 blend: LayerBlend::Alpha,
                 opacity: 1.0,
             },

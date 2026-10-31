@@ -287,6 +287,16 @@ impl VectorFrame {
             .layers
             .iter()
             .any(|layer| matches!(layer.kind, LayerKind::Viewport3D { .. }));
+        // **BV-5**：本帧是否有 3D 视图要求光追（路由据此拒绝 wgpu）。
+        let raytrace = self.layers.iter().any(|layer| {
+            matches!(
+                layer.kind,
+                LayerKind::Viewport3D {
+                    raytrace: true,
+                    ..
+                }
+            )
+        });
         let has_content_texture = !self.content.is_empty();
         // **PG Step 2（路线 B）**：`composite = false` 的层由矢量侧当相机视图先渲、
         // 网格按句柄采样（[`ContentSnapshot::handle`]）。唯一画不了的情形是材质引用的
@@ -310,6 +320,7 @@ impl VectorFrame {
             .fold(0u8, |bits, next| bits | next);
         FrameContent {
             has_3d_camera,
+            raytrace,
             // B14：reveal 也是 2D 图元（独立队列，但同样占画面）。
             // PH Step 1：形变项同样是 2D 图元（3D 帧里以 OVERLAY 叠加）。
             has_2d_primitives: self.draws.len() + self.reveals.len() + self.morphs.len(),
@@ -356,13 +367,15 @@ impl VectorFrame {
         background: [f32; 4],
     ) -> Result<Prepared, String> {
         let camera3d = self.layers.iter().find_map(|layer| match &layer.kind {
-            LayerKind::Viewport3D { camera } => Some(*camera),
+            LayerKind::Viewport3D { camera, raytrace } => Some((*camera, *raytrace)),
             _ => None,
         });
         match camera3d {
-            Some(camera) => {
+            Some((camera, raytrace)) => {
                 let mut view =
                     crate::vector3d::view3(&camera, (width, height), background, params)?;
+                // **BV-5**：脚本组件 `RayTrace` ⇒ 图层标记 ⇒ 这个视图跑光追 pass。
+                view.raytrace = raytrace;
                 // **PH Step 2**：线框细条需要"朝向眼睛"与 1 像素对应的世界长度
                 // （焦距平面处；场景层没有 line_width ⇒ 宽度不可由作者控制）。
                 let lines = crate::vector3d::LineStyle {

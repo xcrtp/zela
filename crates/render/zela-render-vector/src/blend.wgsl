@@ -601,7 +601,7 @@ fn fs_mesh_with_light(in: Shaded) -> Base {
 }
 
 // ── BV-4：把光追结果混进 base ────────────────────────────────────────────────
-// 全屏三角形（无顶点缓冲），组 1 的 `image` 是光追的目标（rgba32float，预乘：rgb + 覆盖 alpha）。
+// 全屏三角形（无顶点缓冲），组 1 的 `image` 是光追的目标（rgba16float，预乘：rgb + 覆盖 alpha）。
 // 片元按预乘 alpha 叠在 base 上：未命中的像素 alpha = 0 ⇒ 完全不影响底图。
 
 @vertex

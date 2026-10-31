@@ -59,8 +59,8 @@ pub use object::{
     AXIS_Z, Arrow, Axes2D, AxesLine, CONTENT_TEXTURE_HEIGHT, CONTENT_TEXTURE_ID,
     CONTENT_TEXTURE_WIDTH, CONTENT_Z, Camera2D, Camera2DHandle, Camera3D, Camera3DHandle, Circle,
     FPS_PITCH_LIMIT, FpsView, Framing2D, FunctionGraph, GRID_Z, LayerBlend, LayerId, LayerKind,
-    Line, Path, Projection, Rect, TextureHandle, TickSpec, Transform, ZOrder, map_path_affine,
-    spawn_camera2d, spawn_camera3d, uniform_scale,
+    Line, Path, Projection, RayTrace, Rect, TextureHandle, TickSpec, Transform, ZOrder,
+    map_path_affine, spawn_camera2d, spawn_camera3d, uniform_scale,
 };
 
 pub use surface::{

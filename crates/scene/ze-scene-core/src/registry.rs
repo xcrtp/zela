@@ -26,7 +26,7 @@ use crate::composer::Composer;
 use crate::domain::CameraMode;
 use crate::object::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
-    Path, Projection, Rect, Transform, ZOrder,
+    Path, Projection, RayTrace, Rect, Transform, ZOrder,
 };
 use crate::surface::{Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef};
 
@@ -41,6 +41,8 @@ macro_rules! known_component_table {
             clone: Circle, Line, Path, Rect, Arrow, Transform, ZOrder,
                    Name, Group, Visibility, Opacity,
                    Camera2D, Camera3D, Projection, Framing2D, CameraMode, FpsView,
+                   // BV-5：3D 视图的光追开关（脚本组件，挂在相机对象上）。
+                   RayTrace,
                    StrokeSolid, FillSolid,
                    // PE：绘制参数（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）。
                    Gradient, Dash, SecondPaint, BackgroundStroke, CurveWindow,

@@ -56,7 +56,7 @@ struct RayParams {
 @group(0) @binding(6) var<storage, read> extras: array<vec4<f32>>; // mesh vertex: normal xyz, u
 @group(2) @binding(0) var<uniform> ray: RayParams;
 @group(2) @binding(1) var<storage, read> ranges: array<vec2<u32>>; // (index_offset, index_count) per instance
-@group(2) @binding(2) var out_color: texture_storage_2d<rgba32float, write>;
+@group(2) @binding(2) var out_color: texture_storage_2d<rgba16float, write>;
 @group(3) @binding(0) var shadow_maps: texture_depth_2d_array;
 @group(3) @binding(1) var shadow_compare: sampler_comparison;
 @group(3) @binding(2) var dfg_table: texture_2d<f32>;
@@ -138,15 +138,21 @@ fn raytrace(@builtin(global_invocation_id) id: vec3<u32>) {
     // 像素中心 → NDC（y 向上：纹理 y = 0 是画面顶行）→ 世界射线
     let ndc = vec2<f32>(2.0 * (f32(id.x) + 0.5) / ray.size.x - 1.0, 1.0 - 2.0 * (f32(id.y) + 0.5) / ray.size.y);
     let eye = ray.eye.xyz;
-    let far = ray.inverse * vec4<f32>(ndc, 0.0, 1.0);
+    // `z = 0.5` 而不是 0：本视图是**反投影 Z**（`view_3d` 里 z / w = NEAR / 距离），
+    // `z = 0` 是无穷远点 ⇒ 逆变换后 `w = 0`，除法得到 inf / NaN（实测：一条命中也打不到）。
+    // 任何落在 (0, 1) 的深度都给出同一条射线（透视下同一像素的所有深度共线）。
+    let far = ray.inverse * vec4<f32>(ndc, 0.5, 1.0);
     let dir = normalize(far.xyz / far.w - eye);
 
     var best = 1e30;
     var best_instance = 0u;
     var best_triangle = 0u;
     var best_bary = vec2<f32>(0.0);
-    let count = arrayLength(&ranges);
-    for (var i = 0u; i < count; i = i + 1u) {
+    // 实例范围由 uniform 给：`ranges` 缓冲按容量分配（跨作品常驻），`arrayLength` 会带出
+    // 上一件作品残留的条目 ⇒ 只能用本帧写进去的 `[base, base + count)`。
+    let base = u32(ray.size.w);
+    let count = u32(ray.size.z);
+    for (var i = base; i < base + count; i = i + 1u) {
         let r = ranges[i];
         let triangles = r.y / 3u;
         for (var t = 0u; t < triangles; t = t + 1u) {

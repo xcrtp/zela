@@ -55,6 +55,8 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
         // 3D 相机：看向原点、上方向 +Y 是默认取景。
         ("zela.Camera3D", "target") => Some(vec3(0.0, 0.0, 0.0)),
         ("zela.Camera3D", "up") => Some(vec3(0.0, 1.0, 0.0)),
+        // BV-5：光追开关默认开 —— 挂上组件就是"要光追"，`RayTrace {}` 即生效。
+        ("zela.RayTrace", "enabled") => Some(PodValue::Scalar(ScalarValue::Bool(true))),
         // 2D 摆放：z 只用于少量分层场景，多数作品写 0。
         ("zela.Transform", "z") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
         // 父子继承权重：变换三维默认全继承（旧行为），样式三维默认不继承（旧行为）。
@@ -118,6 +120,7 @@ pub fn field_default_literal(type_name: &str, field_name: &str) -> Option<&'stat
         ("zela.Camera2D", "center") => Some("Vec2(0, 0)"),
         ("zela.Camera3D", "target") => Some("Vec3(0, 0, 0)"),
         ("zela.Camera3D", "up") => Some("Vec3(0, 1, 0)"),
+        ("zela.RayTrace", "enabled") => Some("true"),
         ("zela.Transform", "z") => Some("0"),
         ("zela.Parent", "position") => Some("1"),
         ("zela.Parent", "rotation") => Some("1"),

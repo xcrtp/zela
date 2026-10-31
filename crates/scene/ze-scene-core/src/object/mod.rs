@@ -23,7 +23,7 @@ pub use affine::{map_path_affine, uniform_scale};
 pub use axes::{AXIS_Z, Axes2D, AxesLine, GRID_Z, TickSpec};
 pub use camera::{
     Camera2D, Camera2DHandle, Camera3D, Camera3DHandle, FPS_PITCH_LIMIT, FpsView, Framing2D,
-    Projection, spawn_camera2d, spawn_camera3d,
+    Projection, RayTrace, spawn_camera2d, spawn_camera3d,
 };
 pub use content_texture::{CONTENT_TEXTURE_HEIGHT, CONTENT_TEXTURE_ID, CONTENT_TEXTURE_WIDTH};
 pub use graph::{CONTENT_Z, FunctionGraph};

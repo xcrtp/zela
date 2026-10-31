@@ -46,8 +46,8 @@ use ze_render_ir::{
 };
 use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
-    Path, Projection, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef, Transform,
-    ZOrder,
+    Path, Projection, RayTrace, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef,
+    Transform, ZOrder,
 };
 
 /// 契约层的**只读 / 读写**能力在此处对外转发：

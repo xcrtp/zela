@@ -75,6 +75,11 @@ pub struct FrameContent {
     /// PE Step 3：wgpu 后端不消费这些字段（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）。
     /// 选到 wgpu 时**必须**在决策理由里写明"已忽略"，不得静默丢效果（B12 同口径）。
     pub vector_only_styles: u8,
+    /// **BV-5**：本帧的 3D 视图要求光追（脚本组件 `RayTrace`）。
+    ///
+    /// 光追 pass 只有矢量后端有；wgpu 选到它时**显式拒绝**（不是"忽略"）——
+    /// 丢弃一个 pass 会让画面与脚本意图系统性不同，且没有任何像素能证明它跑过。
+    pub raytrace: bool,
 }
 
 impl FrameContent {
@@ -213,8 +218,10 @@ fn reject_reason(
 ) -> Option<String> {
     match kind {
         // wgpu 三角化不依赖 adapter feature；内容纹理 / 混排 / 网格形态都由它自己的
-        // 后端实现覆盖（那是今天的默认路径）。
-        BackendKind::Wgpu => None,
+        // 后端实现覆盖（那是今天的默认路径）。唯一的例外是光追（BV-5）：它没有这个 pass。
+        BackendKind::Wgpu => content.raytrace.then(|| {
+            "本帧的 3D 视图要求光追（`RayTrace`），wgpu 后端没有光追 pass".to_string()
+        }),
         BackendKind::Vector => {
             // 1) adapter 硬前置（B11 Step 0）。
             match facts {

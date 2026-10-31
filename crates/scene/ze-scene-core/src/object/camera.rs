@@ -337,6 +337,26 @@ pub fn spawn_camera3d<S: Scene>(scene: &mut S, camera: Camera3D) -> Option<Camer
     scene.spawn_dyn(vec![Box::new(camera)]).map(Camera3DHandle)
 }
 
+/// **BV-5**：3D 视图的光追开关（脚本组件 `zela.RayTrace`）。
+///
+/// 挂在**承载首个 `Camera3D` 的那个对象**上：`zela_render::frame::build_scene_view`
+/// 只认首个 3D 相机，同一实体带本组件且 [`enabled`](Self::enabled) ⇒ 该 3D 图层的
+/// `LayerKind::Viewport3D.raytrace = true`，矢量后端为它跑光追 pass。
+///
+/// 缺席 = 当前行为（只光栅）⇒ 既有作品的图层与像素逐位不变。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RayTrace {
+    /// `false` ⇒ 不跑光追（与不挂组件同义；保留开关是为了脚本能按条件关掉）。
+    pub enabled: bool,
+}
+
+impl RayTrace {
+    /// 开启（`enabled = true`）。
+    pub fn on() -> Self {
+        Self { enabled: true }
+    }
+}
+
 // ─── Projection / Camera3D ────────────────────────────────────────────────
 
 /// 投影方式。

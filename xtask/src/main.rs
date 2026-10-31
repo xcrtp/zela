@@ -1961,7 +1961,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.", "## BB.",
         "## BC.", "## BD.", "## BE.", "## BF.", "## BG.", "## BH.", "## BI.", "## BJ.",
         "## BK.", "## BL.", "## BM.", "## BN.", "## BO.", "## BP.", "## BQ.", "## BR.", "## BS.",
-        "## BT.", "## BU.",
+        "## BT.", "## BU.", "## BV.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -2040,7 +2040,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("BR-")
                     || id.starts_with("BS-")
                     || id.starts_with("BT-")
-                    || id.starts_with("BU-"));
+                    || id.starts_with("BU-")
+                    || id.starts_with("BV-"));
             if !is_item {
                 continue;
             }
@@ -3412,6 +3413,8 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     ("cap_shader_alpha", Some("vector")),
     ("cap_sdf", Some("vector")),
     ("cap_shader_3d", Some("vector")),
+    // BV 批：光追视图（只进矢量 —— wgpu 没有光追 pass，路由会拒绝；见 GAPS BV 段）。
+    ("cap_raytrace", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。

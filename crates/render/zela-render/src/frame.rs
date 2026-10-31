@@ -109,15 +109,20 @@ pub fn build_scene_view(
 
     if options.show_3d {
         let mut first_camera = None;
-        scene.for_each::<Camera3D>(|_, camera| {
+        scene.for_each::<Camera3D>(|id, camera| {
             if first_camera.is_none() {
-                first_camera = Some(*camera);
+                first_camera = Some((id, *camera));
             }
         });
-        if let Some(camera) = first_camera {
+        // **BV-5**：光追开关挂在**同一个对象**上（脚本组件 `RayTrace`）。只认首个 3D 相机
+        // 的实体 —— 与"图层取首个 `Camera3D`"是同一个口径，不做第二套选择规则。
+        let raytrace = first_camera
+            .and_then(|(id, _)| scene.with::<ze_scene_core::RayTrace, _>(id, |ray| ray.enabled))
+            .unwrap_or(false);
+        if let Some((_, camera)) = first_camera {
             view.layers.push(LayerDescriptor {
                 id: LAYER_ID_VIEWPORT_3D,
-                kind: LayerKind::Viewport3D { camera },
+                kind: LayerKind::Viewport3D { camera, raytrace },
                 content: ContentHandle::OPAQUE,
                 opacity: 1.0,
                 blend: LayerBlend::Alpha,

@@ -43,6 +43,7 @@ cap_codegen.lua = exempt: 阶段 2 着色 codegen 能力展示；payload 由 man
 cap_shader_alpha.lua = baseline
 cap_sdf.lua = baseline
 cap_shader_3d.lua = baseline
+cap_raytrace.lua = baseline
 cap_stroke_width.lua = exempt: 阶段 7 线宽通道能力展示；payload 由 manifest 断言；像素基线待补（录制设备批次）
 cap_channels2d.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
 cap_channels3d.lua = exempt: demo 能力展示；payload 由 manifest 断言；像素基线待补（阶段 5 残余）
