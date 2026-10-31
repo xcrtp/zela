@@ -122,7 +122,9 @@ impl Occlusion {
 
     /// A view's occlusion, once its opaque depth is drawn: `projection` the view's (rows; a 3D view's: depth z / w =
     /// near / distance, see `feed.view`), how much (`amount`) and how far around (`radius`, in the world's units).
-    pub(crate) fn encode(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, o: &Occluded, projection: &[[f32; 4]; 4], amount: f32, radius: f32) {
+    ///
+    /// **BR-3**：拆成"写参数"（prepare）与"录制"（execute），由 `PassNode` 驱动。
+    pub(crate) fn write_params(&self, queue: &wgpu::Queue, o: &Occluded, projection: &[[f32; 4]; 4], amount: f32, radius: f32) {
         let length = |r: [f32; 4]| (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
         let unit = length(projection[3]); // w a unit along the view: one over the focal distance
         let (tan_x, tan_y, near) = (unit / length(projection[0]), unit / length(projection[1]), projection[2][3] / unit);
@@ -135,7 +137,11 @@ impl Occlusion {
             0.0, TURNS * TAU / (SAMPLES - 0.5), SAMPLES, 1.0 / (SAME_SURFACE * radius),
         ];
         queue.write_buffer(&o.params, 0, bytemuck::cast_slice(&params));
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("occlusion"), timestamp_writes: None });
+    }
+
+    /// 录一次遮蔽：线性化 → 深度金字塔 → SAO → 横 / 竖两次模糊。
+    pub(crate) fn record(&self, pass: &mut wgpu::ComputePass<'_>, o: &Occluded) {
+        let [width, height] = o.sizes[0];
         let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], entry: &'static str| {
             pass.set_pipeline(&self.passes[k]);
             pass.set_bind_group(0, group, &[]);

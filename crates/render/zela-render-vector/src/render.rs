@@ -336,6 +336,32 @@ impl crate::nodes::PassNode for BloomNode<'_> {
     }
 }
 
+/// **BR-3**：遮蔽节点（`occlusion` 声明）—— 第二个由节点驱动接管的 compute pass。
+struct OcclusionNode<'a> {
+    occlusion: &'a occlusion::Occlusion,
+    occluded: &'a occlusion::Occluded,
+    projection: [[f32; 4]; 4],
+    amount: f32,
+    radius: f32,
+}
+
+impl crate::nodes::PassNode for OcclusionNode<'_> {
+    fn name(&self) -> &'static str {
+        "occlusion"
+    }
+
+    fn prepare(&mut self, ctx: &mut crate::nodes::PrepareContext<'_>) {
+        self.occlusion
+            .write_params(ctx.queue, self.occluded, &self.projection, self.amount, self.radius);
+    }
+
+    fn execute(&self, _ctx: &crate::nodes::ExecuteContext<'_>, pass: &mut crate::nodes::AnyPass<'_>) {
+        if let crate::nodes::AnyPass::Compute(pass) = pass {
+            self.occlusion.record(pass, self.occluded);
+        }
+    }
+}
+
 /// BN-3：把一次 pass 记录进调度游标，错误存进帧级槽位（不 panic、不中断录制）。
 ///
 /// 与 `fill_error` 同一套"先记账、帧末统一报"的做法：录制中途 `?` 会让已开的
@@ -3756,10 +3782,10 @@ impl Player {
                     // its ambient occlusion: its opaque depth (its opaque meshes', then its opaque paths' where nearer),
                     // then how much of the light from all around reaches each pixel's surface; its lit passes read it
                     let occluded = if skipping() & SKIP_AO != 0 { None } else { canvas.occluded.as_ref().zip(occlusion_of(&f.view)) };
-                    // BN-3：遮蔽的两个 pass 是数据驱动的（没有遮蔽源就没有内容）。
+                    // BN-3：遮蔽深度是数据驱动的；`occlusion` 由节点驱动（BR-3），没有遮蔽源时显式跳过。
                     note_pass(&mut schedule, &mut schedule_error, "occlusion depth", occluded.is_some());
-                    note_pass(&mut schedule, &mut schedule_error, "occlusion", occluded.is_some());
-                    let own_lighting = occluded.map(|(o, (amount, radius))| {
+                    let own_lighting = match occluded {
+                        Some((o, (amount, radius))) => {
                         let occlusion = gpu.occlusion.as_ref().expect("the occlusion's passes");
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("occlusion depth"),
@@ -3786,9 +3812,22 @@ impl Player {
                                 gpu.vector.encode(&gpu.device, &gpu.queue, &mut encoder, plan, g, &statics, vector::Out::Opaque(&o.depth), &gpu.fill_layout, &mut gpu.fill_pipelines, &mut fill_error);
                             }
                         }
-                        occlusion.encode(&gpu.queue, &mut encoder, o, &Camera::new(&f.view).projection, amount, radius);
-                        ShadowMaps::bind(gpu, &buffers.shadow_maps.array, &cube, &o.out)
-                    });
+                        // BR-3：遮蔽的 compute 由节点驱动（顺序与报数都由 `record_compute` 给出）。
+                        let mut node = OcclusionNode { occlusion, occluded: o, projection: Camera::new(&f.view).projection, amount, radius };
+                        let mut prepare = crate::nodes::PrepareContext { queue: &gpu.queue, encoder: &mut encoder };
+                        let execute = crate::nodes::ExecuteContext { device: &gpu.device, queue: &gpu.queue };
+                        if let Err(error) = crate::nodes::record_compute(&mut node, &mut prepare, &execute, &mut schedule, "occlusion") {
+                            if schedule_error.is_none() {
+                                schedule_error = Some(error);
+                            }
+                        }
+                        Some(ShadowMaps::bind(gpu, &buffers.shadow_maps.array, &cube, &o.out))
+                        }
+                        None => {
+                            note_pass(&mut schedule, &mut schedule_error, "occlusion", false);
+                            None
+                        }
+                    };
                     let lighting_group = own_lighting.as_ref().unwrap_or(&buffers.shadow_maps.group);
                     let occlusion = occluded.map_or(&gpu.no_occlusion, |(o, _)| &o.out);
                     // the base: the view over the background, or (where its paths lie over and under it) a layer of
