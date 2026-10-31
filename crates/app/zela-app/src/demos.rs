@@ -87,6 +87,8 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_shader_alpha", "着色透明度", "cap_shader_alpha.lua"),
     lua!("cap_sdf", "SDF隐式形状", "cap_sdf.lua"),
     lua!("cap_shader_3d", "3D着色材质", "cap_shader_3d.lua"),
+    // BV 批（顺序与 manifest 末尾一致）
+    lua!("cap_raytrace", "光追视图", "cap_raytrace.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。

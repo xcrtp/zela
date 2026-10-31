@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-vertex`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`
-- 源文件：17 个 · 7491 行
+- 源文件：17 个 · 7496 行
 
 ### 文件清单
 
@@ -22,7 +22,7 @@
 | `src/draw.rs` | 1870 | — |
 | `src/draw_queue_3d.rs` | 340 | — |
 | `src/filters.rs` | 243 | — |
-| `src/frame.rs` | 348 | — |
+| `src/frame.rs` | 353 | — |
 | `src/lib.rs` | 133 | — |
 | `src/light_queue.rs` | 104 | — |
 | `src/painter_2d.rs` | 30 | — |

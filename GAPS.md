@@ -1895,11 +1895,47 @@
 
 ---
 
+## BV. 光追 pass 与资源系统收尾（2026-11-01）
+
+> 计划《光追pass与资源系统收尾_执行计划》。前置核实见 `docs/research/BV_前置核实.md`（BV-0）。
+> 形态 **C（真三角形光追）· 不做 BVH · 输出走独立目标 + 合成 pass**，见计划 §1 的 D1–D4。
+> 红线：像素 **39** 条逐位不变（新 Demo 只新增条目）· 结构 25 件不变 · 不许重录 · 每阶段单独 commit。
+> 本段按阶段记账；**未兑现项写触发条件，不写成「已关闭」**。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BV-01 | `statics[2]`（三角形索引）只作 index buffer，GPU 读不到 ⇒ 光追没有可遍历的三角形 | zela-render-vector | **已关闭** | 组 0 的 binding 3 补上 `indices`（`blend_buffers.wgsl` 声明 + `scene_group` 加一项 + `layout("scene", …)` 同步）；组 0 不受组 1 的 25 槽位预算约束。既有 pass 多绑一个只读缓冲不改任何行为 ⇒ 像素 39 项逐位不变。 |
+| BV-02 | `Instance.ids` 只有顶点基址，**没有索引范围** ⇒ 遍历不知道每个实例的三角形在哪一段 | zela-render-vector | **已关闭** | 新增 `instance_ranges` 表（每实例 `(index_offset, index_count)`），与 `instances` 同序上传；`assert_eq!(ranges.len(), instances.len())` 把"一一对应"变成运行时断言。遍历顺序 = `(实例下标, 三角形下标)` 升序，`t` 相等取先到的（下标小者）⇒ 与线程调度无关。 |
+| BV-03 | `shaded()` 内部用 `dpdx`/`dpdy` ⇒ compute 不能复用 | zela-render-vector | **已关闭** | 光追调 `light.wgsl` 的 `reflected()`（零导数，已核实）；那项基于导数的 roughness 几何修正取 0（**BV-08** 记账）。组 3 与光栅共用同一份光照组、组 0 共用同一份 view uniform ⇒ 不复制资源。 |
+| BV-04 | `base` 是渲染附件，compute 写不进 ⇒ 光追结果无处落地 | zela-render-vector | **已关闭** | 光追写 `Canvas::target(TargetDesc)` 申请的独立 storage 目标（`Canvas::target` 的第一个真消费者），再由 `fs_blit` 全屏三角形按**预乘 alpha** 叠进 `base`（未命中 alpha = 0 ⇒ 完全不影响底图）。两条 pass 都进 `PassDecl`。 |
+| BV-05 | bloom / occlusion / environment 三个老目标仍是手写字段（BU-07 的收尾） | zela-render-vector | **已关闭** | 三处全部迁到 `TargetDesc` + `TargetPool`（多视图共享同一张纹理的能力不变：逐级 mip / 立方体视图按描述符取）。判据：像素 39 项逐位不变 + `held_*` / `peak_*` 读数不变（BU-1 的计量）。 |
+| BV-06 | 脚本层没有光追开关；相机组件**不能**加字段（会改既有 12 件作品的 payload） | 场景层 / pod | **已关闭** | 新组件 `zela.RayTrace`（`scene` `@14 → @15`，指纹 `17_936_327_828_547_956_008`）：与 `Camera3D` 挂同一对象 ⇒ `LayerKind::Viewport3D.raytrace` ⇒ `View3.raytrace`。`RayTrace` 进 `known_component_table!`（可持久化 / 可克隆）。既有作品不引用它 ⇒ payload 逐位不变；wgpu 侧由路由**显式拒绝**（不是静默丢弃）。 |
+| BV-07 | 加速结构（BVH） | 渲染 / 光追 | **记账** | 本批 brute-force：目的是验证后端抽象，判据最干净（无来自树结构的顺序依赖）。将来做时首选自写 LBVH（Morton 码 + 自底向上，稳定排序 ⇒ 完全确定），不引第三方库（`bvh` / `parry3d` 硬依赖 nalgebra，全仓命中 0）。触发条件：三角形数 > 10⁴ 或 CI 单件耗时超过预算。 |
+| BV-08 | roughness 的解析法线差分 | 渲染 / 光追 | **记账** | 光追里的 roughness 几何修正取 0（保守、完全确定）；有每顶点法线可重心插值，解析求导可行。触发条件：与光栅的差异在材质画廊里肉眼可见时。 |
+| BV-09 | 多趟降噪 / 累积缓冲 | 渲染 / 光追 | **记账** | 本批单 dispatch、无历史帧（因此没有帧间状态，天然规避"遍历引入状态"）。真做时是一次 dispatch 内同读同写 ⇒ 必须登记进 BU-09 的 `READ_WRITE` 例外表，并影响 `PassDecl` 的 `inputs` / `outputs`。触发条件：需要可用的画面质量而不是通路判据时。 |
+| BV-10 | CI（lavapipe）上的光追耗时没有实测 | xtask / CI | **已记录** | BV-0 本机实测（RTX 4060）：96×72×8192 tri = 2.1 ms、320×240×8192 = 10.4 ms；CI 是软件 Vulkan，按 ×50–200 外推。本批把成本压到"静态 1 帧 × 24 个三角形"，CI 估计 30 ms/帧量级（见 BV-12）。触发条件：CI 上 `--step hashes` 总耗时明显上升时，先量本件再谈降三角形或换进 `smoke`。 |
+| BV-11 | 首次真跑光追暴露的三个缺陷（布局可见性 / 目标格式 / 反投影 Z 的无穷远点） | zela-render-vector | **已关闭** | ① `scene` / `lighting` 布局的可见性只有 VERTEX\|FRAGMENT ⇒ compute 管线创建即失败（`entry()` 补 `COMPUTE`，可见性是校验门槛、不是行为开关）；② 合成阶段用可过滤采样布局读结果，而 `rgba32float` 不可过滤 ⇒ 目标格式改 `rgba16float`（可写又可过滤）；③ 重建射线用 `z = 0`，在反投影 Z 里那是**无穷远点**（逆变换后 `w = 0` ⇒ inf/NaN，全部像素未命中）；改用 `z = 0.5`（透视下同一像素的所有深度共线）。判据：`raytrace_changes_the_frame_and_is_deterministic`（两次渲染逐字节相同 + 中央像素与关闭时不同）。 |
+| BV-12 | Demo 分辨率偏离计划（计划 96×72，实际对拍固定 640×480） | xtask / demo | **已记录** | `zela-verify` 的作品尺寸由 `HASHES_WORKS` 固定为 640×480，改分辨率要动对拍装置（不在本批范围）。改用"三角形数 ≤ 24 + 静态 1 帧"控成本：640×480×24 ≈ 7.4M 次求交/帧，本机 `prepare` 258 ms（其中绝大多数是管线创建，每进程一次）。这与计划的"96×72 + ≤256 三角形"成本同量级，但**约束的是三角形数而不是像素数**。 |
+| BV-13 | 光追的资源名不在 `PassDecl` 的声明词汇里 | 调度 / 声明 | **已记录** | `raytrace composite` 的 `outputs: &[]`（`base` 不是声明词汇里的资源，写进去会被"生产者先于消费者"校验判红）；组 2（`RayParams` / 范围表 / 输出目标）只在驱动侧 `note_bind`，不参与 `check_bindings`。后果：漏绑由 wgpu 的校验兜，不是本仓的声明校验。触发条件：把 `base` / `raytrace` 也收进声明词汇时一并接上。 |
+| BV-14 | `store_limit(limits, 2)` 对 indices 仍返回 `max_buffer_size` | zela-render-vector | **已记录** | indices 现在**同时**是 index buffer 与组 0 的 storage 绑定，绑定尺寸上限应是 `max_storage_buffer_binding_size`（本机 2047 MiB，CI lavapipe 默认 128 MiB）；`Player::prepare` 里另做「indices 必须装进一次 storage 绑定」的显式检查。没有改 `store_limit` 本身：那会顺带改变 index buffer 的分配上限，属于"两件事一起改"。触发条件：出现超过一次 storage 绑定上限的几何时。 |
+
+**BV 段小计**：已关闭 7 · 部分关闭 0 · 记账 3 · 未执行 0 · 已记录 4。
+
+> 本段读数：像素 **40 项 ok 40 / DIFF 0**（39 条原有逐位不变 + 1 条新 `[vector]`）· 结构 26 件一致 · demo 38/38 · 覆盖 73/73（豁免 0）· `cargo verify --full` 全绿（221.8s）。
+> 新 Demo `cap_raytrace.lua` 的基线由录制设备 `--record` 生成（reason 见 `baselines.txt`），`--rebind` 已归因；
+> 它的判据同时有像素级单测（`raytrace_changes_the_frame_and_is_deterministic`），不是"看一眼没问题"。
+> **并发暴露的两个真缺陷**（都在 BV-11 的同一轮里修掉）：① 复用同一 player 的其它作品会把**上一件的**
+> 光追结果叠进自己的 base（合成组的条件只看画布有没有那张纹理）；② `ranges` 按容量分配，着色器用
+> `arrayLength` 会读到上一件残留的范围。两条都表现为"`--workers 2` 下 script != bundle"，修后 fusion
+> 回到原基线、本件的两条路径逐位相同。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BU**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BU 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–BV**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BV 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

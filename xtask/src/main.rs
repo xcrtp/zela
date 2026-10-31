@@ -1681,6 +1681,7 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("Path", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("PathFollow", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("PhaseAnim", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    ("RayTrace", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("Rect", "scene-core 的几何组件 vs node-editor 的编辑框"),
     ("Reveal", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("SecondPaint", "render-ir 的绘制参数 vs scene-api 的组件视图"),

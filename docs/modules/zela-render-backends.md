@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render-backends`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-core`、`ze-vertex`、`zela-render`
 - 被依赖（下游）：`zela-app`、`zela-cli`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：21 个 · 13925 行
+- 源文件：21 个 · 13938 行
 
 ### 文件清单
 
@@ -32,8 +32,8 @@
 | `src/render_pod_probe.rs` | 615 | — |
 | `src/render_target.rs` | 120 | — |
 | `src/resource_cache.rs` | 261 | — |
-| `src/routing.rs` | 715 | — |
-| `src/scene_callback.rs` | 1026 | — |
+| `src/routing.rs` | 722 | — |
+| `src/scene_callback.rs` | 1032 | — |
 | `src/standard_backends.rs` | 560 | — |
 | `src/vertex_layout.rs` | 323 | — |
 | `src/wgpu_2d.rs` | 2720 | — |

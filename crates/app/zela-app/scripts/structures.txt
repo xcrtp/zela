@@ -15,6 +15,7 @@ cap_background = 42b9a61345666af9
 cap_dash = 39f367d61fcb56b9
 cap_gradient = d63f043fe8fbd329
 cap_mix = 02f22020f5e4b24e
+cap_raytrace = e5c8da3e4b5cc9eb
 cap_sdf = 2a9bc30626fdcced
 cap_second = b22e4e48cdf5e705
 cap_shader_3d = bfa92ce607630c20

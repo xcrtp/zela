@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：42 个 · 10074 行
+- 源文件：42 个 · 10100 行
 
 ### 文件清单
 
@@ -41,16 +41,16 @@
 | `src/mesh_primitives.rs` | 12 | 内置 3D 图元生成器。 |
 | `src/object/affine.rs` | 135 | — |
 | `src/object/axes.rs` | 422 | — |
-| `src/object/camera.rs` | 617 | — |
+| `src/object/camera.rs` | 637 | — |
 | `src/object/content_texture.rs` | 21 | — |
 | `src/object/graph.rs` | 291 | — |
-| `src/object/layer.rs` | 32 | — |
+| `src/object/layer.rs` | 36 | — |
 | `src/object/mod.rs` | 33 | — |
 | `src/object/placement.rs` | 195 | — |
 | `src/object/primitives.rs` | 475 | — |
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
-| `src/registry.rs` | 217 | — |
+| `src/registry.rs` | 219 | — |
 | `src/scene_script.rs` | 930 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
@@ -222,6 +222,7 @@ graph LR
 | `src/object/camera.rs` | `pub struct FpsView` |
 | `src/object/camera.rs` | `pub struct Camera3DHandle(pub ObjectId)` |
 | `src/object/camera.rs` | `pub fn spawn_camera3d<S: Scene>(scene: &mut S, camera: Camera3D) -> Option<Camera3DHandle>` |
+| `src/object/camera.rs` | `pub struct RayTrace` |
 | `src/object/camera.rs` | `pub enum Projection` |
 | `src/object/camera.rs` | `pub struct Camera3D` |
 | `src/object/graph.rs` | `pub struct FunctionGraph` |
