@@ -491,10 +491,11 @@ fn report_work(work: &Work, pass: &str, frames: u32, env: &str, run: &FrameRun) 
 
     if observe_path.is_some() {
         let data = format!(
-            "{{\"timings\":{{\"all\":{all_body},\"window\":{window_body}}},\"gpu\":{gpu},\
+            "{{\"pass_policy\":\"{}\",\"timings\":{{\"all\":{all_body},\"window\":{window_body}}},\"gpu\":{gpu},\
              \"cache\":{cache},\"textures_created\":{},\"vector_resources\":{},\
              \"geometry_upload\":{upload},\
              \"vector_overflow\":{},\"vector_shadows\":{},\"decisions\":[{}]}}",
+            zela_render_vector::passes::PASS_POLICY_ID,
             run.textures_created,
             run.vector_resources.json(),
             run.vector_overflow.json(),

@@ -756,6 +756,51 @@ pub fn validate(plan: PassPlan) -> Result<(), PlanError> {
     Ok(())
 }
 
+// ─── BU-4：调度策略（可插拔；默认 = 声明序）────────────────────────────────
+
+/// **BU-4**：调度策略 —— 给定一张计划与本帧的跳过位，给出**执行序**（声明下标的排列）。
+///
+/// 契约：
+/// - 返回的序列只含**启用**的项（`enabled_when` 的过滤由策略负责）；
+/// - 同一 `(声明, policy_id)` 必须给出同一顺序（断言 BU-B）；
+/// - 策略只决定非环序 —— 环由 [`validate`] 静态拒绝，调度器不替声明"纠正"。
+///
+/// 身份必须可记录：只留接口而不记 `id()` 会出现"payload 一样、按新策略回放得到不同顺序"。
+pub trait SchedulePolicy {
+    /// 策略身份（进观测 / 回放核对；**不依赖任何运行期状态**）。
+    fn id(&self) -> &'static str;
+
+    /// 执行序（声明下标）。
+    fn order(&self, plan: PassPlan, skip: u32) -> Result<Vec<usize>, PlanError>;
+}
+
+/// 默认策略：**声明序**（与 BN 批之前逐位相同）。
+///
+/// 这是"插座位留好、真策略等有消费者时再实现"的那一半：本批只证明默认策略
+/// 与现状逐位相同，外加身份可记录。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BuiltinOrder;
+
+impl BuiltinOrder {
+    /// 身份串（观测产物里的 `pass_policy`）。
+    pub const ID: &'static str = "builtin/declaration-order/1";
+}
+
+impl SchedulePolicy for BuiltinOrder {
+    fn id(&self) -> &'static str {
+        Self::ID
+    }
+
+    fn order(&self, plan: PassPlan, skip: u32) -> Result<Vec<usize>, PlanError> {
+        Ok((0..plan.len())
+            .filter(|&index| plan[index].enabled_when.is_enabled(skip))
+            .collect())
+    }
+}
+
+/// 默认策略的身份（[`BuiltinOrder::ID`] 的别名：调用方不必写出类型）。
+pub const PASS_POLICY_ID: &str = BuiltinOrder::ID;
+
 // ─── 运行时调度校验 ──────────────────────────────────────────────────────
 
 /// 调度期错误：实际记录与声明不一致。
@@ -843,6 +888,10 @@ impl std::fmt::Display for ScheduleError {
 pub struct PassSchedule {
     plan: PassPlan,
     skip: u32,
+    /// **BU-4**：执行序（声明下标的排列），由 [`SchedulePolicy`] 给出。
+    order: Vec<usize>,
+    /// **BU-4**：产生 `order` 的策略身份（观测 / 回放核对）。
+    policy_id: &'static str,
     cursor: usize,
     recorded: Vec<&'static str>,
     skipped: Vec<&'static str>,
@@ -865,10 +914,25 @@ impl PassSchedule {
     ///
     /// 只校验**参与记账**的 pass：一个 pass 只要本帧记过至少一次绑定，就算接入；
     /// 一次都没记的 pass 不参与比对（那是还没改造的调用点 —— 由 [`Self::unbound_passes`] 点名）。
+    ///
+    /// **BU-4**：执行序由默认策略 [`BuiltinOrder`] 给出（= 声明序，行为与之前逐位相同）。
     pub fn with_groups(plan: PassPlan, skip: u32, groups: BindSymbols) -> Self {
+        Self::with_policy(plan, skip, groups, &BuiltinOrder)
+    }
+
+    /// **BU-4**：用给定策略产生执行序。
+    ///
+    /// 策略拒绝一张**静态**计划是声明写错了（环 / 重名该由 [`validate`] 抓住），
+    /// 这里显式 panic 并点名策略与原因 —— 不给"顺序为空、什么都不跑"的静默路径。
+    pub fn with_policy(plan: PassPlan, skip: u32, groups: BindSymbols, policy: &dyn SchedulePolicy) -> Self {
+        let order = policy
+            .order(plan, skip)
+            .unwrap_or_else(|error| panic!("调度策略 {} 拒绝了静态计划：{error}", policy.id()));
         Self {
             plan,
             skip,
+            order,
+            policy_id: policy.id(),
             cursor: 0,
             recorded: Vec::new(),
             skipped: Vec::new(),
@@ -877,6 +941,11 @@ impl PassSchedule {
             bound: Vec::new(),
             stray: Vec::new(),
         }
+    }
+
+    /// **BU-4**：本帧执行序的身份（[`BuiltinOrder::ID`] 等）。
+    pub fn policy_id(&self) -> &'static str {
+        self.policy_id
     }
 
     /// 已记录的数量（诊断用）。
@@ -906,7 +975,9 @@ impl PassSchedule {
     /// 同一名字的多子 pass（阴影每层）会在组名里出现多次，这正是"录了几个 wgpu pass"。
     pub fn command_flow(&self) -> Vec<String> {
         let mut flow = Vec::new();
-        for decl in self.plan {
+        // **BU-4**：按**执行序**（策略给出的序）逐项固定 —— 换策略时命令流跟着变。
+        for &index in &self.order {
+            let decl = &self.plan[index];
             if self.recorded.contains(&decl.name) {
                 let groups: Vec<&str> = self
                     .bound
@@ -967,15 +1038,11 @@ impl PassSchedule {
             .is_some_and(|decl| decl.enabled_when.is_enabled(self.skip))
     }
 
-    /// 推进到声明序里的**下一个启用项**，返回它。
+    /// 推进到执行序里的**下一个**项，返回它（**BU-4**：序由策略给出，不再假定声明序）。
     fn advance(&mut self) -> Result<&'static PassDecl, ScheduleError> {
-        while self.cursor < self.plan.len()
-            && !self.plan[self.cursor].enabled_when.is_enabled(self.skip)
-        {
-            self.cursor += 1;
-        }
-        self.plan
+        self.order
             .get(self.cursor)
+            .map(|&index| &self.plan[index])
             .ok_or(ScheduleError::Undeclared { name: "" })
     }
 
@@ -1066,8 +1133,8 @@ impl PassSchedule {
 
     /// 帧末核对：所有启用项都被记录或被显式跳过；接入记账的 pass 的绑定与声明一致。
     pub fn finish(mut self) -> Result<(), ScheduleError> {
-        while self.cursor < self.plan.len() {
-            let decl = &self.plan[self.cursor];
+        while let Some(&index) = self.order.get(self.cursor) {
+            let decl = &self.plan[index];
             if decl.enabled_when.is_enabled(self.skip) {
                 return Err(ScheduleError::Missing { name: decl.name });
             }
@@ -1911,6 +1978,67 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    // ── BU-4：调度策略 ───────────────────────────────────────────────────
+
+    /// 默认策略 = 声明序：五张真实计划在所有 `skip` 位下都与"按下标升序"相同。
+    #[test]
+    fn the_default_policy_is_declaration_order() {
+        let policy = BuiltinOrder;
+        assert_eq!(policy.id(), PASS_POLICY_ID);
+        for plan in [RASTER_PLAN, RASTER_LAYERED_PLAN, VECTOR_PLAN, ENVIRONMENT_PLAN, CODEGEN_PLAN] {
+            for skip in [0u32, 0b1, 0b10, 0b100, 0b111] {
+                let got = policy.order(plan, skip).expect("默认策略不会拒绝");
+                let want: Vec<usize> = (0..plan.len())
+                    .filter(|&index| plan[index].enabled_when.is_enabled(skip))
+                    .collect();
+                assert_eq!(got, want, "默认策略必须与声明序逐位相同（skip = {skip}）");
+            }
+        }
+    }
+
+    /// **断言 BU-B**：同一 `(decls, policy_id)` ⇒ 同一顺序。
+    ///
+    /// 随机生成 1000 组声明（名字取自固定池、启用位随机），两次调用结果必须逐位相同，
+    /// 且默认策略给出的就是"声明下标升序"。策略状态不在 payload 里 —— 所以它必须**没有**状态。
+    #[test]
+    fn the_same_declarations_and_policy_always_give_the_same_order() {
+        const NAMES: [&str; 8] = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+        // 确定性 PRNG（SplitMix64）：用例本身不依赖随机源。
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let policy = BuiltinOrder;
+        for round in 0..1000 {
+            let count = 1 + (next() % NAMES.len() as u64) as usize;
+            let mut decls = Vec::with_capacity(count);
+            for name in NAMES.iter().take(count) {
+                let enabled = (next() % 8) as u32; // 0 = 总是执行；否则随机一位
+                decls.push(PassDecl {
+                    name,
+                    kind: PassStage::Compute,
+                    inputs: &[],
+                    outputs: &[],
+                    entry: name,
+                    dispatch: Dispatch::Fixed,
+                    enabled_when: EnabledWhen(if enabled == 0 { 0 } else { 1 << enabled }),
+                });
+            }
+            let plan: PassPlan = Box::leak(decls.into_boxed_slice());
+            let a = policy.order(plan, 0).expect("默认策略不会拒绝");
+            let b = policy.order(plan, 0).expect("默认策略不会拒绝");
+            assert_eq!(a, b, "第 {round} 组：同一 (decls, policy_id) 必须给出同一顺序");
+            let want: Vec<usize> = (0..plan.len())
+                .filter(|&index| plan[index].enabled_when.is_enabled(0))
+                .collect();
+            assert_eq!(a, want, "第 {round} 组：默认策略必须与声明序一致");
         }
     }
 }
