@@ -621,7 +621,12 @@ mod tests {
 
         let mut enc = SceneEncoder::new();
         let circle = enc.spawn(circle_components(0.0));
-        let step = Expr::call(OpRef::new("zela.math", "add"), [Expr::rec_prev(), Expr::pure(0.5)]);
+        // BZ-a：谱半径门禁要求 |λ| < 1（稳定衰减 + 常量偏置）。
+        let decay = Expr::call(
+            OpRef::new("zela.math", "scale"),
+            [Expr::pure(0.5), Expr::rec_prev()],
+        );
+        let step = Expr::call(OpRef::new("zela.math", "add"), [decay, Expr::pure(0.5)]);
         enc.bind_expr_gated(
             circle,
             "Circle.radius",
@@ -644,7 +649,7 @@ mod tests {
         assert_eq!(recipe.state_analyses.len(), 1);
         let map = recipe.state_analyses[0].plan.map();
         assert_eq!(map.width(), 1);
-        assert_eq!(map.a(), &[vec![1.0]][..]);
+        assert_eq!(map.a(), &[vec![0.5]][..]);
         assert_eq!(map.b(), &[0.5][..]);
         // **BY-a3/a4**：计划进了绑定（生产求值器消费），档位由识别器推导。
         assert_eq!(recipe.bindings.bindings[0].state_plans.len(), 1);
@@ -690,6 +695,52 @@ mod tests {
             ScriptError::StateNotAffine(error) => {
                 assert!(error.to_string().contains("仿射"), "{error}");
                 assert!(error.to_string().contains("sin"), "{error}");
+            }
+            other => panic!("期望 StateNotAffine，实际：{other:?}"),
+        }
+    }
+
+    /// **BZ-a**：仿射但谱半径 ≥ 1 ⇒ 装配期**显式失败**（错误含谱半径与稳定条件）。
+    #[test]
+    fn unstable_state_is_rejected_at_assembly() {
+        use ze_comb::{Expr, OpRef};
+        use ze_scene_core::animation::{LibraryRef, ResetBehavior};
+        use ze_scene_core::scene_script::ScriptError;
+        use ze_time::ClockProgram;
+
+        let mut enc = SceneEncoder::new();
+        let circle = enc.spawn(circle_components(0.0));
+        // `s' = s + 1`：|λ| = 1（边缘稳定）⇒ 门禁拒绝。
+        let step = Expr::call(
+            OpRef::new("zela.math", "add"),
+            [Expr::rec_prev(), Expr::pure(1.0)],
+        );
+        enc.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            Expr::state(Expr::pure(0.0), step),
+            LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "27".to_string(),
+                op_revisions: Default::default(),
+            },
+            ClockProgram::new(),
+            None,
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("装配期只校验表达式结构；稳定性在 commit 判定");
+
+        let mut scene = SceneStruct::new();
+        let error = enc
+            .finish()
+            .commit(&mut scene)
+            .expect_err("不稳定的 State 必须在装配期被拒绝");
+        match error {
+            ScriptError::StateNotAffine(error) => {
+                let message = error.to_string();
+                assert!(message.contains("谱半径"), "{message}");
+                assert!(message.contains("不稳定"), "{message}");
             }
             other => panic!("期望 StateNotAffine，实际：{other:?}"),
         }

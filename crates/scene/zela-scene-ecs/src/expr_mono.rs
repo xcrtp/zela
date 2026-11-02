@@ -332,10 +332,11 @@ mod tests {
     fn state_plans_are_consumed_by_the_mono() {
         use ze_scene_core::animation::affine::plan_from_expr;
 
-        let init = Expr::pure(0.0);
+        let init = Expr::pure(1.0);
+        // BZ-a：谱半径门禁要求 |λ| < 1 ⇒ 用衰减递推（0.5^40 在二进制下精确）。
         let step = Expr::call(
-            OpRef::new("zela.math", "add"),
-            [Expr::rec_prev(), Expr::pure(0.25)],
+            OpRef::new("zela.math", "scale"),
+            [Expr::pure(0.5), Expr::rec_prev()],
         );
         let plan = plan_from_expr(&init, &step, None).unwrap();
         let program = CompiledExpr::compile(&Expr::state(init, step)).unwrap();
@@ -344,7 +345,7 @@ mod tests {
             .with_state_plans(std::slice::from_ref(&plan));
         let value = program.eval(&mono).unwrap();
         assert_eq!(value, plan.value_at(40));
-        assert_eq!(value, Value::f64(10.0), "40 帧 × 0.25");
+        assert_eq!(value, Value::f64(0.5f64.powi(40)), "40 帧 × 0.5");
     }
 
     /// **B2 跨层一致性**：作者面方法目录（`zela.math`）与求值注册表

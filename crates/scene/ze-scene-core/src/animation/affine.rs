@@ -129,6 +129,40 @@ impl AffineMap {
                 })
         })
     }
+
+    /// **谱半径** `|λ|max`（BZ-a：装配期稳定性门禁用）。
+    ///
+    /// 1 / 2 阶用解析式；3 / 4 阶由特征多项式（Faddeev–LeVerrier）+
+    /// Durand–Kerner 求根（固定初值 / 固定迭代次数 ⇒ 确定性）。
+    /// 只在装配期调用，**不在**每帧路径上。
+    ///
+    /// 非有限值（NaN / inf 来自非法常量）原样传播 ⇒ 调用方的 `< 1` 判定会拒绝。
+    pub fn spectral_radius(&self) -> f64 {
+        let k = self.width();
+        match k {
+            1 => self.a[0][0].abs(),
+            2 => {
+                let (a, b) = (self.a[0][0], self.a[0][1]);
+                let (c, d) = (self.a[1][0], self.a[1][1]);
+                let trace = a + d;
+                let det = a * d - b * c;
+                let disc = trace * trace - 4.0 * det;
+                if disc >= 0.0 {
+                    let root = disc.sqrt();
+                    ((trace + root) / 2.0).abs().max(((trace - root) / 2.0).abs())
+                } else {
+                    // 共轭复根：模长 = sqrt(det)（此时 det > 0）。
+                    det.abs().sqrt()
+                }
+            }
+            _ => {
+                let coefficients = characteristic_coefficients(&self.a);
+                polynomial_root_moduli(&coefficients)
+                    .into_iter()
+                    .fold(0.0, f64::max)
+            }
+        }
+    }
 }
 
 fn identity(n: usize) -> Vec<Vec<f64>> {
@@ -150,8 +184,113 @@ fn mat_mul(a: &[Vec<f64>], b: &[Vec<f64>]) -> Vec<Vec<f64>> {
     out
 }
 
+/// 特征多项式 `λ^n + c[1]·λ^(n-1) + … + c[n]` 的系数（`c[0] = 1`）。
+///
+/// Faddeev–LeVerrier：`c_s = −tr(A·M_s) / s`，`M_s = A·M_(s−1) + c_(s−1)·I`，
+/// `M_1 = I`。`k ≤ 4` ⇒ 常数开销。
+fn characteristic_coefficients(a: &[Vec<f64>]) -> Vec<f64> {
+    let n = a.len();
+    let mut c = vec![0.0; n + 1];
+    c[0] = 1.0;
+    let mut m = identity(n);
+    for s in 1..=n {
+        if s > 1 {
+            let mut next = mat_mul(a, &m);
+            for (i, row) in next.iter_mut().enumerate() {
+                row[i] += c[s - 1];
+            }
+            m = next;
+        }
+        let am = mat_mul(a, &m);
+        let trace: f64 = (0..n).map(|i| am[i][i]).sum();
+        c[s] = -trace / s as f64;
+    }
+    c
+}
+
+/// 极简复数（只用于求根；不引依赖）。
+#[derive(Clone, Copy)]
+struct Complex {
+    re: f64,
+    im: f64,
+}
+
+impl Complex {
+    const fn new(re: f64, im: f64) -> Self {
+        Self { re, im }
+    }
+
+    fn sub(self, other: Self) -> Self {
+        Self::new(self.re - other.re, self.im - other.im)
+    }
+
+    fn mul(self, other: Self) -> Self {
+        Self::new(
+            self.re * other.re - self.im * other.im,
+            self.re * other.im + self.im * other.re,
+        )
+    }
+
+    fn div(self, other: Self) -> Self {
+        let denom = other.re * other.re + other.im * other.im;
+        Self::new(
+            (self.re * other.re + self.im * other.im) / denom,
+            (self.im * other.re - self.re * other.im) / denom,
+        )
+    }
+
+    fn modulus(self) -> f64 {
+        self.re.hypot(self.im)
+    }
+}
+
+/// 首一多项式的值（Horner）。
+fn polynomial_at(coefficients: &[f64], z: Complex) -> Complex {
+    let mut acc = Complex::new(0.0, 0.0);
+    for &coefficient in coefficients {
+        acc = acc.mul(z);
+        acc.re += coefficient;
+    }
+    acc
+}
+
+/// Durand–Kerner 求根，返回各根的模长（首一多项式）。
+///
+/// 初值是固定的几何序列 ⇒ 同一输入永远给出同一输出（不依赖随机 / 迭代顺序）。
+fn polynomial_root_moduli(coefficients: &[f64]) -> Vec<f64> {
+    let n = coefficients.len() - 1;
+    let seed = Complex::new(0.4, 0.9);
+    let mut roots = Vec::with_capacity(n);
+    let mut current = Complex::new(1.0, 0.0);
+    for _ in 0..n {
+        roots.push(current);
+        current = current.mul(seed);
+    }
+    for _ in 0..500 {
+        let mut max_delta: f64 = 0.0;
+        for i in 0..n {
+            let mut denom = Complex::new(1.0, 0.0);
+            for (j, root) in roots.iter().enumerate() {
+                if j != i {
+                    denom = denom.mul(roots[i].sub(*root));
+                }
+            }
+            if denom.modulus() == 0.0 {
+                continue;
+            }
+            let delta = polynomial_at(coefficients, roots[i]).div(denom);
+            roots[i] = roots[i].sub(delta);
+            max_delta = max_delta.max(delta.modulus());
+        }
+        if max_delta <= 1e-14 {
+            break;
+        }
+    }
+    roots.iter().map(|root| root.modulus()).collect()
+}
+
 /// 识别失败：**显式**错误（不是"静默当作非线性跳过"）。
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum AffineError {
     /// 出现了识别器不接受的节点 / 算子。
     #[error("`State.step` 含 `{0}`：不是关于 prev 的仿射表达式")]
@@ -174,6 +313,12 @@ pub enum AffineError {
     /// predicate 引用了状态自身（环依赖）。
     #[error("`State.predicate` 不得引用状态自身（`rec_prev` / 嵌套 State / NatRec）")]
     PredicateRefsState,
+    /// **BZ-a**：仿射图不稳定（`|λ|max ≥ 1` 或非有限）⇒ 闭式求值会随帧数发散。
+    #[error(
+        "`State.step` 的仿射图不稳定：谱半径 |λ|max = {radius:.6}（要求 |λ|max < 1；\
+         1 阶取 |a| < 1，2 阶半隐式欧拉取 damp + stiff < 1；边缘稳定 |λ| = 1 同样拒绝）"
+    )]
+    Unstable { radius: f64 },
 }
 
 /// 装配期门禁失败：`State.step` 不是仿射（显式拒绝，不降级 `Replay`）。
@@ -323,6 +468,12 @@ pub fn plan_from_expr(
 ) -> Result<StatePlan, AffineError> {
     let (init_values, shape) = init_values(init)?;
     let map = recognize(step, shape.width())?;
+    // **BZ-a 稳定性门禁**：闭式求值 `f^n` 只在 `|λ|max < 1` 时有界。
+    // 发散 / 边缘稳定都在装配期显式失败（不静默产出 inf/NaN）。
+    let radius = map.spectral_radius();
+    if !radius.is_finite() || radius >= 1.0 {
+        return Err(AffineError::Unstable { radius });
+    }
     let active = match predicate {
         Some(predicate) => active_intervals(predicate)?,
         None => None,
@@ -896,7 +1047,8 @@ mod tests {
     #[test]
     fn state_predicate_uses_index_intervals() {
         let init = pure(0.0);
-        let step = add(prev(), pure(1.0));
+        // 稳定的一阶递推（|λ| = 0.5）：BZ-a 的谱半径门禁要求 |λ| < 1。
+        let step = add(scale(0.5, prev()), pure(1.0));
         let predicate = Expr::call(
             ze_comb::OpRef::new("zela.math", "lt"),
             [
@@ -913,5 +1065,83 @@ mod tests {
 
         let self_ref = plan_from_expr(&init, &step, Some(&prev()));
         assert_eq!(self_ref, Err(AffineError::PredicateRefsState));
+    }
+
+    /// **BZ-a**：`|λ|max ≥ 1` ⇒ 装配期显式失败（不静默产出 inf/NaN）。
+    ///
+    /// 二维半隐式欧拉 `x' = x + v`、`v' = damp·v − stiff·x` 的谱半径是
+    /// `sqrt(damp + stiff)`；`damp = 0.98`、`stiff = 0.5` ⇒ `sqrt(1.48) > 1`。
+    #[test]
+    fn unstable_affine_state_is_rejected() {
+        let init = Expr::call(
+            ze_comb::OpRef::new("zela.math", "vec2"),
+            [pure(1.5), pure(0.0)],
+        );
+        let x = variable(0);
+        let v = variable(1);
+        let step = vec2(
+            add(x.clone(), v.clone()),
+            add(scale(0.98, v), scale(-0.5, x)),
+        );
+        match plan_from_expr(&init, &step, None) {
+            Err(AffineError::Unstable { radius }) => {
+                let expected = 1.48f64.sqrt();
+                assert!((radius - expected).abs() < 1e-9, "谱半径 {radius}");
+                let message = AffineError::Unstable { radius }.to_string();
+                assert!(message.contains("谱半径"), "{message}");
+                assert!(message.contains("damp + stiff"), "{message}");
+            }
+            other => panic!("期望 Unstable，实际：{other:?}"),
+        }
+    }
+
+    /// **BZ-a R5**：边缘稳定（`|λ| = 1`）同样显式失败 —— 只统计到有限帧也会线性增长，
+    /// 不是"近似稳定"，不能静默放过。
+    #[test]
+    fn marginal_affine_state_is_rejected() {
+        let step = add(prev(), pure(1.0));
+        match plan_from_expr(&pure(0.0), &step, None) {
+            Err(AffineError::Unstable { radius }) => assert_eq!(radius, 1.0),
+            other => panic!("期望 Unstable，实际：{other:?}"),
+        }
+    }
+
+    /// **BZ-a**：现有弹簧作品（`0.97 / 0.02` ⇒ 谱半径 `sqrt(0.99)`）不受门禁影响。
+    #[test]
+    fn stable_spring_is_accepted() {
+        let init = Expr::call(
+            ze_comb::OpRef::new("zela.math", "vec2"),
+            [pure(1.5), pure(0.0)],
+        );
+        let x = variable(0);
+        let v = variable(1);
+        let step = vec2(
+            add(x.clone(), v.clone()),
+            add(scale(0.97, v), scale(-0.02, x)),
+        );
+        let plan = plan_from_expr(&init, &step, None).unwrap();
+        let radius = plan.map().spectral_radius();
+        assert!((radius - 0.99f64.sqrt()).abs() < 1e-9, "谱半径 {radius}");
+        assert!(plan
+            .map()
+            .apply(&[1.5, 0.0], 5000)
+            .iter()
+            .all(|component| component.is_finite()));
+    }
+
+    /// 3 / 4 阶走特征多项式 + Durand–Kerner：对角矩阵的谱半径 = 最大对角元。
+    #[test]
+    fn spectral_radius_covers_higher_widths() {
+        let step = Expr::call(
+            ze_comb::OpRef::new("zela.math", "vec3"),
+            [
+                scale(0.5, variable(0)),
+                scale(0.25, variable(1)),
+                scale(0.75, variable(2)),
+            ],
+        );
+        let map = recognize(&step, 3).unwrap();
+        let radius = map.spectral_radius();
+        assert!((radius - 0.75).abs() < 1e-9, "谱半径 {radius}");
     }
 }
