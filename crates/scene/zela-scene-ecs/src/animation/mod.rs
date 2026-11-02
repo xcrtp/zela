@@ -22,6 +22,8 @@ pub use path_follow::PathFollowApplySystem;
 pub use system::BindingApplySystem;
 
 pub use ze_scene_core::animation::{binding, target, timeline};
+// CA-b/c：参数注册表与地址回写（装配期 side table + 稳定 WidgetId 分配）。
+pub use ze_scene_core::animation::params;
 pub use ze_scene_core::animation::{
     Binding, BindingDriver, BindingTable, Camera2DFraming, CameraEye, CircleRadius, FieldSpec,
     FieldTarget, LibraryRef, MorphT, OpacityValue, Phase, ResetBehavior, RevealRange, SeekKind,

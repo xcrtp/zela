@@ -250,6 +250,10 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     };
     bindings.add(orbit_binding.clone());
 
+    // **CA-b**：参数注册表是装配期算出的 side table（不进 payload）。
+    // 必须在 `bindings` 移入 `Resources` **之前**建；地址升序 ⇒ 控件顺序确定。
+    let parameters = zela_scene_ecs::animation::params::build_registry(&bindings);
+
     let duration = record_hint
         .filter(|seconds| *seconds > 0.0)
         .unwrap_or_else(|| forest_duration(&forest, &bindings));
@@ -285,6 +289,8 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     resources.insert(RevealQueue::default());
     resources.insert(forest);
     resources.insert(bindings);
+    // **CA-b**：参数地址 → Property 的 side table（只读；UI 按它生成控件）。
+    resources.insert(parameters);
     resources.insert(DirectorState::new());
     resources.insert(group_visibility);
     resources.insert(DeferredCommands::new());

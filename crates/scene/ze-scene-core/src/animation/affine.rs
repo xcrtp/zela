@@ -75,6 +75,23 @@ impl AffineMap {
         &self.b
     }
 
+    /// 读一个线性系数 `A[row][col]`（越界返回 `None`）。
+    ///
+    /// **CA-b**：参数面板把 `State` 的系数当可调参数枚举 / 回写。
+    pub fn linear(&self, row: usize, col: usize) -> Option<f64> {
+        self.a.get(row).and_then(|line| line.get(col)).copied()
+    }
+
+    /// 复制一份并把 `A[row][col]` 换成 `value`（越界返回 `None`）。
+    ///
+    /// 这是**纯函数式**改系数：调用方拿到新图后自行校验稳定性
+    /// （[`StatePlan::set_linear`] 是带门禁的封装）。
+    pub fn with_linear(&self, row: usize, col: usize, value: f64) -> Option<AffineMap> {
+        let mut next = self.clone();
+        *next.a.get_mut(row)?.get_mut(col)? = value;
+        Some(next)
+    }
+
     /// **增广矩阵幂**：`f^n(init)`，`O(k³ log n)`。
     ///
     /// **这是定义**（BY §2.2）：`State(n) := apply(init, n)`。
@@ -530,6 +547,34 @@ impl StatePlan {
     /// 事件 predicate 的编译程序（`None` = 非事件 predicate）。
     pub fn event_predicate(&self) -> Option<&ze_comb::CompiledExpr> {
         self.event_predicate.as_ref()
+    }
+
+    /// 读一个线性系数 `A[row][col]`（参数注册表用）。
+    pub fn linear(&self, row: usize, col: usize) -> Option<f64> {
+        self.map.linear(row, col)
+    }
+
+    /// 写一个线性系数，并**重新过 BZ-a 稳定性门禁**。
+    ///
+    /// 参数面板让用户改 `stiff` / `damp` 之后，这里必须复用同一判据：
+    /// 谱半径 `|λ|max ≥ 1`（或非有限）⇒ [`AffineError::Unstable`] 显式拒绝，
+    /// 原图保持不动（不允许先写进去、运行期再拿到 inf/NaN）。
+    pub fn set_linear(
+        &mut self,
+        row: usize,
+        col: usize,
+        value: f64,
+    ) -> Result<(), AffineError> {
+        let next = self
+            .map
+            .with_linear(row, col, value)
+            .ok_or_else(|| AffineError::NotAffine(format!("线性系数 A[{row}][{col}] 越界")))?;
+        let radius = next.spectral_radius();
+        if !radius.is_finite() || radius >= 1.0 {
+            return Err(AffineError::Unstable { radius });
+        }
+        self.map = next;
+        Ok(())
     }
 }
 
