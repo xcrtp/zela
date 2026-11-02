@@ -3416,6 +3416,23 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     ("cap_shader_3d", Some("vector")),
     // BV 批：光追视图（只进矢量 —— wgpu 没有光追 pass，路由会拒绝；见 GAPS BV 段）。
     ("cap_raytrace", Some("vector")),
+    // BW 批：补债 —— 此前只在 dispositions.txt 里 `exempt`（像素基线待补）的
+    // 12 件能力展示作品全部纳管。只进 `[vector]`，与 PE / BT / BV 同理：
+    // wgpu 会无提示丢弃其中一部分样式，录 `[native]` 等于把"丢弃"固化成基线。
+    // 两件 Python 翻译（fourier.py / storyboard.py）仍豁免：批量对拍固定
+    // `--no-default-features --features typst,js`，不加载 pyo3 运行时。
+    ("cap_stroke_width", Some("vector")),
+    ("cap_channels2d", Some("vector")),
+    ("cap_channels3d", Some("vector")),
+    ("cap_parent_inherit", Some("vector")),
+    ("cap_plot", Some("vector")),
+    ("cap_path_follow", Some("vector")),
+    ("cap_text_group", Some("vector")),
+    ("cap_sequence", Some("vector")),
+    ("expr_demo", Some("vector")),
+    ("expr_read", Some("vector")),
+    ("sine_trace", Some("vector")),
+    ("cap_codegen", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。
