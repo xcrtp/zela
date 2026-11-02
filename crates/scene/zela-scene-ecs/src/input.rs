@@ -11,8 +11,10 @@ use zela_schedule::system::System;
 
 use crate::Curve;
 use crate::animation::BindingTable;
+use crate::animation::params::{self, widget_index};
 use crate::director_state::DirectorState;
 use crate::domain::{InputEvents, SceneEvent, WidgetId, ids};
+use ze_property::{ParameterRegistry, PropertyValue};
 
 // ─── TimeControlSystem（播放/暂停、速度、seek）────────────────────────────
 
@@ -62,17 +64,16 @@ impl System for TimeControlSystem {
 
 /// 参数面板事件消费（LogicUpdate 阶段）。
 ///
-/// 只消费 `SceneEvent::Slider` 并按 **WidgetId** 写回 `BindingTable`
-/// （与 A5 一致，不依赖插入顺序）。
+/// **CA-c**：回写键从"手写 WidgetId + 曲线类型"泛化为**参数地址**：
+/// 注册表按地址升序分配 `WidgetId`（[`params::widget_id`]），本 System 把 id 换回
+/// 地址后统一走 [`params::apply`]。既有 13 个手写 id 的分支保留（渐进式，
+/// `SceneEvent` 契约不变）。
 ///
-/// T0-②：驱动目标 trait 化后 target 无法模式匹配，且**集中分类清单已删除**。
-/// 写回只靠 `WidgetId` —— 它本身**唯一确定**一个滑块（面板里六个 `WidgetId` 互不重复），
-/// 故 `kind` 是冗余的保险，去掉后仍无歧义。滑块是否显示由**曲线类型**决定（见 host 侧），
-/// 与 target 无关。
+/// 写回只靠 `WidgetId`（面板里每个控件互不重复）；旧分支的语义与 CA 前一致。
 pub struct ParamPanelSystem;
 impl System for ParamPanelSystem {
-    type Reads = (InputEvents,);
-    type Writes = (BindingTable,);
+    type Reads = (InputEvents, ParameterRegistry);
+    type Writes = (BindingTable, ParameterRegistry);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         let events: Vec<SceneEvent> = match ctx.get::<InputEvents>() {
@@ -91,10 +92,11 @@ impl System for ParamPanelSystem {
             return;
         }
 
-        // 克隆出 BindingTable 修改，避免同时持有 &mut ctx 和 &mut table。
+        // 克隆出 BindingTable / 注册表修改，避免同时持有 &mut ctx 与资源借用。
         let mut table = ctx.get::<BindingTable>().cloned().unwrap_or_default();
+        let mut registry = ctx.get::<ParameterRegistry>().cloned().unwrap_or_default();
 
-        // 写回：**只按 `WidgetId` + 曲线类型**匹配（不再需要 target 类别）。
+        // 旧分支：手写 id（阶段 1 保留，场景侧代码不必立刻改）。
         for binding in table.bindings.iter_mut() {
             for (id, value) in &sliders {
                 // 表达式绑定没有可调曲线字段（滑块只服务于曲线绑定）。
@@ -116,9 +118,33 @@ impl System for ParamPanelSystem {
             }
         }
 
+        // 新分支：注册表分配的动态 id → 参数地址 → 语义化回写。
+        for (id, value) in &sliders {
+            let Some(index) = widget_index(*id) else {
+                continue;
+            };
+            let Some(entry) = registry.at(index) else {
+                continue;
+            };
+            let address = entry.address.to_string();
+            match params::apply(&mut table, &address, *value) {
+                // 生效值同步回注册表（下一帧滑块才停在新位置）。
+                Ok(()) => {
+                    let _ = registry.set_value(&address, PropertyValue::Scalar(*value));
+                }
+                // R6：不稳定 / 绑定让位 / 种类不符 ⇒ 显式拒绝，注册表保持旧值。
+                Err(error) => {
+                    eprintln!("[zela] 参数 `{address}` 写入被拒绝：{error}");
+                }
+            }
+        }
+
         // 写回
         if let Some(t) = ctx.get_mut::<BindingTable>() {
             *t = table;
+        }
+        if let Some(r) = ctx.get_mut::<ParameterRegistry>() {
+            *r = registry;
         }
     }
 }
@@ -296,5 +322,57 @@ mod tests {
             }
         }
         assert!(saw_sin && saw_orbit, "两条绑定都应被核对过");
+    }
+
+    /// **CA-c**：注册表分配的动态 `WidgetId` 按地址回写，并把生效值同步回注册表。
+    #[test]
+    fn registry_widget_id_routes_slider_to_its_address() {
+        let mut table = BindingTable::new();
+        table.add(Binding {
+            clock: ClockId(0),
+            driver: BindingDriver::Curve(Curve::Sin {
+                base: 0.0,
+                amp: 1.0,
+                omega: 2.0,
+            }),
+            target: Arc::new(CircleRadius {
+                id: ObjectId {
+                    index: 3,
+                    generation: 1,
+                },
+            }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
+        });
+        let registry = crate::animation::params::build_registry(&table);
+        let (index, address) = registry
+            .iter()
+            .enumerate()
+            .find(|(_, entry)| entry.address.ends_with(":amp"))
+            .map(|(index, entry)| (index, entry.address.to_string()))
+            .expect("Sin 绑定应登记 amp");
+
+        let mut resources = Resources::new();
+        resources.insert(table);
+        resources.insert(registry.clone());
+        resources.insert(InputEvents::from_events(vec![SceneEvent::Slider {
+            id: crate::animation::params::widget_id(index),
+            value: 0.7,
+        }]));
+
+        let mut sched = Scheduler::new(hecs::World::new(), resources);
+        sched.add_system(Phase::LogicUpdate, ParamPanelSystem);
+        sched.init_resources();
+        sched.run_frame(0.016);
+
+        let table = sched.resources().get::<BindingTable>().unwrap();
+        let curve = table.bindings[0].driver.as_curve().unwrap();
+        assert!(matches!(curve, Curve::Sin { amp, .. } if (*amp - 0.7).abs() < 1e-6));
+        let registry = sched.resources().get::<ParameterRegistry>().unwrap();
+        assert!(matches!(registry.value(&address), Some(PropertyValue::Scalar(v)) if (v - 0.7).abs() < 1e-6));
     }
 }
