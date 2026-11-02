@@ -10,7 +10,8 @@
 //!   * type-safe assignment: wrong kind returns [`PropertyError`], no panic;
 //!   * constraints live on each property (no separate constraint system);
 //!   * serializable as a whole;
-//!   * bidirectional with [`crate::NodeSpec::properties`].
+//!   * bidirectional with a declarative property list (`NodeSpec::properties`
+//!     in the node stack, or a scene-side parameter registry).
 
 use serde::{Deserialize, Serialize};
 

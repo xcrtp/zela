@@ -41,12 +41,17 @@ pub enum StringKind {
     Password,
 }
 
-/// Reference to a function-producing output socket (the `Evalable` hook for the
+/// Reference to a function-producing output slot (the `Evalable` hook for the
 /// future higher-order `Function` variant). Kept plain-data and serializable so
 /// property graphs survive a round-trip.
+///
+/// `node` is a **host reference slot**: the semantics belong to the consumer.
+/// The node stack uses it to point at a `NodeId`; a scene-side consumer may use
+/// the same field for an `ObjectId`. Keeping it a bare `u64` is deliberate — it
+/// is what lets this crate stay independent of any host vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionHandle {
-    /// Owning node id (matches `ze_node_core::NodeId.0`).
+    /// Host reference slot (node id for the node stack, object id for a scene).
     pub node: u64,
     /// Output socket index on that node.
     pub socket: u32,

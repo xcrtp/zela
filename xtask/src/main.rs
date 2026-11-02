@@ -1872,6 +1872,8 @@ fn check_no_hashmap_in_graph_paths(root: &Path) -> Result<(), String> {
     const NO_HASHMAP_PATHS: &[&str] = &[
         "crates/kernel/ze-graph-core/src",
         "crates/kernel/ze-comb/src",
+        // CA-a：属性顺序会被参数面板继承 ⇒ 注册表必须升序、确定性。
+        "crates/kernel/ze-property/src",
         "crates/kernel/ze-func/src/simplify.rs",
         "crates/scene/ze-scene-core/src/scene_script.rs",
         "crates/scene/ze-scene-core/src/animation/predicate.rs",

@@ -4,11 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Property model layer for ze-node-core (NodeSpec / Property / NodeRegistry / DynamicObject). No egui dependency."
+description = "NodeSpec / NodeRegistry / DynamicNode layer for ze-node-core. Property vocabulary lives in ze-property (CA-a). No egui dependency."
 
 [dependencies]
 ze-node-core = { path = "../ze-node-core", version = "0.1.1" }
 ze-node-schema-macros = { path = "../ze-node-schema-macros", version = "0.1.1" }
+ze-property = { path = "../../../kernel/ze-property", version = "0.1.1" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

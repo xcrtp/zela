@@ -6657,6 +6657,7 @@ dependencies = [
  "ze-graph-eval",
  "ze-node-core",
  "ze-node-schema-macros",
+ "ze-property",
 ]
 
 [[package]]
@@ -6794,6 +6795,15 @@ dependencies = [
  "typst-library",
  "ze-content",
  "ze-notion",
+]
+
+[[package]]
+name = "ze-property"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -9,19 +9,16 @@
 
 - 层：`graph`（`crates/ze/graph`）
 - 路径：`crates/ze/graph/ze-node-schema`
-- 生产依赖（上游，dev-deps 不计）：`ze-node-core`、`ze-node-schema-macros`
+- 生产依赖（上游，dev-deps 不计）：`ze-node-core`、`ze-node-schema-macros`、`ze-property`
 - 被依赖（下游）：`ze-node`、`zela-node-egui-ui`
-- 源文件：7 个 · 1484 行
+- 源文件：4 个 · 623 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/dynamic.rs` | 224 | [`DynamicObject`] — a runtime-extensible, ordered map of named properties. |
 | `src/dynamic_node.rs` | 212 | [`DynamicNode`] — a node whose properties are a runtime [`DynamicObject`]. |
-| `src/error.rs` | 31 | Errors raised by the property model. All operations return errors rather |
-| `src/lib.rs` | 47 | `ze-node-schema` — the property model layer for zela's node graph. |
-| `src/property.rs` | 608 | The property model: a serializable, UI-neutral description of every |
+| `src/lib.rs` | 49 | `ze-node-schema` — the property model layer for zela's node graph. |
 | `src/registry.rs` | 304 | [`NodeRegistry`] — the type-erased catalogue of `NodeSpec` node types. |
 | `src/spec.rs` | 58 | [`NodeSpec`] — the declarative property interface a node exposes. |
 
@@ -29,44 +26,19 @@
 
 ```mermaid
 graph LR
-    f0["src/dynamic.rs"]
-    f2["src/dynamic_node.rs"]
-    f1["src/error.rs"]
-    f4["src/property.rs"]
-    f5["src/registry.rs"]
-    f3["src/spec.rs"]
+    f0["src/dynamic_node.rs"]
+    f2["src/registry.rs"]
+    f1["src/spec.rs"]
     f0 --> f1
-    f2 --> f0
     f2 --> f1
-    f2 --> f3
-    f4 --> f0
-    f4 --> f1
-    f5 --> f3
-    f3 --> f1
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
 
 | 文件 | 项 |
 |---|---|
-| `src/dynamic.rs` | `pub struct DynamicObject` |
-| `src/dynamic.rs` | `pub struct DynamicField` |
 | `src/dynamic_node.rs` | `pub struct DynamicNode` |
 | `src/dynamic_node.rs` | `pub struct DynamicNodeBuilder` |
-| `src/error.rs` | `pub enum PropertyError` |
-| `src/property.rs` | `pub enum StringKind` |
-| `src/property.rs` | `pub struct FunctionHandle` |
-| `src/property.rs` | `pub struct BoolConfig` |
-| `src/property.rs` | `pub struct StringConfig` |
-| `src/property.rs` | `pub struct VecNConfig` |
-| `src/property.rs` | `pub struct ColorConfig` |
-| `src/property.rs` | `pub struct EnumConfig` |
-| `src/property.rs` | `pub struct RangeConfig` |
-| `src/property.rs` | `pub struct FunctionConfig` |
-| `src/property.rs` | `pub struct DynamicConfig` |
-| `src/property.rs` | `pub struct ListConfig` |
-| `src/property.rs` | `pub enum Property` |
-| `src/property.rs` | `pub enum PropertyValue` |
 | `src/registry.rs` | `pub struct RegistryCategory` |
 | `src/registry.rs` | `pub struct RegistryNodeInfo` |
 | `src/registry.rs` | `pub struct NodeRegistry` |

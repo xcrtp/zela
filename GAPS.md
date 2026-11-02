@@ -1326,6 +1326,7 @@
 | crate | 职责 | 可复用能力（领域无关者显式标记） |
 |---|---|---|
 | ze-type | 纯代数类型层 | `TypeSpec` / `Layout` / `unify` / `ReflectError` / 单态化上界（no_std） |
+| ze-property | kernel 级属性模型 | `Property` / `PropertyValue` / `DynamicObject` / `PropertyError` / `ParameterRegistry`（no egui / no glam / 无节点依赖） |
 | ze-reflect | 运行时反射 | `SlotTable` / `SymbolTable` / `TypeRegistry` / `Codec` / `MonoCache` |
 | ze-graph-core | 纯拓扑图算法 | `Topology` / `topo_sort` / `scc` / `reachable` / `dirty_downstream`（只认节点 id + 边） |
 | ze-notion | 数学与几何基元 | `Path2D` / `Transform` / `Vec` 运算 |
