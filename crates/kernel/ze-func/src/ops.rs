@@ -45,10 +45,76 @@ pub fn is_known(op: &OpRef) -> bool {
 pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     let entry = crate::op::eval_entry(&op.name)
         .filter(|_| op.namespace == crate::LIBRARY_NAMESPACE);
-    match entry {
-        Some(eval) => eval(op, args),
-        None => Err(EvalError::op(op, format!("未知算子 `{}`", op.name))),
+    let Some(eval) = entry else {
+        return Err(EvalError::op(op, format!("未知算子 `{}`", op.name)));
+    };
+    // **BY-b**：标记 `batched` 的算子接受 `Iter` 实参，在内部按元素展开。
+    // 语义仍是同一条 `eval`（逐点版），批量只是外层循环 ⇒ 逐位相同。
+    if crate::op::op_def(&op.name).is_some_and(|def| def.batched)
+        && args.iter().any(|arg| matches!(arg, Value::Iter(_)))
+    {
+        return eval_batched(op, args, eval);
     }
+    eval(op, args)
+}
+
+/// 批量展开：标量广播、`Iter` 按下标对齐；`sum` 是升序折叠。
+fn eval_batched(
+    op: &OpRef,
+    args: &[Value],
+    eval: crate::op::EvalFn,
+) -> Result<Value, EvalError> {
+    // `sum(iter)`：单实参折叠（下标升序，与 `NatRec` 同序）。
+    if op.name == "sum" && args.len() == 1 {
+        if let Value::Iter(iter) = &args[0] {
+            let items = iter.items();
+            // 空序列 = `0.0`（与逐点 `sum` 的空实参同口径）。
+            let Some(first) = items.first() else {
+                return Ok(Value::f64(0.0));
+            };
+            // 数值从 `0.0` 起累加；向量从首项起（`sum` 不收标量 + 向量）。
+            let (mut acc, start) = match first.as_f64() {
+                Some(_) => (Value::f64(0.0), 0),
+                None => (first.clone(), 1),
+            };
+            for item in &items[start..] {
+                acc = eval(op, &[acc, item.clone()])?;
+            }
+            return Ok(acc);
+        }
+    }
+    let len = args
+        .iter()
+        .find_map(|arg| match arg {
+            Value::Iter(iter) => Some(iter.len()),
+            _ => None,
+        })
+        .expect("调用前已确认至少一个 Iter 实参");
+    for arg in args {
+        if let Value::Iter(iter) = arg {
+            if iter.len() != len {
+                return Err(EvalError::op(
+                    op,
+                    format!(
+                        "批量实参长度不一致：期望 {len}，实际 {}（不做隐式截断 / 补齐）",
+                        iter.len()
+                    ),
+                ));
+            }
+        }
+    }
+    let mut items = Vec::with_capacity(len);
+    for index in 0..len {
+        let element_args: Vec<Value> = args
+            .iter()
+            .map(|arg| match arg {
+                Value::Iter(iter) => iter.items()[index].clone(),
+                scalar => scalar.clone(),
+            })
+            .collect();
+        items.push(eval(op, &element_args)?);
+    }
+    ze_comb::iter::ValueIter::new(items).map(Value::Iter)
 }
 
 // ─── 实参提取（每个算子只做自己那一件事）─────────────────────────────────
@@ -1123,5 +1189,109 @@ mod tests {
         );
         let err = eval(&math("eq"), &[Value::text("a"), Value::text("a")]).unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::eq"));
+    }
+
+    // ─── BY-b：批量算子（`Iter` 实参在内部展开）────────────────────────────
+
+    fn iter(items: Vec<f64>) -> Value {
+        Value::Iter(
+            ze_comb::ValueIter::new(items.into_iter().map(Value::f64).collect()).unwrap(),
+        )
+    }
+
+    fn values(value: &Value) -> Vec<Value> {
+        match value {
+            Value::Iter(iter) => iter.items().to_vec(),
+            other => panic!("期望 Iter，实际 {other:?}"),
+        }
+    }
+
+    /// **判据 1**：每个 `batched` 算子「N 次单点」与「一次批量」逐位相同。
+    #[test]
+    fn batched_matches_pointwise_bit_for_bit() {
+        let samples = [0.1, 0.2, 0.3, 0.4, 0.5];
+        for op in ["sin", "cos"] {
+            let batch = eval(&math(op), &[iter(samples.to_vec())]).unwrap();
+            let singles: Vec<Value> = samples
+                .iter()
+                .map(|x| eval(&math(op), &[Value::f64(*x)]).unwrap())
+                .collect();
+            assert_eq!(values(&batch), singles, "{op}: 批量与单点必须逐位相同");
+        }
+    }
+
+    /// 二元算子的三种形态：`Iter ⊕ Iter`、`Iter ⊕ 标量`（广播）、`scale(标量, Iter)`。
+    #[test]
+    fn batched_binary_broadcasts_scalars() {
+        let a = [0.1, 0.2, 0.3];
+        let b = [0.4, 0.5, 0.6];
+        let batch = eval(&math("add"), &[iter(a.to_vec()), iter(b.to_vec())]).unwrap();
+        let singles: Vec<Value> = a
+            .iter()
+            .zip(b)
+            .map(|(x, y)| eval(&math("add"), &[Value::f64(*x), Value::f64(y)]).unwrap())
+            .collect();
+        assert_eq!(values(&batch), singles);
+
+        let broadcast = eval(&math("mul"), &[iter(a.to_vec()), Value::f64(2.0)]).unwrap();
+        let singles: Vec<Value> = a
+            .iter()
+            .map(|x| eval(&math("mul"), &[Value::f64(*x), Value::f64(2.0)]).unwrap())
+            .collect();
+        assert_eq!(values(&broadcast), singles);
+
+        let scaled = eval(&math("scale"), &[Value::f64(-1.0), iter(a.to_vec())]).unwrap();
+        let singles: Vec<Value> = a
+            .iter()
+            .map(|x| eval(&math("scale"), &[Value::f64(-1.0), Value::f64(*x)]).unwrap())
+            .collect();
+        assert_eq!(values(&scaled), singles);
+    }
+
+    /// **判据 2**：折叠顺序固定为下标升序（非结合的例子能区分）。
+    #[test]
+    fn batched_sum_folds_in_ascending_order() {
+        let xs = [1e16, 1.0, -1e16];
+        let folded = eval(&math("sum"), &[iter(xs.to_vec())]).unwrap();
+        // 手动升序：((0 + 1e16) + 1.0) + (-1e16) = 0.0
+        let manual = xs
+            .iter()
+            .fold(Value::f64(0.0), |acc, x| {
+                eval(&math("sum"), &[acc, Value::f64(*x)]).unwrap()
+            });
+        assert_eq!(folded, manual);
+        assert_eq!(folded, Value::f64(0.0));
+        // 逆序会不同（(0 - 1e16) + 1.0 + 1e16 = 0? 1e16 精度吞掉 1 ⇒ 仍是 0；
+        // 用另一个例子确认顺序敏感：0.1 + 0.2 + 0.3 vs 0.3 + 0.2 + 0.1）
+        let a = [0.1, 0.2, 0.3];
+        let asc: f64 = a.iter().fold(0.0, |acc, x| acc + x);
+        let desc: f64 = a.iter().rev().fold(0.0, |acc, x| acc + x);
+        assert_ne!(asc, desc, "本用例依赖非结合性，若平台变了要重新选样本");
+        assert_eq!(
+            eval(&math("sum"), &[iter(a.to_vec())]).unwrap(),
+            Value::f64(asc)
+        );
+    }
+
+    /// **判据 3**：混型 / 长度不一致 ⇒ 显式失败（不截断、不补齐）。
+    #[test]
+    fn batched_rejects_mixed_kinds_and_lengths() {
+        assert!(ze_comb::ValueIter::new(vec![Value::f64(1.0), Value::Bool(true)]).is_err());
+        let short = eval(&math("add"), &[iter(vec![1.0, 2.0]), iter(vec![1.0])]).unwrap_err();
+        assert!(
+            matches!(short, EvalError::Op { ref message, .. } if message.contains("长度不一致")),
+            "{short:?}"
+        );
+    }
+
+    /// 能力标记只在唯一登记点：恰好 6 个算子（`sub` 在目录里不存在）。
+    #[test]
+    fn batched_capability_is_declared_on_the_catalog() {
+        let marked: Vec<&str> = crate::op::DEFS
+            .iter()
+            .filter(|def| def.batched)
+            .map(|def| def.name)
+            .collect();
+        assert_eq!(marked, vec!["sin", "cos", "add", "mul", "scale", "sum"]);
     }
 }

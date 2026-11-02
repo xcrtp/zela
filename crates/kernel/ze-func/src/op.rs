@@ -353,6 +353,33 @@ const NOT: OpSig = OpSig {
     variadic: false,
 };
 
+/// **BY-b**：首批接受批量实参的算子（唯一登记点仍在本表的 `def()`）。
+///
+/// 用 `const fn` 做字节比较（`&str` 的 `==` 不能进常量求值）。
+const fn name_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn batched_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    name_eq(bytes, b"sin")
+        || name_eq(bytes, b"cos")
+        || name_eq(bytes, b"add")
+        || name_eq(bytes, b"mul")
+        || name_eq(bytes, b"scale")
+        || name_eq(bytes, b"sum")
+}
+
 /// 目录条目：签名 + 版本；语义默认逐点、仅宿主（改语义时显式覆盖）。
 const fn def(
     name: &'static str,
@@ -369,6 +396,8 @@ const fn def(
         changed,
         // 全部现有算子都是纯函数（同一实参 ⇒ 同一结果），属于连续层。
         pointwise: true,
+        // **BY-b**：批量能力由名字表决定（唯一登记点）。
+        batched: batched_name(name),
         targets: HOST_ONLY,
     }
 }

@@ -273,6 +273,10 @@ pub struct OpDef {
     pub changed: u32,
     /// 连续层声明：逐点求值（`f: ℝⁿ → V`）。
     pub pointwise: bool,
+    /// **BY-b**：接受 `Value::Iter` 实参并在内部**按元素展开**（长度由值携带）。
+    ///
+    /// 与 `pointwise` 正交：批量版与逐点版必须走同一份语义实现（逐位相同）。
+    pub batched: bool,
     /// 出口能力（占位）。
     pub targets: &'static [Target],
 }
