@@ -28,21 +28,21 @@
 # 条数按**字形**计（如 fourier 63 → 50 个对象），payload 随之变化 —— 属预期。
 #
 # id            title              script          payload-hash
-fourier         傅里叶级数展开      fourier.lua     f48320cfb6eb37e9ae76e8c843fc615cc7c787daaa070fee6d393def669df047
-storyboard      分镜演示            storyboard.lua  f7ad5d5660c3889dec4d44472348ff0a46aa6a7b8d05c49dfcfbee4511f36612
-demo3d          3D 场景             demo3d.lua      65d832e0555e11348940dab47bdbd39e18a506bc7b26d266dda29c6948e70367
-fusion          融合演示(双面+透明) fusion.lua      7900c60a912ea9a2175ef3bfd5d422f0979bce122531290ac56a6609f5b85ea0
-pbr_materials   PBR材质画廊        pbr_materials.lua 43b131f726d5400519a21a9adea1bbbf78359fc6c201c19da08fa7aaf6ffb6fa
-pbr_lights      PBR光照实验室      pbr_lights.lua  abb620747320cd765bad3a9cb570fb0561f2073858241c209e5b7a7d1f07a2c1
-pbr_scene       PBR材质秀          pbr_scene.lua   1f3b620b1881c229d60ccafb6f37ed34081d1b282b03cdb28213507b6eb4a4bc
-pendulum        钟摆动画            pendulum.lua    dc627530e1424354ed9c73d573dbb56e7b7284ad2290248b949a3bd741ceafa7
-orbit           公转行星            orbit.lua       08e98e0b5458c1955c459913a5472ac48f09a13119e6b088b9827e7fc2fe7a0d
-spring          弹跳小球            spring.lua      a0af0e329d5e7f94da15015b74f113b05a1193bcc01a41c4fea8b8e42cef539b
+fourier         傅里叶级数展开      fourier.lua     5cee4f95f7e619c901bc96e82ce1dcf5759a7fa4166651852bc38da3d014c52d
+storyboard      分镜演示            storyboard.lua  630cc89bdd57b78c36b7d41574ab2445287988e7af9b9d1851814d7034dea8fb
+demo3d          3D 场景             demo3d.lua      d69f5e0a8b7474e0eeeb6004df0262a4e9329a959fdeb99ed79450a1f1609f01
+fusion          融合演示(双面+透明) fusion.lua      710a90d4d3c74b3b1b7fad29a7a953fcb74449689de862aef548818c580c188a
+pbr_materials   PBR材质画廊        pbr_materials.lua ceaa459ed0ed7deb35411032c2a483d8566c0f4024c29e14d9c00c3ba4c9e115
+pbr_lights      PBR光照实验室      pbr_lights.lua  e3848b9f39a5bce271e2693a7ba0826e52ecc32a5eec10f40e0d6bec100a8041
+pbr_scene       PBR材质秀          pbr_scene.lua   cb95be1ace6dbb9457ab07801d74491a6b0469773ac6e750f9c047221313f437
+pendulum        钟摆动画            pendulum.lua    d0bff58dbe624d2114852c8e1f4b75745ec6db32a141124a442a463e6ba706f2
+orbit           公转行星            orbit.lua       c7baba339d806489ea513f4a844f3c3907b577ea4ef92bbdf169880f81c54b47
+spring          弹跳小球            spring.lua      49bcfb9a6d236a43d8d95efdd1b98f185306dc9d732495dffcf660e8b0a4945a
 surface_matrix  Surface能力矩阵      surface_matrix.lua  098aff13a8e6f39cba37ba5b4bcdb00ef409d5263b4293b57dc2390ed54a3ab9
 surface_matrix_js  Surface能力矩阵(JS) surface_matrix.js  098aff13a8e6f39cba37ba5b4bcdb00ef409d5263b4293b57dc2390ed54a3ab9
-atlas           2D纹理进3D           atlas.lua       5851300dc5f177f3a2c8de58dc8b0b4f8f6bca1542037707cfaaac742e184cb3
+atlas           2D纹理进3D           atlas.lua       7dba47c61fa55f708ee42a71fc074c411fed1daeb65a5ee9b0ebeb5b147c2738
 vector_paths    矢量后端作品         vector_paths.lua b2f6f4f8eeded354294e64bb8111f49817031c523efa0946579dcc7458605b9c
-capability_gaps 能力缺口补齐        capability_gaps.lua 6f47244e6294121c57bad585e9a3bfa57b43e9c6a58031f7686cdd336ba4f650
+capability_gaps 能力缺口补齐        capability_gaps.lua 205b38fe30170f5ccc1465ccde474c7eac8f55caa9a5455032efd9875ec65cf5
 shaded_meshes   3D网格着色栈        shaded_meshes.lua 7d7081ba5e06f7ff9ec51eba706fd7d7cd7c592a05daed2dd31029f4f65bd40b
 # PE Step 2：能力展示作品（一件能力一件作品；**只进 [vector] 基线**）。
 # 它们用的样式组件在 wgpu 下不生效 —— 这正是路由要显式说明"已忽略"的原因。
@@ -54,27 +54,27 @@ cap_window      曲线窗口            cap_window.lua  90ba47a4a19fa0571ba42aa0
 # PF Step 2：2D/3D 混排（2D 记录以屏幕平面 overlay 叠进 3D 帧）。
 cap_mix         2D/3D混排           cap_mix.lua     1443758a2fe47a469411ae35eb39bfa758d310f16cc82b997a757f1dab26959d
 # S3 验收作品：脚本只提交表达式结构（半径 / 透明度由宿主 M 注入 Time）。
-expr_demo       表达式驱动          expr_demo.lua   c5447111f69ffd0641bd62dec68fa2f992380de8706aa48478a13df8f6441204
+expr_demo       表达式驱动          expr_demo.lua   8ccec9f1abf39eca1b4b4d8709de76a04359fccc7f5bd8b3c210f183bc7d7d3f
 # F / G / H 批验收作品：新字段通道（一个通道一条绑定）+ 通道读端 + 值分支。
-cap_channels2d  2D字段通道          cap_channels2d.lua  6c1210b5870900f6c7b4285ae96f77e138f48fe29f785571e6b4c379b76b3f6c
-cap_channels3d  3D字段通道          cap_channels3d.lua  69acc78d91b2f77d6c725da9c56e1ffce84c8081d2b72fa3ef0e008b3cb82515
-expr_read       通道读端与值分支     expr_read.lua       6e5a2c06c23eaab2a512c153b2c7967dfd55c146e4d0919edcd2c6543abc6706
+cap_channels2d  2D字段通道          cap_channels2d.lua  0db9356fb9b17d1f27558e09e557d6628bce86772bb5ed613ba759cca06cfc76
+cap_channels3d  3D字段通道          cap_channels3d.lua  5bc57e380ee7857732e915ac7cdec1a4b7c76e13f55d12470e959e9bb7bd3209
+expr_read       通道读端与值分支     expr_read.lua       b34ad1bf1399025afbede7a11782eccb5990c1139d1529c32374f929b7b3a0df
 # 内容作品：小球随 Reveal 画出正弦（书写进度与小珠位置逐段同步）。
-sine_trace      小球画正弦          sine_trace.lua      45e02c587799c0a3916dc831cce145776ab6b4f95309033b43d20d2fda4aadf2
+sine_trace      小球画正弦          sine_trace.lua      134ce1f082fee2138afd40f8164a663d333a94529b564db12f64df569e27b291
 # 阶段 2 验收作品：填充色由 `expr.shader` 生成的 WGSL 在 GPU 上算（装饰性，静态 1 帧）。
 cap_codegen     着色codegen         cap_codegen.lua     a2cab28745b2ba941921021ebf67ec8c60c1f59cfbc74f0edb9e888903c2efc6
 # 阶段 7（第 BB 批）验收作品：`Stroke.width` 通道可动画（新算子 abs / pow + 糖）。
-cap_stroke_width 线宽通道           cap_stroke_width.lua 7e8eaf8fc398cc7503e03552710715ded6b2f9c6fecc899fed4912992f7be63e
+cap_stroke_width 线宽通道           cap_stroke_width.lua 384278531afce0a002f2ac0a9e192513d56b37b12a1b8f67bd1590526fc48a66
 # 第 BC 批验收作品：`Parent` 六个继承权重通道（变换三维 + 样式三维）。
-cap_parent_inherit Parent继承        cap_parent_inherit.lua e5194d9cad66323976c24d90dde8db4d04823cbb42d393630b3e84755091c40f
+cap_parent_inherit Parent继承        cap_parent_inherit.lua 333e6d126e50e3f667a3430a016ca73f00e332a13ce28fed9e82153151a87269
 # 动画层阶段 1 验收作品：`expr.plot` 装配期采样成折线（自变量是逐元素通道 `plot.x`）。
 cap_plot        函数图像            cap_plot.lua         0756afa3bb29271fd3b07101d0a08f43af4db523dcb73c1a019da0217f56fda4
 # 动画层阶段 2 验收作品：路径跟随（`PathFollow` 组件 + 方法 `Reveal.point_at` / `tangent_at`）。
-cap_path_follow 路径跟随            cap_path_follow.lua  67630da5bff1a97af4ebbd986604cd7eea4e66228b8ef4b674240ac9473fd1f1
+cap_path_follow 路径跟随            cap_path_follow.lua  0cef79ca864978a1456b74474fb8515ab602aac8c0578ab585e9e54123f89876
 # 动画层阶段 3 验收作品：文字排版糖 `scene.text` + 组级淡出 / 缩放（只动容器一个字段）。
-cap_text_group  文字组              cap_text_group.lua   1aaa6814f0b50e95ee6612e22546caaf4cb80c551da3842e15f80b7afd92bec9
+cap_text_group  文字组              cap_text_group.lua   f1f3d2d278ff63be9296ee3b61d3c024541b1751d980e8361c186f92ec29fdac
 # 动画层阶段 4 验收作品：时序糖 `scene.sequence`（顺序 / 并行 / 空档三种段形态）。
-cap_sequence    时序                 cap_sequence.lua     1dc47c14c4c155faf691de4224e820b778fb19019ba194b166b4133b1d44baa8
+cap_sequence    时序                 cap_sequence.lua     411398d0255c7af96a7f8c700a41c014af839f8f22d3fa338815978dbf4613c1
 
 # BT-4 验收作品：着色器给的透明度（Vec4 出口的 w）真的生效（不透明 / 半透明 / 逐像素渐变三组同几何对照）。
 cap_shader_alpha 着色透明度        cap_shader_alpha.lua 59d68e10467ffb45d50b4b5ad03ff21750de6f4c16242231c5c16d479bc6dc0c
@@ -84,3 +84,5 @@ cap_sdf           SDF隐式形状        cap_sdf.lua          552916d3138f02399b
 cap_shader_3d     3D着色材质         cap_shader_3d.lua    cf733daa816a51e2af16b58a7dd1612c2172c4ad33434eeba01ce76a5add234d
 # BV-5 验收作品：3D 视图的 brute-force 光追（脚本组件 `RayTrace`；wgpu 无此 pass ⇒ 只进 [vector]）。
 cap_raytrace     光追视图            cap_raytrace.lua     0b612dcaac67b11210eff2fa3cbb788fcb36f61661c38350c9ac0490390a9852
+# BX 验收作品：单帧 State（二维元组，帧号驱动）+ 装配期仿射识别 + 阻尼弹簧。
+spring_state     阻尼弹簧状态        spring_state.lua     c8ef75b437c5fbaef0fe97bb7a75be16ec70bb37d47dfa2797784dbfcb48832f

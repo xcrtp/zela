@@ -1943,13 +1943,16 @@
 | BX-02 | 仿射识别器不存在（`ze-comb/src/` 无 `simplify.rs`） | 场景 / 表达式 | **已关闭** | `ze-scene-core::animation::affine`：装配期 analysis pass（`scene.state_affine`），识别 `prev + c` / `prev × c` / 线性组合 / 二维互引；6 个正例返回 `(A, b)`，3 个反例（`sin` / `abs` / `prev²`）显式失败。产物只进 side table（`SceneRecipe::state_analyses`），**不进 payload**。 |
 | BX-03 | 非线性 `State.step` 会静默算错 / 降级 | 场景 | **已关闭** | `Timeline::analyze_states` 在 `commit` 期门禁：`ScriptError::StateNotAffine`（含目标名与原因）。不降级 `Replay`（AI-07 未放开）。用例：`non_affine_state_is_rejected_at_assembly`。 |
 | BX-04 | 单值 State 与逐次重放的一致性没有判据 | 内核 | **已关闭** | `state_matches_explicit_nat_rec_replay_bit_for_bit`：`State` 在帧 `n` 的值与同 `n` 轮的 `NatRec` 重放**逐位相同**（0..=64 帧）。两条路径共用同一段 `fold` ⇒ 一致性是结构事实。 |
-| BX-05 | `nat_rec` 脚本侧零使用（AX-05 的一半） | pod / 脚本 | **已关闭（BX-b）** | 弹簧作品 `spring_state.lua` 用 `expr.nat_rec` 生成静态的预计算序列（`count` 为字面量），使 `nat_rec` 的脚本侧使用从 0 变 ≥1；`State` 走帧号驱动，两者同一份折叠实现。 |
+| BX-05 | `nat_rec` 脚本侧零使用（AX-05 的一半） | pod / 脚本 | **已关闭** | 弹簧作品 [`spring_state.lua`](crates/app/zela-app/scripts/spring_state.lua) 用 `expr.nat_rec` 折叠 4 次得到参考线高度（`y = 0.60`），经 `expr.plot` 在**装配期采样**成折线 —— 因不进入绑定，不触发 AI-07 的 `Replay` 拒绝。`State` 与它共用同一份折叠实现（`CompiledExpr::fold`）。 |
 | BX-06 | **快速幂运行时路径未启用**：`O(log n)` 未达成 | 内核 / 场景 | **记账** | 快速幂（`AffineMap::apply`）与逐次重放在 IEEE754 下不是同一个计算：只有系数与中间值都能精确表示时才逐位相同（`matches_replay`；整数振荡器 0..=512 通过，含 `0.01` 的弹簧不通过）。按计划 §7.2 的**预先定死判据**，不通过的形态不启用优化 —— 运行时走重放（`O(n)`，仍可 seek 任意帧）。触发条件：BY 的谱系/求值器能把"重放"作为一等代价记账，或改用有理/定点算术表示状态。 |
 
 **BX 段小计**：已关闭 5（BX-01…BX-05）· 部分关闭 0 · 记账 1（BX-06）· 未执行 0 · 已记录 0。
 
 > 精度口径（计划 §6，按推荐案 A）：先以现有 `F32×2` 向量算子起步；实测快速幂与重放
 > 不逐位相同 ⇒ 运行时不启用快速幂（BX-06），不为此新增 `F64×k` 元组形态。
+> 作品 [`spring_state.lua`](crates/app/zela-app/scripts/spring_state.lua)：三条水平轨道，
+> 二维状态 `(x, v)` 半隐式欧拉（`x' = x + v`、`v' = 0.98v − 0.02x`），阻尼收敛；
+> 像素基线 `[vector] spring_state`，结构指纹同批记录。
 
 ---
 

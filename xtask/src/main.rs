@@ -3435,6 +3435,8 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     ("expr_read", Some("vector")),
     ("sine_trace", Some("vector")),
     ("cap_codegen", Some("vector")),
+    // BX 批：单帧 State（二维元组 + 仿射识别）的真消费者，只进 `[vector]`。
+    ("spring_state", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。
