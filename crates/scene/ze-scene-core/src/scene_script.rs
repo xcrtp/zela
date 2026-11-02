@@ -46,6 +46,7 @@ use ze_scene_contract::{
 };
 use ze_time::{ClockForest, ClockProgram};
 
+use crate::animation::affine::StateUnsupported;
 use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
 use crate::animation::target::target_ctor_by_name;
 use crate::animation::timeline::Timeline;
@@ -854,6 +855,27 @@ impl SceneScript {
             .analyze_states()
             .map_err(ScriptError::StateNotAffine)?;
 
+        // **BY**：`State` 计划必须与编译出的 `Step::State.id` 一一对应
+        // （分析器与编译器同为 DFS 序；不在 `Ref` 目标内）。对不上 ⇒ 显式失败，
+        // 不允许"部分 State 没有计划"静默退回重放。
+        for binding in &bindings.bindings {
+            let crate::animation::binding::BindingDriver::Expr(program) = &binding.driver else {
+                continue;
+            };
+            let mut ids = Vec::new();
+            collect_state_ids(program.lowered(), &mut ids);
+            if ids.len() != binding.state_plans.len() {
+                return Err(ScriptError::StateNotAffine(StateUnsupported {
+                    target: binding.target.name().to_string(),
+                    reason: format!(
+                        "State 计划数 {} 与编译出的 State 数 {} 不一致（State 位于 Ref 目标内？）",
+                        binding.state_plans.len(),
+                        ids.len()
+                    ),
+                }));
+            }
+        }
+
         // **G 批帧内定序**：完整表 + 时钟森林都在手 ⇒ 装配期检查"读先于写"，
         // 冲突显式报错（不留给运行期读到旧值 / 未定义值）。
         check_read_order(&bindings, &forest).map_err(ScriptError::OrderConflict)?;
@@ -878,6 +900,37 @@ impl SceneScript {
 impl From<SceneEncoder> for SceneScript {
     fn from(enc: SceneEncoder) -> Self {
         enc.finish()
+    }
+}
+
+/// **BY**：按值表顺序收集 `Step::State.id`（含嵌套子程序）。
+fn collect_state_ids(program: &CompiledExpr, out: &mut Vec<u32>) {
+    use ze_comb::Step;
+    for step in program.steps() {
+        match step {
+            Step::State {
+                id,
+                init,
+                step,
+                predicate,
+            } => {
+                collect_state_ids(init, out);
+                collect_state_ids(step, out);
+                if let Some(predicate) = predicate {
+                    collect_state_ids(predicate, out);
+                }
+                out.push(*id);
+            }
+            Step::Select { then, r#else, .. } => {
+                collect_state_ids(then, out);
+                collect_state_ids(r#else, out);
+            }
+            Step::NatRec { init, step, .. } => {
+                collect_state_ids(init, out);
+                collect_state_ids(step, out);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -915,9 +968,18 @@ fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(),
                     collect_reads(step, out);
                 }
                 // **BX**：`State` 同样有 init / step 两个子程序。
-                Step::State { init, step } => {
+                // **BY**：predicate 是独立的索引域表达式，也走同一读集收集。
+                Step::State {
+                    init,
+                    step,
+                    predicate,
+                    ..
+                } => {
                     collect_reads(init, out);
                     collect_reads(step, out);
+                    if let Some(predicate) = predicate {
+                        collect_reads(predicate, out);
+                    }
                 }
                 _ => {}
             }

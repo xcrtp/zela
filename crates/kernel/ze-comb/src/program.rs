@@ -634,6 +634,14 @@ pub trait Mono {
     fn frame_index(&self) -> Option<i64> {
         None
     }
+
+    /// **BY**：`State` 的**闭式值**（装配期识别出的仿射计划的第 `id` 条）。
+    ///
+    /// 默认返回 `None` ⇒ [`Step::State`] 退回逐次重放（显式降级，不是静默换算法）。
+    /// 场景侧由 `SceneMono` 按当前绑定的 `state_plans` 提供。
+    fn affine_state(&self, _id: u32) -> Option<Value> {
+        None
+    }
 }
 
 /// 求值错误：显式、带算子来源（§7.6 的运行时对应物）。
@@ -720,6 +728,9 @@ pub enum EvalError {
     /// 宿主帧号为负（不取绝对值、不静默钳到 0）。
     #[error("宿主帧号必须非负，实际 {actual}")]
     FrameIndex { actual: i64 },
+    /// 带 predicate 的 `State` 没有闭式计划：拒绝静默退回逐帧重放。
+    #[error("State 带 predicate 但没有装配期闭式计划（不允许静默忽略门槛）")]
+    StatePredicateNeedsPlan,
 }
 
 impl EvalError {
@@ -805,9 +816,17 @@ pub enum Step {
     ///
     /// 与 [`Step::NatRec`] 共用同一份折叠循环（`init` / `step` 子程序形态也相同），
     /// 区别只在轮数来源。`State` **不消费** `RecCache`（它是帧号的纯函数）。
+    ///
+    /// **BY**：`id` 是该 `State` 在本次编译里的**稳定序号**（DFS 序）。装配期把
+    /// 仿射识别结果按同一个序号放进 `Binding` 的 side table，运行期由
+    /// [`Mono::affine_state`] 提供 **闭式值**；没有计划时退回重放（显式降级）。
     State {
+        id: u32,
         init: Box<CompiledExpr>,
         step: Box<CompiledExpr>,
+        /// **BY**：状态推进 predicate（`time` = 状态索引）。`Some` 时**必须**有闭式
+        /// 计划（装配期已分析）；没有计划的回落路径会显式失败，不静默忽略门槛。
+        predicate: Option<Box<CompiledExpr>>,
     },
     /// `NatRec.step` 内：上一步状态。
     RecPrev,
@@ -836,7 +855,8 @@ impl CompiledExpr {
         let defs = crate::expr::definitions(expr);
         let mut steps = Vec::new();
         let mut memo = BTreeMap::new();
-        let root = compile_node(expr, &defs, &mut memo, &mut steps);
+        let mut state_ids = 0u32;
+        let root = compile_node(expr, &defs, &mut memo, &mut steps, &mut state_ids);
         Ok(Self {
             steps,
             root,
@@ -857,6 +877,11 @@ impl CompiledExpr {
     /// 程序（只读；用于诊断 / 导出）。
     pub fn steps(&self) -> &[Step] {
         &self.steps
+    }
+
+    /// 根值在值表里的下标（装配期分析器读子程序用）。
+    pub fn root(&self) -> usize {
+        self.root
     }
 
     /// 求值一次。
@@ -980,7 +1005,23 @@ impl CompiledExpr {
                     state
                 }
                 // **BX**：轮数 = 宿主帧号；不消费 `RecCache`（帧号的纯函数）。
-                Step::State { init, step } => {
+                // **BY**：优先用装配期放入的闭式计划（`Mono::affine_state`）；
+                // 没有计划 ⇒ 退回逐次重放（显式降级，语义仍是同一个纯函数）。
+                Step::State {
+                    id,
+                    init,
+                    step,
+                    predicate,
+                } => {
+                    if let Some(value) = mono.affine_state(*id) {
+                        values.push(value);
+                        continue;
+                    }
+                    // 没有闭式计划：带 predicate 的状态**不允许**静默退回重放
+                    // （重放需要逐帧判定 predicate，而它已被声明为索引域区间）。
+                    if predicate.is_some() {
+                        return Err(EvalError::StatePredicateNeedsPlan);
+                    }
                     let count = match mono.frame_index() {
                         Some(value) if value >= 0 => value,
                         Some(value) => {
@@ -1108,6 +1149,7 @@ fn compile_node<'a>(
     defs: &BTreeMap<&'a str, &'a Expr>,
     memo: &mut BTreeMap<&'a str, usize>,
     steps: &mut Vec<Step>,
+    state_ids: &mut u32,
 ) -> usize {
     if let Some(id) = expr.id.as_deref() {
         if let Some(index) = memo.get(id) {
@@ -1141,7 +1183,7 @@ fn compile_node<'a>(
         } => {
             let args: Vec<usize> = args
                 .iter()
-                .map(|arg| compile_node(arg, defs, memo, steps))
+                .map(|arg| compile_node(arg, defs, memo, steps, state_ids))
                 .collect();
             steps.push(Step::Method {
                 method: method.clone(),
@@ -1153,7 +1195,7 @@ fn compile_node<'a>(
         Node::Call { op, args } => {
             let args: Vec<usize> = args
                 .iter()
-                .map(|arg| compile_node(arg, defs, memo, steps))
+                .map(|arg| compile_node(arg, defs, memo, steps, state_ids))
                 .collect();
             steps.push(Step::Call {
                 op: op.clone(),
@@ -1166,15 +1208,15 @@ fn compile_node<'a>(
             let target = defs
                 .get(to.as_str())
                 .expect("compile 之前必须通过 Expr::validate");
-            compile_node(target, defs, memo, steps)
+            compile_node(target, defs, memo, steps, state_ids)
         }
         // **H 批**：`cond` 编进外层程序（它的值就在合并点前一步），
         // 两个分支各自编译成**独立子程序**（各自的值表 / 根索引），
         // 运行期只 `eval` 被选中那一支 ⇒ 惰性是结构性的。
         Node::Select { cond, then, r#else } => {
-            let cond = compile_node(cond, defs, memo, steps);
-            let then = compile_branch(then, defs);
-            let r#else = compile_branch(r#else, defs);
+            let cond = compile_node(cond, defs, memo, steps, state_ids);
+            let then = compile_branch(then, defs, state_ids);
+            let r#else = compile_branch(r#else, defs, state_ids);
             steps.push(Step::Select {
                 cond,
                 then: Box::new(then),
@@ -1185,9 +1227,9 @@ fn compile_node<'a>(
         // **阶段 3**：`count` 编进外层；`init` / `step` 各自独立子程序
         // （`step` 内的 `RecPrev` / `RecIndex` 是普通叶子，编译成专用 `Step`）。
         Node::NatRec { count, init, step } => {
-            let count = compile_node(count, defs, memo, steps);
-            let init = compile_branch(init, defs);
-            let step = compile_branch(step, defs);
+            let count = compile_node(count, defs, memo, steps, state_ids);
+            let init = compile_branch(init, defs, state_ids);
+            let step = compile_branch(step, defs, state_ids);
             steps.push(Step::NatRec {
                 count,
                 init: Box::new(init),
@@ -1196,12 +1238,24 @@ fn compile_node<'a>(
             steps.len() - 1
         }
         // **BX**：`State` 没有 `count` 子节点（轮数来自宿主帧号）。
-        Node::State { init, step } => {
-            let init = compile_branch(init, defs);
-            let step = compile_branch(step, defs);
+        // `id` 在 init / step 编完之后分配 ⇒ 与装配期分析器的 DFS 序一致。
+        Node::State {
+            init,
+            step,
+            predicate,
+        } => {
+            let init = compile_branch(init, defs, state_ids);
+            let step = compile_branch(step, defs, state_ids);
+            let predicate = predicate
+                .as_ref()
+                .map(|predicate| Box::new(compile_branch(predicate, defs, state_ids)));
+            let id = *state_ids;
+            *state_ids += 1;
             steps.push(Step::State {
+                id,
                 init: Box::new(init),
                 step: Box::new(step),
+                predicate,
             });
             steps.len() - 1
         }
@@ -1230,10 +1284,14 @@ fn compile_node<'a>(
 ///
 /// 子程序有自己的值表与根索引；`defs` 仍是整棵表达式的定义表 ⇒ 分支里对
 /// 外层 `id` 的 `Ref` 照常解析（共享节点在分支内重新编译一次是纯函数，无副作用）。
-fn compile_branch<'a>(expr: &'a Expr, defs: &BTreeMap<&'a str, &'a Expr>) -> CompiledExpr {
+fn compile_branch<'a>(
+    expr: &'a Expr,
+    defs: &BTreeMap<&'a str, &'a Expr>,
+    state_ids: &mut u32,
+) -> CompiledExpr {
     let mut steps = Vec::new();
     let mut memo = BTreeMap::new();
-    let root = compile_node(expr, defs, &mut memo, &mut steps);
+    let root = compile_node(expr, defs, &mut memo, &mut steps, state_ids);
     CompiledExpr {
         steps,
         root,

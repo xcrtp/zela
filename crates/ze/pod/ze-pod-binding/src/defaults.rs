@@ -108,6 +108,12 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
         ("zela.math.BindEach", "reset") => {
             Some(PodValue::Enum("zela.math.Reset", "Hold", Vec::new()))
         }
+        // **BY**：`State` 的推进 predicate 缺省恒真（每帧都推进）。
+        ("zela.math.State", "predicate") => Some(PodValue::Enum(
+            "zela.math.Predicate",
+            "Always",
+            Vec::new(),
+        )),
         _ => None,
     }
 }
@@ -143,6 +149,7 @@ pub fn field_default_literal(type_name: &str, field_name: &str) -> Option<&'stat
         ("zela.math.BindEach", "clock") => Some("Clock()"),
         ("zela.math.BindEach", "predicate") => Some("Predicate.Always"),
         ("zela.math.BindEach", "reset") => Some("Reset.Hold"),
+        ("zela.math.State", "predicate") => Some("Predicate.Always"),
         _ => None,
     }
 }

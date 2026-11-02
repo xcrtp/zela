@@ -237,6 +237,7 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         active: None,
         reset: ResetBehavior::Hold,
         initial: None,
+        state_plans: Vec::new(),
         seek_kind: SeekKind::O1,
     };
     bindings.add(orbit_binding.clone());

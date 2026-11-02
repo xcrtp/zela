@@ -1225,7 +1225,13 @@ fn state_ctor(pod: &dyn Pod, spec: StateSpec) -> Handle {
     let this = expr_pod(pod);
     let init = child(this, spec.init);
     let step = child(this, spec.step);
-    this.intern(Expr::state(init, step))
+    let expression = match spec.predicate {
+        crate::api::PredicateSpec::Always => Expr::state(init, step),
+        crate::api::PredicateSpec::Of { expr } => {
+            Expr::state_gated(init, step, child(this, expr))
+        }
+    };
+    this.intern(expression)
 }
 
 fn rec_prev(pod: &dyn Pod) -> Handle {
@@ -2255,6 +2261,7 @@ mod tests {
             StateSpec {
                 init: pure(&this, 0.0),
                 step,
+                predicate: crate::api::PredicateSpec::Always,
             },
         );
         let tree = this.tree(handle).unwrap();

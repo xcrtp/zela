@@ -299,6 +299,47 @@ impl IntervalSet {
             Some(_) => None,
         }
     }
+
+    /// **BY（State 时间 predicate）**：区间集在整数域 `[lower, upper]` 上的**计数**。
+    ///
+    /// `State` 的 predicate 把 `time` 变量解释为**状态索引**（整数帧序）：
+    /// `s(n+1) = P(n) ? step(s(n)) : s(n)` ⇒ `s(n)` 只需知道 `1..=n` 里有多少步生效，
+    /// 不需要逐帧模拟。计数与 `last_active` 共用同一批规范化区间（AI-06 已锁不变式）。
+    pub fn count_integers(&self, lower: i64, upper: i64) -> i64 {
+        debug_assert!(
+            self.is_normalized(),
+            "count_integers 依赖「有序、互不相交、已合并」：{self:?}"
+        );
+        if upper < lower {
+            return 0;
+        }
+        let mut total = 0i64;
+        for interval in &self.intervals {
+            let lo = if interval.start.value == f64::NEG_INFINITY {
+                lower
+            } else {
+                let mut value = interval.start.value.ceil() as i64;
+                // 开区间且端点是整数 ⇒ 该整数本身不算。
+                if !interval.start.closed && interval.start.value.fract() == 0.0 {
+                    value += 1;
+                }
+                value.max(lower)
+            };
+            let hi = if interval.end.value == f64::INFINITY {
+                upper
+            } else {
+                let mut value = interval.end.value.floor() as i64;
+                if !interval.end.closed && interval.end.value.fract() == 0.0 {
+                    value -= 1;
+                }
+                value.min(upper)
+            };
+            if hi >= lo {
+                total += hi - lo + 1;
+            }
+        }
+        total
+    }
 }
 
 /// **连续变量**的规范名：宿主基础通道 `time`（空 namespace）。

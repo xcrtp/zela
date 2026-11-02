@@ -13,17 +13,32 @@
 //! | `(x, v)` 互相线性引用（半隐式欧拉） | 2 |
 //! | `sin(prev)` / `abs(prev)` / `prev²` | ❌ 显式失败 |
 //!
-//! # 与"逐位相同"的关系
+//! # 与"逐位相同"的关系（**BY 翻转定义**）
 //!
-//! `AffineMap::apply` 是**优化路径**（增广矩阵快速幂）。IEEE754 下它与逐次重放
-//! **不是同一个计算**：只有系数与中间值都能被精确表示时两者才逐位相同。
-//! 因此运行时默认仍走重放（[`ze_comb`] 的折叠循环）；快速幂只在
-//! [`AffineMap::matches_replay`] 验证通过的形态上可用（见 GAPS BX-02）。
+//! **`apply` 是定义**：`State(n) := 闭式 / 矩阵快速幂的值`。
+//! 逐次重放是**近似实现**，只作为回归 oracle（容差见 [`STATE_ORACLE_TOLERANCE`]）。
+//!
+//! 两者算的是同一个实数递推、舍入路径不同；快速幂的运算更少 ⇒ 更接近真值。
+//! 要求两个不同的浮点近似逐位相同是"巧合检测"，不是正确性判据（BY 计划 §2）。
+//!
+//! 本定义**只适用于 `State` 的闭式求值**；项目其余部分继续严守逐位相同。
 
-use ze_comb::{Expr, Literal, Node};
+use ze_comb::{Expr, Literal, Node, Value as EvalValue};
+
+use crate::animation::predicate::{IntervalSet, TIME_VARIABLE, analyze as analyze_predicate};
 
 /// 识别器支持的最大状态宽度（与 `SCALAR_MAX_DIM` 同口径）。
 pub const AFFINE_MAX_WIDTH: usize = 4;
+
+/// **容差 oracle**（BY-a2）：闭式定义 vs 逐次重放的回归判据。
+///
+/// 单位是**分量绝对误差**。场景侧状态的分量量级为 1–10，f32 重放的舍入
+/// （每步 ~1e-7，120 步 ~1e-5）远小于该阈值；而真正的语义错误（非线性、
+/// 状态错位、predicate 边界错）是数量级差异，不会被放过。
+///
+/// ⚠️ 它不是"反正有容差"的口子：只用于 `State` 闭式求值的 oracle，
+/// 其它所有判据仍要求逐位相同（BY 计划 §2.6）。
+pub const STATE_ORACLE_TOLERANCE: f64 = 1e-3;
 
 /// `out[i] = Σ_j a[i][j] · prev[j] + b[i]`。
 #[derive(Clone, Debug, PartialEq)]
@@ -50,7 +65,11 @@ impl AffineMap {
 
     /// **增广矩阵幂**：`f^n(init)`，`O(k³ log n)`。
     ///
-    /// 这是优化路径；与逐次重放是否逐位相同由 [`Self::matches_replay`] 判定。
+    /// **这是定义**（BY §2.2）：`State(n) := apply(init, n)`。
+    /// 纯函数 ⇒ seek 与路径无关；只用 `+ − × ÷` ⇒ IEEE754 逐位可复现。
+    ///
+    /// 矩阵乘法的求和顺序由 [`mat_mul`] 的下标升序 `.sum()` 固定 ⇒ **不得**
+    /// 改成并行 / 树形归约（那会改变舍入）。
     pub fn apply(&self, init: &[f64], n: u64) -> Vec<f64> {
         assert_eq!(init.len(), self.width(), "init 宽度必须与仿射图一致");
         // 增广 (k+1)×(k+1)：[[A, b], [0, 1]]
@@ -80,7 +99,7 @@ impl AffineMap {
             .collect()
     }
 
-    /// 逐次重放（**定义**）：`init` 迭代 `n` 次 `A·x + b`。
+    /// 逐次重放（**近似实现 / 测试 oracle**，不是定义）。
     pub fn replay(&self, init: &[f64], n: u64) -> Vec<f64> {
         let mut state = init.to_vec();
         for _ in 0..n {
@@ -96,11 +115,19 @@ impl AffineMap {
         state
     }
 
-    /// 在 `0..=horizon` 上逐帧比对快速幂与重放（**逐位**相等）。
+    /// 在 `0..=horizon` 上比对闭式定义与重放（**容差内**，不是逐位）。
     ///
-    /// 判据来自计划 §7.2：优化值是"定义"的前提是它与参考实现逐位相同。
-    pub fn matches_replay(&self, init: &[f64], horizon: u64) -> bool {
-        (0..=horizon).all(|n| self.apply(init, n) == self.replay(init, n))
+    /// BY §2.2：这是回归 oracle，不是"是否启用快速幂"的开关。
+    pub fn replay_within(&self, init: &[f64], horizon: u64, tolerance: f64) -> bool {
+        (0..=horizon).all(|n| {
+            self.apply(init, n)
+                .iter()
+                .zip(self.replay(init, n))
+                .all(|(a, b)| {
+                    // NaN 永不相等（不能靠 NaN 绕过判据）。
+                    !a.is_nan() && !b.is_nan() && (a - b).abs() <= tolerance
+                })
+        })
     }
 }
 
@@ -141,6 +168,12 @@ pub enum AffineError {
     /// init 不是可识别的数值 / 向量。
     #[error("`State.init` 不是数值或定长向量：{0}")]
     UnsupportedInit(String),
+    /// predicate 不可分析（不是时间 / 索引区间）。
+    #[error("`State.predicate` 不可分析：{0}")]
+    UnsupportedPredicate(String),
+    /// predicate 引用了状态自身（环依赖）。
+    #[error("`State.predicate` 不得引用状态自身（`rec_prev` / 嵌套 State / NatRec）")]
+    PredicateRefsState,
 }
 
 /// 装配期门禁失败：`State.step` 不是仿射（显式拒绝，不降级 `Replay`）。
@@ -156,8 +189,242 @@ pub struct StateUnsupported {
 pub struct StateAnalysis {
     /// 绑定目标名（诊断用）。
     pub target: String,
-    /// 识别出的仿射图 `(A, b)`。
-    pub map: AffineMap,
+    /// 闭式计划（仿射图 + init + predicate 区间）。
+    pub plan: StatePlan,
+}
+
+/// 按**编译器的 DFS 序**收集一条表达式里的全部 `State` 计划。
+///
+/// 顺序与 [`ze_comb::Step::State`] 的 `id` 分配一致：`init` → `step` → `predicate`
+/// → 自身（父节点的其余子表达式按 `Node::children()` 顺序）。
+pub fn plans_for_expr(expr: &Expr) -> Result<Vec<StatePlan>, AffineError> {
+    let mut out = Vec::new();
+    collect_plans(expr, &mut out)?;
+    Ok(out)
+}
+
+fn collect_plans(expr: &Expr, out: &mut Vec<StatePlan>) -> Result<(), AffineError> {
+    if let Node::State {
+        init,
+        step,
+        predicate,
+    } = &expr.node
+    {
+        collect_plans(init, out)?;
+        collect_plans(step, out)?;
+        if let Some(predicate) = predicate {
+            collect_plans(predicate, out)?;
+        }
+        out.push(plan_from_expr(init, step, predicate.as_deref())?);
+        return Ok(());
+    }
+    for child in expr.node.children() {
+        collect_plans(child, out)?;
+    }
+    Ok(())
+}
+
+/// 状态的**值形状**（决定 `Value` 的标签，运行时与重放路径一致）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StateShape {
+    Scalar,
+    Vec2,
+    Vec3,
+    Vec4,
+}
+
+impl StateShape {
+    pub fn width(self) -> usize {
+        match self {
+            StateShape::Scalar => 1,
+            StateShape::Vec2 => 2,
+            StateShape::Vec3 => 3,
+            StateShape::Vec4 => 4,
+        }
+    }
+
+    fn value(self, components: &[f64]) -> EvalValue {
+        match self {
+            StateShape::Scalar => EvalValue::f64(components[0]),
+            StateShape::Vec2 => EvalValue::vec2([components[0] as f32, components[1] as f32]),
+            StateShape::Vec3 => EvalValue::vec3([
+                components[0] as f32,
+                components[1] as f32,
+                components[2] as f32,
+            ]),
+            StateShape::Vec4 => EvalValue::vec4([
+                components[0] as f32,
+                components[1] as f32,
+                components[2] as f32,
+                components[3] as f32,
+            ]),
+        }
+    }
+}
+
+/// **闭式计划**：装配期把 `State` 固定成 `State(n) := apply(init, steps(n))`。
+///
+/// - `steps(n)` 是 predicate 生效的步数（无 predicate ⇒ `n`）；
+/// - 计划是**派生量**，存在 `Binding` 的 side table 里，不进 payload；
+/// - 没有计划时运行期退回重放（带 predicate 时**显式失败**，不静默忽略门槛）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatePlan {
+    map: AffineMap,
+    init: Vec<f64>,
+    shape: StateShape,
+    /// 生效**状态索引**的集合（`time` 变量在此解释为索引；`None` = 每步都生效）。
+    active: Option<IntervalSet>,
+}
+
+impl StatePlan {
+    /// 状态宽度。
+    pub fn width(&self) -> usize {
+        self.map.width()
+    }
+
+    /// 仿射图（诊断 / 测试）。
+    pub fn map(&self) -> &AffineMap {
+        &self.map
+    }
+
+    /// 值形状。
+    pub fn shape(&self) -> StateShape {
+        self.shape
+    }
+
+    /// 到第 `frame` 帧为止**实际推进的步数**（predicate 生效的索引数）。
+    pub fn steps_at(&self, frame: i64) -> u64 {
+        let frame = frame.max(0) as u64;
+        match &self.active {
+            Some(set) => set.count_integers(1, frame as i64).max(0) as u64,
+            None => frame,
+        }
+    }
+
+    /// **定义**：第 `frame` 帧的状态值。
+    pub fn value_at(&self, frame: i64) -> EvalValue {
+        let steps = self.steps_at(frame);
+        self.shape.value(&self.map.apply(&self.init, steps))
+    }
+
+    /// predicate 生效的索引集（`None` = 每步生效）。
+    pub fn active(&self) -> Option<&IntervalSet> {
+        self.active.as_ref()
+    }
+}
+
+/// 从表达式树建立闭式计划（装配期；只读）。
+///
+/// `predicate` 的 `time` 变量解释为**状态索引**；不可分析 / 引用状态自身 ⇒ 显式失败。
+pub fn plan_from_expr(
+    init: &Expr,
+    step: &Expr,
+    predicate: Option<&Expr>,
+) -> Result<StatePlan, AffineError> {
+    let (init_values, shape) = init_values(init)?;
+    let map = recognize(step, shape.width())?;
+    let active = match predicate {
+        Some(predicate) => active_intervals(predicate)?,
+        None => None,
+    };
+    Ok(StatePlan {
+        map,
+        init: init_values,
+        shape,
+        active,
+    })
+}
+
+/// `State.init` → 分量值 + 形状（只接受字面量与定长向量构造）。
+fn init_values(init: &Expr) -> Result<(Vec<f64>, StateShape), AffineError> {
+    match &init.node {
+        Node::Pure { value } => match value {
+            Literal::F32(v) => Ok((vec![f64::from(*v)], StateShape::Scalar)),
+            Literal::F64(v) => Ok((vec![*v], StateShape::Scalar)),
+            Literal::I32(v) => Ok((vec![f64::from(*v)], StateShape::Scalar)),
+            Literal::I64(v) => Ok((vec![*v as f64], StateShape::Scalar)),
+            Literal::Vec2(v) => Ok((
+                v.iter().map(|x| f64::from(*x)).collect(),
+                StateShape::Vec2,
+            )),
+            Literal::Vec3(v) => Ok((
+                v.iter().map(|x| f64::from(*x)).collect(),
+                StateShape::Vec3,
+            )),
+            Literal::Vec4(v) => Ok((
+                v.iter().map(|x| f64::from(*x)).collect(),
+                StateShape::Vec4,
+            )),
+            Literal::Bool(_) | Literal::Text(_) => Err(AffineError::UnsupportedInit(
+                "Bool / Text 不是状态值".to_string(),
+            )),
+        },
+        Node::Call { op, args } => {
+            let shape = match op.name.as_str() {
+                "vec2" => StateShape::Vec2,
+                "vec3" => StateShape::Vec3,
+                "vec4" => StateShape::Vec4,
+                other => {
+                    return Err(AffineError::UnsupportedInit(format!(
+                        "构造器 `{other}` 不是定长数值"
+                    )))
+                }
+            };
+            if args.len() != shape.width() {
+                return Err(AffineError::UnsupportedInit(format!(
+                    "`{}` 需要 {} 个分量，实际 {}",
+                    op.name,
+                    shape.width(),
+                    args.len()
+                )));
+            }
+            let values = args
+                .iter()
+                .map(const_scalar)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((values, shape))
+        }
+        other => Err(AffineError::UnsupportedInit(format!("节点 `{other:?}`"))),
+    }
+}
+
+/// predicate → **状态索引**区间集（`None` = 恒真 / 无约束）。
+fn active_intervals(predicate: &Expr) -> Result<Option<IntervalSet>, AffineError> {
+    if references_state(predicate) {
+        return Err(AffineError::PredicateRefsState);
+    }
+    let Some(set) = analyze_predicate(predicate) else {
+        return Err(AffineError::UnsupportedPredicate(
+            "predicate 不是可分析的时间 / 索引区间（要求 time 与字面量比较 + And/Or/Not）"
+                .to_string(),
+        ));
+    };
+    if set.has_non_time_variable() {
+        return Err(AffineError::UnsupportedPredicate(format!(
+            "predicate 依赖非时间变量：{:?}",
+            set.non_time_variables()
+        )));
+    }
+    if set.is_empty() {
+        return Ok(Some(IntervalSet::empty()));
+    }
+    let mut intervals = set.vars();
+    match intervals.next() {
+        Some((name, set)) if name == TIME_VARIABLE => Ok(Some(set.clone())),
+        // `is_all`（无变量约束）⇒ 每步都生效。
+        None => Ok(None),
+        Some((name, _)) => Err(AffineError::UnsupportedPredicate(format!(
+            "predicate 的变量名必须是 `{TIME_VARIABLE}`，实际 `{name}`"
+        ))),
+    }
+}
+
+/// predicate 是否引用了**状态自身**（`RecPrev` / 嵌套 `State` / 离散层）。
+fn references_state(expr: &Expr) -> bool {
+    match &expr.node {
+        Node::RecPrev | Node::RecIndex | Node::State { .. } | Node::NatRec { .. } => true,
+        _ => expr.node.children().into_iter().any(references_state),
+    }
 }
 
 /// `State.init` 的宽度（`1` = 标量，`2..=4` = 向量）。
@@ -569,28 +836,82 @@ mod tests {
         );
     }
 
-    /// 快速幂与重放在**精确算术**下逐位相同（整数振荡器，周期 6）。
+    /// **BY-a2**：精确算术下 oracle 当然成立（整数振荡器，周期 6）。
     #[test]
-    fn fast_power_matches_replay_when_arithmetic_is_exact() {
+    fn exact_arithmetic_agrees_with_replay() {
         let map = AffineMap {
             a: vec![vec![1.0, 1.0], vec![-1.0, 0.0]],
             b: vec![0.0, 0.0],
         };
         let init = [1.0, 0.0];
-        assert!(map.matches_replay(&init, 512), "整数矩阵在 f64 下应逐位相同");
+        assert!(map.replay_within(&init, 512, 0.0), "整数矩阵在 f64 下逐位相同");
     }
 
-    /// 非精确系数下快速幂与重放**不**逐位相同 —— 这正是计划 §7.1 的风险。
+    /// **BY-a2 翻转定义**：非精确系数下两者**不**逐位相同，但仍在容差内 ⇒
+    /// 定义仍是快速幂，重放退化为 oracle（不再是启用开关）。
     #[test]
-    fn fast_power_diverges_on_inexact_coefficients() {
+    fn inexact_coefficients_are_within_the_oracle_tolerance() {
         let map = AffineMap {
             a: vec![vec![1.0, 0.25], vec![-0.01, 0.0]],
             b: vec![0.0, 0.0],
         };
         let init = [1.0, 0.0];
         assert!(
-            !map.matches_replay(&init, 512),
-            "非二进制可表示系数必须被识别为不适用（运行时走重放）"
+            !map.replay_within(&init, 512, 0.0),
+            "先确认两者不是逐位相同（否则本用例没有区分力）"
         );
+        assert!(
+            map.replay_within(&init, 512, STATE_ORACLE_TOLERANCE),
+            "容差 oracle 必须通过"
+        );
+    }
+
+    /// `StatePlan`：无 predicate ⇒ `steps(n) = n`；`value_at` 走闭式定义。
+    #[test]
+    fn plan_value_is_the_closed_form() {
+        let init = Expr::call(
+            ze_comb::OpRef::new("zela.math", "vec2"),
+            [pure(1.5), pure(0.0)],
+        );
+        let x = variable(0);
+        let v = variable(1);
+        let step = Expr::call(
+            ze_comb::OpRef::new("zela.math", "vec2"),
+            [
+                add(x.clone(), v.clone()),
+                add(scale(0.97, v), scale(-0.02, x)),
+            ],
+        );
+        let plan = plan_from_expr(&init, &step, None).unwrap();
+        assert_eq!(plan.shape(), StateShape::Vec2);
+        assert_eq!(plan.steps_at(120), 120);
+        let components = plan.map().apply(&[1.5, 0.0], 120);
+        assert_eq!(
+            plan.value_at(120),
+            EvalValue::vec2([components[0] as f32, components[1] as f32])
+        );
+    }
+
+    /// **BY-a5/a6**：predicate 的 `time` 解释为状态索引；自引用显式失败。
+    #[test]
+    fn state_predicate_uses_index_intervals() {
+        let init = pure(0.0);
+        let step = add(prev(), pure(1.0));
+        let predicate = Expr::call(
+            ze_comb::OpRef::new("zela.math", "lt"),
+            [
+                Expr::channel(ze_comb::ChannelRef::builtin("time")),
+                pure(3.0),
+            ],
+        );
+        // `t < 3` ⇒ 索引 1 / 2 推进（索引 0 是 init，不参与转移）；第 n 帧最多 2 步。
+        let plan = plan_from_expr(&init, &step, Some(&predicate)).unwrap();
+        assert_eq!(plan.steps_at(0), 0);
+        assert_eq!(plan.steps_at(2), 2);
+        assert_eq!(plan.steps_at(3), 2);
+        assert_eq!(plan.steps_at(100), 2);
+
+        let self_ref = plan_from_expr(&init, &step, Some(&prev()));
+        assert_eq!(self_ref, Err(AffineError::PredicateRefsState));
     }
 }

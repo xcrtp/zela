@@ -231,7 +231,8 @@ mod tests {
                     active: None,
                     reset: crate::animation::ResetBehavior::Hold,
                     initial: None,
-                    seek_kind: SeekKind::O1,
+                    state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
                 },
                 Binding {
                     clock: c_scale,
@@ -249,7 +250,8 @@ mod tests {
                     active: None,
                     reset: crate::animation::ResetBehavior::Hold,
                     initial: None,
-                    seek_kind: SeekKind::O1,
+                    state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
                 },
             ];
             let orbit = Binding {
@@ -267,7 +269,8 @@ mod tests {
                 active: None,
                 reset: crate::animation::ResetBehavior::Hold,
                 initial: None,
-                seek_kind: SeekKind::O1,
+                state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
             };
 
             let mut table = BindingTable::new();
@@ -426,6 +429,7 @@ mod tests {
             active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         };
         f.sched
@@ -468,6 +472,7 @@ mod tests {
             active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         };
         let mut table = BindingTable::new();

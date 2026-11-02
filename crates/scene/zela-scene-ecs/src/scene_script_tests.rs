@@ -642,10 +642,16 @@ mod tests {
         let recipe = enc.finish().commit(&mut scene).expect("State 不应触发 AI-07 拒绝");
         assert_eq!(recipe.bindings.bindings.len(), 1);
         assert_eq!(recipe.state_analyses.len(), 1);
-        let map = &recipe.state_analyses[0].map;
+        let map = recipe.state_analyses[0].plan.map();
         assert_eq!(map.width(), 1);
         assert_eq!(map.a(), &[vec![1.0]][..]);
         assert_eq!(map.b(), &[0.5][..]);
+        // **BY-a3/a4**：计划进了绑定（生产求值器消费），档位由识别器推导。
+        assert_eq!(recipe.bindings.bindings[0].state_plans.len(), 1);
+        assert_eq!(
+            recipe.bindings.bindings[0].seek_kind,
+            ze_scene_core::animation::SeekKind::OLogN
+        );
     }
 
     /// **BX**：`State.step` 非线性 ⇒ 装配期**显式失败**（不降级 Replay、不静默）。

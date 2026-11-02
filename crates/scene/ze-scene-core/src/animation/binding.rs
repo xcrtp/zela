@@ -32,18 +32,23 @@ pub enum ResetBehavior {
     Skip,
 }
 
-/// seek 语义：当前全为 O1（纯函数、无记忆），弹簧等有记忆演化器需要 Replay 模式。
+/// seek 语义的**代价谱系**（BY-a4）：档位由装配期识别器推导，不是手填。
 ///
-/// **本轮有意保留的方向标记**（§8.1）：`Replay` 从"预留未接线"升级为
-/// "**Scene 不保证纯**"的正式记账——触发条件：接弹簧 / 数值积分 / 外部事件。
-/// 它**不是**死代码，不得顺手删除。
+/// | 档位 | 含义 | 推导条件 |
+/// |---|---|---|
+/// | `O1` | 单帧纯函数，常数代价 | 无状态、无区间门槛 |
+/// | `OPerInterval` | 按 predicate 区间分段，段内常数代价 | 可分析 predicate（`active` 有值） |
+/// | `OLogN` | 帧号驱动的 `State`，矩阵快速幂 `O(k³ log n)` | 含至少一个仿射 `State` 计划 |
+/// | `Replay` | 需要历史重放（离散层 / 历史 payload 的 Hold） | `requires_replay`，AI-07 装配期拒绝 |
 ///
-/// **AI-07**：引擎只实现了 `O1`。在重放路径落地前，带 `Replay` 的绑定在
-/// **装配期**被 [`BindingTable::reject_replay`] 显式拒绝 —— 不允许"seek 到
-/// 中间帧静默拿错值"。放开条件 = 提案阶段 7（混合求值器）真正实现重放。
+/// 优先级：`Replay > OLogN > OPerInterval > O1`（越"贵"越先命中）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeekKind {
     O1,
+    OLogN,
+    OPerInterval,
+    /// **AI-07**：引擎没有重放路径 ⇒ 装配期被 [`BindingTable::reject_replay`] 拒绝。
+    /// 它**不是**死代码，不得顺手删除（提案阶段 7 落地重放后才放开）。
     Replay,
 }
 
@@ -132,6 +137,10 @@ pub struct Binding {
     pub reset: ResetBehavior,
     /// `reset = Reset` 的初值（`commit` 时从场景快照；`None` = 读不到 / 不需要）。
     pub initial: Option<AnimValue>,
+    /// **BY**：该绑定里各 `State` 的闭式计划（下标 = `Step::State.id`）。
+    ///
+    /// 派生量：每次 `commit` 重算，**不进 payload**。运行期由 `SceneMono` 消费。
+    pub state_plans: Vec<crate::animation::affine::StatePlan>,
     pub seek_kind: SeekKind,
 }
 
@@ -167,6 +176,7 @@ impl BindingTable {
             active: None,
             reset: ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         });
     }
@@ -203,9 +213,28 @@ impl BindingTable {
         active: Option<MultiIntervalSet>,
         reset: ResetBehavior,
     ) {
+        self.bind_expr_gated_with_states(clock, program, target, predicate, active, reset, Vec::new());
+    }
+
+    /// **BY**：带 `State` 闭式计划的表达式绑定（计划下标 = `Step::State.id`）。
+    pub fn bind_expr_gated_with_states(
+        &mut self,
+        clock: ClockId,
+        program: impl Into<ExprProgram>,
+        target: Arc<dyn Target>,
+        predicate: Option<CompiledExpr>,
+        active: Option<MultiIntervalSet>,
+        reset: ResetBehavior,
+        state_plans: Vec<crate::animation::affine::StatePlan>,
+    ) {
         let program = program.into();
-        let seek_kind =
-            seek_kind_for(program.requires_replay(), predicate.is_some(), reset, active.is_some());
+        let seek_kind = seek_kind_for(
+            program.requires_replay(),
+            predicate.is_some(),
+            reset,
+            active.is_some(),
+            !state_plans.is_empty(),
+        );
         self.add(Binding {
             clock,
             driver: BindingDriver::Expr(program),
@@ -214,6 +243,7 @@ impl BindingTable {
             active,
             reset,
             initial: None,
+            state_plans,
             seek_kind,
         });
     }
@@ -255,11 +285,16 @@ fn seek_kind_for(
     predicate_present: bool,
     reset: ResetBehavior,
     active_known: bool,
+    has_state_plan: bool,
 ) -> SeekKind {
-    if requires_replay
-        || (predicate_present && reset == ResetBehavior::Hold && !active_known)
-    {
+    if requires_replay || (predicate_present && reset == ResetBehavior::Hold && !active_known) {
         SeekKind::Replay
+    } else if has_state_plan {
+        // 帧号驱动的仿射 State：矩阵快速幂 O(k³ log n)。
+        SeekKind::OLogN
+    } else if active_known {
+        // 可分析 predicate：按区间分段，段内单帧纯函数。
+        SeekKind::OPerInterval
     } else {
         SeekKind::O1
     }
@@ -272,20 +307,20 @@ mod tests {
     #[test]
     fn continuous_expressions_stay_o1() {
         assert_eq!(
-            seek_kind_for(false, false, ResetBehavior::Hold, false),
+            seek_kind_for(false, false, ResetBehavior::Hold, false, false),
             SeekKind::O1
         );
         assert_eq!(
-            seek_kind_for(false, true, ResetBehavior::Hold, true),
-            SeekKind::O1,
-            "可分析的 Hold 是纯函数"
+            seek_kind_for(false, true, ResetBehavior::Hold, true, false),
+            SeekKind::OPerInterval,
+            "可分析 predicate ⇒ 按区间分段"
         );
     }
 
     #[test]
     fn discrete_layer_requires_replay() {
         assert_eq!(
-            seek_kind_for(true, false, ResetBehavior::Hold, false),
+            seek_kind_for(true, false, ResetBehavior::Hold, false, false),
             SeekKind::Replay,
             "含 NatRec 的绑定必须重放"
         );
@@ -294,13 +329,32 @@ mod tests {
     #[test]
     fn unanalyzable_hold_stays_replay() {
         assert_eq!(
-            seek_kind_for(false, true, ResetBehavior::Hold, false),
+            seek_kind_for(false, true, ResetBehavior::Hold, false, false),
             SeekKind::Replay
         );
         assert_eq!(
-            seek_kind_for(false, true, ResetBehavior::Skip, false),
+            seek_kind_for(false, true, ResetBehavior::Skip, false, false),
             SeekKind::O1,
             "非 Hold 的失效行为不需要历史"
+        );
+    }
+
+    /// **BY-a4**：档位由识别结果推导 —— 有计划 ⇒ `OLogN`，且优先于区间档。
+    #[test]
+    fn state_plan_derives_ologn() {
+        assert_eq!(
+            seek_kind_for(false, false, ResetBehavior::Hold, false, true),
+            SeekKind::OLogN
+        );
+        assert_eq!(
+            seek_kind_for(false, true, ResetBehavior::Hold, true, true),
+            SeekKind::OLogN,
+            "State 计划优先于 OPerInterval"
+        );
+        assert_eq!(
+            seek_kind_for(true, false, ResetBehavior::Hold, false, true),
+            SeekKind::Replay,
+            "Replay 仍最优先"
         );
     }
 

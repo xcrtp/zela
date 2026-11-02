@@ -542,7 +542,11 @@ impl<'a> Infer<'a> {
                 })
             }
             // **BX**：`State` 与 `NatRec` 同构，但轮数由宿主帧号给出（不需要 count 类型）。
-            Node::State { init, step } => {
+            Node::State {
+                init,
+                step,
+                predicate,
+            } => {
                 let init_info = self.type_of(init)?;
                 let previous = self.rec.replace(init_info.ty);
                 let step_info = self.type_of(step);
@@ -554,6 +558,16 @@ impl<'a> Infer<'a> {
                         init_info.ty.name(),
                         step_info.ty.name()
                     )));
+                }
+                if let Some(predicate) = predicate {
+                    // predicate 是独立 Bool 表达式（不走 `rec` 作用域）。
+                    let predicate_info = self.type_of(predicate)?;
+                    if predicate_info.ty != ChannelType::Bool {
+                        return Err(TypeError::new(format!(
+                            "`State.predicate` 必须是 Bool，实际 {}",
+                            predicate_info.ty.name()
+                        )));
+                    }
                 }
                 Ok(Inference {
                     ty: init_info.ty,

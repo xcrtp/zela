@@ -121,8 +121,10 @@ impl System for BindingApplySystem {
                 // **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 同源），
                 // 不再用全局 elapsed —— G1（两条路径 t 不同源）由此消失。
                 BindingDriver::Expr(program) => match program
-                    .eval(&SceneMono::with_global(eval_at, t_global, frame, &scene))
-                {
+                    .eval(
+                        &SceneMono::with_global(eval_at, t_global, frame, &scene)
+                            .with_state_plans(&b.state_plans),
+                    ) {
                     Ok(value) => match anim_value(&value) {
                         Some(value) => value,
                         None => {
@@ -275,6 +277,7 @@ mod tests {
             active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         });
 
@@ -546,7 +549,8 @@ mod tests {
                 active: None,
                 reset: crate::animation::ResetBehavior::Hold,
                 initial: None,
-                seek_kind: SeekKind::O1,
+                state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
             });
         };
         bind(
@@ -699,6 +703,7 @@ mod tests {
             active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         });
         let read_expr = Expr::read(
@@ -722,6 +727,7 @@ mod tests {
             active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         });
 

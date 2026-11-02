@@ -84,9 +84,14 @@ impl Expr {
                 init: Box::new(f(init)),
                 step: Box::new(f(step)),
             },
-            Node::State { init, step } => Node::State {
+            Node::State {
+                init,
+                step,
+                predicate,
+            } => Node::State {
                 init: Box::new(f(init)),
                 step: Box::new(f(step)),
+                predicate: predicate.as_ref().map(|predicate| Box::new(f(predicate))),
             },
             Node::Method {
                 method,

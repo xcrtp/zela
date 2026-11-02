@@ -651,6 +651,11 @@ pub struct StateSpec {
     pub init: Handle,
     /// 递推步表达式（用 `rec_prev()` 引用上一步状态）。
     pub step: Handle,
+    /// **BY**：推进 predicate（缺省 `Predicate.Always`）。
+    ///
+    /// `s(n+1) = P(n) ? step(s(n)) : s(n)`；predicate 里的 `time` 变量按
+    /// **状态索引**（整数帧序）解释，装配期分析成区间集。
+    pub predicate: PredicateSpec,
 }
 
 /// 表达式叶子算子集合。

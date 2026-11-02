@@ -28,6 +28,7 @@
 
 use ze_comb::{ChannelRef, EvalError, MethodRef, Mono, OpRef, Value};
 use ze_scene_contract::ObjectId;
+use ze_scene_core::animation::affine::StatePlan;
 use ze_scene_core::animation::target::{method_entry, target_entry};
 use ze_scene_core::scene_write::SceneRead;
 use ze_time::AnimValue;
@@ -47,6 +48,11 @@ pub struct SceneMono<'a> {
     /// 该帧的**全局时间**（`c.time()` 按 `c` 的时钟链反算用）。
     pub global: f64,
     pub frame: u64,
+    /// **BY**：当前绑定的 `State` 闭式计划（下标 = `Step::State.id`）。
+    ///
+    /// 空切片 ⇒ 退回重放（显式降级）。装配期 `commit` 已经拒绝非仿射 State，
+    /// 因此正常路径下这里总有计划。
+    state_plans: &'a [StatePlan],
     scene: &'a dyn SceneRead,
 }
 
@@ -56,6 +62,7 @@ impl<'a> SceneMono<'a> {
             time,
             global: time,
             frame,
+            state_plans: &[],
             scene,
         }
     }
@@ -66,8 +73,15 @@ impl<'a> SceneMono<'a> {
             time: local,
             global,
             frame,
+            state_plans: &[],
             scene,
         }
+    }
+
+    /// **BY**：挂上该绑定的 `State` 闭式计划（求值时由 `Step::State` 消费）。
+    pub fn with_state_plans(mut self, plans: &'a [StatePlan]) -> Self {
+        self.state_plans = plans;
+        self
     }
 
     /// 从 [`TimeState`] 取通道值（每帧构造一次，无状态）。
@@ -76,6 +90,7 @@ impl<'a> SceneMono<'a> {
             time: state.elapsed as f64,
             global: state.elapsed as f64,
             frame: state.frame,
+            state_plans: &[],
             scene,
         }
     }
@@ -131,6 +146,13 @@ impl Mono for SceneMono<'_> {
     /// —— 这是本批的显式口径（局部帧需要 fps，宿主尚未提供）。
     fn frame_index(&self) -> Option<i64> {
         i64::try_from(self.frame).ok()
+    }
+
+    /// **BY**：`State(n) := apply(init, steps(n))` —— 闭式定义（生产路径）。
+    fn affine_state(&self, id: u32) -> Option<Value> {
+        self.state_plans
+            .get(id as usize)
+            .map(|plan| plan.value_at(self.frame as i64))
     }
 
     /// **B2**：方法经 [`ze_scene_core::animation::method_entry`] 查表求值。
@@ -264,7 +286,7 @@ mod tests {
     use super::*;
     use crate::contract::WorldScene;
     use hecs::World;
-    use ze_comb::{CompiledExpr, Expr};
+    use ze_comb::{CompiledExpr, Expr, OpRef};
     use ze_scene_contract::Scene as _;
     use ze_scene_core::Circle;
 
@@ -303,6 +325,26 @@ mod tests {
         assert!(mono
             .read(&ChannelRef::new("zela.scene", "Circle.radius"))
             .is_err());
+    }
+
+    /// **BY-a1/a3**：`Step::State` 在生产路径上**消费**装配期的闭式计划。
+    #[test]
+    fn state_plans_are_consumed_by_the_mono() {
+        use ze_scene_core::animation::affine::plan_from_expr;
+
+        let init = Expr::pure(0.0);
+        let step = Expr::call(
+            OpRef::new("zela.math", "add"),
+            [Expr::rec_prev(), Expr::pure(0.25)],
+        );
+        let plan = plan_from_expr(&init, &step, None).unwrap();
+        let program = CompiledExpr::compile(&Expr::state(init, step)).unwrap();
+        let state = TimeState::at_frame(0.0, 40);
+        let mono = SceneMono::from_time_state(&state, &NoScene)
+            .with_state_plans(std::slice::from_ref(&plan));
+        let value = program.eval(&mono).unwrap();
+        assert_eq!(value, plan.value_at(40));
+        assert_eq!(value, Value::f64(10.0), "40 帧 × 0.25");
     }
 
     /// **B2 跨层一致性**：作者面方法目录（`zela.math`）与求值注册表

@@ -92,6 +92,12 @@ pub enum Node {
     State {
         init: Box<Expr>,
         step: Box<Expr>,
+        /// **BY**：状态推进的时间 predicate（`s(n+1) = P(n) ? step(s(n)) : s(n)`）。
+        ///
+        /// 只允许**时间 / 索引区间**形状（`time` 变量在此解释为**状态索引**），
+        /// 装配期由区间代数分析；不可分析 ⇒ 显式拒绝。缺省 = 每一步都推进。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        predicate: Option<Box<Expr>>,
     },
     /// **集合判空**（B4 Query）：`exists(requires = [...], excludes = [...])`。
     ///
@@ -119,7 +125,17 @@ impl Node {
                 cond, then, r#else,
             } => vec![cond, then, r#else],
             Node::NatRec { count, init, step } => vec![count, init, step],
-            Node::State { init, step } => vec![init, step],
+            Node::State {
+                init,
+                step,
+                predicate,
+            } => {
+                let mut children = vec![init.as_ref(), step.as_ref()];
+                if let Some(predicate) = predicate {
+                    children.push(predicate.as_ref());
+                }
+                children
+            }
             Node::Method { args, .. } => args.iter().collect(),
             Node::Pure { .. }
             | Node::Channel { .. }
@@ -750,6 +766,19 @@ impl Expr {
         Self::new(Node::State {
             init: Box::new(init),
             step: Box::new(step),
+            predicate: None,
+        })
+    }
+
+    /// **BY**：带时间 predicate 的 `State`（`s(n+1) = P(n) ? step(s(n)) : s(n)`）。
+    ///
+    /// predicate 里的 `time` 变量按**状态索引**解释（整数帧序）；不可分析 ⇒ 装配期拒绝。
+    /// predicate **不得**引用 `RecPrev`（那会形成环依赖，结构守卫显式报错）。
+    pub fn state_gated(init: Expr, step: Expr, predicate: Expr) -> Self {
+        Self::new(Node::State {
+            init: Box::new(init),
+            step: Box::new(step),
+            predicate: Some(Box::new(predicate)),
         })
     }
 

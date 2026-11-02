@@ -166,7 +166,16 @@ fn eval_node<'a>(
             }
             state
         }
-        Node::State { init, step } => {
+        Node::State {
+            init,
+            step,
+            predicate,
+        } => {
+            // **BY**：参考求值器没有闭式计划（它是 oracle 本身）⇒ 带 predicate 的
+            // 状态无法在这里复现，显式失败而不是忽略门槛。
+            if predicate.is_some() {
+                return Err(EvalError::StatePredicateNeedsPlan);
+            }
             // **BX**：轮数 = 宿主帧号（与 lowered 求值器同源）。
             let count = match mono.frame_index() {
                 Some(value) if value >= 0 => value,

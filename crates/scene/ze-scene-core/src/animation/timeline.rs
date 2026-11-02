@@ -22,9 +22,7 @@ use ze_comb::{CompiledExpr, Expr, Node};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, ClockProgram, PlayMode};
 
-use crate::animation::affine::{
-    StateAnalysis, StateUnsupported, init_width, recognize as recognize_affine,
-};
+use crate::animation::affine::{StateAnalysis, StateUnsupported};
 use crate::animation::binding::{BindingTable, ExprProgram, LibraryRef, ResetBehavior};
 use crate::animation::target::Target;
 
@@ -283,7 +281,15 @@ impl Timeline {
                         },
                         None => None,
                     };
-                    bindings.bind_expr_gated(id, program, target, predicate, active, *reset);
+                    bindings.bind_expr_gated_with_states(
+                        id,
+                        program,
+                        target,
+                        predicate,
+                        active,
+                        *reset,
+                        crate::animation::affine::plans_for_expr(expr).unwrap_or_default(),
+                    );
                 }
             }
         }
@@ -297,7 +303,16 @@ impl Timeline {
         let mut out = Vec::new();
         for step in &self.steps {
             let Step::Expr { target, expr, .. } = step;
-            collect_states(expr, &target.name, &mut out)?;
+            let plans = crate::animation::affine::plans_for_expr(expr).map_err(|error| {
+                StateUnsupported {
+                    target: target.name.to_string(),
+                    reason: error.to_string(),
+                }
+            })?;
+            out.extend(plans.into_iter().map(|plan| StateAnalysis {
+                target: target.name.to_string(),
+                plan,
+            }));
         }
         Ok(out)
     }
@@ -455,30 +470,6 @@ fn clock_affine(clock: &ClockProgram) -> Option<(f64, f64)> {
         rate *= link.rate;
     }
     (rate > 0.0).then_some((rate, shift))
-}
-
-/// 收集表达式里的 `State` 并逐条识别（显式失败）。
-fn collect_states(
-    expr: &Expr,
-    target: &str,
-    out: &mut Vec<StateAnalysis>,
-) -> Result<(), StateUnsupported> {
-    if let Node::State { init, step } = &expr.node {
-        let fail = |reason: String| StateUnsupported {
-            target: target.to_string(),
-            reason,
-        };
-        let width = init_width(init).map_err(|error| fail(error.to_string()))?;
-        let map = recognize_affine(step, width).map_err(|error| fail(error.to_string()))?;
-        out.push(StateAnalysis {
-            target: target.to_string(),
-            map,
-        });
-    }
-    for child in expr.node.children() {
-        collect_states(child, target, out)?;
-    }
-    Ok(())
 }
 
 /// 递归重写 Expr 树里的 `Node::Read.object`（G 批）。

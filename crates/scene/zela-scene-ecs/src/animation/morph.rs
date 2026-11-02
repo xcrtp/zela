@@ -82,6 +82,7 @@ mod tests {
             active: None,
             reset: crate::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         });
 
