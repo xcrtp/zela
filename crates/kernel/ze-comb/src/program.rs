@@ -1354,6 +1354,98 @@ mod tests {
         assert_eq!(program.eval(&NoFrame), Err(EvalError::FrameContext));
     }
 
+    /// **BX**：二维元组 `State`（弹簧的半隐式欧拉）也与逐次重放逐位相同，
+    /// 且长序列（2000 帧）不改变判据。
+    #[test]
+    fn tuple_state_matches_replay_bit_for_bit() {
+        use crate::Value;
+
+        /// `F32×2` 的最小宿主（与场景侧 `SceneMono` 的算子语义同量级）。
+        struct Vec2Mono {
+            frame: u64,
+        }
+        impl Mono for Vec2Mono {
+            fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
+                Err(EvalError::MissingChannel {
+                    channel: channel.clone(),
+                })
+            }
+            fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
+                let scalar = |index: usize| -> Result<f64, EvalError> {
+                    args.get(index)
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是数")))
+                };
+                let vector = |index: usize| -> Result<[f32; 2], EvalError> {
+                    args.get(index)
+                        .and_then(|value| match value {
+                            Value::Scalar(scalar) => scalar.as_vec2(),
+                            _ => None,
+                        })
+                        .ok_or_else(|| EvalError::op(op, format!("第 {index} 个实参不是 Vec2")))
+                };
+                match op.name.as_str() {
+                    "vec2" => Ok(Value::vec2([scalar(0)? as f32, scalar(1)? as f32])),
+                    "add" => {
+                        if let (Some(a), Some(b)) = (args[0].as_f64(), args[1].as_f64()) {
+                            return Ok(Value::f64(a + b));
+                        }
+                        let a = vector(0)?;
+                        let b = vector(1)?;
+                        Ok(Value::vec2([a[0] + b[0], a[1] + b[1]]))
+                    }
+                    "scale" => {
+                        let k = scalar(0)? as f32;
+                        match args.get(1).and_then(Value::as_f64) {
+                            Some(value) => Ok(Value::f64(f64::from(k) * value)),
+                            None => {
+                                let v = vector(1)?;
+                                Ok(Value::vec2([k * v[0], k * v[1]]))
+                            }
+                        }
+                    }
+                    "x" => Ok(Value::f64(f64::from(vector(0)?[0]))),
+                    "y" => Ok(Value::f64(f64::from(vector(0)?[1]))),
+                    other => Err(EvalError::op(op, format!("未知算子 `{other}`"))),
+                }
+            }
+            fn frame_index(&self) -> Option<i64> {
+                Some(self.frame as i64)
+            }
+        }
+
+        let x = || Expr::call(math("x"), [Expr::rec_prev()]);
+        let v = || Expr::call(math("y"), [Expr::rec_prev()]);
+        let init = Expr::call(math("vec2"), [Expr::pure(1.5), Expr::pure(0.0)]);
+        let step = Expr::call(
+            math("vec2"),
+            [
+                Expr::call(math("add"), [x(), v()]),
+                Expr::call(
+                    math("add"),
+                    [
+                        Expr::call(math("scale"), [Expr::pure(0.98), v()]),
+                        Expr::call(math("scale"), [Expr::pure(-0.02), x()]),
+                    ],
+                ),
+            ],
+        );
+        let state = CompiledExpr::compile(&Expr::state(init.clone(), step.clone())).unwrap();
+        for frame in [0u64, 1, 2, 44, 120, 2000] {
+            let mono = Vec2Mono { frame };
+            let driven = state.eval(&mono).unwrap();
+            let replay = CompiledExpr::compile(&Expr::nat_rec(
+                Expr::pure(Literal::I64(frame as i64)),
+                init.clone(),
+                step.clone(),
+            ))
+            .unwrap()
+            .eval(&mono)
+            .unwrap();
+            assert_eq!(driven, replay, "frame {frame}: 二维 State 与重放必须逐位相同");
+        }
+    }
+
     /// 共享节点：`h1 = sin(t × 1)`，根 = `h1 + 2 × h1`。
     fn shared_tree() -> Expr {
         let h1 = Expr::call(math("sin"), [Expr::call(math("mul"), [
