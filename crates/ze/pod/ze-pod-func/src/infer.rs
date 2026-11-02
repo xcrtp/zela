@@ -844,6 +844,7 @@ mod tests {
             since: 1,
             changed: 1,
             pointwise: true,
+            batched: false,
             targets: &[ze_pod_core::Target::HostOnly],
         };
         let error = unify_overloads(&def, &[ChannelType::Number]).expect_err("必须报歧义");

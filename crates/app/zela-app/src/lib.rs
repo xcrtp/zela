@@ -713,6 +713,7 @@ mod tests {
             active: None,
             reset: zela_scene_ecs::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         };
         // 分镜的 2D 相机绑定（`free_2d_camera` 会托管让位/复位）。
@@ -733,6 +734,7 @@ mod tests {
             active: None,
             reset: zela_scene_ecs::animation::ResetBehavior::Hold,
             initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         };
         let mut bindings = BindingTable::new();
