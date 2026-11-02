@@ -1444,6 +1444,40 @@ mod tests {
             .unwrap();
             assert_eq!(driven, replay, "frame {frame}: 二维 State 与重放必须逐位相同");
         }
+
+        // **压力用例**（计划 §7.4）：高刚度 + 长序列。判据不变（逐位相同），
+        // 且值必须有限（不能靠 NaN 绕过比较）。
+        // 半隐式欧拉的稳定域是 `d + k < 1`（`det = d + k`）⇒ k 取 0.019 已接近上限。
+        let stiff_step = Expr::call(
+            math("vec2"),
+            [
+                Expr::call(math("add"), [x(), v()]),
+                Expr::call(
+                    math("add"),
+                    [
+                        Expr::call(math("scale"), [Expr::pure(0.97), v()]),
+                        Expr::call(math("scale"), [Expr::pure(-0.019), x()]),
+                    ],
+                ),
+            ],
+        );
+        let stiff = CompiledExpr::compile(&Expr::state(init.clone(), stiff_step.clone())).unwrap();
+        let replay = CompiledExpr::compile(&Expr::nat_rec(
+            Expr::pure(Literal::I64(2000)),
+            init.clone(),
+            stiff_step,
+        ))
+        .unwrap();
+        let mono = Vec2Mono { frame: 2000 };
+        let driven = stiff.eval(&mono).unwrap();
+        assert_eq!(driven, replay.eval(&mono).unwrap(), "高刚度长序列必须逐位相同");
+        match &driven {
+            Value::Scalar(scalar) => {
+                let [x, v] = scalar.as_vec2().expect("状态是 Vec2");
+                assert!(x.is_finite() && v.is_finite(), "压力用例不得产生 NaN / inf");
+            }
+            other => panic!("期望 Vec2 状态，实际 {other:?}"),
+        }
     }
 
     /// 共享节点：`h1 = sin(t × 1)`，根 = `h1 + 2 × h1`。

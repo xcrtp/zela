@@ -85,4 +85,4 @@ cap_shader_3d     3D着色材质         cap_shader_3d.lua    cf733daa816a51e2af
 # BV-5 验收作品：3D 视图的 brute-force 光追（脚本组件 `RayTrace`；wgpu 无此 pass ⇒ 只进 [vector]）。
 cap_raytrace     光追视图            cap_raytrace.lua     0b612dcaac67b11210eff2fa3cbb788fcb36f61661c38350c9ac0490390a9852
 # BX 验收作品：单帧 State（二维元组，帧号驱动）+ 装配期仿射识别 + 阻尼弹簧。
-spring_state     阻尼弹簧状态        spring_state.lua     c8ef75b437c5fbaef0fe97bb7a75be16ec70bb37d47dfa2797784dbfcb48832f
+spring_state     阻尼弹簧状态        spring_state.lua     68c2d0add7f25afa37c6665fee708f6d11d1d6bc6322972dcd10b03fdb3e4df3
