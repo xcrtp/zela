@@ -6953,6 +6953,7 @@ dependencies = [
  "ze-pod-lua",
  "ze-pod-py",
  "ze-prerender",
+ "ze-property",
  "ze-render-ir",
  "ze-scene-core",
  "zela-authored",

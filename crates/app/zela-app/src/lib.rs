@@ -593,6 +593,40 @@ mod tests {
         false
     }
 
+    /// **CA-b/d**：弹簧作品的 `State` 系数真的被枚举成可调参数（stiff / damp）。
+    ///
+    /// 这是「参数化组件」的端到端判据：脚本 → 绑定表 → 注册表，不经过 GUI。
+    #[test]
+    fn spring_state_exposes_stiff_and_damp_parameters() {
+        use ze_property::PropertyValue;
+
+        let assembly = crate::assembly::assemble(Arc::new(crate::formula::build_engine()))
+            .expect("脚本 Pod 装配成功");
+        let script = assembly
+            .run_script(include_str!("../scripts/spring_state.lua"))
+            .expect("spring_state.lua 执行成功");
+        let mut scene = Scene::new();
+        let recipe = script.commit(&mut scene).expect("commit");
+
+        let registry = zela_scene_ecs::animation::params::build_registry(&recipe.bindings);
+        let scalar = |suffix: &str| -> Vec<f32> {
+            registry
+                .iter()
+                .filter(|entry| entry.address.ends_with(suffix))
+                .filter_map(|entry| match entry.property.value() {
+                    PropertyValue::Scalar(value) => Some(value),
+                    _ => None,
+                })
+                .collect()
+        };
+        let stiff = scalar(":stiff");
+        let damp = scalar(":damp");
+        assert_eq!(stiff.len(), 3, "三条轨道各一个 stiff：{stiff:?}");
+        assert_eq!(damp.len(), 3, "三条轨道各一个 damp：{damp:?}");
+        assert!(stiff.iter().all(|value| (value - 0.02).abs() < 1e-6));
+        assert!(damp.iter().all(|value| (value - 0.97).abs() < 1e-6));
+    }
+
     /// **B3 Step 5 / 作品 A（非像素断言）**：`surface_matrix.lua` 的每种
     /// 脚本可表达组合都真的录进了内容层（Circle/Arrow 各 Fill+Stroke、Path Stroke）。
     #[test]

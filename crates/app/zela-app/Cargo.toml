@@ -61,6 +61,8 @@ png.workspace = true
 [dev-dependencies]
 # 像素一致性用例直接驱动 egui-wgpu 的回调路径（不是生产依赖）。
 egui-wgpu.workspace = true
+# CA-b/d：断言弹簧作品的 State 系数被枚举成可调参数。
+ze-property = { path = "../../kernel/ze-property" }
 
 [features]
 # typst 默认开：否则看不见真公式，demo 无意义。

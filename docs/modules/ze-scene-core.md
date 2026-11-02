@@ -9,17 +9,18 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/ze-scene-core`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
+- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：43 个 · 11893 行
+- 源文件：44 个 · 12573 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/affine.rs` | 1365 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
+| `src/animation/affine.rs` | 1410 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
 | `src/animation/binding.rs` | 401 | — |
-| `src/animation/mod.rs` | 31 | — |
+| `src/animation/mod.rs` | 33 | — |
+| `src/animation/params.rs` | 633 | params.rs — 参数注册表 side table（CA-b）与参数地址回写（CA-c）。 |
 | `src/animation/predicate.rs` | 893 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
 | `src/animation/target.rs` | 1354 | — |
 | `src/animation/timeline.rs` | 632 | — |
@@ -68,75 +69,80 @@ graph LR
     f0["src/animation/affine.rs"]
     f2["src/animation/binding.rs"]
     f1["src/animation/mod.rs"]
+    f5["src/animation/params.rs"]
     f3["src/animation/predicate.rs"]
     f4["src/animation/target.rs"]
-    f8["src/animation/timeline.rs"]
-    f5["src/bounds.rs"]
-    f9["src/components.rs"]
-    f10["src/components/3d.rs"]
-    f27["src/composer.rs"]
-    f12["src/domain/camera.rs"]
-    f14["src/domain/event.rs"]
-    f13["src/domain/mod.rs"]
-    f15["src/domain/view.rs"]
-    f17["src/domain/view_rect.rs"]
-    f19["src/mesh_primitives.rs"]
-    f18["src/mesh_primitives/cube.rs"]
-    f20["src/mesh_primitives/parametric_surface.rs"]
-    f21["src/object/affine.rs"]
-    f22["src/object/axes.rs"]
-    f6["src/object/camera.rs"]
-    f23["src/object/graph.rs"]
-    f16["src/object/mod.rs"]
-    f24["src/object/placement.rs"]
-    f7["src/object/primitives.rs"]
-    f25["src/persist.rs"]
-    f26["src/registry.rs"]
-    f28["src/scene_script.rs"]
-    f29["src/surface.rs"]
-    f11["src/types.rs"]
-    f31["src/world_inherit.rs"]
-    f30["src/world_transforms.rs"]
+    f10["src/animation/timeline.rs"]
+    f7["src/bounds.rs"]
+    f11["src/components.rs"]
+    f12["src/components/3d.rs"]
+    f28["src/composer.rs"]
+    f14["src/domain/camera.rs"]
+    f15["src/domain/event.rs"]
+    f6["src/domain/mod.rs"]
+    f16["src/domain/view.rs"]
+    f18["src/domain/view_rect.rs"]
+    f20["src/mesh_primitives.rs"]
+    f19["src/mesh_primitives/cube.rs"]
+    f21["src/mesh_primitives/parametric_surface.rs"]
+    f22["src/object/affine.rs"]
+    f23["src/object/axes.rs"]
+    f8["src/object/camera.rs"]
+    f24["src/object/graph.rs"]
+    f17["src/object/mod.rs"]
+    f25["src/object/placement.rs"]
+    f9["src/object/primitives.rs"]
+    f26["src/persist.rs"]
+    f27["src/registry.rs"]
+    f29["src/scene_script.rs"]
+    f30["src/surface.rs"]
+    f13["src/types.rs"]
+    f32["src/world_inherit.rs"]
+    f31["src/world_transforms.rs"]
     f0 --> f1
     f2 --> f1
     f2 --> f3
     f2 --> f4
+    f5 --> f0
+    f5 --> f1
+    f5 --> f4
+    f5 --> f6
     f3 --> f1
     f4 --> f1
-    f4 --> f5
-    f4 --> f6
     f4 --> f7
-    f8 --> f1
-    f8 --> f4
-    f5 --> f9
-    f10 --> f9
-    f10 --> f11
+    f4 --> f8
+    f4 --> f9
+    f10 --> f1
+    f10 --> f4
+    f7 --> f11
+    f12 --> f11
     f12 --> f13
-    f14 --> f13
-    f14 --> f15
-    f15 --> f13
+    f14 --> f6
+    f15 --> f6
     f15 --> f16
-    f15 --> f11
-    f17 --> f13
-    f18 --> f19
-    f20 --> f19
-    f21 --> f16
-    f22 --> f16
-    f6 --> f16
-    f23 --> f16
-    f24 --> f16
-    f7 --> f16
-    f25 --> f16
-    f26 --> f27
-    f26 --> f13
-    f28 --> f0
-    f28 --> f2
-    f28 --> f4
-    f28 --> f8
-    f28 --> f29
-    f29 --> f9
-    f29 --> f16
-    f30 --> f31
+    f16 --> f6
+    f16 --> f17
+    f16 --> f13
+    f18 --> f6
+    f19 --> f20
+    f21 --> f20
+    f22 --> f17
+    f23 --> f17
+    f8 --> f17
+    f24 --> f17
+    f25 --> f17
+    f9 --> f17
+    f26 --> f17
+    f27 --> f28
+    f27 --> f6
+    f29 --> f0
+    f29 --> f2
+    f29 --> f4
+    f29 --> f10
+    f29 --> f30
+    f30 --> f11
+    f30 --> f17
+    f31 --> f32
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -160,6 +166,11 @@ graph LR
 | `src/animation/binding.rs` | `pub struct LibraryRef` |
 | `src/animation/binding.rs` | `pub struct Binding` |
 | `src/animation/binding.rs` | `pub struct BindingTable` |
+| `src/animation/params.rs` | `pub fn widget_id(index: usize) -> WidgetId` |
+| `src/animation/params.rs` | `pub fn widget_index(id: WidgetId) -> Option<usize>` |
+| `src/animation/params.rs` | `pub enum ParamError` |
+| `src/animation/params.rs` | `pub fn build_registry(bindings: &BindingTable) -> ParameterRegistry` |
+| `src/animation/params.rs` | `pub fn apply(bindings: &mut BindingTable, address: &str, value: f32) -> Result<(), ParamError>` |
 | `src/animation/predicate.rs` | `pub struct Bound` |
 | `src/animation/predicate.rs` | `pub struct Interval` |
 | `src/animation/predicate.rs` | `pub struct IntervalSet` |

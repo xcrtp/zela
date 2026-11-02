@@ -9,9 +9,9 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/zela-scene-ecs`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
+- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：26 个 · 9696 行
+- 源文件：26 个 · 9776 行
 
 ### 文件清单
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | `src/animation/camera_drive.rs` | 532 | — |
 | `src/animation/event_log.rs` | 41 | **BZ-c**：事件 predicate 的稀疏推进日志（`SeekKind::EventReplay` / L2）。 |
-| `src/animation/mod.rs` | 30 | — |
+| `src/animation/mod.rs` | 32 | — |
 | `src/animation/morph.rs` | 116 | — |
 | `src/animation/path_follow.rs` | 131 | — |
 | `src/animation/system.rs` | 887 | — |
@@ -35,7 +35,7 @@
 | `src/expr_mono.rs` | 672 | 表达式求值的**宿主单子 `M`**（S3）。 |
 | `src/fingerprint.rs` | 374 | — |
 | `src/geometry.rs` | 258 | — |
-| `src/input.rs` | 300 | — |
+| `src/input.rs` | 378 | — |
 | `src/lib.rs` | 102 | — |
 | `src/lifetime.rs` | 403 | — |
 | `src/register.rs` | 75 | — |

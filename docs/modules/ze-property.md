@@ -10,7 +10,7 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-property`
 - 生产依赖（上游，dev-deps 不计）：（无）
-- 被依赖（下游）：`ze-node-schema`
+- 被依赖（下游）：`ze-node-schema`、`ze-scene-core`、`zela-egui`、`zela-scene-ecs`
 - 源文件：5 个 · 1112 行
 
 ### 文件清单

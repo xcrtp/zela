@@ -1996,11 +1996,29 @@
 
 ---
 
+## CA. Property 下沉与参数化组件（2026-11-03）
+
+> 计划《CA 批次执行计划：Property 下沉与参数化组件》。把属性模型从节点栈下沉为
+> kernel 级概念，并立刻用它兑现「自动发现的参数面板」。本批**不**前置节点栈
+> 依赖倒置（T1–T4），也不动 `SceneEvent` 的序列化契约。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CA-01 | `Property` 长在节点栈里 ⇒ 参数面板必须依赖节点栈（R-08 死锁） | 内核 / UI | **已关闭** | 新建 `crates/kernel/ze-property`（`property.rs` 608 + `dynamic.rs` 224 + `error.rs` 31 行整体搬家）；`ze-node-schema` 改为依赖并 re-export（`ze_node_schema::Property` / `::property::*` / `::dynamic::*` 路径不失效）。`FunctionHandle.node` 语义中立化为宿主引用槽位。新 crate 零 `glam`，`crates/kernel/ze-property/src` 已加入 `NO_HASHMAP_PATHS`；`cargo verify --step structure` 通过。 |
+| CA-02 | 没有地方能回答"有哪些可调参数"（`field_registry` 无引用） | 场景 / 内核 | **已关闭** | `ze_property::ParameterRegistry`（`BTreeMap` ⇒ 升序）+ `ze_scene_core::animation::params::build_registry`：曲线字段（`Sin`/`Phase`/`Orbit`）与 `State` 仿射系数在**装配期**枚举成 side table，`assemble_runtime` 插入资源、不进 payload。半隐式欧拉形态（`A[0] == [1,1]`）登记为 `stiff` / `damp`，其余按 `a[row][col]`。用例 `state_coefficients_are_enumerable_and_named` / `iteration_is_ascending_by_address` / `dangling_target_yields_no_parameters`。 |
+| CA-03 | 参数回写靠集中手写的 13 个 `WidgetId` 与 `(WidgetId, 曲线类型)` 二元组 | UI / 场景 | **已关闭** | `params::widget_id(index)` 按地址升序稳定分配 `WidgetId(100 + index)`；`ParamPanelSystem` 把 id → 地址 → `params::apply`，生效值同步回注册表。既有 13 个手写 id 的分支原样保留（渐进式：`SceneEvent` 序列化契约不变）。用例 `registry_widget_id_routes_slider_to_its_address`。 |
+| CA-04 | 参数面板是硬编码 switch；`State` 系数在 UI 上完全不可调 | UI | **已关闭** | `draw_param_panel` 只遍历注册表的 `Property::Scalar` 生成滑块（含 `stiff` / `damp`），删除按曲线类型的 `match` 与 `target_label` 映射；新增参数不再改 `host.rs` / `input.rs`。R6 兑现：`StatePlan::set_linear` 复用 BZ-a 谱半径门禁，`\|λ\|max ≥ 1` ⇒ `AffineError::Unstable` 显式拒绝且注册表保持旧值（用例 `state_write_back_persists_and_rejects_unstable`）。 |
+| CA-05 | 参数面板本身没有像素基线 | 作品 / 门禁 | **记账** | `--step hashes` 覆盖的是 headless 渲染画面（不含 egui 面板），本批只保证脚本画面的 hashes 不变；面板控件是否出现由注册表用例与 GUI 手测覆盖。触发条件：出现 GUI 截图基线机制时把面板纳入。 |
+
+**CA 段小计**：已关闭 4（CA-01 / CA-02 / CA-03 / CA-04）· 部分关闭 0 · 记账 1（CA-05）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BZ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BZ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CA**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CA 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
