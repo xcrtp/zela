@@ -4,10 +4,13 @@
 // 本模块与 `EguiSceneHost` 的关系：host 负责场景 ↔ egui 的适配，本模块负责帧序
 // （构建视图 → 收集输入 → 提交命令 → 呈现 → 可观测性 → 帧末清理）。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use zela_scene_ecs::domain::SceneView;
+use zela_scene_bundle::{Pairing, Recorder};
+use zela_scene_ecs::director_state::DirectorState;
+use zela_scene_ecs::domain::{InputEvents, SceneView};
 use zela_scene_ecs::{DriverCommand, DriverPod};
 
 use crate::health::HealthOverlay;
@@ -51,6 +54,10 @@ pub struct SceneFrame {
     /// 墙钟时间基准：每帧用 `Instant::now() - last_frame` 算 dt，
     /// 不依赖渲染帧间隔（帧率波动、卡顿都不影响 Director 时间流速）。
     last_frame: Instant,
+    /// **BZ-b**：输入流录制（默认 `disabled()` ⇒ 每帧纯 no-op）。
+    recorder: Recorder,
+    /// 录制输出路径；`Some` 且录制开启 ⇒ `Drop` 时写盘（窗口关闭 / 换作品）。
+    record_path: Option<PathBuf>,
 }
 
 impl SceneFrame {
@@ -59,7 +66,18 @@ impl SceneFrame {
             driver,
             health: HealthOverlay::new(),
             last_frame: Instant::now(),
+            recorder: Recorder::disabled(),
+            record_path: None,
         }
+    }
+
+    /// **BZ-b**：开启输入流录制（GUI 会话 / 导出）。
+    ///
+    /// `pairing` 指向本作品对应的 ZSB；写盘发生在 [`Drop`]。
+    pub fn with_input_recording(mut self, pairing: Pairing, path: impl Into<PathBuf>) -> Self {
+        self.recorder = Recorder::recording(pairing);
+        self.record_path = Some(path.into());
+        self
     }
 
     /// 帧首：构建视图 → 写输入 / 视口 → **推进一帧**。
@@ -88,6 +106,26 @@ impl SceneFrame {
                 .map(|v| v.rect)
                 .unwrap_or_default()
         });
+
+        // **BZ-b**：录制本帧实际喂给场景的事件（推进前 ⇒ 帧号 = 当前
+        // `Director.frame`，与输入流重放的"推进前装填"口径一致）。
+        // 关闭录制时连资源读取都跳过 ⇒ 零开销。
+        if self.recorder.is_enabled() {
+            let (frame, events) = driver.with_scheduler(|scheduler| {
+                let frame = scheduler
+                    .resources()
+                    .get::<DirectorState>()
+                    .map(|state| state.director.frame)
+                    .unwrap_or(0);
+                let events = scheduler
+                    .resources()
+                    .get::<InputEvents>()
+                    .cloned()
+                    .unwrap_or_default();
+                (frame, events)
+            });
+            self.recorder.capture(frame as u32, &events);
+        }
 
         // 3. **命令推进**：GUI 与 headless 共用同一条 `Advance(dt)` 命令。
         let _receipt = driver.submit(DriverCommand::Advance { dt });
@@ -161,5 +199,31 @@ impl SceneFrame {
         let begin = self.begin(ui);
         self.present_wgpu(ui, &begin);
         self.finish(ui, &begin, progress);
+    }
+}
+
+/// **BZ-b**：窗口关闭 / 换作品时把录到的输入流落盘。
+///
+/// 没开录制 ⇒ `record_path` 为 `None`，什么都不做（不是"写一个空流"）。
+impl Drop for SceneFrame {
+    fn drop(&mut self) {
+        let Some(path) = self.record_path.take() else {
+            return;
+        };
+        let recorder = std::mem::take(&mut self.recorder);
+        let Some(stream) = recorder.finish() else {
+            return;
+        };
+        match stream.to_json() {
+            Ok(text) => match std::fs::write(&path, text) {
+                Ok(()) => eprintln!(
+                    "[record] 输入流已写入 {}（{} 个帧有事件）",
+                    path.display(),
+                    stream.frames.len()
+                ),
+                Err(error) => eprintln!("[record] 写入 {} 失败：{error}", path.display()),
+            },
+            Err(error) => eprintln!("[record] 输入流序列化失败：{error}"),
+        }
     }
 }

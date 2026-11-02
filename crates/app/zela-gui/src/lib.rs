@@ -262,7 +262,7 @@ impl App {
 
         let progress = Arc::new(FrameProgress::new());
         attach_progress(&runtime, Arc::clone(&progress))?;
-        let frame = SceneFrame::new(Arc::clone(&runtime.driver));
+        let frame = recording_frame(SceneFrame::new(Arc::clone(&runtime.driver)), &runtime);
         Ok(Self {
             runtime,
             progress,
@@ -315,7 +315,8 @@ impl App {
                 } else {
                     self.error = None;
                 }
-                self.frame = SceneFrame::new(Arc::clone(&runtime.driver));
+                self.frame =
+                    recording_frame(SceneFrame::new(Arc::clone(&runtime.driver)), &runtime);
                 self.progress = progress;
                 self.runtime = runtime;
                 // 作品级决策 / 纹理都随运行时一起失效。
@@ -808,6 +809,27 @@ fn install_camera_control(runtime: &Runtime) {
         camera_label(control.camera),
         control.free_2d
     );
+}
+
+/// **BZ-b**：`ZELA_RECORD_INPUT=<path>` 时给帧体接上输入流录制。
+///
+/// 默认不开（`Recorder::disabled()` ⇒ 每帧纯 no-op）；没有 ZSB 配对信息的
+/// 作品（内置能力 demo）显式跳过，不静默写出一份无法回放的流。
+fn recording_frame(frame: SceneFrame, runtime: &Runtime) -> SceneFrame {
+    let Some(path) = std::env::var_os("ZELA_RECORD_INPUT") else {
+        return frame;
+    };
+    let path = std::path::PathBuf::from(path);
+    match &runtime.pairing {
+        Some(pairing) => {
+            eprintln!("[record] 输入流录制开启 → {}", path.display());
+            frame.with_input_recording(pairing.clone(), path)
+        }
+        None => {
+            eprintln!("[record] 当前作品没有 ZSB 配对信息（内置能力 demo），跳过录制");
+            frame
+        }
+    }
 }
 
 fn attach_progress(runtime: &Runtime, progress: Arc<FrameProgress>) -> Result<()> {

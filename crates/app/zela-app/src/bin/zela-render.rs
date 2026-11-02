@@ -1,8 +1,8 @@
 //! `zela-render`：headless 薄壳 —— 脚本直接渲到视频。
 //!
 //! ```text
-//! zela-render <脚本路径> [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash]
-//! zela-render --bundle <file.zsb> [--input-stream FILE] [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash]
+//! zela-render <脚本路径> [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash] [--record-input FILE]
+//! zela-render --bundle <file.zsb> [--input-stream FILE] [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash] [--record-input FILE]
 //! ```
 //!
 //! - 默认 **ffmpeg 管道**（rawvideo → libx264）；ffmpeg 不在 PATH ⇒ **明确报错**并提示 `--frames`；
@@ -34,6 +34,7 @@ use zela_app::{
 use zela_render_backends::{HeadlessTarget, RenderContext, StandardBackends};
 use zela_scene_bundle::Bundle;
 use zela_scene_bundle::frame_hash::FrameSequenceHash;
+use zela_scene_ecs::domain::InputEvents;
 
 #[derive(Debug)]
 struct Args {
@@ -41,6 +42,8 @@ struct Args {
     bundle: Option<PathBuf>,
     /// 输入流（独立产物；只与 `--bundle` 搭配，配对校验需要 ZSB payload hash）。
     input_stream: Option<PathBuf>,
+    /// **BZ-b**：把逐帧实际应用的 `InputEvents` 录成输入流（headless 侧的生产接线）。
+    record_input: Option<PathBuf>,
     frames_dir: Option<PathBuf>,
     hash_out: Option<PathBuf>,
     /// B8 Step 2：是否挂 `HashSink`（主流程默认**不挂**）。
@@ -71,6 +74,7 @@ impl Args {
         let mut script: Option<PathBuf> = None;
         let mut bundle: Option<PathBuf> = None;
         let mut input_stream: Option<PathBuf> = None;
+        let mut record_input: Option<PathBuf> = None;
         let mut frames_dir = None;
         let mut hash_out = None;
         let mut hash = false;
@@ -132,6 +136,13 @@ impl Args {
                         raw.get(i).ok_or("--input-stream 需要一个文件参数")?,
                     ));
                 }
+                // BZ-b：headless 侧录制（把每帧实际应用的 InputEvents 写成输入流）。
+                "--record-input" => {
+                    i += 1;
+                    record_input = Some(PathBuf::from(
+                        raw.get(i).ok_or("--record-input 需要一个文件参数")?,
+                    ));
+                }
                 "--out" => {
                     i += 1;
                     out = PathBuf::from(raw.get(i).ok_or("--out 需要一个文件参数")?);
@@ -189,6 +200,7 @@ impl Args {
             script,
             bundle,
             input_stream,
+            record_input,
             frames_dir,
             hash_out,
             hash,
@@ -300,6 +312,19 @@ fn run() -> Result<(), String> {
         unreachable!("Args::parse 已保证二者恰有一个")
     };
 
+    // **BZ-b**：headless 侧录制。`Recorder::disabled()` 是零 no-op；开启时把每帧
+    // **实际应用**的 `InputEvents` 写进流（不是"从输入流抄一遍"：事件源可以是任何
+    // 上游，录下来的是驱动本帧的那一份）。
+    let mut recorder: Option<(zela_scene_bundle::Recorder, PathBuf)> = match &args.record_input {
+        Some(path) => {
+            let pairing = runtime.pairing.clone().ok_or_else(|| {
+                "--record-input 需要可配对的 ZSB（当前装配路径没有 payload 身份）".to_string()
+            })?;
+            Some((zela_scene_bundle::Recorder::recording(pairing), path.clone()))
+        }
+        None => None,
+    };
+
     let (width, height) = args.size;
     let frames = frames_for(&runtime, args.fps);
     eprintln!(
@@ -379,6 +404,17 @@ fn run() -> Result<(), String> {
         },
         need_rgba,
         &mut |index, frame| {
+            // **BZ-b**：先录本帧已应用的事件，再装填下一帧（否则会录到下一帧）。
+            if let Some((recorder, _)) = &mut recorder {
+                let events = input_driver.with_scheduler(|scheduler| {
+                    scheduler
+                        .resources()
+                        .get::<InputEvents>()
+                        .cloned()
+                        .unwrap_or_default()
+                });
+                recorder.capture(index, &events);
+            }
             // D 批：本帧已渲染 ⇒ 装填下一帧的事件（帧索引，不按时间）。
             if let Some(stream) = &input_stream {
                 zela_playback::apply_input_frame(&input_driver, stream.events_at(index + 1));
@@ -395,6 +431,22 @@ fn run() -> Result<(), String> {
             Ok(sinks.iter().map(|sink| sink.last_hash_time()).sum())
         },
     )?;
+
+    // **BZ-b**：录制收尾 —— `finish()` 返回 `Option<InputStream>`（没开录制是 `None`）。
+    if let Some((recorder, path)) = recorder {
+        if let Some(stream) = recorder.finish() {
+            let text = stream
+                .to_json()
+                .map_err(|error| format!("输入流序列化失败：{error}"))?;
+            std::fs::write(&path, text)
+                .map_err(|error| format!("写入输入流 {} 失败：{error}", path.display()))?;
+            eprintln!(
+                "[record] 输入流已写入 {}（{} 个帧有事件）",
+                path.display(),
+                stream.frames.len()
+            );
+        }
+    }
 
     // B12 Step 2：决策落盘（与 B13 对拍同一份字段；拒绝理由非空由 `run_frames` 校验）。
     for decision in &run.decisions {

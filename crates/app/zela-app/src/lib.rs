@@ -383,7 +383,7 @@ fn build_runtime(
     // ── 2D 场景：脚本 / 能力 demo（启动参数切换，见 `SceneChoice`）──────────
     // 两条来源产出**同形的三样东西**：时钟树 + 绑定表 + 主 2D 相机句柄；
     // demo 额外产出一个"待插入的组级开关"（N2 的组控制）。
-    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint) =
+    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint, pairing) =
         build_scene_source(&mut scene, &engine, &source)?;
 
     // S3-3 内容纹理：由场景中的 `Surface(Renderer2D)` 生成（唯一装配入口）。
@@ -402,6 +402,7 @@ fn build_runtime(
         record_hint,
         camera3d: demo3d.as_ref().map(|demo| demo.camera3d),
         content_textures,
+        pairing,
     };
     let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
     install_native_clock(&runtime);
@@ -422,6 +423,8 @@ fn build_scene_source(
     Option<Camera2DHandle>,
     GroupVisibility,
     Option<f64>,
+    // **BZ-b**：录制输入流所需的 ZSB 配对信息（脚本路径可推导；纯内置 demo 为 `None`）。
+    Option<zela_scene_bundle::Pairing>,
 )> {
     // ── 任意脚本（headless）──
     if let SceneSource::Script { source, language } = source {
@@ -442,6 +445,14 @@ fn build_scene_source(
         // 只作为默认录制长度的提示（`None` = 不可推导 ⇒ 交给时钟树兜底）；
         // `ExportSpec.frames` 才是录制长度的唯一依据（AH-05：不再用 0 冒充）。
         let record_hint = script.still_time();
+        // **BZ-b**：输入流录制要绑定到这份脚本对应的 ZSB（payload hash 只覆盖
+        // payload，因此这里编码出的 hash 与 `zela-compile` 产物一致）。
+        let pairing = zela_scene_bundle::Bundle::encode(
+            &script,
+            zela_scene_bundle::MetaInput::default(),
+        )
+        .ok()
+        .and_then(|bundle| zela_scene_bundle::Pairing::for_bundle(&bundle).ok());
         let recipe = script
             .commit(scene)
             .map_err(|e| Error::InitializationError(format!("脚本 commit 失败：{e}")))?;
@@ -453,6 +464,7 @@ fn build_scene_source(
             camera,
             GroupVisibility::default(),
             record_hint,
+            pairing,
         ));
     }
 
@@ -481,7 +493,14 @@ fn build_scene_source(
             // 默认**不隐藏任何组**（全可见）⇒ 看得见 `cos` 淡出（N4）。
             eprintln!("[zela-app] 场景 = 能力 demo（N 线：Name / Group / Visibility / Opacity）");
             let d = zela_authored::capability_demo::build(scene);
-            Ok((d.forest, d.bindings, Some(d.camera), d.group_visibility, None))
+            Ok((
+                d.forest,
+                d.bindings,
+                Some(d.camera),
+                d.group_visibility,
+                None,
+                None,
+            ))
         }
         SceneChoice::PythonStoryboard => {
             #[cfg(not(feature = "python"))]
@@ -643,7 +662,7 @@ mod tests {
 
         let engine = Arc::new(placeholder_engine());
         let mut scene_default = Scene::new();
-        let (_forest_a, bindings_a, camera_a, _, duration_a) = build_scene_source(
+        let (_forest_a, bindings_a, camera_a, _, duration_a, _) = build_scene_source(
             &mut scene_default,
             &engine,
             &SceneSource::Choice(SceneChoice::Storyboard),
@@ -651,7 +670,7 @@ mod tests {
         .expect("默认场景装配成功");
 
         let mut scene_script = Scene::new();
-        let (_forest_b, bindings_b, camera_b, _, duration_b) = build_scene_source(
+        let (_forest_b, bindings_b, camera_b, _, duration_b, _) = build_scene_source(
             &mut scene_script,
             &engine,
             &SceneSource::Choice(SceneChoice::ScriptStoryboard),

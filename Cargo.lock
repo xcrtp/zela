@@ -7020,6 +7020,7 @@ dependencies = [
  "ze-scene-core",
  "zela-render",
  "zela-render-backends",
+ "zela-scene-bundle",
  "zela-scene-ecs",
  "zela-schedule",
 ]

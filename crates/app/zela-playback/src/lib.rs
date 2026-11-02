@@ -56,7 +56,7 @@ use zela_scene_ecs::{
     DynamicObjects, LifetimeEvents, LifetimeTracker, SeekKind, TimeState,
 };
 use zela_scene_bundle::{
-    Available, Bundle, BundleError, Capability, Pod, RestoreError,
+    Available, Bundle, BundleError, Capability, Pairing, Pod, RestoreError,
 };
 use zela_schedule::resource::Resources;
 use zela_schedule::scheduler::Scheduler;
@@ -86,6 +86,10 @@ pub struct Runtime {
     pub render_ctx: RenderContext,
     /// 默认录制时长（秒）：静止时刻提示；不可推导时由时钟树兜底。
     pub duration: f64,
+    /// **BZ-b**：输入流录制所需的配对信息（ZSB payload hash + 函子库身份）。
+    ///
+    /// `None` = 该装配路径没有可配对的 ZSB（例如纯内置能力 demo）⇒ 不录制。
+    pub pairing: Option<Pairing>,
 }
 
 /// [`assemble_runtime`] 的输入：**场景已经建好**，只差资源 / 系统图 / Driver。
@@ -104,6 +108,8 @@ pub struct SceneAssembly {
     pub camera3d: Option<Camera3DHandle>,
     /// 可选内容纹理规格（GUI demo 用；B3 Step 4c-2 起为多实例容器）。
     pub content_textures: Option<ContentTextureSpecs>,
+    /// **BZ-b**：录制输入流所需配对信息（见 [`Runtime::pairing`]）。
+    pub pairing: Option<Pairing>,
 }
 
 /// **回放端能解释什么**：payload 是已烘焙的纯数据 ⇒ 只需要 scene 能力与 scene Pod。
@@ -168,6 +174,7 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
             record_hint,
             camera3d: None,
             content_textures,
+            pairing: Pairing::for_bundle(bundle).ok(),
         },
     ))
 }
@@ -205,6 +212,7 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         record_hint,
         camera3d,
         content_textures,
+        pairing,
     } = assembly;
 
     // 2D 相机取景绑定（`center` + `scale`）交给 `CameraDriveSystem` 托管。
@@ -291,6 +299,7 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         driver: Arc::new(DriverPod::new(scheduler)),
         render_ctx,
         duration,
+        pairing,
     }
 }
 
