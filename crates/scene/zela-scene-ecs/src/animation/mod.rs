@@ -7,6 +7,7 @@
 // `zela_scene_ecs::animation::{Binding, Target, …}` 全部转发自核心层。
 
 pub mod camera_drive;
+pub mod event_log;
 pub mod morph;
 pub mod path_follow;
 pub mod system;
@@ -15,6 +16,7 @@ pub mod system;
 mod target_tests;
 
 pub use camera_drive::CameraDriveSystem;
+pub use event_log::StateEventLog;
 pub use morph::MorphApplySystem;
 pub use path_follow::PathFollowApplySystem;
 pub use system::BindingApplySystem;

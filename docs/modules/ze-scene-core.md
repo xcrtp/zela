@@ -11,14 +11,14 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：43 个 · 11637 行
+- 源文件：43 个 · 11893 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/affine.rs` | 1147 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
-| `src/animation/binding.rs` | 381 | — |
+| `src/animation/affine.rs` | 1365 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
+| `src/animation/binding.rs` | 401 | — |
 | `src/animation/mod.rs` | 31 | — |
 | `src/animation/predicate.rs` | 893 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
 | `src/animation/target.rs` | 1354 | — |
@@ -52,7 +52,7 @@
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
 | `src/registry.rs` | 219 | — |
-| `src/scene_script.rs` | 1033 | — |
+| `src/scene_script.rs` | 1051 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |

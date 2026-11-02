@@ -91,6 +91,8 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_raytrace", "光追视图", "cap_raytrace.lua"),
     // BX 批（顺序与 manifest 末尾一致）
     lua!("spring_state", "阻尼弹簧状态", "spring_state.lua"),
+    // BZ 批：多实例阵列（同一组 (A, b)，各自初值）。
+    lua!("spring_array", "弹簧阵列", "spring_array.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。

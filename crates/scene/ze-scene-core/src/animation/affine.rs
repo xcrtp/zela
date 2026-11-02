@@ -23,9 +23,21 @@
 //!
 //! 本定义**只适用于 `State` 的闭式求值**；项目其余部分继续严守逐位相同。
 
+use std::collections::BTreeSet;
+
 use ze_comb::{Expr, Literal, Node, Value as EvalValue};
 
 use crate::animation::predicate::{IntervalSet, TIME_VARIABLE, analyze as analyze_predicate};
+
+/// **BZ-c**：事件通道的依赖键（脚本写作 `expr.channel { name = "event" }`）。
+///
+/// 语义：本帧 `InputEvents` 非空 ⇒ `true`（纯布尔存在性；具体事件用其它通道）。
+pub const EVENT_CHANNEL: &str = "event";
+
+/// 一条 `State` 依赖的通道集合（`namespace::name`；`BTreeSet` ⇒ 升序）。
+///
+/// **派生量**：装配期算出的 side table，不进 payload（纪律④）。
+pub type StateDependencies = BTreeSet<String>;
 
 /// 识别器支持的最大状态宽度（与 `SCALAR_MAX_DIM` 同口径）。
 pub const AFFINE_MAX_WIDTH: usize = 4;
@@ -72,6 +84,27 @@ impl AffineMap {
     /// 改成并行 / 树形归约（那会改变舍入）。
     pub fn apply(&self, init: &[f64], n: u64) -> Vec<f64> {
         assert_eq!(init.len(), self.width(), "init 宽度必须与仿射图一致");
+        let powered = self.powered_matrix(n);
+        self.apply_powered(&powered, init)
+    }
+
+    /// **BZ-d 多实例**：N 个实例共享同一组 `(A, b)`、只差 `init`。
+    ///
+    /// **一次**矩阵快速幂 + N 次"矩阵 × 向量"（不是 N 次快速幂）。
+    /// 每个结果与 [`apply`](Self::apply) **逐位相同**（同一个 `M^n`、同一求和顺序）。
+    pub fn apply_many(&self, inits: &[Vec<f64>], n: u64) -> Vec<Vec<f64>> {
+        let powered = self.powered_matrix(n);
+        inits
+            .iter()
+            .map(|init| {
+                assert_eq!(init.len(), self.width(), "init 宽度必须与仿射图一致");
+                self.apply_powered(&powered, init)
+            })
+            .collect()
+    }
+
+    /// 增广矩阵的 `n` 次幂 `[[A, b], [0, 1]]^n`（幂表：可跨实例复用）。
+    fn powered_matrix(&self, n: u64) -> Vec<Vec<f64>> {
         // 增广 (k+1)×(k+1)：[[A, b], [0, 1]]
         let k = self.width();
         let mut base = vec![vec![0.0; k + 1]; k + 1];
@@ -92,10 +125,14 @@ impl AffineMap {
                 base = mat_mul(&base, &base);
             }
         }
+        acc
+    }
+
+    /// 用已算好的幂表把 `init` 推进一步（`O(k²)`）。
+    fn apply_powered(&self, powered: &[Vec<f64>], init: &[f64]) -> Vec<f64> {
+        let k = self.width();
         (0..k)
-            .map(|i| {
-                (0..k).map(|j| acc[i][j] * init[j]).sum::<f64>() + acc[i][k]
-            })
+            .map(|i| (0..k).map(|j| powered[i][j] * init[j]).sum::<f64>() + powered[i][k])
             .collect()
     }
 
@@ -419,6 +456,12 @@ pub struct StatePlan {
     shape: StateShape,
     /// 生效**状态索引**的集合（`time` 变量在此解释为索引；`None` = 每步都生效）。
     active: Option<IntervalSet>,
+    /// **BZ-c**：依赖的通道集合（升序；派生量，不进产物）。
+    dependencies: StateDependencies,
+    /// **BZ-c**：predicate 依赖 `event` 通道 ⇒ 按事件帧稀疏重放（L2）。
+    event_gated: bool,
+    /// 事件 predicate 的编译程序（运行期逐帧求值，判定该事件帧是否推进）。
+    event_predicate: Option<ze_comb::CompiledExpr>,
 }
 
 impl StatePlan {
@@ -438,7 +481,11 @@ impl StatePlan {
     }
 
     /// 到第 `frame` 帧为止**实际推进的步数**（predicate 生效的索引数）。
+    ///
+    /// ⚠️ 只适用于时间 / 索引 predicate；事件 predicate 的步数由
+    /// [`value_at_event`](Self::value_at_event) 从事件日志给出。
     pub fn steps_at(&self, frame: i64) -> u64 {
+        debug_assert!(!self.event_gated, "事件 predicate 的步数必须由事件日志给出");
         let frame = frame.max(0) as u64;
         match &self.active {
             Some(set) => set.count_integers(1, frame as i64).max(0) as u64,
@@ -448,13 +495,41 @@ impl StatePlan {
 
     /// **定义**：第 `frame` 帧的状态值。
     pub fn value_at(&self, frame: i64) -> EvalValue {
+        debug_assert!(!self.event_gated, "事件 predicate 必须走 value_at_event");
         let steps = self.steps_at(frame);
         self.shape.value(&self.map.apply(&self.init, steps))
     }
 
-    /// predicate 生效的索引集（`None` = 每步生效）。
+    /// **BZ-c 定义**：事件 predicate 的状态值。
+    ///
+    /// `matched` 是**升序**的帧号列表：`P(n)` 为真的索引（`n ≥ 1`，索引 0 是 init）。
+    /// `State(frame) = f^{# { n ∈ matched : n ≤ frame } }(init)` ——
+    /// 只随事件帧推进，帧间是 identity（与 `Hold` 同构）。
+    pub fn value_at_event(&self, frame: i64, matched: &[i64]) -> EvalValue {
+        debug_assert!(self.event_gated, "非事件 predicate 不得使用事件日志");
+        let frame = frame.max(0);
+        let steps = matched.partition_point(|&index| index <= frame) as u64;
+        self.shape.value(&self.map.apply(&self.init, steps))
+    }
+
+    /// predicate 生效的索引集（`None` = 每步生效 / 事件 predicate）。
     pub fn active(&self) -> Option<&IntervalSet> {
         self.active.as_ref()
+    }
+
+    /// **BZ-c**：依赖的通道集合（升序）。
+    pub fn dependencies(&self) -> &StateDependencies {
+        &self.dependencies
+    }
+
+    /// **BZ-c**：是否由事件 predicate 驱动（L2：按事件帧稀疏重放）。
+    pub fn event_gated(&self) -> bool {
+        self.event_gated
+    }
+
+    /// 事件 predicate 的编译程序（`None` = 非事件 predicate）。
+    pub fn event_predicate(&self) -> Option<&ze_comb::CompiledExpr> {
+        self.event_predicate.as_ref()
     }
 }
 
@@ -474,16 +549,85 @@ pub fn plan_from_expr(
     if !radius.is_finite() || radius >= 1.0 {
         return Err(AffineError::Unstable { radius });
     }
-    let active = match predicate {
-        Some(predicate) => active_intervals(predicate)?,
-        None => None,
+    // **BZ-c**：依赖边 + 事件 predicate 分区（同一个遍历，一次做掉）。
+    let dependencies = dependencies_of(init, step, predicate);
+    let event_gated = predicate.is_some() && dependencies.contains(EVENT_CHANNEL);
+    let (active, event_predicate) = match predicate {
+        Some(predicate) => {
+            // 硬边界 1：predicate 不得引用状态自身的值（含事件 predicate）。
+            if references_state(predicate) {
+                return Err(AffineError::PredicateRefsState);
+            }
+            if event_gated {
+                let unexpected: Vec<&str> = dependencies
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|key| *key != EVENT_CHANNEL && *key != TIME_VARIABLE)
+                    .collect();
+                if !unexpected.is_empty() {
+                    return Err(AffineError::UnsupportedPredicate(format!(
+                        "事件 predicate 只能依赖 `{EVENT_CHANNEL}` / `{TIME_VARIABLE}`，\
+                         实际还依赖 {unexpected:?}"
+                    )));
+                }
+                let compiled = ze_comb::CompiledExpr::compile(predicate).map_err(|error| {
+                    AffineError::UnsupportedPredicate(format!("事件 predicate 编译失败：{error}"))
+                })?;
+                // 事件 predicate 的索引集未知 ⇒ `active = None`；步数由事件日志给出。
+                (None, Some(compiled))
+            } else {
+                (active_intervals(predicate)?, None)
+            }
+        }
+        None => (None, None),
     };
     Ok(StatePlan {
         map,
         init: init_values,
         shape,
         active,
+        dependencies,
+        event_gated,
+        event_predicate,
     })
+}
+
+/// 一条 `State` 的依赖通道集（`init` / `step` / `predicate` 全部计入）。
+fn dependencies_of(
+    init: &Expr,
+    step: &Expr,
+    predicate: Option<&Expr>,
+) -> StateDependencies {
+    let mut out = BTreeSet::new();
+    for expression in [Some(init), Some(step), predicate].into_iter().flatten() {
+        collect_dependencies(expression, &mut out);
+    }
+    out
+}
+
+/// 递归收集通道读（`Channel` / 组件字段 `Read`）。
+fn collect_dependencies(expr: &Expr, out: &mut StateDependencies) {
+    match &expr.node {
+        Node::Channel { channel } => {
+            out.insert(channel_key(channel));
+        }
+        Node::Read { channel, .. } => {
+            out.insert(channel_key(channel));
+        }
+        _ => {}
+    }
+    for child in expr.node.children() {
+        collect_dependencies(child, out);
+    }
+}
+
+/// `namespace::name`（空 namespace 只写 `name`）—— 与脚本写法一致的升序键。
+fn channel_key(channel: &ze_comb::ChannelRef) -> String {
+    if channel.namespace.is_empty() {
+        channel.name.clone()
+    } else {
+        format!("{}::{}", channel.namespace, channel.name)
+    }
 }
 
 /// `State.init` → 分量值 + 形状（只接受字面量与定长向量构造）。
@@ -1127,6 +1271,80 @@ mod tests {
             .apply(&[1.5, 0.0], 5000)
             .iter()
             .all(|component| component.is_finite()));
+    }
+
+    /// **BZ-d**：多实例共享一次矩阵幂；结果与逐个 `apply` **逐位相同**。
+    #[test]
+    fn apply_many_shares_one_power_table() {
+        let map = AffineMap {
+            a: vec![vec![1.0, 1.0], vec![-0.02, 0.97]],
+            b: vec![0.0, 0.0],
+        };
+        let inits: Vec<Vec<f64>> = (0..8)
+            .map(|i| vec![1.9 - 0.1 * i as f64, -0.1 + 0.02 * i as f64])
+            .collect();
+        let batched = map.apply_many(&inits, 500);
+        for (init, value) in inits.iter().zip(&batched) {
+            assert_eq!(*value, map.apply(init, 500), "批量与单点必须逐位相同");
+        }
+        // 同一初值重复 128 次 ⇒ 结果与单实例完全一致（幂表复用，不随 N 变化）。
+        let wide = map.apply_many(&vec![inits[0].clone(); 128], 500);
+        assert!(wide.iter().all(|value| value == &batched[0]));
+    }
+
+    /// **BZ-c**：事件 predicate ⇒ 依赖边含 `event`，值只随匹配的事件帧推进。
+    #[test]
+    fn event_predicate_uses_sparse_matched_frames() {
+        let init = pure(0.0);
+        let step = add(scale(0.5, prev()), pure(0.5));
+        let predicate = Expr::channel(ze_comb::ChannelRef::builtin("event"));
+        let plan = plan_from_expr(&init, &step, Some(&predicate)).unwrap();
+        assert!(plan.event_gated());
+        assert!(plan.dependencies().contains("event"), "{:?}", plan.dependencies());
+        assert!(plan.event_predicate().is_some());
+        // 帧 1 / 3 / 5 命中 ⇒ 第 0..6 帧的推进步数 = 0/1/1/2/2/3/3。
+        let matched = [1i64, 3, 5];
+        let expected = [0u64, 1, 1, 2, 2, 3, 3];
+        for (frame, steps) in expected.into_iter().enumerate() {
+            let value = plan.value_at_event(frame as i64, &matched);
+            let components = plan.map().apply(&[0.0], steps);
+            assert_eq!(value, EvalValue::f64(components[0]), "frame {frame}");
+        }
+    }
+
+    /// **BZ-c**：事件 predicate 仍受"不得引用自身"门禁约束。
+    #[test]
+    fn event_predicate_still_rejects_self_reference() {
+        let init = pure(0.0);
+        let step = add(scale(0.5, prev()), pure(0.5));
+        let predicate = add(
+            Expr::channel(ze_comb::ChannelRef::builtin("event")),
+            prev(),
+        );
+        assert_eq!(
+            plan_from_expr(&init, &step, Some(&predicate)),
+            Err(AffineError::PredicateRefsState)
+        );
+    }
+
+    /// **BZ-c**：时间 predicate 的依赖边只含 `time`（保持 OLogN / OPerInterval）。
+    #[test]
+    fn time_predicate_dependencies_are_time_only() {
+        let init = pure(0.0);
+        let step = add(scale(0.5, prev()), pure(1.0));
+        let predicate = Expr::call(
+            ze_comb::OpRef::new("zela.math", "lt"),
+            [
+                Expr::channel(ze_comb::ChannelRef::builtin("time")),
+                pure(3.0),
+            ],
+        );
+        let plan = plan_from_expr(&init, &step, Some(&predicate)).unwrap();
+        assert!(!plan.event_gated());
+        assert_eq!(
+            plan.dependencies().iter().cloned().collect::<Vec<_>>(),
+            vec!["time".to_string()]
+        );
     }
 
     /// 3 / 4 阶走特征多项式 + Durand–Kerner：对角矩阵的谱半径 = 最大对角元。

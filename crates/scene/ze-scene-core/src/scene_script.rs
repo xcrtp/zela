@@ -105,7 +105,8 @@ pub enum ExprBindError {
 /// 与其它 namespace 一律拒绝（与旧行为一致：显式 `UnsupportedChannel`）。
 fn is_injected(channel: &ChannelRef) -> bool {
     if channel.is_builtin() {
-        return matches!(channel.name.as_str(), "time" | "frame");
+        // **BZ-c / AF-07**：`event` 由 `SceneMono` 注入（本帧有无输入事件）。
+        return matches!(channel.name.as_str(), "time" | "frame" | "event");
     }
     // 派生量是**方法**（B2），不再作为可读通道；这里只认可写字段地址。
     channel.namespace == "zela.scene"
@@ -509,6 +510,23 @@ impl SceneRecipe {
     /// 句柄 → `ObjectId`（越界 ⇒ `None`）。
     pub fn id(&self, h: Handle) -> Option<ObjectId> {
         self.handles.get(h.0).copied()
+    }
+
+    /// **BZ-c**：`State` 依赖边 side table（`target → {通道集合}`，升序）。
+    ///
+    /// 派生量（不进 payload）：与 [`Self::state_analyses`] 同源，供门禁 / 诊断 /
+    /// 代价分区读取。多个 `State` 落在同一 target 时取并集。
+    pub fn state_dependencies(
+        &self,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+        let mut out: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+            std::collections::BTreeMap::new();
+        for analysis in &self.state_analyses {
+            out.entry(analysis.target.clone())
+                .or_default()
+                .extend(analysis.plan.dependencies().iter().cloned());
+        }
+        out
     }
 }
 

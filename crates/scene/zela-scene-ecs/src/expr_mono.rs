@@ -16,7 +16,8 @@
 //! | `("", "time")` | ✅ 由 `TimeState.elapsed` 注入（S3 起由帧号派生） |
 //! | `("", "frame")` | ✅ 由 `TimeState.frame` 注入 |
 //! | `("zela.scene", "Circle.radius")` 等组件字段 | ✅ **G 批**：经 [`Mono::read_object`] 读回 |
-//! | `("", "event")` / `env` | **显式缺失**（S3 后续：输入 / 运行环境） |
+//! | `("", "event")` | ✅ **BZ-c**：本帧有无输入事件（布尔；HostState ⇒ 只可能进 CPU 求值） |
+//! | `env` | **显式缺失**（S3 后续：运行环境） |
 //!
 //! 缺失通道返回 [`EvalError::MissingChannel`]，不静默给 0。
 //!
@@ -28,7 +29,7 @@
 
 use ze_comb::{ChannelRef, EvalError, MethodRef, Mono, OpRef, Value};
 use ze_scene_contract::ObjectId;
-use ze_scene_core::animation::affine::StatePlan;
+use ze_scene_core::animation::affine::{EVENT_CHANNEL, StatePlan};
 use ze_scene_core::animation::target::{method_entry, target_entry};
 use ze_scene_core::scene_write::SceneRead;
 use ze_time::AnimValue;
@@ -48,11 +49,15 @@ pub struct SceneMono<'a> {
     /// 该帧的**全局时间**（`c.time()` 按 `c` 的时钟链反算用）。
     pub global: f64,
     pub frame: u64,
+    /// **BZ-c**：本帧是否有输入事件（`event` 通道 = 布尔存在性，不进 shader）。
+    pub event: bool,
     /// **BY**：当前绑定的 `State` 闭式计划（下标 = `Step::State.id`）。
     ///
     /// 空切片 ⇒ 退回重放（显式降级）。装配期 `commit` 已经拒绝非仿射 State，
     /// 因此正常路径下这里总有计划。
     state_plans: &'a [StatePlan],
+    /// **BZ-c**：事件 predicate 的匹配帧日志（下标 = 计划下标；升序）。
+    event_logs: &'a [Vec<i64>],
     scene: &'a dyn SceneRead,
 }
 
@@ -62,7 +67,9 @@ impl<'a> SceneMono<'a> {
             time,
             global: time,
             frame,
+            event: false,
             state_plans: &[],
+            event_logs: &[],
             scene,
         }
     }
@@ -73,7 +80,9 @@ impl<'a> SceneMono<'a> {
             time: local,
             global,
             frame,
+            event: false,
             state_plans: &[],
+            event_logs: &[],
             scene,
         }
     }
@@ -84,13 +93,27 @@ impl<'a> SceneMono<'a> {
         self
     }
 
+    /// **BZ-c**：注入本帧的事件存在性（`event` 通道）。
+    pub fn with_event(mut self, event: bool) -> Self {
+        self.event = event;
+        self
+    }
+
+    /// **BZ-c**：注入事件 predicate 的匹配帧日志（下标与计划对齐）。
+    pub fn with_event_logs(mut self, logs: &'a [Vec<i64>]) -> Self {
+        self.event_logs = logs;
+        self
+    }
+
     /// 从 [`TimeState`] 取通道值（每帧构造一次，无状态）。
     pub fn from_time_state(state: &TimeState, scene: &'a dyn SceneRead) -> Self {
         Self {
             time: state.elapsed as f64,
             global: state.elapsed as f64,
             frame: state.frame,
+            event: false,
             state_plans: &[],
+            event_logs: &[],
             scene,
         }
     }
@@ -106,6 +129,9 @@ impl Mono for SceneMono<'_> {
                 None => self.time,
             })),
             ("", FRAME_CHANNEL) => Ok(Value::f64(self.frame as f64)),
+            // **BZ-c / AF-07**：`event` 通道的第一个消费者（事件 predicate）。
+            // 语义 = 本帧有无输入事件（HostState ⇒ 只可能进 CPU 求值）。
+            ("", EVENT_CHANNEL) => Ok(Value::Bool(self.event)),
             _ => Err(EvalError::MissingChannel {
                 channel: channel.clone(),
             }),
@@ -149,10 +175,21 @@ impl Mono for SceneMono<'_> {
     }
 
     /// **BY**：`State(n) := apply(init, steps(n))` —— 闭式定义（生产路径）。
+    ///
+    /// **BZ-c**：事件 predicate 的计划改走**稀疏事件日志**
+    /// （`f^{#matched ≤ n}`），不按总帧数推进。
     fn affine_state(&self, id: u32) -> Option<Value> {
-        self.state_plans
-            .get(id as usize)
-            .map(|plan| plan.value_at(self.frame as i64))
+        let plan = self.state_plans.get(id as usize)?;
+        if plan.event_gated() {
+            let matched = self
+                .event_logs
+                .get(id as usize)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            Some(plan.value_at_event(self.frame as i64, matched))
+        } else {
+            Some(plan.value_at(self.frame as i64))
+        }
     }
 
     /// **B2**：方法经 [`ze_scene_core::animation::method_entry`] 查表求值。

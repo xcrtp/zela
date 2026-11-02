@@ -47,6 +47,7 @@ sine_trace.lua = baseline
 smoke.lua = baseline
 spring.lua = baseline
 spring_state.lua = baseline
+spring_array.lua = baseline
 storyboard.lua = baseline
 surface_matrix.js = baseline
 surface_matrix.lua = baseline

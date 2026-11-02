@@ -1962,7 +1962,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.", "## BB.",
         "## BC.", "## BD.", "## BE.", "## BF.", "## BG.", "## BH.", "## BI.", "## BJ.",
         "## BK.", "## BL.", "## BM.", "## BN.", "## BO.", "## BP.", "## BQ.", "## BR.", "## BS.",
-        "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.",
+        "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.", "## BZ.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -2045,7 +2045,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("BV-")
                     || id.starts_with("BW-")
                     || id.starts_with("BX-")
-                    || id.starts_with("BY-"));
+                    || id.starts_with("BY-")
+                    || id.starts_with("BZ-"));
             if !is_item {
                 continue;
             }
@@ -3438,6 +3439,8 @@ const HASHES_WORKS: &[(&str, Option<&str>)] = &[
     ("cap_codegen", Some("vector")),
     // BX 批：单帧 State（二维元组 + 仿射识别）的真消费者，只进 `[vector]`。
     ("spring_state", Some("vector")),
+    // BZ 批：多实例阵列（同一组 (A, b)、各自初值），只进 `[vector]`。
+    ("spring_array", Some("vector")),
 ];
 
 /// 报告 / 重录用的唯一标签：同一作品同时纳管两个后端时不能只用作品名。

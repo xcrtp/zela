@@ -15,15 +15,18 @@ use zela_schedule::system::System;
 use crate::animation::binding::BindingDriver;
 use crate::animation::binding::BindingTable;
 use crate::animation::binding::ResetBehavior;
+use crate::animation::event_log::StateEventLog;
 use crate::contract::WorldScene;
+use crate::domain::InputEvents;
 use crate::expr_mono::{SceneMono, anim_value};
 
 /// 遍历 BindingTable，按 `Binding.target` 把 `Curve::sample(forest.eval_local(clock, t))` 写入组件字段。
 pub struct BindingApplySystem;
 
 impl System for BindingApplySystem {
-    type Reads = (TimeState, ClockForest, BindingTable);
-    type Writes = ();
+    type Reads = (TimeState, ClockForest, BindingTable, InputEvents);
+    /// **BZ-c**：事件 predicate 的稀疏推进日志（帧间累积）。
+    type Writes = (StateEventLog,);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         // 先从 ctx.get 取出所有数据（&mut ctx 的借用到此释放），
@@ -39,6 +42,19 @@ impl System for BindingApplySystem {
             Some(t) => t,
             None => return,
         };
+        // **BZ-c**：`event` 通道 = 本帧 InputEvents 非空（布尔存在性）。
+        let has_events = ctx
+            .get::<InputEvents>()
+            .is_some_and(|events| !events.is_empty());
+        let mut event_log = ctx.get::<StateEventLog>().cloned().unwrap_or_default();
+        // 事件日志槽位 = 全局 `Step::State` 序号（绑定顺序 × 绑定内计划顺序）。
+        let mut log_offsets = Vec::with_capacity(table.bindings.len());
+        let mut log_total = 0usize;
+        for binding in &table.bindings {
+            log_offsets.push(log_total);
+            log_total += binding.state_plans.len();
+        }
+        event_log.slots(log_total);
 
         // 目标层**不认识 hecs**：把世界包成契约层适配器再派发，
         // `apply` 内部只走契约方法（`Scene::get_mut`）。
@@ -59,6 +75,25 @@ impl System for BindingApplySystem {
         let mut scene = WorldScene::new(&mut *ctx.world);
         for index in order {
             let b = &table.bindings[index];
+            // **BZ-c**：先推进事件 predicate 的日志（索引 0 是 init，不参与转移）。
+            // `time` 在 State predicate 里解释为**状态索引** ⇒ Mono.time = frame。
+            for (plan_index, plan) in b.state_plans.iter().enumerate() {
+                let Some(predicate) = plan.event_predicate() else {
+                    continue;
+                };
+                if frame == 0 {
+                    continue;
+                }
+                let mono = SceneMono::new(frame as f64, frame, &scene).with_event(has_events);
+                let advance = predicate
+                    .eval(&mono)
+                    .ok()
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                if advance {
+                    event_log.push(log_offsets[index] + plan_index, frame as i64);
+                }
+            }
             if forest.is_before_start(b.clock, t_global) {
                 continue;
             }
@@ -120,11 +155,14 @@ impl System for BindingApplySystem {
                 BindingDriver::Curve(curve) => curve.sample(eval_at),
                 // **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 同源），
                 // 不再用全局 elapsed —— G1（两条路径 t 不同源）由此消失。
-                BindingDriver::Expr(program) => match program
-                    .eval(
-                        &SceneMono::with_global(eval_at, t_global, frame, &scene)
-                            .with_state_plans(&b.state_plans),
-                    ) {
+                BindingDriver::Expr(program) => match program.eval(
+                    &SceneMono::with_global(eval_at, t_global, frame, &scene)
+                        .with_state_plans(&b.state_plans)
+                        .with_event(has_events)
+                        .with_event_logs(
+                            event_log.slice(log_offsets[index], b.state_plans.len()),
+                        ),
+                ) {
                     Ok(value) => match anim_value(&value) {
                         Some(value) => value,
                         None => {
@@ -147,6 +185,11 @@ impl System for BindingApplySystem {
             if let Err(error) = b.target.apply(&mut scene, &value) {
                 eprintln!("[anim] {error}");
             }
+        }
+        // 事件日志跨帧累积：写回 Resource（缺失 ⇒ 本帧只做局部推进，不静默插入）。
+        drop(scene);
+        if let Some(log) = ctx.get_mut::<StateEventLog>() {
+            *log = event_log;
         }
     }
 }
@@ -293,6 +336,96 @@ mod tests {
         let radius = scheduler.world().get::<&Circle>(entity).unwrap().radius;
         // t=0, sin(0)=0 → radius = 1.0 + 0.5 * 0 = 1.0
         assert!((radius - 1.0).abs() < 1e-5);
+    }
+
+    /// **BZ-c 验收**：事件 predicate 的 State 只随事件帧推进（L2 稀疏重放）。
+    ///
+    /// 同一份表达式在"无事件帧"上必须保持上一值（identity），事件帧才走一步；
+    /// 这同时证明 `event` 通道、`StateEventLog` 与 `SceneMono::affine_state` 接通。
+    #[test]
+    fn event_gated_state_advances_only_on_event_frames() {
+        use crate::animation::event_log::StateEventLog;
+        use crate::domain::{InputEvents, SceneEvent, ids};
+        use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
+        use ze_scene_core::animation::affine::plan_from_expr;
+
+        let mut world = World::new();
+        let entity = world.spawn((Circle::new(vec2(0.0, 0.0), 0.0),));
+        let mut forest = XcClockForest::new();
+        let root = forest.insert(ClockNode::new(None)).unwrap();
+
+        let init = Expr::pure(0.0);
+        let step = Expr::call(
+            OpRef::new("zela.math", "add"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [Expr::pure(0.5), Expr::rec_prev()],
+                ),
+                Expr::pure(0.5),
+            ],
+        );
+        let predicate = Expr::channel(ChannelRef::builtin("event"));
+        let plan = plan_from_expr(&init, &step, Some(&predicate)).unwrap();
+        assert!(plan.event_gated());
+        let expected_plan = plan.clone();
+        let program = CompiledExpr::compile(&Expr::state_gated(
+            init,
+            step,
+            predicate,
+        ))
+        .unwrap();
+
+        let mut table = BindingTable::new();
+        table.add(Binding {
+            clock: root,
+            driver: BindingDriver::Expr(program.into()),
+            target: std::sync::Arc::new(CircleRadius {
+                id: crate::contract::object_id_of(entity),
+            }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: vec![plan],
+            seek_kind: SeekKind::EventReplay,
+        });
+
+        let mut resources = Resources::new();
+        resources.insert(TimeState::at_frame(0.0, 0));
+        resources.insert(forest);
+        resources.insert(table);
+        resources.insert(InputEvents::default());
+        resources.insert(StateEventLog::default());
+
+        let mut scheduler = Scheduler::new(world, resources);
+        scheduler.add_system(Phase::SceneSync, BindingApplySystem);
+
+        let matched: Vec<i64> = vec![1, 3, 5];
+        for frame in 0u64..=6 {
+            scheduler
+                .resources_mut()
+                .insert(TimeState::at_frame(frame as f32, frame));
+            let events = if matches!(frame, 1 | 3 | 5) {
+                InputEvents::from_events(vec![SceneEvent::Button {
+                    id: ids::PLAY_PAUSE,
+                }])
+            } else {
+                InputEvents::default()
+            };
+            scheduler.resources_mut().insert(events);
+            scheduler.run_frame(0.1);
+
+            let radius = scheduler.world().get::<&Circle>(entity).unwrap().radius;
+            let expected = expected_plan
+                .map()
+                .apply(&[0.0], matched.iter().filter(|&&f| f <= frame as i64).count() as u64)[0]
+                as f32;
+            assert!(
+                (radius - expected).abs() < 1e-6,
+                "frame {frame}: radius {radius} != {expected}"
+            );
+        }
     }
 
     /// **S1 / G1**：后段的 `from` 初值不得从第 0 帧覆盖前段。

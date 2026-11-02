@@ -659,6 +659,57 @@ mod tests {
         );
     }
 
+    /// **BZ-c**：事件 predicate ⇒ 依赖边 side table 含 `event`，档位 `EventReplay`
+    /// （L2），且不触发 AI-07 的 `Replay` 拒绝。
+    #[test]
+    fn event_gated_state_records_dependency_and_seek_kind() {
+        use ze_comb::{ChannelRef, Expr, OpRef};
+        use ze_scene_core::animation::{LibraryRef, ResetBehavior, SeekKind};
+        use ze_time::ClockProgram;
+
+        let mut enc = SceneEncoder::new();
+        let circle = enc.spawn(circle_components(0.0));
+        let decay = Expr::call(
+            OpRef::new("zela.math", "scale"),
+            [Expr::pure(0.5), Expr::rec_prev()],
+        );
+        let step = Expr::call(OpRef::new("zela.math", "add"), [decay, Expr::pure(0.5)]);
+        let predicate = Expr::channel(ChannelRef::builtin("event"));
+        enc.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            Expr::state_gated(Expr::pure(0.0), step, predicate),
+            LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "27".to_string(),
+                op_revisions: Default::default(),
+            },
+            ClockProgram::new(),
+            None,
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("事件 predicate 装配成功");
+
+        let mut scene = SceneStruct::new();
+        let recipe = enc
+            .finish()
+            .commit(&mut scene)
+            .expect("事件 predicate 不应触发 AI-07 拒绝");
+        assert_eq!(
+            recipe.bindings.bindings[0].seek_kind,
+            SeekKind::EventReplay
+        );
+        let dependencies = recipe.state_dependencies();
+        let keys: Vec<&str> = dependencies
+            .get("CircleRadius")
+            .expect("依赖边 side table 含该 target")
+            .iter()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, vec!["event"], "只依赖事件通道");
+    }
+
     /// **BX**：`State.step` 非线性 ⇒ 装配期**显式失败**（不降级 Replay、不静默）。
     #[test]
     fn non_affine_state_is_rejected_at_assembly() {

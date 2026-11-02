@@ -564,17 +564,35 @@ fn nested_clocks_compose_linearly() {
     assert!((radius_at(script, t) - 1.0).abs() < 1e-5);
 }
 
+/// **BZ-c / AF-07**：`event` 通道已由 `SceneMono` 注入（事件 predicate 的第一个消费者）
+/// ⇒ 装配期放行；真正"未注入"的通道（`env`）仍显式拒绝。
 #[test]
-fn unimplemented_channels_fail_at_assembly() {
+fn event_channel_is_injected_and_env_still_fails() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
-    let expr = Expr::channel(ChannelRef::builtin("event"));
+    enc.bind_expr(
+        dot,
+        "CircleRadius",
+        Expr::channel(ChannelRef::builtin("event")),
+        library(),
+        global_clock(),
+        1.0,
+    )
+    .expect("event 通道已注入 ⇒ 放行");
+
     let error = enc
-        .bind_expr(dot, "CircleRadius", expr, library(), global_clock(), 1.0)
-        .expect_err("Event 通道尚未注入 ⇒ 必须失败");
+        .bind_expr(
+            dot,
+            "CircleRadius",
+            Expr::channel(ChannelRef::builtin("env")),
+            library(),
+            global_clock(),
+            1.0,
+        )
+        .expect_err("env 尚未注入 ⇒ 必须失败");
     assert_eq!(
         error,
-        ze_scene_core::scene_script::ExprBindError::UnsupportedChannel(ChannelRef::builtin("event"))
+        ze_scene_core::scene_script::ExprBindError::UnsupportedChannel(ChannelRef::builtin("env"))
     );
 }
 

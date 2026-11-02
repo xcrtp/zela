@@ -1977,11 +1977,29 @@
 
 ---
 
+## BZ. 事件侧通路与多实例兑现（2026-11-02）
+
+> 计划《事件侧通路与多实例兑现执行计划》。本批补齐事件侧通路（录制 + 事件 predicate），
+> 并交付多实例作品；`animation/` 仍在 6k 阈值内（BZ-01 不触发）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`；`animation/` 本批 ~4.9k 行 < 6k ⇒ **不触发**。处方仍是方案③（给 `ze-comb` 窄数学接口，只暴露 `[f64; N]` 仿射运算、不引 glam），它动 C1 约定 ⇒ 须单独立批。触发条件：`animation/` > 6k，或出现第二个同类落点需求。 |
+| BZ-02 | 仿射 `State` 的稳定性无门禁（错参数静默拿到 inf/NaN） | 内核 / 场景 | **已关闭** | `AffineMap::spectral_radius`（1/2 阶解析式；3/4 阶 Faddeev–LeVerrier + Durand–Kerner，固定初值 ⇒ 确定性）；`plan_from_expr` 在 `\|λ\|max ≥ 1`（或非有限）时显式 `AffineError::Unstable`，错误含谱半径与稳定条件提示（1 阶 `\|a\| < 1`、2 阶 `damp + stiff < 1`，边缘稳定同样拒绝）。现有 `spring_state`（0.97 / 0.02 ⇒ `sqrt(0.99)`）不受影响；用例 `unstable_affine_state_is_rejected` / `marginal_affine_state_is_rejected` / `stable_spring_is_accepted` / `unstable_state_is_rejected_at_assembly`。 |
+| BZ-03 | `Recorder::capture` 生产零调用（AI-08：输入流能放不能录） | 回放 / GUI | **已关闭** | GUI：`SceneFrame::with_input_recording`（`ZELA_RECORD_INPUT=<path>`）在推进前捕获本帧 `InputEvents`，`Drop` 时 `finish()` 落盘；headless：`zela-render --record-input` 每帧捕获、收尾写盘。`disabled()` 仍是零 no-op（关闭时连资源读取都跳过）。往返判据 `recorded_stream_replays_the_same_trajectory`：录到的流与输入流逐字节相同，且回放得到同一条轨迹。 |
+| BZ-04 | 依赖边未提取、事件 predicate 不存在 | 内核 / 场景 | **已关闭** | `StatePlan::dependencies`（`BTreeSet` 升序，`namespace::name` 键）+ `SceneRecipe::state_dependencies`（side table，不进 payload）。事件 predicate：`event` 通道 = 本帧 `InputEvents` 非空（HostState ⇒ 只可能进 CPU 求值）；计划标记 `event_gated`，`SeekKind::EventReplay`（**L2**：只重放事件帧，帧间 identity），运行期由 `StateEventLog` 记升序匹配帧、`value_at_event` 用 `partition_point` 计数。无事件依赖的 State 档位不变（`OLogN` / `OPerInterval`）。自引用仍显式失败（`PredicateRefsState`）。用例 `event_predicate_uses_sparse_matched_frames` / `event_gated_state_advances_only_on_event_frames` / `event_gated_state_records_dependency_and_seek_kind`。 |
+| BZ-05 | 多实例作品不存在（`batched` 无真消费者） | 作品 / 内核 | **部分关闭** | 作品 [`spring_array.lua`](crates/app/zela-app/scripts/spring_array.lua)：8 个实例共用同一组 `(A, b)`（0.97 / 0.02），只有 init 不同；像素基线 `[vector] spring_array` + 结构指纹同批录入。内核侧 `AffineMap::apply_many`：一次矩阵幂 + N 次矩阵×向量，与逐个 `apply` **逐位相同**（用例 `apply_many_shares_one_power_table`）。**残留**：脚本侧没有 `Iter` 构造入口 ⇒ BY-b 的 `batched` 仍无**脚本级**消费者（BZ-06）。 |
+| BZ-06 | `batched` 的脚本级消费者 | 内核 / 脚本 | **记账** | BY-b 的批量算子接受 `Value::Iter`，但作者面没有构造有穷序列的入口；BZ-d 的 `apply_many` 只覆盖"共享幂表"部分。触发条件：出现逐实例 / 逐顶点表达式（`Mono::eval_each` 或脚本 `batch` 构造器）时接入；届时用 BY-b 的批量/单点自动对拍直接验收。 |
+
+**BZ 段小计**：已关闭 3（BZ-02 / BZ-03 / BZ-04）· 部分关闭 1（BZ-05）· 记账 2（BZ-01 / BZ-06）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BY**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BY 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–BZ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BZ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

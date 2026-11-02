@@ -39,14 +39,19 @@ pub enum ResetBehavior {
 /// | `O1` | 单帧纯函数，常数代价 | 无状态、无区间门槛 |
 /// | `OPerInterval` | 按 predicate 区间分段，段内常数代价 | 可分析 predicate（`active` 有值） |
 /// | `OLogN` | 帧号驱动的 `State`，矩阵快速幂 `O(k³ log n)` | 含至少一个仿射 `State` 计划 |
+/// | `EventReplay` | **L2**：事件 predicate 的 `State`，**只重放事件帧**（稀疏） | 计划依赖 `event` 通道 |
 /// | `Replay` | 需要历史重放（离散层 / 历史 payload 的 Hold） | `requires_replay`，AI-07 装配期拒绝 |
 ///
-/// 优先级：`Replay > OLogN > OPerInterval > O1`（越"贵"越先命中）。
+/// 优先级：`Replay > EventReplay > OLogN > OPerInterval > O1`（越"贵"越先命中）。
+/// `EventReplay` **不**触发 AI-07（它的重放范围由事件日志界定，不是任意历史）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeekKind {
     O1,
     OLogN,
     OPerInterval,
+    /// **BZ-c / L2**：事件 predicate 驱动的 State —— 只需按事件帧推进
+    /// （`seek = O(事件数 × log 间隔)`），帧间是 identity。
+    EventReplay,
     /// **AI-07**：引擎没有重放路径 ⇒ 装配期被 [`BindingTable::reject_replay`] 拒绝。
     /// 它**不是**死代码，不得顺手删除（提案阶段 7 落地重放后才放开）。
     Replay,
@@ -234,6 +239,7 @@ impl BindingTable {
             reset,
             active.is_some(),
             !state_plans.is_empty(),
+            state_plans.iter().any(|plan| plan.event_gated()),
         );
         self.add(Binding {
             clock,
@@ -286,9 +292,13 @@ fn seek_kind_for(
     reset: ResetBehavior,
     active_known: bool,
     has_state_plan: bool,
+    has_event_state: bool,
 ) -> SeekKind {
     if requires_replay || (predicate_present && reset == ResetBehavior::Hold && !active_known) {
         SeekKind::Replay
+    } else if has_event_state {
+        // **BZ-c**：事件 predicate 的 State ⇒ L2（只重放事件帧，帧间 identity）。
+        SeekKind::EventReplay
     } else if has_state_plan {
         // 帧号驱动的仿射 State：矩阵快速幂 O(k³ log n)。
         SeekKind::OLogN
@@ -307,11 +317,11 @@ mod tests {
     #[test]
     fn continuous_expressions_stay_o1() {
         assert_eq!(
-            seek_kind_for(false, false, ResetBehavior::Hold, false, false),
+            seek_kind_for(false, false, ResetBehavior::Hold, false, false, false),
             SeekKind::O1
         );
         assert_eq!(
-            seek_kind_for(false, true, ResetBehavior::Hold, true, false),
+            seek_kind_for(false, true, ResetBehavior::Hold, true, false, false),
             SeekKind::OPerInterval,
             "可分析 predicate ⇒ 按区间分段"
         );
@@ -320,7 +330,7 @@ mod tests {
     #[test]
     fn discrete_layer_requires_replay() {
         assert_eq!(
-            seek_kind_for(true, false, ResetBehavior::Hold, false, false),
+            seek_kind_for(true, false, ResetBehavior::Hold, false, false, false),
             SeekKind::Replay,
             "含 NatRec 的绑定必须重放"
         );
@@ -329,11 +339,11 @@ mod tests {
     #[test]
     fn unanalyzable_hold_stays_replay() {
         assert_eq!(
-            seek_kind_for(false, true, ResetBehavior::Hold, false, false),
+            seek_kind_for(false, true, ResetBehavior::Hold, false, false, false),
             SeekKind::Replay
         );
         assert_eq!(
-            seek_kind_for(false, true, ResetBehavior::Skip, false, false),
+            seek_kind_for(false, true, ResetBehavior::Skip, false, false, false),
             SeekKind::O1,
             "非 Hold 的失效行为不需要历史"
         );
@@ -343,18 +353,28 @@ mod tests {
     #[test]
     fn state_plan_derives_ologn() {
         assert_eq!(
-            seek_kind_for(false, false, ResetBehavior::Hold, false, true),
+            seek_kind_for(false, false, ResetBehavior::Hold, false, true, false),
             SeekKind::OLogN
         );
         assert_eq!(
-            seek_kind_for(false, true, ResetBehavior::Hold, true, true),
+            seek_kind_for(false, true, ResetBehavior::Hold, true, true, false),
             SeekKind::OLogN,
             "State 计划优先于 OPerInterval"
         );
         assert_eq!(
-            seek_kind_for(true, false, ResetBehavior::Hold, false, true),
+            seek_kind_for(true, false, ResetBehavior::Hold, false, true, false),
             SeekKind::Replay,
             "Replay 仍最优先"
+        );
+        // **BZ-c**：事件 predicate 的 State ⇒ L2（只重放事件帧），且不触发 AI-07。
+        assert_eq!(
+            seek_kind_for(false, false, ResetBehavior::Hold, false, true, true),
+            SeekKind::EventReplay
+        );
+        assert_eq!(
+            seek_kind_for(true, false, ResetBehavior::Hold, false, true, true),
+            SeekKind::Replay,
+            "真正的 Replay 仍最优先"
         );
     }
 

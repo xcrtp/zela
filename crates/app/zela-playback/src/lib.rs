@@ -264,6 +264,8 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         resources.insert(camera3d);
     }
     resources.insert(TimeState::default());
+    // **BZ-c**：事件 predicate 的稀疏推进日志（L2）。
+    resources.insert(zela_scene_ecs::animation::StateEventLog::default());
     resources.insert(UiConfig::default());
     resources.insert(zela_scene_ecs::WorldTransforms::default());
     resources.insert(zela_scene_ecs::TransformHierarchyError::default());

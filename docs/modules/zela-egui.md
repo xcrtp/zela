@@ -9,15 +9,15 @@
 
 - 层：`ui`（`crates/ui`）
 - 路径：`crates/ui/zela-egui`
-- 生产依赖（上游，dev-deps 不计）：`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-scene-core`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`、`zela-schedule`
+- 生产依赖（上游，dev-deps 不计）：`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-scene-core`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-gui`
-- 源文件：6 个 · 1456 行
+- 源文件：6 个 · 1520 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/frame.rs` | 165 | — |
+| `src/frame.rs` | 229 | — |
 | `src/health.rs` | 193 | — |
 | `src/host.rs` | 888 | — |
 | `src/lib.rs` | 35 | — |

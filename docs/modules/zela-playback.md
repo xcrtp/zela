@@ -11,14 +11,14 @@
 - 路径：`crates/app/zela-playback`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-render-ir`、`ze-scene-core`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-web`
-- 源文件：4 个 · 2863 行
+- 源文件：4 个 · 2919 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/input_replay.rs` | 99 | **输入流重放**（D 批）：把「第 N 帧的事件」装进 `InputEvents`。 |
-| `src/lib.rs` | 582 | `zela-playback` — **回放运行时**（浏览器与 native `--bundle` 共用）。 |
+| `src/input_replay.rs` | 144 | **输入流重放**（D 批）：把「第 N 帧的事件」装进 `InputEvents`。 |
+| `src/lib.rs` | 593 | `zela-playback` — **回放运行时**（浏览器与 native `--bundle` 共用）。 |
 | `src/vector3d.rs` | 826 | B10 **3D 场景 → 矢量后端**的桥：`Camera3D` → [`View3`]、`LightQueue` → 灯、 |
 | `src/vector_frame.rs` | 1356 | 一帧内容的**矢量渲染**与路由特征（B11 Step 4/5）。 |
 
