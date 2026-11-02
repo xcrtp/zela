@@ -2356,14 +2356,15 @@ expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
         );
         let node = recipe.forest.get(binding.clock).expect("时钟节点");
         assert_eq!(node.span, None, "新语义下时钟不钳区间");
-        // **AH-07**：可分析的时间门 ⇒ Hold 是纯函数 `f(last_active(t))` ⇒ O1。
+        // **AH-07 / BY-a4**：可分析的时间门 ⇒ Hold 是纯函数 `f(last_active(t))`；
+        // 档位由识别器推导为 `OPerInterval`（按区间分段，不再需要重放）。
         assert!(
             binding.active.is_some(),
             "predicate 应已分析成局部时间区间集"
         );
         assert_eq!(
             binding.seek_kind,
-            zela_scene_ecs::animation::SeekKind::O1,
+            zela_scene_ecs::animation::SeekKind::OPerInterval,
             "predicate + Hold 不再需要重放"
         );
     }
