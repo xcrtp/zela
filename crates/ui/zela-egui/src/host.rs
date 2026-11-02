@@ -27,14 +27,15 @@ use egui::Panel;
 use ze_notion::Rect2D;
 use zela_render::ViewRect;
 use zela_render_backends::SceneCompositorCallback;
-use zela_scene_ecs::animation::BindingTable;
+use zela_scene_ecs::animation::params;
 use zela_scene_ecs::contract::WorldView;
 use zela_scene_ecs::director_state::DirectorState;
 use zela_scene_ecs::domain::{
     CameraCommand, InputEvents, LayerKind, SceneEvent, SceneView, ids,
 };
-use zela_scene_ecs::{Curve, TimeState};
+use zela_scene_ecs::TimeState;
 use zela_schedule::resource::Resources;
+use ze_property::{ParameterRegistry, Property};
 
 use crate::resources::{UiConfig, ViewportCamera};
 
@@ -491,19 +492,16 @@ impl EguiSceneHost {
         events
     }
 
-    /// 参数面板（原 ParamPanelSystem 的 UI chrome）。
+    /// 参数面板（**CA-d：由参数注册表自动生成**）。
     ///
-    /// **T0-② 后**：`dyn Target` 无法模式匹配，且集中分类清单已删除 ⇒
-    /// **滑块集由曲线类型决定**（`Sin` 显示 `base/amp/omega`、`Orbit` 显示
-    /// `radius/speed/angle`……），target 只提供**标签文字**（`target.name()`，可选中文化）。
-    /// 滑块交互以 `Slider { id }` 事件上报，由场景侧 `ParamPanelSystem` 按 `WidgetId` 写回。
+    /// 不再按曲线类型 `match`，也不再手写 `WidgetId`：注册表（装配期 side table）
+    /// 按地址升序列出每个可调参数（含 `State` 的 `stiff` / `damp`），本函数只把
+    /// `Property::Scalar` 映射成滑块。交互仍以 `Slider { id }` 事件上报，
+    /// `id = params::widget_id(index)`，由场景侧 `ParamPanelSystem` 按地址回写。
     ///
-    /// 行为变化（T0-② 记账）：从 `match (kind, curve)` 改为 `match curve` ⇒
-    /// **任何 `Sin` 曲线都会显示三个滑块**（原来只有 `CircleRadius` 的才显示）。
-    /// 这是**更通用**的改进；当前场景里 `Curve::Phase` 会被 `RevealRange` 绑定用到
-    /// （书写动画的 `omega`），故该滑块现在也会出现 —— 见交付说明。
+    /// 新增参数只需改注册表（绑定侧），**不用改本文件**。
     fn draw_param_panel(ui: &mut egui::Ui, res: &mut Resources) -> Vec<SceneEvent> {
-        let table = res.get::<BindingTable>().cloned().unwrap_or_default();
+        let registry = res.get::<ParameterRegistry>().cloned().unwrap_or_default();
 
         let mut events = Vec::new();
         Panel::right("params")
@@ -512,71 +510,28 @@ impl EguiSceneHost {
             .show(ui, |ui| {
                 ui.heading("动画参数");
                 ui.separator();
-
-                for binding in table.bindings.iter() {
-                    // 表达式绑定没有可调曲线参数（面板只服务于曲线绑定）。
-                    let Some(curve) = binding.driver.as_curve() else {
+                if registry.is_empty() {
+                    ui.label("（本场景没有可调参数）");
+                    return;
+                }
+                for (index, entry) in registry.iter().enumerate() {
+                    let Property::Scalar(config) = entry.property else {
                         continue;
                     };
-                    match curve {
-                        Curve::Sin { base, amp, omega } => {
-                            ui.label(target_label(binding.target.name()));
-                            for (id, label, value, range, step) in [
-                                (ids::CIRCLE_BASE, "base", *base, 0.0..=3.0, 0.1),
-                                (ids::CIRCLE_AMP, "amp", *amp, 0.0..=2.0, 0.05),
-                                (ids::CIRCLE_OMEGA, "omega", *omega, 0.0..=8.0, 0.1),
-                            ] {
-                                let mut v = value;
-                                if ui
-                                    .add(egui::Slider::new(&mut v, range).text(label).step_by(step))
-                                    .changed()
-                                {
-                                    events.push(SceneEvent::Slider { id, value: v });
-                                }
-                            }
-                            ui.separator();
-                        }
-                        Curve::Phase { omega } => {
-                            ui.label(target_label(binding.target.name()));
-                            let mut v = *omega;
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut v, 0.0..=5.0)
-                                        .text("omega")
-                                        .step_by(0.1),
-                                )
-                                .changed()
-                            {
-                                events.push(SceneEvent::Slider {
-                                    id: ids::PHASE_OMEGA,
-                                    value: v,
-                                });
-                            }
-                            ui.separator();
-                        }
-                        Curve::Orbit {
-                            radius,
-                            speed,
-                            initial_angle,
-                            ..
-                        } => {
-                            ui.label(target_label(binding.target.name()));
-                            for (id, label, value, range, step) in [
-                                (ids::ORBIT_RADIUS, "radius", *radius, 1.0..=20.0, 0.5),
-                                (ids::ORBIT_SPEED, "speed", *speed, -2.0..=2.0, 0.1),
-                                (ids::ORBIT_ANGLE, "angle", *initial_angle, -3.14..=3.14, 0.1),
-                            ] {
-                                let mut v = value;
-                                if ui
-                                    .add(egui::Slider::new(&mut v, range).text(label).step_by(step))
-                                    .changed()
-                                {
-                                    events.push(SceneEvent::Slider { id, value: v });
-                                }
-                            }
-                            ui.separator();
-                        }
-                        _ => {}
+                    let mut value = config.value;
+                    let step = f64::from(config.step.unwrap_or(0.01));
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut value, config.min..=config.max)
+                                .text(&config.label)
+                                .step_by(step),
+                        )
+                        .changed()
+                    {
+                        events.push(SceneEvent::Slider {
+                            id: params::widget_id(index),
+                            value,
+                        });
                     }
                 }
             });
@@ -663,27 +618,6 @@ impl EguiSceneHost {
         let options = zela_render::FrameOptions::from_ui_config(config);
         let input = zela_render::frame::build_frame_inputs(view, res, options)?;
         zela_render_backends::frame::build_scene_callback(input)
-    }
-}
-
-/// 参数面板的**可选**中文标签映射（T0-②）。
-///
-/// 名字由各 target **自带**（`Target::name()`）；本表只是 UI 侧的增强 ——
-/// **未收录的名字 fallback 到原样输出**，故它**不是**"新增 target 必须登记的清单"。
-fn target_label(name: &str) -> &str {
-    match name {
-        "CircleRadius" => "圆半径",
-        "Phase" => "函数曲线相位",
-        "CameraEye" => "3D 轨道相机",
-        "Camera2DFraming" => "2D 相机取景",
-        "RevealRange" => "书写动画",
-        "OpacityValue" => "不透明度",
-        "MorphT" => "形变插值",
-        // B7：`TransformValue`（按值类型猜通道）已删除，只剩三条显式通道。
-        "TransformPosition" => "摆放 · 位移",
-        "TransformRotation" => "摆放 · 旋转",
-        "TransformScale" => "摆放 · 缩放",
-        _ => name,
     }
 }
 

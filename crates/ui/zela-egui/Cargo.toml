@@ -23,6 +23,8 @@ ze-notion = { path = "../../kernel/ze-notion" }
 ze-scene-core = { path = "../../scene/ze-scene-core" }
 # BZ-b：GUI 侧输入流录制（Recorder / Pairing；与回放共用同一份格式）。
 zela-scene-bundle = { path = "../../scene/zela-scene-bundle" }
+# CA-d：参数面板按 kernel 级 Property / ParameterRegistry 自动生成控件。
+ze-property = { path = "../../kernel/ze-property" }
 
 egui.workspace = true
 # A5：GUI 帧体 / 窗口参数归位到 UI 层，需要 eframe 的 `App` 无关宿主类型。
