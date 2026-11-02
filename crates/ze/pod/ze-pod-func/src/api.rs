@@ -637,6 +637,22 @@ pub struct NatRecSpec {
     pub step: Handle,
 }
 
+/// `State { init, step }`：**单帧状态**（BX）。
+///
+/// 与 [`NatRecSpec`] 同构，但**没有 `count`**：轮数 = 宿主帧号（`TimeState.frame`）。
+/// 语义是 `f^n(init)`（单帧纯函数，seek 到任意帧都能直接算）。
+///
+/// **装配期门禁**：`step` 必须关于 `prev`（`expr.rec_prev()`）仿射
+/// （`add` / `mul` / `scale` / `sum` 与常量），否则显式失败。
+#[derive(Clone, Debug, PartialEq, PodType)]
+#[pod_type(name = "zela.math.State")]
+pub struct StateSpec {
+    /// 初值表达式（数值或定长向量）。
+    pub init: Handle,
+    /// 递推步表达式（用 `rec_prev()` 引用上一步状态）。
+    pub step: Handle,
+}
+
 /// 表达式叶子算子集合。
 ///
 /// 字段名就是脚本侧函数名（`expr.sin` / `expr.mul` …）。
@@ -645,7 +661,7 @@ pub struct NatRecSpec {
 /// 漂移会得到显式失败而不是错位调用）。
 #[capability(
     namespace = "zela.math",
-    version = "26",
+    version = "27",
     description = "表达式层叶子算子（组合子库；只做表达，不取数）",
     bindings
 )]
@@ -856,6 +872,11 @@ pub struct MathApi<'a> {
     /// `NatRec { count, init, step }`：离散折（合法递归；`count` 必须是非负整数）。
     pub nat_rec: fn(&'a dyn Pod, spec: NatRecSpec) -> Handle,
 
+    /// `State { init, step }`：**单帧状态**（BX；轮数 = 宿主帧号）。
+    ///
+    /// 与 `nat_rec` 的区别只在轮数来源；`step` 必须关于 `rec_prev()` 仿射。
+    pub state: fn(&'a dyn Pod, spec: StateSpec) -> Handle,
+
     /// `NatRec.step` 内的前一项（只能出现在 `step` 内，装配期校验）。
     pub rec_prev: fn(&'a dyn Pod) -> Handle,
 
@@ -963,13 +984,14 @@ pub struct MathApi<'a> {
 /// `LIBRARY_VERSION` 随之进产物。
 /// `@25`（BT-1）：新增 `vec4` / `w`（四维出口），`zela.math.Vec4Of` / `ChannelType::Vec4`。
 /// `@26`（BT-3）：新增 `shader_source`（作者手写 WGSL 的逃生舱）。
+/// `@27`（BX）：新增 `state`（单帧状态：轮数 = 宿主帧号，`step` 必须仿射）。
 ///
 /// **加算子的代价（实测）**：新增算子必然改 `signatures()` ⇒ 必须递增 version ⇒
 /// `LIBRARY_VERSION` 进表达式产物 ⇒ **payload 逐位变化**（像素不变）。第 BB 批
 /// 因此把 28 个算子**一次**加完、只 bump 一次（`@21 → @22`），而不是分五批 bump 五次。
-pub const MATH_API_VERSION: &str = "26";
+pub const MATH_API_VERSION: &str = "27";
 /// `zela.math` 的 `hash(signatures())` 基线。
-pub const MATH_API_FINGERPRINT: u64 = 12_694_093_268_345_882_282;
+pub const MATH_API_FINGERPRINT: u64 = 17_173_791_370_762_742_913;
 
 /// **糖层能力**（第 BB 批，阶段 4）：装配期展开成 `zela.math` 的 core 算子组合。
 ///

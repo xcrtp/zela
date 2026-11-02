@@ -166,6 +166,39 @@ fn eval_node<'a>(
             }
             state
         }
+        Node::State { init, step } => {
+            // **BX**：轮数 = 宿主帧号（与 lowered 求值器同源）。
+            let count = match mono.frame_index() {
+                Some(value) if value >= 0 => value,
+                Some(value) => return Err(EvalError::FrameIndex { actual: value }),
+                None => return Err(EvalError::FrameContext),
+            };
+            if count > REC_MAX_STEPS {
+                return Err(EvalError::RecBudget {
+                    count,
+                    max_steps: REC_MAX_STEPS,
+                });
+            }
+            let mut state = eval_node(init, defs, context, mono)?;
+            let state_kind = value_kind(&state);
+            for index in 1..=count {
+                let mut step_context = RefContext {
+                    memo: BTreeMap::new(),
+                    rec: Some((state.clone(), index)),
+                    element: context.element,
+                };
+                let next = eval_node(step, defs, &mut step_context, mono)?;
+                if value_kind(&next) != state_kind {
+                    return Err(EvalError::RecStateType {
+                        expected: state_kind,
+                        actual: value_kind(&next),
+                        index,
+                    });
+                }
+                state = next;
+            }
+            state
+        }
         Node::RecPrev => match &context.rec {
             Some((prev, _)) => prev.clone(),
             None => return Err(EvalError::RecContext { leaf: "rec_prev" }),

@@ -541,6 +541,25 @@ impl<'a> Infer<'a> {
                     pointwise: PointwiseReport::blocked("nat_rec（离散层）"),
                 })
             }
+            // **BX**：`State` 与 `NatRec` 同构，但轮数由宿主帧号给出（不需要 count 类型）。
+            Node::State { init, step } => {
+                let init_info = self.type_of(init)?;
+                let previous = self.rec.replace(init_info.ty);
+                let step_info = self.type_of(step);
+                self.rec = previous;
+                let step_info = step_info?;
+                if step_info.ty != init_info.ty {
+                    return Err(TypeError::new(format!(
+                        "`State` 的 init / step 类型不同：{} / {}",
+                        init_info.ty.name(),
+                        step_info.ty.name()
+                    )));
+                }
+                Ok(Inference {
+                    ty: init_info.ty,
+                    pointwise: PointwiseReport::blocked("state（帧号驱动）"),
+                })
+            }
             Node::RecPrev => match self.rec {
                 Some(ty) => Ok(Inference {
                     ty,

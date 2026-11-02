@@ -33,7 +33,7 @@ use crate::api::{
     LtSpec, MixSpec, MulSpec, SmoothstepSpec,
     BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
     PlotSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
-    ShaderSourceSpec, ShaderSpec, SinSpec, SplatSpec, SumSpec, Vec2FromVec3Spec,
+    ShaderSourceSpec, ShaderSpec, SinSpec, SplatSpec, StateSpec, SumSpec, Vec2FromVec3Spec,
     Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec, Vec4OfSpec,
     // 第 BB 批（算子扩充）：WGSL 标准库算子
     AbsSpec, AcosSpec, AsinSpec, Atan2Spec, AtanSpec, CeilSpec, CrossSpec, DegreesSpec, DotSpec,
@@ -74,7 +74,8 @@ pub const LIBRARY_NAMESPACE: &str = ze_func::LIBRARY_NAMESPACE;
 /// （按归一化弧长取点 / 切线；`METHOD_SIGNATURES` 变 ⇒ 版本必须递增）。
 /// `25`：**BT-1** 新增 `vec4` / `w`（四维出口）。
 /// `26`：**BT-3** 新增 `shader_source`（作者手写 WGSL 的逃生舱）。
-pub const LIBRARY_VERSION: &str = "26";
+/// `27`：**BX** 新增 `state`（单帧状态；轮数 = 宿主帧号，`step` 必须仿射）。
+pub const LIBRARY_VERSION: &str = "27";
 
 /// 组件字段通道的命名空间（`Circle.radius` 属于场景地址表）。
 pub const SCENE_NAMESPACE: &str = "zela.scene";
@@ -340,6 +341,13 @@ impl ExprPod {
             "zela.math.NatRec",
             HANDLE,
             nat_rec_ctor,
+        );
+        // **BX**：单帧状态（轮数 = 宿主帧号）。
+        registry.register_fn1_named::<StateSpec, Handle>(
+            "zela.math::state",
+            "zela.math.State",
+            HANDLE,
+            state_ctor,
         );
         // 方法（B2）：对象 + 方法名 → 方法调用节点。
         registry.register_fn1_named::<MethodCallSpec, Handle>(
@@ -672,6 +680,7 @@ impl Pod for ExprPod {
             "not" => Box::new(not_ctor(self, arg::<NotSpec>(args, 0)?.clone())),
             "method" => Box::new(method_ctor(self, arg::<MethodCallSpec>(args, 0)?.clone())),
             "nat_rec" => Box::new(nat_rec_ctor(self, arg::<NatRecSpec>(args, 0)?.clone())),
+            "state" => Box::new(state_ctor(self, arg::<StateSpec>(args, 0)?.clone())),
             "rec_prev" => Box::new(rec_prev(self)),
             "rec_index" => Box::new(rec_index(self)),
             "clock_shift" => Box::new(clock_shift(self, *arg::<f64>(args, 0)?)),
@@ -1206,6 +1215,17 @@ fn nat_rec_ctor(pod: &dyn Pod, spec: NatRecSpec) -> Handle {
     let init = child(this, spec.init);
     let step = child(this, spec.step);
     this.intern(Expr::nat_rec(count, init, step))
+}
+
+/// `State { init, step }`（BX）：单帧状态，轮数由宿主帧号给出。
+///
+/// **没有 `count`**（与 `nat_rec` 的区别）；`step` 的仿射性由 `ze-scene-core`
+/// 在装配期识别，不在这里判定（Pod 层看不到数学库）。
+fn state_ctor(pod: &dyn Pod, spec: StateSpec) -> Handle {
+    let this = expr_pod(pod);
+    let init = child(this, spec.init);
+    let step = child(this, spec.step);
+    this.intern(Expr::state(init, step))
 }
 
 fn rec_prev(pod: &dyn Pod) -> Handle {
@@ -2223,6 +2243,27 @@ mod tests {
             errors.iter().any(|error| error.contains("非负整数")),
             "{errors:?}"
         );
+    }
+
+    /// **BX**：`state` 建出 `Node::State`，且**不**被判为需要历史重放（AI-07 不命中）。
+    #[test]
+    fn state_builds_the_frame_driven_fold_without_replay() {
+        let this = pod();
+        let step = call2(&this, "add", rec_prev(&this), pure(&this, 0.25));
+        let handle = state_ctor(
+            &this,
+            StateSpec {
+                init: pure(&this, 0.0),
+                step,
+            },
+        );
+        let tree = this.tree(handle).unwrap();
+        assert!(
+            matches!(tree.node, Node::State { .. }),
+            "期望 State 节点：{:?}",
+            tree.node
+        );
+        assert!(!tree.requires_replay(), "State 是帧号的纯函数，不应触发 Replay");
     }
 
     /// 快慢路径调用同一组 helper ⇒ 结果一致（结构可序列化对比）。

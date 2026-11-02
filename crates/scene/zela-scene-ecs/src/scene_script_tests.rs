@@ -612,6 +612,83 @@ mod tests {
         }
     }
 
+    /// **BX**：`State`（帧号驱动）不是 Replay ⇒ 装配成功，且产出仿射 side table。
+    #[test]
+    fn state_binding_is_accepted_and_affine_is_analyzed() {
+        use ze_comb::{Expr, OpRef};
+        use ze_scene_core::animation::{LibraryRef, ResetBehavior};
+        use ze_time::ClockProgram;
+
+        let mut enc = SceneEncoder::new();
+        let circle = enc.spawn(circle_components(0.0));
+        let step = Expr::call(OpRef::new("zela.math", "add"), [Expr::rec_prev(), Expr::pure(0.5)]);
+        enc.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            Expr::state(Expr::pure(0.0), step),
+            LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "27".to_string(),
+                op_revisions: Default::default(),
+            },
+            ClockProgram::new(),
+            None,
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("State 绑定装配成功");
+
+        let mut scene = SceneStruct::new();
+        let recipe = enc.finish().commit(&mut scene).expect("State 不应触发 AI-07 拒绝");
+        assert_eq!(recipe.bindings.bindings.len(), 1);
+        assert_eq!(recipe.state_analyses.len(), 1);
+        let map = &recipe.state_analyses[0].map;
+        assert_eq!(map.width(), 1);
+        assert_eq!(map.a(), &[vec![1.0]][..]);
+        assert_eq!(map.b(), &[0.5][..]);
+    }
+
+    /// **BX**：`State.step` 非线性 ⇒ 装配期**显式失败**（不降级 Replay、不静默）。
+    #[test]
+    fn non_affine_state_is_rejected_at_assembly() {
+        use ze_comb::{Expr, OpRef};
+        use ze_scene_core::animation::{LibraryRef, ResetBehavior};
+        use ze_scene_core::scene_script::ScriptError;
+        use ze_time::ClockProgram;
+
+        let mut enc = SceneEncoder::new();
+        let circle = enc.spawn(circle_components(0.0));
+        let step = Expr::call(OpRef::new("zela.math", "sin"), [Expr::rec_prev()]);
+        enc.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            Expr::state(Expr::pure(0.0), step),
+            LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "27".to_string(),
+                op_revisions: Default::default(),
+            },
+            ClockProgram::new(),
+            None,
+            ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("装配期只校验表达式结构；仿射性在 commit 判定");
+
+        let mut scene = SceneStruct::new();
+        let error = enc
+            .finish()
+            .commit(&mut scene)
+            .expect_err("非线性 State 必须在装配期被拒绝");
+        match error {
+            ScriptError::StateNotAffine(error) => {
+                assert!(error.to_string().contains("仿射"), "{error}");
+                assert!(error.to_string().contains("sin"), "{error}");
+            }
+            other => panic!("期望 StateNotAffine，实际：{other:?}"),
+        }
+    }
+
     /// **AI-07（历史 payload 形状）**：`predicate` 不可分析 + `active` 缺失 + `Hold`
     /// ⇒ `Replay`；绑定表必须在交付运行期前显式拒绝（而不是等到 seek 中间帧才算错）。
     #[test]

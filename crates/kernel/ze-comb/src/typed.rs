@@ -586,6 +586,7 @@ impl<'a> Builder<'a> {
             | Node::Method { .. }
             | Node::Select { .. }
             | Node::NatRec { .. }
+            | Node::State { .. }
             | Node::RecPrev
             | Node::RecIndex
             | Node::Exists { .. } => return None,

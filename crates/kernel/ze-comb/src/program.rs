@@ -626,6 +626,14 @@ pub trait Mono {
             channel: channel.clone(),
         })
     }
+
+    /// **BX**：宿主帧号（[`Step::State`] 的折叠轮数）。
+    ///
+    /// 默认返回 `None` ⇒ `State` 求值**显式失败**（不静默按 0 轮算）。
+    /// 场景侧的实现见 `zela-scene-ecs::expr_mono::SceneMono`。
+    fn frame_index(&self) -> Option<i64> {
+        None
+    }
 }
 
 /// 求值错误：显式、带算子来源（§7.6 的运行时对应物）。
@@ -706,6 +714,12 @@ pub enum EvalError {
     /// 宿主没有提供逐元素数据源（不静默返回 0）。
     #[error("通道 `{channel}` 的逐元素值未由宿主注入")]
     MissingElementChannel { channel: ChannelRef },
+    /// `State` 需要宿主帧号，但宿主没有提供（不静默按 0 轮折叠）。
+    #[error("State 需要宿主帧号，但当前求值上下文没有帧号（Mono::frame_index 返回 None）")]
+    FrameContext,
+    /// 宿主帧号为负（不取绝对值、不静默钳到 0）。
+    #[error("宿主帧号必须非负，实际 {actual}")]
+    FrameIndex { actual: i64 },
 }
 
 impl EvalError {
@@ -784,6 +798,14 @@ pub enum Step {
     /// [`EvalContext`] 提供。
     NatRec {
         count: usize,
+        init: Box<CompiledExpr>,
+        step: Box<CompiledExpr>,
+    },
+    /// **单帧状态**（BX）：轮数 = [`Mono::frame_index`]（帧号本身）。
+    ///
+    /// 与 [`Step::NatRec`] 共用同一份折叠循环（`init` / `step` 子程序形态也相同），
+    /// 区别只在轮数来源。`State` **不消费** `RecCache`（它是帧号的纯函数）。
+    State {
         init: Box<CompiledExpr>,
         step: Box<CompiledExpr>,
     },
@@ -937,42 +959,18 @@ impl CompiledExpr {
                     } else {
                         None
                     };
-                    let (mut state, mut index) = match cached {
-                        Some(cache) if cache.count <= count => (cache.value, cache.count),
-                        _ => (
-                            init.eval_with(
-                                mono,
-                                &mut EvalContext {
-                                    element: context.element,
-                                    ..EvalContext::default()
-                                },
-                            )?,
-                            0,
-                        ),
+                    let seed = match cached {
+                        Some(cache) if cache.count <= count => Some((cache.value, cache.count)),
+                        _ => None,
                     };
-                    let state_kind = value_kind(&state);
-                    while index < count {
-                        index += 1;
-                        let mut step_context = EvalContext {
-                            rec: Some(RecFrame {
-                                prev: state.clone(),
-                                index,
-                            }),
-                            cache: None,
-                            cache_enabled: false,
-                            // 元素身份跨 fold 保持：逐顶点的递归仍然知道自己是第几个顶点。
-                            element: context.element,
-                        };
-                        let next = step.eval_with(mono, &mut step_context)?;
-                        if value_kind(&next) != state_kind {
-                            return Err(EvalError::RecStateType {
-                                expected: state_kind,
-                                actual: value_kind(&next),
-                                index,
-                            });
-                        }
-                        state = next;
-                    }
+                    let state = Self::fold(
+                        mono,
+                        context.element,
+                        count,
+                        init,
+                        step,
+                        seed,
+                    )?;
                     if owns_cache {
                         context.cache = Some(RecCache {
                             count,
@@ -980,6 +978,23 @@ impl CompiledExpr {
                         });
                     }
                     state
+                }
+                // **BX**：轮数 = 宿主帧号；不消费 `RecCache`（帧号的纯函数）。
+                Step::State { init, step } => {
+                    let count = match mono.frame_index() {
+                        Some(value) if value >= 0 => value,
+                        Some(value) => {
+                            return Err(EvalError::FrameIndex { actual: value })
+                        }
+                        None => return Err(EvalError::FrameContext),
+                    };
+                    if count > REC_MAX_STEPS {
+                        return Err(EvalError::RecBudget {
+                            count,
+                            max_steps: REC_MAX_STEPS,
+                        });
+                    }
+                    Self::fold(mono, context.element, count, init, step, None)?
                 }
                 Step::RecPrev => match &context.rec {
                     Some(frame) => frame.prev.clone(),
@@ -1006,6 +1021,58 @@ impl CompiledExpr {
             values.push(value);
         }
         Ok(values[self.root].clone())
+    }
+
+    /// [`Step::NatRec`] / [`Step::State`] 共用的折叠循环（`init` + n 次 `step`）。
+    ///
+    /// `seed` = 已折叠到的 `(状态, 索引)`（`RecCache` 续算）；`None` ⇒ 从 `init` 起算。
+    /// 两条路径共用同一段代码 ⇒ "State 的值 == 同轮数的逐次重放"是**结构事实**，
+    /// 不靠两份实现碰巧一致。
+    fn fold(
+        mono: &dyn Mono,
+        element: Option<u32>,
+        count: i64,
+        init: &CompiledExpr,
+        step: &CompiledExpr,
+        seed: Option<(Value, i64)>,
+    ) -> Result<Value, EvalError> {
+        let (mut state, mut index) = match seed {
+            Some(seed) => seed,
+            None => (
+                init.eval_with(
+                    mono,
+                    &mut EvalContext {
+                        element,
+                        ..EvalContext::default()
+                    },
+                )?,
+                0,
+            ),
+        };
+        let state_kind = value_kind(&state);
+        while index < count {
+            index += 1;
+            let mut step_context = EvalContext {
+                rec: Some(RecFrame {
+                    prev: state.clone(),
+                    index,
+                }),
+                cache: None,
+                cache_enabled: false,
+                // 元素身份跨 fold 保持：逐顶点的递归仍然知道自己是第几个顶点。
+                element,
+            };
+            let next = step.eval_with(mono, &mut step_context)?;
+            if value_kind(&next) != state_kind {
+                return Err(EvalError::RecStateType {
+                    expected: state_kind,
+                    actual: value_kind(&next),
+                    index,
+                });
+            }
+            state = next;
+        }
+        Ok(state)
     }
 }
 
@@ -1128,6 +1195,16 @@ fn compile_node<'a>(
             });
             steps.len() - 1
         }
+        // **BX**：`State` 没有 `count` 子节点（轮数来自宿主帧号）。
+        Node::State { init, step } => {
+            let init = compile_branch(init, defs);
+            let step = compile_branch(step, defs);
+            steps.push(Step::State {
+                init: Box::new(init),
+                step: Box::new(step),
+            });
+            steps.len() - 1
+        }
         Node::RecPrev => {
             steps.push(Step::RecPrev);
             steps.len() - 1
@@ -1224,6 +1301,57 @@ mod tests {
                 other => Err(EvalError::op(op, format!("未知算子 `{other}`"))),
             }
         }
+
+        fn frame_index(&self) -> Option<i64> {
+            Some(self.frame as i64)
+        }
+    }
+
+    /// **BX**：`State` 的闭式值（帧号驱动）与同轮数的 `NatRec` 逐次重放**逐位相同**。
+    #[test]
+    fn state_matches_explicit_nat_rec_replay_bit_for_bit() {
+        let init = Expr::pure(0.0);
+        let step = Expr::call(math("add"), [Expr::rec_prev(), Expr::pure(0.25)]);
+        let state = CompiledExpr::compile(&Expr::state(init.clone(), step.clone())).unwrap();
+        for frame in 0..=64u64 {
+            let mono = ScalarMono::new(0.0, frame);
+            let driven = state.eval(&mono).unwrap();
+            // 参考实现：`NatRec` 把同一个 step 从 0 逐次重放到 frame。
+            let replay = CompiledExpr::compile(&Expr::nat_rec(
+                Expr::pure(Literal::I64(frame as i64)),
+                init.clone(),
+                step.clone(),
+            ))
+            .unwrap()
+            .eval(&mono)
+            .unwrap();
+            assert_eq!(
+                driven, replay,
+                "frame {frame}: State 与逐次重放必须逐位相同"
+            );
+        }
+    }
+
+    /// `State` 没有帧号 ⇒ 显式失败（不静默按 0 轮算）。
+    #[test]
+    fn state_without_frame_index_fails_explicitly() {
+        struct NoFrame;
+        impl Mono for NoFrame {
+            fn read(&self, channel: &ChannelRef) -> Result<Value, EvalError> {
+                Err(EvalError::MissingChannel {
+                    channel: channel.clone(),
+                })
+            }
+            fn call(&self, _op: &OpRef, _args: &[Value]) -> Result<Value, EvalError> {
+                Ok(Value::f64(0.0))
+            }
+        }
+        let expr = Expr::state(
+            Expr::pure(0.0),
+            Expr::call(math("add"), [Expr::rec_prev(), Expr::pure(1.0)]),
+        );
+        let program = CompiledExpr::compile(&expr).unwrap();
+        assert_eq!(program.eval(&NoFrame), Err(EvalError::FrameContext));
     }
 
     /// 共享节点：`h1 = sin(t × 1)`，根 = `h1 + 2 × h1`。

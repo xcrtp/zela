@@ -500,6 +500,8 @@ pub struct SceneRecipe {
     pub bindings: BindingTable,
     /// `handles[i]` = 本脚本第 `i` 个 [`Handle`] 对应的 `ObjectId`。
     pub handles: Vec<ObjectId>,
+    /// **BX**：装配期仿射识别结果（side table：**不进产物**，供门禁 / 诊断）。
+    pub state_analyses: Vec<crate::animation::affine::StateAnalysis>,
 }
 
 impl SceneRecipe {
@@ -521,6 +523,10 @@ pub enum ScriptError {
     /// 装配期显式失败，不允许 seek 到中间帧静默拿错值（见
     /// [`crate::animation::BindingTable::reject_replay`]）。
     ReplayRequiresHistory(crate::animation::ReplayUnsupported),
+    /// **BX**：`State.step` 不是关于 `prev` 的仿射表达式 ⇒ 装配期显式拒绝。
+    ///
+    /// 本批不把"不可识别的状态"降级成 `Replay`（那等于静默），也不放开 AI-07。
+    StateNotAffine(crate::animation::affine::StateUnsupported),
 }
 
 impl std::fmt::Display for ScriptError {
@@ -531,6 +537,7 @@ impl std::fmt::Display for ScriptError {
             }
             ScriptError::OrderConflict(error) => write!(f, "{error}"),
             ScriptError::ReplayRequiresHistory(error) => write!(f, "{error}"),
+            ScriptError::StateNotAffine(error) => write!(f, "{error}"),
         }
     }
 }
@@ -840,6 +847,13 @@ impl SceneScript {
             .reject_replay()
             .map_err(ScriptError::ReplayRequiresHistory)?;
 
+        // **BX**：`State` 的 `step` 必须关于 prev 仿射（识别器在 ze-scene-core：
+        // 只有这一层同时看得见表达式树与数学库）。不通过 ⇒ 显式拒绝，不降级 Replay。
+        let state_analyses = self
+            .timeline
+            .analyze_states()
+            .map_err(ScriptError::StateNotAffine)?;
+
         // **G 批帧内定序**：完整表 + 时钟森林都在手 ⇒ 装配期检查"读先于写"，
         // 冲突显式报错（不留给运行期读到旧值 / 未定义值）。
         check_read_order(&bindings, &forest).map_err(ScriptError::OrderConflict)?;
@@ -856,6 +870,7 @@ impl SceneScript {
             forest,
             bindings,
             handles,
+            state_analyses,
         })
     }
 }
@@ -899,6 +914,11 @@ fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(),
                     collect_reads(init, out);
                     collect_reads(step, out);
                 }
+                // **BX**：`State` 同样有 init / step 两个子程序。
+                Step::State { init, step } => {
+                    collect_reads(init, out);
+                    collect_reads(step, out);
+                }
                 _ => {}
             }
         }
@@ -939,4 +959,13 @@ pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
             owner: "ze-scene-core",
         })
         .expect("read order pass 名唯一");
+    // **BX**：`State.step` 的仿射识别也是装配期分析 pass（只读 IR、写 side table）。
+    registry
+        .register(ze_comb::PassInfo {
+            name: "scene.state_affine",
+            kind: ze_comb::PassKind::Analysis,
+            semantics: ze_comb::Semantics::Preserving,
+            owner: "ze-scene-core",
+        })
+        .expect("state affine pass 名唯一");
 }

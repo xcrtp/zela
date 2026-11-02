@@ -78,6 +78,21 @@ pub enum Node {
         init: Box<Expr>,
         step: Box<Expr>,
     },
+    /// **单帧状态**（BX）：`value(n) = step(value(n−1))`，`n` = **当前帧号**。
+    ///
+    /// 与 [`Node::NatRec`] **同构**（都是 `init` + `step(prev)` 的折叠），区别只在
+    /// 索引来源：`NatRec` 的轮数由表达式给出，`State` 的轮数由宿主帧号给出。
+    ///
+    /// 语义上是**单帧纯函数**（`f^n(init)`）⇒ seek 到任意帧都能直接算，不需要历史；
+    /// 因此 [`Expr::requires_replay`] 对它返回 `false`（AI-07 的拒绝不命中）。
+    /// 折叠次数仍有上限（[`crate::REC_MAX_STEPS`]），超限显式失败。
+    ///
+    /// **装配期门禁**：`step` 必须关于 `RecPrev` 仿射（`ze-scene-core::animation::affine`
+    /// 识别），否则显式拒绝 —— 本批不放开 `Replay`（见 GAPS AI-07）。
+    State {
+        init: Box<Expr>,
+        step: Box<Expr>,
+    },
     /// **集合判空**（B4 Query）：`exists(requires = [...], excludes = [...])`。
     ///
     /// 过滤条件只有**组件类型组合**，装配期即可判定 ⇒ 装配期**常量折叠**成
@@ -104,6 +119,7 @@ impl Node {
                 cond, then, r#else,
             } => vec![cond, then, r#else],
             Node::NatRec { count, init, step } => vec![count, init, step],
+            Node::State { init, step } => vec![init, step],
             Node::Method { args, .. } => args.iter().collect(),
             Node::Pure { .. }
             | Node::Channel { .. }
@@ -725,6 +741,18 @@ impl Expr {
         })
     }
 
+    /// **单帧状态**（BX）：`value(n) = step(value(n−1))`，轮数 = 宿主帧号。
+    ///
+    /// 与 [`Expr::nat_rec`] 同构，但**没有** `count` 子节点：索引由
+    /// [`crate::Mono::frame_index`] 提供（装配期不写死，也不进 payload）。
+    /// 形状守卫与 `NatRec` 一致：`RecPrev` / `RecIndex` 只在 `step` 内合法。
+    pub fn state(init: Expr, step: Expr) -> Self {
+        Self::new(Node::State {
+            init: Box::new(init),
+            step: Box::new(step),
+        })
+    }
+
     /// `NatRec.step` 内的上一步状态。
     pub fn rec_prev() -> Self {
         Self::new(Node::RecPrev)
@@ -768,6 +796,9 @@ impl Expr {
     /// 连续层只是读通道 / 调算子，仍是 O1。
     pub fn requires_replay(&self) -> bool {
         match self.node {
+            // **BX**：`State` 是帧号的纯函数（`f^n(init)`），seek 不需要历史 ⇒ 不是 Replay。
+            // 它内部可以出现 `RecPrev`（折叠用），但那不改变"单帧可算"这件事。
+            Node::State { .. } => false,
             Node::NatRec { .. } | Node::RecPrev | Node::RecIndex => true,
             _ => self
                 .node
@@ -795,8 +826,8 @@ pub enum ExprError {
     /// 节点类型只有序列化格式、尚未实现求值（`Select`，提案 #6 D）。
     #[error("节点 `{0}` 尚未实现求值（格式已保留）")]
     UnsupportedNode(&'static str),
-    /// `RecPrev` / `RecIndex` 出现在 `NatRec.step` 之外。
-    #[error("递归叶子 `{0}` 只能出现在 `NatRec.step` 内（结构守卫）")]
+    /// `RecPrev` / `RecIndex` 出现在 `NatRec.step` / `State.step` 之外。
+    #[error("递归叶子 `{0}` 只能出现在 `NatRec.step` / `State.step` 内（结构守卫）")]
     OrphanRec(&'static str),
 }
 
@@ -820,9 +851,11 @@ fn check_recursive_leaves(expr: &Expr) -> Result<(), ExprError> {
             parent: Option<&'a Node>,
         ) -> Result<bool, ExprError> {
             let inherited = *self.in_step.last().unwrap_or(&false);
-            // 只有 `NatRec.step` 这一条边打开递归作用域；`count` / `init` 继承外层。
+            // 只有 `NatRec.step` / `State.step` 这两条边打开递归作用域；
+            // `count` / `init` 继承外层。
             let in_step = match parent {
                 Some(Node::NatRec { step, .. }) if std::ptr::eq(step.as_ref(), expr) => true,
+                Some(Node::State { step, .. }) if std::ptr::eq(step.as_ref(), expr) => true,
                 Some(_) => inherited,
                 None => false,
             };

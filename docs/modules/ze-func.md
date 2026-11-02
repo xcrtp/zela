@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-func`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-reflect`、`ze-type`
 - 被依赖（下游）：`ze-pod-func`、`ze-scene-core`、`zela-scene-ecs`
-- 源文件：8 个 · 3299 行
+- 源文件：8 个 · 3301 行
 
 ### 文件清单
 
@@ -23,7 +23,7 @@
 | `src/mono.rs` | 595 | **单态解析器**：把 `(算子, 实参槽类型)` 解析成具体类型的函数指针。 |
 | `src/op.rs` | 643 | **算子目录**：签名 + 语义元数据，**唯一一张表**。 |
 | `src/ops.rs` | 1127 | `zela.math` 的**标量算子语义**（纯函数，无状态）。 |
-| `src/simplify.rs` | 332 | **符号化简**（阶段 4）：常量折叠 + **层间迁移**（离散层 → 连续层）。 |
+| `src/simplify.rs` | 334 | **符号化简**（阶段 4）：常量折叠 + **层间迁移**（离散层 → 连续层）。 |
 | `src/wgsl.rs` | 325 | **WGSL codegen 后端**（阶段 4-A）：把 `zela.math` 的算子渲染成 WGSL 表达式。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

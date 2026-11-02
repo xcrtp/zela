@@ -125,6 +125,14 @@ impl Mono for SceneMono<'_> {
         ze_pod_func::eval_op(op, args)
     }
 
+    /// **BX**：`State` 的折叠轮数 = 宿主帧号（`TimeState.frame`）。
+    ///
+    /// 帧号是**全局**的（与 `frame` 通道同源）；带时钟偏移的绑定仍按全局帧推进
+    /// —— 这是本批的显式口径（局部帧需要 fps，宿主尚未提供）。
+    fn frame_index(&self) -> Option<i64> {
+        i64::try_from(self.frame).ok()
+    }
+
     /// **B2**：方法经 [`ze_scene_core::animation::method_entry`] 查表求值。
     ///
     /// 未注册 / 参数个数不符 ⇒ 显式失败（不静默给 0）。方法体是纯函数：

@@ -140,6 +140,8 @@ fn eval_closed(expr: &Expr, rec: Option<(&Value, i64)>) -> Option<Value> {
         Node::Ref { .. } => return None,
         // `exists` 依赖装配期的对象集 ⇒ 不是闭合表达式（装配期已折叠成常量）。
         Node::Exists { .. } => return None,
+        // **BX**：`State` 依赖宿主帧号 ⇒ 不是闭合表达式。
+        Node::State { .. } => return None,
     };
     Some(value)
 }

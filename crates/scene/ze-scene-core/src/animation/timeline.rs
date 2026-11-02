@@ -22,6 +22,9 @@ use ze_comb::{CompiledExpr, Expr, Node};
 use ze_scene_contract::ObjectId;
 use ze_time::{ClockForest, ClockNode, ClockProgram, PlayMode};
 
+use crate::animation::affine::{
+    StateAnalysis, StateUnsupported, init_width, recognize as recognize_affine,
+};
 use crate::animation::binding::{BindingTable, ExprProgram, LibraryRef, ResetBehavior};
 use crate::animation::target::Target;
 
@@ -286,6 +289,19 @@ impl Timeline {
         }
     }
 
+    /// **BX**：装配期识别所有 `State`（只读 Expr，产出 side table，**不进产物**）。
+    ///
+    /// `State.step` 不是关于 `prev` 的仿射 ⇒ 显式失败（不降级 `Replay`）。
+    /// 返回的分析结果供门禁 / 诊断使用；运行期仍走同一份折叠循环（重放即定义）。
+    pub(crate) fn analyze_states(&self) -> Result<Vec<StateAnalysis>, StateUnsupported> {
+        let mut out = Vec::new();
+        for step in &self.steps {
+            let Step::Expr { target, expr, .. } = step;
+            collect_states(expr, &target.name, &mut out)?;
+        }
+        Ok(out)
+    }
+
     /// 产物里出现的**函子库身份**（去重、按 namespace / version 排序）。
     ///
     /// 输入流的配对校验需要它：同一份 ZSB 的 payload hash 已覆盖库版本，
@@ -439,6 +455,30 @@ fn clock_affine(clock: &ClockProgram) -> Option<(f64, f64)> {
         rate *= link.rate;
     }
     (rate > 0.0).then_some((rate, shift))
+}
+
+/// 收集表达式里的 `State` 并逐条识别（显式失败）。
+fn collect_states(
+    expr: &Expr,
+    target: &str,
+    out: &mut Vec<StateAnalysis>,
+) -> Result<(), StateUnsupported> {
+    if let Node::State { init, step } = &expr.node {
+        let fail = |reason: String| StateUnsupported {
+            target: target.to_string(),
+            reason,
+        };
+        let width = init_width(init).map_err(|error| fail(error.to_string()))?;
+        let map = recognize_affine(step, width).map_err(|error| fail(error.to_string()))?;
+        out.push(StateAnalysis {
+            target: target.to_string(),
+            map,
+        });
+    }
+    for child in expr.node.children() {
+        collect_states(child, target, out)?;
+    }
+    Ok(())
 }
 
 /// 递归重写 Expr 树里的 `Node::Read.object`（G 批）。

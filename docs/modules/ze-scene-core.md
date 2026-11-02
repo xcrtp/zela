@@ -11,17 +11,18 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：42 个 · 10271 行
+- 源文件：43 个 · 10938 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
+| `src/animation/affine.rs` | 596 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
 | `src/animation/binding.rs` | 327 | — |
-| `src/animation/mod.rs` | 29 | — |
+| `src/animation/mod.rs` | 31 | — |
 | `src/animation/predicate.rs` | 852 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
 | `src/animation/target.rs` | 1354 | — |
-| `src/animation/timeline.rs` | 601 | — |
+| `src/animation/timeline.rs` | 641 | — |
 | `src/bounds.rs` | 197 | — |
 | `src/camera_input.rs` | 160 | — |
 | `src/components/3d.rs` | 402 | — |
@@ -51,7 +52,7 @@
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
 | `src/registry.rs` | 219 | — |
-| `src/scene_script.rs` | 942 | — |
+| `src/scene_script.rs` | 971 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
@@ -64,81 +65,89 @@
 
 ```mermaid
 graph LR
-    f0["src/animation/binding.rs"]
+    f0["src/animation/affine.rs"]
+    f2["src/animation/binding.rs"]
     f1["src/animation/mod.rs"]
-    f2["src/animation/predicate.rs"]
-    f3["src/animation/target.rs"]
-    f7["src/animation/timeline.rs"]
-    f4["src/bounds.rs"]
-    f8["src/components.rs"]
-    f9["src/components/3d.rs"]
-    f26["src/composer.rs"]
-    f11["src/domain/camera.rs"]
-    f13["src/domain/event.rs"]
-    f12["src/domain/mod.rs"]
-    f14["src/domain/view.rs"]
-    f16["src/domain/view_rect.rs"]
-    f18["src/mesh_primitives.rs"]
-    f17["src/mesh_primitives/cube.rs"]
-    f19["src/mesh_primitives/parametric_surface.rs"]
-    f20["src/object/affine.rs"]
-    f21["src/object/axes.rs"]
-    f5["src/object/camera.rs"]
-    f22["src/object/graph.rs"]
-    f15["src/object/mod.rs"]
-    f23["src/object/placement.rs"]
-    f6["src/object/primitives.rs"]
-    f24["src/persist.rs"]
-    f25["src/registry.rs"]
-    f27["src/scene_script.rs"]
-    f28["src/surface.rs"]
-    f10["src/types.rs"]
-    f30["src/world_inherit.rs"]
-    f29["src/world_transforms.rs"]
+    f3["src/animation/predicate.rs"]
+    f4["src/animation/target.rs"]
+    f8["src/animation/timeline.rs"]
+    f5["src/bounds.rs"]
+    f9["src/components.rs"]
+    f10["src/components/3d.rs"]
+    f27["src/composer.rs"]
+    f12["src/domain/camera.rs"]
+    f14["src/domain/event.rs"]
+    f13["src/domain/mod.rs"]
+    f15["src/domain/view.rs"]
+    f17["src/domain/view_rect.rs"]
+    f19["src/mesh_primitives.rs"]
+    f18["src/mesh_primitives/cube.rs"]
+    f20["src/mesh_primitives/parametric_surface.rs"]
+    f21["src/object/affine.rs"]
+    f22["src/object/axes.rs"]
+    f6["src/object/camera.rs"]
+    f23["src/object/graph.rs"]
+    f16["src/object/mod.rs"]
+    f24["src/object/placement.rs"]
+    f7["src/object/primitives.rs"]
+    f25["src/persist.rs"]
+    f26["src/registry.rs"]
+    f28["src/scene_script.rs"]
+    f29["src/surface.rs"]
+    f11["src/types.rs"]
+    f31["src/world_inherit.rs"]
+    f30["src/world_transforms.rs"]
     f0 --> f1
-    f0 --> f2
-    f0 --> f3
     f2 --> f1
+    f2 --> f3
+    f2 --> f4
     f3 --> f1
-    f3 --> f4
-    f3 --> f5
-    f3 --> f6
-    f7 --> f1
-    f7 --> f3
-    f4 --> f8
-    f9 --> f8
-    f9 --> f10
-    f11 --> f12
-    f13 --> f12
-    f13 --> f14
-    f14 --> f12
+    f4 --> f1
+    f4 --> f5
+    f4 --> f6
+    f4 --> f7
+    f8 --> f1
+    f8 --> f4
+    f5 --> f9
+    f10 --> f9
+    f10 --> f11
+    f12 --> f13
+    f14 --> f13
     f14 --> f15
-    f14 --> f10
-    f16 --> f12
-    f17 --> f18
-    f19 --> f18
-    f20 --> f15
-    f21 --> f15
-    f5 --> f15
-    f22 --> f15
-    f23 --> f15
-    f6 --> f15
-    f24 --> f15
-    f25 --> f26
-    f25 --> f12
-    f27 --> f0
-    f27 --> f3
-    f27 --> f7
-    f27 --> f28
+    f15 --> f13
+    f15 --> f16
+    f15 --> f11
+    f17 --> f13
+    f18 --> f19
+    f20 --> f19
+    f21 --> f16
+    f22 --> f16
+    f6 --> f16
+    f23 --> f16
+    f24 --> f16
+    f7 --> f16
+    f25 --> f16
+    f26 --> f27
+    f26 --> f13
+    f28 --> f2
+    f28 --> f4
     f28 --> f8
-    f28 --> f15
-    f29 --> f30
+    f28 --> f29
+    f29 --> f9
+    f29 --> f16
+    f30 --> f31
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
 
 | 文件 | 项 |
 |---|---|
+| `src/animation/affine.rs` | `pub struct AffineMap` |
+| `src/animation/affine.rs` | `pub enum AffineError` |
+| `src/animation/affine.rs` | `pub struct StateUnsupported` |
+| `src/animation/affine.rs` | `pub struct StateAnalysis` |
+| `src/animation/affine.rs` | `pub fn init_width(init: &Expr) -> Result<usize, AffineError>` |
+| `src/animation/affine.rs` | `pub fn recognize(step: &Expr, width: usize) -> Result<AffineMap, AffineError>` |
 | `src/animation/binding.rs` | `pub enum ResetBehavior` |
 | `src/animation/binding.rs` | `pub enum SeekKind` |
 | `src/animation/binding.rs` | `pub struct ReplayUnsupported` |

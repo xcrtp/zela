@@ -9,11 +9,13 @@
 // ECS 侧（`zela-scene`）保留三个 System：`BindingApplySystem` / `CameraDriveSystem` /
 // `MorphApplySystem`，并通过 re-export 保持 `zela_scene_ecs::animation::*` 路径不变。
 
+pub mod affine;
 pub mod binding;
 pub mod predicate;
 pub mod target;
 pub mod timeline;
 
+pub use affine::{AffineError, AffineMap, init_width, recognize as recognize_affine};
 pub use binding::{
     Binding, BindingDriver, BindingTable, LibraryRef, ReplayUnsupported, ResetBehavior, SeekKind,
 };

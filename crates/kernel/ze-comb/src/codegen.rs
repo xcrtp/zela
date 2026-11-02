@@ -253,6 +253,8 @@ impl Emitter<'_> {
             Node::Read { .. } => return Err(unsupported("read")),
             Node::Method { .. } => return Err(unsupported("method")),
             Node::NatRec { .. } => return Err(unsupported("nat_rec")),
+            // **BX**：`State` 需要帧号历史，进不了 shader（走 CPU）。
+            Node::State { .. } => return Err(unsupported("state")),
             Node::RecPrev => return Err(unsupported("rec_prev")),
             Node::RecIndex => return Err(unsupported("rec_index")),
             Node::Exists { .. } => return Err(unsupported("exists")),

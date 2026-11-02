@@ -84,6 +84,10 @@ impl Expr {
                 init: Box::new(f(init)),
                 step: Box::new(f(step)),
             },
+            Node::State { init, step } => Node::State {
+                init: Box::new(f(init)),
+                step: Box::new(f(step)),
+            },
             Node::Method {
                 method,
                 object,
