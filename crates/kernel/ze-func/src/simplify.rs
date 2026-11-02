@@ -38,16 +38,21 @@ fn simplify_node(expr: &Expr) -> Expr {
 fn fold(expr: Expr) -> Expr {
     let Expr { id, node } = expr;
     match node {
-        Node::Call { op, args } => match fold_call(&op, &args) {
-            Some(value) => Expr {
-                id,
-                node: Node::Pure { value },
-            },
-            None => Expr {
-                id,
-                node: Node::Call { op, args },
-            },
-        },
+        Node::Call { op, args } => {
+            if let Some(identity) = neutralize(&op, &args, &id) {
+                return identity;
+            }
+            match fold_call(&op, &args) {
+                Some(value) => Expr {
+                    id,
+                    node: Node::Pure { value },
+                },
+                None => Expr {
+                    id,
+                    node: Node::Call { op, args },
+                },
+            }
+        }
         Node::Select { cond, then, r#else } => {
             // 带 id 的 Select 不折叠：单个 Expr 只带一个 id，折叠会丢引用目标。
             if id.is_none() {
@@ -81,6 +86,50 @@ fn fold(expr: Expr) -> Expr {
             }
         }
         other => Expr { id, node: other },
+    }
+}
+
+/// **BY-c**：安全恒等式（只做**类型无关**的消去）。
+///
+/// - `mul(x, 1)` / `mul(1, x)` → `x`
+/// - `scale(1, x)` → `x`
+///
+/// **刻意不做** `x + 0` / `x * 0`：向量 + 标量在求值期是**显式错误**，
+/// 折叠会把"错误"变成"成功"，违反语义保持。`x / 1` 也不做 —— 目录里没有除法算子。
+/// `sum(x)` 也不做：批量语义下单个 `Iter` 实参是**折叠**，不是恒等。
+///
+/// 带 `id` 的节点**不折叠**：单个 `Expr` 只带一个 id，替换会丢引用目标
+/// （与 `Select` 同口径）。
+fn neutralize(op: &ze_comb::OpRef, args: &[Expr], id: &Option<ze_comb::Id>) -> Option<Expr> {
+    if id.is_some() {
+        return None;
+    }
+    let one = |expr: &Expr| matches!(
+        &expr.node,
+        Node::Pure {
+            value: Literal::F64(value)
+        } if *value == 1.0
+    ) || matches!(
+        &expr.node,
+        Node::Pure {
+            value: Literal::F32(value)
+        } if *value == 1.0
+    ) || matches!(
+        &expr.node,
+        Node::Pure {
+            value: Literal::I32(value)
+        } if *value == 1
+    ) || matches!(
+        &expr.node,
+        Node::Pure {
+            value: Literal::I64(value)
+        } if *value == 1
+    );
+    match (op.name.as_str(), args) {
+        ("mul", [a, b]) if one(b) => Some(a.clone()),
+        ("mul", [a, b]) if one(a) => Some(b.clone()),
+        ("scale", [k, of]) if one(k) => Some(of.clone()),
+        _ => None,
     }
 }
 
@@ -238,6 +287,38 @@ mod tests {
         );
         let simplified = simplify(&expr);
         assert_eq!(simplified.node, Node::Pure { value: Literal::F64(7.0) });
+    }
+
+    /// **BY-c**：`mul(x,1)` / `mul(1,x)` / `scale(1,x)` 消去（类型无关）。
+    #[test]
+    fn multiplicative_one_is_eliminated() {
+        let x = Expr::channel(ze_comb::ChannelRef::builtin("time"));
+        assert_eq!(
+            simplify(&Expr::call(math("mul"), [x.clone(), pure_f64(1.0)])).node,
+            x.node
+        );
+        assert_eq!(
+            simplify(&Expr::call(math("mul"), [pure_f64(1.0), x.clone()])).node,
+            x.node
+        );
+        assert_eq!(
+            simplify(&Expr::call(math("scale"), [pure_f64(1.0), x.clone()])).node,
+            x.node
+        );
+    }
+
+    /// **BY-c**：加法零**刻意不折** —— 向量 + 标量在求值期是显式错误，
+    /// 折叠会把错误变成成功（语义保持优先于化简率）。
+    #[test]
+    fn additive_zero_is_not_folded() {
+        let expr = Expr::call(
+            math("add"),
+            [
+                Expr::channel(ze_comb::ChannelRef::builtin("time")),
+                pure_f64(0.0),
+            ],
+        );
+        assert!(matches!(simplify(&expr).node, Node::Call { .. }));
     }
 
     #[test]

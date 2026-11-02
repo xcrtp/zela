@@ -63,4 +63,6 @@ pub const SERVICE: &str = "expr";
 pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
     infer::register_passes(registry);
     signature::register_passes(registry);
+    // **BY-c**：等价化简也是生产 pass（第二次兑现 pass 架构；BX 的仿射识别是第一次）。
+    ze_func::simplify::register_passes(registry);
 }
