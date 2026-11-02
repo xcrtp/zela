@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：13 个 · 6401 行
+- 源文件：13 个 · 6493 行
 
 ### 文件清单
 
@@ -26,7 +26,7 @@
 | `src/iter.rs` | 286 | 可迭代类型：**`Iter`（有穷）与 `Stream`（余归纳）是两个类型**。 |
 | `src/lib.rs` | 109 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
 | `src/pass.rs` | 293 | **Pass 抽象**：把已有的能力收进一个约定（不是为假想需求预付）。 |
-| `src/program.rs` | 2030 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
+| `src/program.rs` | 2122 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
 | `src/reference.rs` | 320 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
 | `src/typed.rs` | 637 | **单态化求值**（typed fast path）：编译期定类型、按类型分槽、直接调函数指针。 |
 | `src/walk.rs` | 169 | — |
