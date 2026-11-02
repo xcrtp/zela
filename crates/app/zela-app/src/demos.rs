@@ -89,6 +89,8 @@ pub static DEMOS: &[Demo] = &[
     lua!("cap_shader_3d", "3D着色材质", "cap_shader_3d.lua"),
     // BV 批（顺序与 manifest 末尾一致）
     lua!("cap_raytrace", "光追视图", "cap_raytrace.lua"),
+    // BX 批（顺序与 manifest 末尾一致）
+    lua!("spring_state", "阻尼弹簧状态", "spring_state.lua"),
 ];
 
 /// 按 id 找作品（找不到 ⇒ `None`，调用方决定回退）。
