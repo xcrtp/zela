@@ -14,7 +14,9 @@ pub mod predicate;
 pub mod target;
 pub mod timeline;
 
-pub use binding::{Binding, BindingDriver, BindingTable, LibraryRef, ResetBehavior, SeekKind};
+pub use binding::{
+    Binding, BindingDriver, BindingTable, LibraryRef, ReplayUnsupported, ResetBehavior, SeekKind,
+};
 pub use predicate::{
     Interval, IntervalSet, MultiIntervalSet, TIME_VARIABLE, analyze as analyze_predicate,
 };

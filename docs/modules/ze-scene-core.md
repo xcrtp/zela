@@ -11,15 +11,15 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：42 个 · 10100 行
+- 源文件：42 个 · 10271 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/binding.rs` | 293 | — |
-| `src/animation/mod.rs` | 27 | — |
-| `src/animation/predicate.rs` | 729 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
+| `src/animation/binding.rs` | 327 | — |
+| `src/animation/mod.rs` | 29 | — |
+| `src/animation/predicate.rs` | 852 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
 | `src/animation/target.rs` | 1354 | — |
 | `src/animation/timeline.rs` | 601 | — |
 | `src/bounds.rs` | 197 | — |
@@ -51,7 +51,7 @@
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
 | `src/registry.rs` | 219 | — |
-| `src/scene_script.rs` | 930 | — |
+| `src/scene_script.rs` | 942 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
@@ -141,6 +141,7 @@ graph LR
 |---|---|
 | `src/animation/binding.rs` | `pub enum ResetBehavior` |
 | `src/animation/binding.rs` | `pub enum SeekKind` |
+| `src/animation/binding.rs` | `pub struct ReplayUnsupported` |
 | `src/animation/binding.rs` | `pub enum BindingDriver` |
 | `src/animation/binding.rs` | `pub struct LibraryRef` |
 | `src/animation/binding.rs` | `pub struct Binding` |

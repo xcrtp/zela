@@ -37,10 +37,25 @@ pub enum ResetBehavior {
 /// **本轮有意保留的方向标记**（§8.1）：`Replay` 从"预留未接线"升级为
 /// "**Scene 不保证纯**"的正式记账——触发条件：接弹簧 / 数值积分 / 外部事件。
 /// 它**不是**死代码，不得顺手删除。
+///
+/// **AI-07**：引擎只实现了 `O1`。在重放路径落地前，带 `Replay` 的绑定在
+/// **装配期**被 [`BindingTable::reject_replay`] 显式拒绝 —— 不允许"seek 到
+/// 中间帧静默拿错值"。放开条件 = 提案阶段 7（混合求值器）真正实现重放。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeekKind {
     O1,
     Replay,
+}
+
+/// 装配期拒绝：`SeekKind::Replay` 绑定尚无重放路径（AI-07）。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "绑定 `{target}` 需要历史重放（SeekKind::Replay：历史 payload 的 predicate + Hold，\
+     或含 NatRec 的离散层），而引擎只实现了 O1 —— seek 到中间帧会无提示拿到错值，\
+     故在装配期显式拒绝"
+)]
+pub struct ReplayUnsupported {
+    pub target: String,
 }
 
 /// 表达式驱动：**lowered 恒有、typed 可选**（定义在 `ze-comb`，**领域无关**）。
@@ -205,6 +220,25 @@ impl BindingTable {
 
     pub fn is_empty(&self) -> bool {
         self.bindings.is_empty()
+    }
+
+    /// **装配期门禁（AI-07）**：引擎只实现了 `O1`，带 `SeekKind::Replay` 的绑定
+    /// seek 到中间帧会无提示拿到错值 ⇒ 在绑定表交付前显式拒绝。
+    ///
+    /// 现状零生产 `Replay`（可分析的 Hold 是纯函数，脚本侧不可分析的 Hold 已在
+    /// [`crate::scene_script::ExprBindError::UnanalyzableHold`] 拒绝），因此这道
+    /// 门禁只会挡住**历史 payload** 与 `NatRec` 这类真正需要历史的绑定。
+    pub fn reject_replay(&self) -> Result<(), ReplayUnsupported> {
+        match self
+            .bindings
+            .iter()
+            .find(|binding| binding.seek_kind == SeekKind::Replay)
+        {
+            Some(binding) => Err(ReplayUnsupported {
+                target: binding.target.name().to_string(),
+            }),
+            None => Ok(()),
+        }
     }
 }
 

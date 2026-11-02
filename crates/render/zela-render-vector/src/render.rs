@@ -1053,16 +1053,31 @@ fn finish_schedule(schedule: crate::passes::PassSchedule, slot: Option<crate::pa
     schedule.finish().map_err(|error| format!("pass 调度与声明不一致：{error}"))
 }
 
-/// 一张纹理的字节数（块大小 × 宽 × 高 × 层 × mip 级 × 采样数；mip 按整层估算，偏大但可比）。
+/// 一张纹理的字节数：按 **mip 逐级实际尺寸** 累加（PI-10）。
+///
+/// 旧口径 `size × mip_level_count` 把每一级都当成基础尺寸 ⇒ mipmapped 纹理
+/// 记出 6 倍量级（M-4 的 +203.4 MB 实际约 +35.5 MB，约 4/3）。
+/// 正确口径是 `Σ (block × ceil(w_i / block_w) × ceil(h_i / block_h) × 层 × 采样)`
+/// —— 与 `wgpu` 的物理尺寸一致，可以当显存占用的引用值。
 fn texture_bytes(desc: &wgpu::TextureDescriptor<'_>) -> usize {
-    let block = desc.format.block_copy_size(None).unwrap_or(0) as usize;
-    let size = desc.size;
-    block
-        * size.width as usize
-        * size.height as usize
-        * size.depth_or_array_layers as usize
-        * desc.mip_level_count as usize
-        * desc.sample_count as usize
+    let bytes_per_block = desc.format.block_copy_size(None).unwrap_or(0) as u64;
+    let (block_width, block_height) = desc.format.block_dimensions();
+    let (block_width, block_height) = (
+        u64::from(block_width.max(1)),
+        u64::from(block_height.max(1)),
+    );
+    let mut total = 0u64;
+    for level in 0..desc.mip_level_count {
+        let size = desc.size.mip_level_size(level, desc.dimension);
+        let blocks_x = u64::from(size.width).div_ceil(block_width);
+        let blocks_y = u64::from(size.height).div_ceil(block_height);
+        total += bytes_per_block
+            * blocks_x
+            * blocks_y
+            * u64::from(size.depth_or_array_layers)
+            * u64::from(desc.sample_count);
+    }
+    total as usize
 }
 
 /// **BU-1**：一次分配的租约。最后一个引用（句柄或任一视图）drop 时把持有量减回去。
@@ -5809,6 +5824,57 @@ mod buffer_contract {
         assert_eq!(pick_max_samples(F::MULTISAMPLE_X8 | F::MULTISAMPLE_X4), 8);
         assert_eq!(pick_max_samples(F::MULTISAMPLE_X4), 4);
         assert_eq!(pick_max_samples(F::empty()), 1);
+    }
+
+    /// **PI-10**：mipmapped 纹理按**逐级实际尺寸**累加，不是 `base × 级数`。
+    ///
+    /// 1024×512 R8G8B8A8 的完整 mip 链（6 级）逐级字节：
+    /// `4 × (1024·512 + 512·256 + 256·128 + 128·64 + 64·32 + 32·16) = 2_795_520`；
+    /// 旧口径会记成 `4 × 1024·512 × 6 = 12_582_912`（4.5 倍）。
+    #[test]
+    fn texture_bytes_sums_each_mip_level_instead_of_scaling_the_base() {
+        let desc = wgpu::TextureDescriptor {
+            label: Some("PI-10 mip 链"),
+            size: wgpu::Extent3d {
+                width: 1024,
+                height: 512,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 6,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+        let per_level = (1024 * 512 + 512 * 256 + 256 * 128 + 128 * 64 + 64 * 32 + 32 * 16) * 4;
+        assert_eq!(texture_bytes(&desc), per_level);
+        let old = 4 * 1024 * 512 * 6;
+        assert!(
+            texture_bytes(&desc) < old / 4,
+            "旧口径（base × levels）会高估到 {old} 字节"
+        );
+    }
+
+    /// **PI-10**：块压缩格式按 `block_copy_size × ceil(尺寸 / block_dimensions)` 计。
+    #[test]
+    fn texture_bytes_understands_block_compression() {
+        let desc = wgpu::TextureDescriptor {
+            label: Some("PI-10 BC1"),
+            size: wgpu::Extent3d {
+                width: 8,
+                height: 8,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 4,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bc1RgbaUnorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+        // 每级都至少一个 4×4 块（8 B）：8×8 = 4 块、4×4 = 1 块、2×2 / 1×1 = 各 1 块。
+        assert_eq!(texture_bytes(&desc), 8 * (4 + 1 + 1 + 1));
     }
 
     #[test]

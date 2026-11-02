@@ -517,6 +517,10 @@ pub enum ScriptError {
     CreateFailed { handle: Handle },
     /// **G 批帧内定序**：装配期发现"读先于写"（见 [`ExprBindError::ReadOrderConflict`]）。
     OrderConflict(ExprBindError),
+    /// **AI-07**：绑定需要历史重放（`SeekKind::Replay`），而引擎只实现了 `O1`。
+    /// 装配期显式失败，不允许 seek 到中间帧静默拿错值（见
+    /// [`crate::animation::BindingTable::reject_replay`]）。
+    ReplayRequiresHistory(crate::animation::ReplayUnsupported),
 }
 
 impl std::fmt::Display for ScriptError {
@@ -526,6 +530,7 @@ impl std::fmt::Display for ScriptError {
                 write!(f, "场景脚本 commit 失败：第 {} 条创建命令被拒绝", handle.0)
             }
             ScriptError::OrderConflict(error) => write!(f, "{error}"),
+            ScriptError::ReplayRequiresHistory(error) => write!(f, "{error}"),
         }
     }
 }
@@ -827,6 +832,13 @@ impl SceneScript {
             &mut forest,
             &mut bindings,
         );
+
+        // **AI-07**：引擎只有 O1 求值器。需要历史重放的绑定（历史 payload 的
+        // predicate + Hold，或含 NatRec 的离散层）在装配期显式失败 ——
+        // seek 到中间帧拿错值却静默通过，是本批要消灭的那类洞。
+        bindings
+            .reject_replay()
+            .map_err(ScriptError::ReplayRequiresHistory)?;
 
         // **G 批帧内定序**：完整表 + 时钟森林都在手 ⇒ 装配期检查"读先于写"，
         // 冲突显式报错（不留给运行期读到旧值 / 未定义值）。

@@ -136,7 +136,51 @@ impl IntervalSet {
                 _ => merged.push(interval),
             }
         }
-        Self { intervals: merged }
+        let set = Self { intervals: merged };
+        debug_assert!(
+            set.is_normalized(),
+            "IntervalSet::new 必须产出有序、互不相交、已合并的区间集：{set:?}"
+        );
+        set
+    }
+
+    /// **不变式（AI-06）**：区间集必须**有序、互不相交、已合并**。
+    ///
+    /// [`last_active`](Self::last_active) / `still_time` / [`intersect`](Self::intersect)
+    /// 都是零状态线性遍历，一旦上游构造出非规范集合就会**无提示**给出错值。
+    /// 消费方入口用 `debug_assert!` 把它钉住（release 不付成本）。
+    fn is_normalized(&self) -> bool {
+        let mut previous_end: Option<Bound> = None;
+        for interval in &self.intervals {
+            // 单个区间非空：`start < end`，或退化为非空端点（两端闭合）。
+            let non_empty = interval.start.value < interval.end.value
+                || (interval.start.value == interval.end.value
+                    && interval.start.closed
+                    && interval.end.closed);
+            if !non_empty {
+                return false;
+            }
+            // 无穷端点必须开（`±∞` 不在实数域里）。
+            if interval.start.value == f64::NEG_INFINITY && interval.start.closed {
+                return false;
+            }
+            if interval.end.value == f64::INFINITY && interval.end.closed {
+                return false;
+            }
+            if let Some(end) = previous_end {
+                // 有序：后一段的起点严格大于前一段的终点；
+                // 相等时只允许"两端都开"（否则本应合并）。
+                let ordered = end.value < interval.start.value
+                    || (end.value == interval.start.value
+                        && !end.closed
+                        && !interval.start.closed);
+                if !ordered {
+                    return false;
+                }
+            }
+            previous_end = Some(interval.end);
+        }
+        true
     }
 
     /// 是否为空集。
@@ -219,6 +263,12 @@ impl IntervalSet {
     ///   的意思是"到 2 为止"，取右端点而不是左极限）；
     /// - `t` 在第一段之前 ⇒ `None`（还没生效过）。
     pub fn last_active(&self, t: f64) -> Option<f64> {
+        // **AI-06**：下面的遍历假设区间有序且互不相交（遇到第一个满足条件的
+        // 区间就 `break`）⇒ 不变式被绕过时会拿到错值，必须在入口响亮失败。
+        debug_assert!(
+            self.is_normalized(),
+            "last_active 依赖「有序、互不相交、已合并」：{self:?}"
+        );
         let mut best = None;
         for interval in &self.intervals {
             if t < interval.start.value {
@@ -647,6 +697,79 @@ mod tests {
     fn unknown_shapes_are_not_guessed() {
         // 右侧不是字面量 ⇒ 不可分析。
         assert!(analyze(&call("lt", vec![time(), time()])).is_none());
+    }
+
+    /// **AI-06**：规范化结果必须满足不变式；绕过 `new` 直接构造非规范集合时，
+    /// 断言必须能发现（`last_active` 入口的 `debug_assert` 才有意义）。
+    #[test]
+    fn normalization_invariant_is_locked() {
+        let set = IntervalSet::new(vec![
+            Interval {
+                start: Bound::new(3.0, true),
+                end: Bound::new(5.0, false),
+            },
+            Interval {
+                start: Bound::new(1.0, true),
+                end: Bound::new(4.0, false),
+            },
+            Interval {
+                start: Bound::new(8.0, true),
+                end: Bound::new(9.0, true),
+            },
+        ]);
+        assert!(set.is_normalized());
+        assert_eq!(set.intervals.len(), 2, "重叠区间应被合并");
+        assert_eq!(set.last_active(6.0), Some(5.0));
+
+        // 乱序 + 重叠：本应由 `new` 修好，手工构造时必须被识别为不规范。
+        let broken = IntervalSet {
+            intervals: vec![
+                Interval {
+                    start: Bound::new(3.0, true),
+                    end: Bound::new(5.0, false),
+                },
+                Interval {
+                    start: Bound::new(1.0, true),
+                    end: Bound::new(4.0, false),
+                },
+            ],
+        };
+        assert!(!broken.is_normalized());
+
+        // 相接且至少一端闭合 ⇒ 本应合并。
+        let unmerged = IntervalSet {
+            intervals: vec![
+                Interval {
+                    start: Bound::new(1.0, true),
+                    end: Bound::new(4.0, true),
+                },
+                Interval {
+                    start: Bound::new(4.0, true),
+                    end: Bound::new(5.0, true),
+                },
+            ],
+        };
+        assert!(!unmerged.is_normalized());
+    }
+
+    /// **AI-06**：不变式被绕过时，`last_active` 必须响亮失败（debug 构建）。
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "有序、互不相交")]
+    fn last_active_fails_loudly_on_a_non_normalized_set() {
+        let broken = IntervalSet {
+            intervals: vec![
+                Interval {
+                    start: Bound::new(3.0, true),
+                    end: Bound::new(5.0, false),
+                },
+                Interval {
+                    start: Bound::new(1.0, true),
+                    end: Bound::new(4.0, false),
+                },
+            ],
+        };
+        let _ = broken.last_active(2.0);
     }
 
     /// **B4 验收**：常量 predicate 是"完全静态"的另一类（折叠先于区间代数）。

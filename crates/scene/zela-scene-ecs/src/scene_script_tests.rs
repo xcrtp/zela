@@ -566,10 +566,12 @@ mod tests {
         assert_eq!(recipe.bindings.bindings[0].target.name(), "Circle.center");
     }
 
-    /// **B5**：含 `NatRec` 的绑定 `seek_kind` 必须是 `Replay`（离散层有记忆）。
+    /// **B5 / AI-07**：含 `NatRec` 的绑定 `seek_kind` 是 `Replay`（离散层有记忆），
+    /// 而引擎只有 `O1` ⇒ **装配期显式失败**，不允许 seek 到中间帧静默拿错值。
     #[test]
-    fn nat_rec_binding_requires_replay() {
+    fn nat_rec_binding_is_rejected_at_assembly() {
         use ze_scene_core::animation::{LibraryRef, ResetBehavior};
+        use ze_scene_core::scene_script::ScriptError;
         use ze_time::ClockProgram;
 
         let mut enc = SceneEncoder::new();
@@ -593,15 +595,63 @@ mod tests {
             ResetBehavior::Hold,
             0.0,
         )
-        .expect("NatRec 绑定装配成功");
+        .expect("NatRec 绑定装配成功（拒绝发生在 commit）");
 
         let mut scene = SceneStruct::new();
-        let recipe = enc.finish().commit(&mut scene).expect("commit 成功");
-        assert_eq!(
-            recipe.bindings.bindings[0].seek_kind,
-            crate::animation::SeekKind::Replay,
-            "含 NatRec 的绑定必须整段重放"
+        let error = enc
+            .finish()
+            .commit(&mut scene)
+            .expect_err("Replay 绑定必须在装配期被拒绝");
+        match error {
+            ScriptError::ReplayRequiresHistory(error) => {
+                assert_eq!(error.target, "CircleRadius");
+                assert!(error.to_string().contains("SeekKind::Replay"));
+                assert!(error.to_string().contains("历史 payload"));
+            }
+            other => panic!("期望 ReplayRequiresHistory，实际：{other:?}"),
+        }
+    }
+
+    /// **AI-07（历史 payload 形状）**：`predicate` 不可分析 + `active` 缺失 + `Hold`
+    /// ⇒ `Replay`；绑定表必须在交付运行期前显式拒绝（而不是等到 seek 中间帧才算错）。
+    #[test]
+    fn historical_hold_payload_is_rejected_by_the_binding_table() {
+        use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
+        use ze_scene_core::animation::{ResetBehavior, target_ctor_by_name};
+        use ze_time::{ClockForest, ClockNode};
+
+        let mut forest = ClockForest::new();
+        let clock = forest.insert(ClockNode::new(None)).expect("插入根节点");
+        // `frame` 不是时间变量 ⇒ 区间代数分析不出可用于 Hold 反算的集合。
+        let predicate = Expr::call(
+            OpRef::new("zela.math", "lt"),
+            [
+                Expr::channel(ChannelRef::builtin("frame")),
+                Expr::pure(2.0),
+            ],
         );
+        let program = CompiledExpr::compile(&Expr::pure(1.0)).expect("常量可编译");
+        let predicate = CompiledExpr::compile(&predicate).expect("predicate 可编译");
+        let (make, _) = target_ctor_by_name("CircleRadius").expect("目标已登记");
+        let mut table = BindingTable::new();
+        table.bind_expr_gated(
+            clock,
+            program,
+            make(ObjectId::DANGLING),
+            Some(predicate),
+            None,
+            ResetBehavior::Hold,
+        );
+        assert_eq!(
+            table.bindings[0].seek_kind,
+            crate::animation::SeekKind::Replay,
+            "不可分析的 Hold 只能保守记 Replay"
+        );
+        let error = table
+            .reject_replay()
+            .expect_err("Replay 必须在装配期被拒绝");
+        assert_eq!(error.target, "CircleRadius");
+        assert!(error.to_string().contains("历史 payload"));
     }
 
     /// **G 批帧内定序**：装配期（`commit`）显式拒绝"读先于写"。
