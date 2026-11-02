@@ -1944,12 +1944,12 @@
 | BX-03 | 非线性 `State.step` 会静默算错 / 降级 | 场景 | **已关闭** | `Timeline::analyze_states` 在 `commit` 期门禁：`ScriptError::StateNotAffine`（含目标名与原因）。不降级 `Replay`（AI-07 未放开）。用例：`non_affine_state_is_rejected_at_assembly`。 |
 | BX-04 | 单值 / 元组 State 与逐次重放的一致性没有判据 | 内核 | **已关闭** | `state_matches_explicit_nat_rec_replay_bit_for_bit`（标量 0..=64 帧）与 `tuple_state_matches_replay_bit_for_bit`（二维弹簧，含 2000 帧长序列）：`State` 在帧 `n` 的值与同 `n` 轮的 `NatRec` 重放**逐位相同**。两条路径共用同一段 `fold` ⇒ 一致性是结构事实。 |
 | BX-05 | `nat_rec` 脚本侧零使用（AX-05 的一半） | pod / 脚本 | **已关闭** | 弹簧作品 [`spring_state.lua`](crates/app/zela-app/scripts/spring_state.lua) 用 `expr.nat_rec` 折叠 4 次得到参考线高度（`y = 0.60`），经 `expr.plot` 在**装配期采样**成折线 —— 因不进入绑定，不触发 AI-07 的 `Replay` 拒绝。`State` 与它共用同一份折叠实现（`CompiledExpr::fold`）。 |
-| BX-06 | **快速幂运行时路径未启用**：`O(log n)` 未达成 | 内核 / 场景 | **记账** | 快速幂（`AffineMap::apply`）与逐次重放在 IEEE754 下不是同一个计算：只有系数与中间值都能精确表示时才逐位相同（`matches_replay`；整数振荡器 0..=512 通过，含 `0.01` 的弹簧不通过）。按计划 §7.2 的**预先定死判据**，不通过的形态不启用优化 —— 运行时走重放（`O(n)`，仍可 seek 任意帧）。触发条件：BY 的谱系/求值器能把"重放"作为一等代价记账，或改用有理/定点算术表示状态。 |
+| BX-06 | **快速幂运行时路径未启用**：`O(log n)` 未达成 | 内核 / 场景 | **已关闭（BY）** | BY-a 翻转定义：`State(n) := apply(init, steps(n))` 成为**生产路径**（计划经 `Binding::state_plans` 进 `SceneMono`，由 `Step::State` 消费）；逐次重放降为容差 oracle（`STATE_ORACLE_TOLERANCE = 1e-3`，只用于 `State`）。 |
 
-**BX 段小计**：已关闭 5（BX-01…BX-05）· 部分关闭 0 · 记账 1（BX-06）· 未执行 0 · 已记录 0。
+**BX 段小计**：已关闭 6（BX-01…BX-06）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 0。
 
-> 精度口径（计划 §6，按推荐案 A）：先以现有 `F32×2` 向量算子起步；实测快速幂与重放
-> 不逐位相同 ⇒ 运行时不启用快速幂（BX-06），不为此新增 `F64×k` 元组形态。
+> 精度口径（计划 §6，按推荐案 A）：先以现有 `F32×2` 向量算子起步；BY 起 `State`
+> 的**定义**改为闭式（f64 矩阵幂），重放降为容差 oracle（见 BY-01 / BY-02）。
 > 作品 [`spring_state.lua`](crates/app/zela-app/scripts/spring_state.lua)：三条水平轨道，
 > 二维状态 `(x, v)` 半隐式欧拉（`x' = x + v`、`v' = 0.97v − 0.02x`；`d + k = 0.99 < 1`
 > ⇒ 真阻尼、不发散），阻尼收敛；
@@ -1957,11 +1957,31 @@
 
 ---
 
+## BY. 代价谱系、批量算子与解析化简（2026-11-02）
+
+> 计划《代价谱系、批量算子与解析化简执行计划》。本批**翻转 `State` 的定义**
+> （闭式 / 矩阵快速幂为定义，逐次重放为容差 oracle），并交付批量算子与化简 pass。
+> 作用域限定：新的"近似"纪律**只适用于 `State` 闭式求值**，其余部分仍逐位相同。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| BY-01 | `State` 的"定义"被写反（BX 要求快速幂与重放逐位相同） | 内核 / 场景 | **已关闭** | `AffineMap::apply` 是定义；`StatePlan::value_at` 走 `apply(init, steps)`。生产路径：`Timeline::compile_with` 把计划放进 `Binding::state_plans`，`SceneMono::affine_state` 供给 `Step::State`。判据：`spring_state` 像素随定义翻转而变化（`031ec78d…` → `1883032f…`）。 |
+| BY-02 | 重放与闭式的判据是"逐位相同"（巧合检测） | 内核 | **已关闭** | `replay_within(init, horizon, tolerance)`：容差 `STATE_ORACLE_TOLERANCE = 1e-3`（分量绝对误差）。用例：整数矩阵容差 0 通过；含 `0.01` 的弹簧在容差 0 下不同、在 oracle 容差下通过。 |
+| BY-03 | `state_analyses` 只被测试读（零消费者） | 场景 | **已关闭** | 计划进 `Binding::state_plans`，由 `zela-scene-ecs` 的 `SceneMono` 每帧消费；用例 `state_plans_are_consumed_by_the_mono`（闭式值 == 40 帧 × 0.25）。 |
+| BY-04 | `SeekKind` 只有 `O1` / `Replay` 两档 | 场景 | **已关闭** | 扩为 `O1 / OPerInterval / OLogN / Replay`，由装配期识别器推导（优先级 `Replay > OLogN > OPerInterval > O1`）；用例 `state_plan_derives_ologn`。 |
+| BY-05 | `State` 没有时间 predicate；自引用无门禁 | 内核 / 场景 | **已关闭** | `Node::State { predicate }` + `Expr::state_gated`：`s(n+1) = P(n) ? step : s(n)`；`time` 变量解释为**状态索引**，用 `IntervalSet::count_integers` 求生效步数（O(#区间)）。自引用（`rec_prev` / 嵌套 State / NatRec）⇒ `PredicateRefsState`。脚本侧 `expr.state { predicate = Predicate.Of { … } }`（缺省 `Always`）。 |
+| BY-06 | `batched` 批量算子能力 | 内核 | **已关闭** | `OpDef.batched`（唯一登记点 `def()`）：`sin` / `cos` / `add` / `mul` / `scale` / `sum` 六个（`sub` 在目录里**不存在** —— 减法由 `add` + `scale(-1)` 表达）。`ops::eval` 对 `Value::Iter` 实参展开：标量广播、`sum` 升序折叠；批量与单点逐位相同（自动对拍用例）。 |
+| BY-07 | 化简恒等式只做类型无关子集 | 内核 | **已记录** | 实现 `mul(x,1)` / `mul(1,x)` / `scale(1,x)`；**刻意不做** `x + 0` / `x * 0`：向量 + 标量在求值期是显式错误，折叠会把错误变成成功（语义保持优先于化简率）。`x / 1` 不存在（目录无除法算子）。`sum(x)` 不折：批量语义下单个 `Iter` 是折叠而非恒等。 |
+
+**BY 段小计**：已关闭 6（BY-01…BY-06）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 1（BY-07）。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–BX**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–BX 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–BY**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–BY 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

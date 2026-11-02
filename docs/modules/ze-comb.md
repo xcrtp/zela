@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：13 个 · 6527 行
+- 源文件：13 个 · 6628 行
 
 ### 文件清单
 
@@ -21,15 +21,15 @@
 | `src/codata.rs` | 215 | codata：**生产性展开**（不是图灵完备）。 |
 | `src/codegen.rs` | 499 | **WGSL codegen（2 阶）**：把 [`Expr`] 编译成一个**确定性的纯函数**。 |
 | `src/compiled.rs` | 164 | **装配期程序的两种形态**：`lowered`（语义基准）+ 可选 `typed`（单态化快路径）。 |
-| `src/expr.rs` | 1289 | 表达式树：节点、字面量、通道、算子引用，以及装配期校验。 |
+| `src/expr.rs` | 1318 | 表达式树：节点、字面量、通道、算子引用，以及装配期校验。 |
 | `src/graph_view.rs` | 221 | **Expr DAG 图视图**：把表达式树投影成 [`ze_graph_core::Topology`]。 |
 | `src/iter.rs` | 286 | 可迭代类型：**`Iter`（有穷）与 `Stream`（余归纳）是两个类型**。 |
 | `src/lib.rs` | 109 | ze-comb: **领域无关的确定性计算内核**（原 `ze-func` 改名）。 |
 | `src/pass.rs` | 293 | **Pass 抽象**：把已有的能力收进一个约定（不是为假想需求预付）。 |
-| `src/program.rs` | 2156 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
-| `src/reference.rs` | 320 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
+| `src/program.rs` | 2214 | 求值：**装配期建图 → 运行期定序**，效果只能从 [`Mono`] 进。 |
+| `src/reference.rs` | 329 | **参考求值器**：直接在 `Expr` 树上走一遍（tree-walking）。 |
 | `src/typed.rs` | 637 | **单态化求值**（typed fast path）：编译期定类型、按类型分槽、直接调函数指针。 |
-| `src/walk.rs` | 169 | — |
+| `src/walk.rs` | 174 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

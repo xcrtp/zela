@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-type`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-comb`、`ze-func`、`ze-node-core`、`ze-pod-core`、`ze-pod-func`、`ze-reflect`
-- 源文件：7 个 · 2061 行
+- 源文件：7 个 · 2065 行
 
 ### 文件清单
 
@@ -22,7 +22,7 @@
 | `src/layout.rs` | 540 | **Layout**：定长类型的字节描述（size / align / 字段偏移）。 |
 | `src/lib.rs` | 42 | ze-type：**纯代数类型层**。 |
 | `src/tag.rs` | 163 | Type tags and socket-level type compatibility（阶段 4：收敛到 `ze-type`）。 |
-| `src/ty.rs` | 425 | 类型描述（IDL schema）：语言无关、零依赖、编译期常量。 |
+| `src/ty.rs` | 429 | 类型描述（IDL schema）：语言无关、零依赖、编译期常量。 |
 | `src/unify.rs` | 383 | 合一 / 子类型 / 布局计算 —— **纯代数**，无缓存、无注册表。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
