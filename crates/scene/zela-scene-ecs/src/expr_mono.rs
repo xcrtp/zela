@@ -352,11 +352,15 @@ mod tests {
             mono.read(&ChannelRef::builtin(FRAME_CHANNEL)).unwrap(),
             Value::f64(45.0)
         );
+        // **BZ-c / AF-07**：`event` 已注入（本帧有无事件；默认 false）。
         assert_eq!(
-            mono.read(&ChannelRef::builtin("event")).unwrap_err(),
-            EvalError::MissingChannel {
-                channel: ChannelRef::builtin("event")
-            }
+            mono.read(&ChannelRef::builtin("event")).unwrap(),
+            Value::Bool(false)
+        );
+        let with_event = SceneMono::from_time_state(&state, &NoScene).with_event(true);
+        assert_eq!(
+            with_event.read(&ChannelRef::builtin("event")).unwrap(),
+            Value::Bool(true)
         );
         // 组件字段通道与基础通道同形：`read`（无对象）对它仍是显式缺失。
         assert!(mono
