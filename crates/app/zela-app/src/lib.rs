@@ -45,6 +45,8 @@ use zela_schedule::scheduler::Scheduler;
 mod assembly;
 // 内置作品清单（GUI 的"作品"下拉；脚本 `include_str!` 编进二进制）。
 pub mod demos;
+// **CH-b**：事件标记的差分回执（TraceReport / FrameDiff / 镜像类型）。
+pub mod debug;
 pub mod export;
 mod formula;
 // **CG-g**：Headless 出口（零窗口 / 零 GPU / 零 egui；注入事件 → 读一帧 Frame）。

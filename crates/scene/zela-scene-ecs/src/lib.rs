@@ -62,7 +62,9 @@ pub use fingerprint::{
     StructureFingerprint, WorldRead, fingerprint_world, sequence_digest,
 };
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
-pub use hud::{Hud, HudMetrics, HudState, HudSystem, build as build_hud};
+pub use hud::{
+    Hud, HudMetrics, HudOutcome, HudOutcomeKind, HudState, HudSystem, build as build_hud,
+};
 pub use input::{ParamPanelSystem, TimeControlSystem};
 pub use interact::{
     InteractSet, InteractState, PanelEntry, PanelSpec, SliderSpec, build_panel,

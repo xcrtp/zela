@@ -23,12 +23,18 @@
 use std::sync::Arc;
 
 use ze_interact::Frame;
-use ze_scene_core::domain::{SceneInputContext, WindowInput};
+use ze_scene_core::domain::{
+    InjectError, Injected, InjectedPayload, SceneInputContext, SceneEvent, WindowInput,
+};
 use zela_scene_ecs::contract::WorldView;
-use zela_scene_ecs::domain::{InputEvents, SceneEvent, UiConfig};
-use zela_scene_ecs::hud::HudState;
-use zela_scene_ecs::{DriverCommand, DriverPod};
+use zela_scene_ecs::domain::{InputEvents, UiConfig};
+use zela_scene_ecs::hud::{HudState};
+use zela_scene_ecs::{DriverCommand, DriverPod, Hud};
 
+use crate::debug::{
+    ActiveTags, Diagnostics, FrameTrace, OutcomeKind, OutcomeRecord, SceneEventRecord,
+    TraceError, TraceReport, diff_frames,
+};
 use crate::{Result, SceneChoice};
 
 /// 一次 headless 装配：只有一个驱动器和一份时长（没有渲染上下文）。
@@ -111,6 +117,127 @@ impl HeadlessScene {
                 .resources_mut()
                 .insert(InputEvents::from_events(Vec::new()));
         });
+    }
+
+    /// **CH-b**：注入一个带 tag 的事件并返回**差分回执**。
+    ///
+    /// - `max_frames` 是显式窗口上限（`0` 按 1 处理）；到达上限且最后一帧仍有变化
+    ///   ⇒ `truncated = true`（如实说明，不假装收敛）；
+    /// - 注入帧号必须等于当前帧（**一帧一个 active tag**）；
+    /// - 派生事件来自 `collect_events`，`outcomes` 是状态机返回值的镜像，
+    ///   `frame_diff` 覆盖所有 System 的副作用 ⇒ 零 System 传播 tag。
+    pub fn trace(
+        &self,
+        injected: &Injected,
+        max_frames: u32,
+    ) -> std::result::Result<TraceReport, TraceError> {
+        injected.validate()?;
+        let current = self.driver.frame();
+        if injected.frame != current {
+            return Err(TraceError::FrameMismatch {
+                requested: injected.frame,
+                current,
+            });
+        }
+        let max_frames = max_frames.max(1);
+
+        // 1) 派生事件：窗口输入走纯函数换算；场景事件原样投递。
+        let derived_events: Vec<SceneEvent> = match &injected.payload {
+            InjectedPayload::Window(input) => {
+                let context = self.input_context().ok_or_else(|| {
+                    TraceError::Input("场景没有可操作的图层（2D / 3D 都没有）".into())
+                })?;
+                ze_scene_core::domain::collect_events(input, &context)
+            }
+            InjectedPayload::Scene(event) => vec![event.clone()],
+            InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
+        };
+        self.driver.with_scheduler_mut(|scheduler| {
+            scheduler
+                .resources_mut()
+                .insert(InputEvents::from_events(derived_events.clone()));
+        });
+
+        // 2) 逐帧推进 + 差分（不因请求多跑一帧：注入只发生在本帧）。
+        let mut before = self.frame();
+        let mut frames = Vec::new();
+        let mut quiet = false;
+        for index in 0..max_frames {
+            self.advance(1, 1.0 / 60.0);
+            self.clear_events();
+            let outcomes = self.hud_outcomes();
+            let after = self.frame();
+            let frame_diff = diff_frames(before.as_ref(), after.as_ref());
+            let diagnostics = self.diagnostics();
+            let derived = if index == 0 {
+                derived_events.iter().map(SceneEventRecord::from).collect()
+            } else {
+                Vec::new()
+            };
+            quiet = derived.is_empty() && outcomes.is_empty() && frame_diff.is_empty();
+            frames.push(FrameTrace {
+                frame: current + index + 1,
+                derived,
+                outcomes,
+                frame_diff,
+                diagnostics,
+            });
+            before = after;
+            if quiet {
+                break;
+            }
+        }
+
+        Ok(TraceReport {
+            tag: injected.tag,
+            label: injected.label.clone(),
+            source: injected.source,
+            injected_frame: current,
+            active: ActiveTags::new(injected.tag, current + max_frames),
+            frames,
+            truncated: !quiet,
+        })
+    }
+
+    /// 当前 HUD 快照（没有自研面板 ⇒ `None`）。
+    fn hud_snapshot(&self) -> Option<Hud> {
+        self.driver
+            .with_scheduler(|scheduler| scheduler.resources().get::<HudState>()?.hud().cloned())
+    }
+
+    /// 本帧状态机意图（镜像）。
+    fn hud_outcomes(&self) -> Vec<OutcomeRecord> {
+        self.hud_snapshot()
+            .map(|hud| {
+                hud.outcomes()
+                    .iter()
+                    .map(|outcome| OutcomeRecord {
+                        control: outcome.control.0,
+                        name: outcome.name.clone(),
+                        kind: match outcome.kind {
+                            zela_scene_ecs::HudOutcomeKind::ValueChanged(value) => {
+                                OutcomeKind::ValueChanged { value }
+                            }
+                            zela_scene_ecs::HudOutcomeKind::Activated => OutcomeKind::Activated,
+                        },
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 派生态诊断：当前投递目标；没有可观察帧时给出说明。
+    fn diagnostics(&self) -> Diagnostics {
+        let Some(hud) = self.hud_snapshot() else {
+            return Diagnostics {
+                routed: None,
+                note: Some("本场景没有结构化帧（无自研面板），只有事件层回执".into()),
+            };
+        };
+        Diagnostics {
+            routed: hud.routed_name().map(str::to_string),
+            note: None,
+        }
     }
 
     /// 推进 `frames` 帧（固定 `dt`；与 GUI 的固定步长路径同一入口）。
