@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-prerender`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：9 个 · 1702 行
+- 源文件：10 个 · 2041 行
 
 ### 文件清单
 
@@ -19,10 +19,11 @@
 |---|---|---|
 | `src/cache.rs` | 55 | — |
 | `src/engine.rs` | 192 | — |
-| `src/lib.rs` | 73 | — |
-| `src/metrics.rs` | 280 | 字体度量（装配期）：用 `fontdb` 找字体、`ttf-parser` 取 advance。 |
+| `src/lib.rs` | 78 | — |
+| `src/metrics.rs` | 297 | 字体度量（装配期）：用 `fontdb` 找字体、`ttf-parser` 取 advance。 |
 | `src/placeholder.rs` | 64 | — |
 | `src/request.rs` | 77 | — |
+| `src/text.rs` | 317 | 场景图元文字（CG-b）：直接由 ttf 轮廓生成 `ContentIR` + `TextRun`。 |
 | `src/typst/convert.rs` | 482 | — |
 | `src/typst/mod.rs` | 220 | — |
 | `src/typst/world.rs` | 259 | — |
@@ -59,6 +60,8 @@ graph LR
 | `src/request.rs` | `pub enum ContentStatus` |
 | `src/request.rs` | `pub enum ContentError` |
 | `src/request.rs` | `pub struct CacheKey` |
+| `src/text.rs` | `pub struct TextOutput` |
+| `src/text.rs` | `pub struct DirectTextEngine` |
 | `src/typst/convert.rs` | `pub fn frame_to_ir(` |
 | `src/typst/mod.rs` | `pub fn compile(` |
 | `src/typst/mod.rs` | `pub fn engine() -> Result<InMemoryEngine, ContentError>` |

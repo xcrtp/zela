@@ -109,6 +109,30 @@ impl MetricsDb {
         families
     }
 
+    /// 主字体面的下标：`None` ⇒ 排序后的第一个面。
+    fn primary_index(&self, family: Option<&str>) -> Result<usize, MetricsError> {
+        match family {
+            Some(name) => self
+                .faces
+                .iter()
+                .position(|face| face.family.eq_ignore_ascii_case(name))
+                .ok_or_else(|| MetricsError::UnknownFamily(name.to_string())),
+            None => Ok(0),
+        }
+    }
+
+    /// 主字体面的原始数据 `(data, face_index)`。
+    ///
+    /// 供同 crate 的轮廓生成复用（`text` 模块）；度量与轮廓因此走**同一份**字体数据。
+    pub(crate) fn face_data(
+        &self,
+        family: Option<&str>,
+    ) -> Result<(std::sync::Arc<Vec<u8>>, u32), MetricsError> {
+        let index = self.primary_index(family)?;
+        let face = &self.faces[index];
+        Ok((face.data.clone(), face.index))
+    }
+
     /// 度量一段文本。
     ///
     /// - `family = None` ⇒ 用排序后的第一个面（显式默认，不猜"最合适"的字体）；
@@ -121,14 +145,7 @@ impl MetricsDb {
         family: Option<&str>,
         font_size: f32,
     ) -> Result<TextMetrics, MetricsError> {
-        let primary = match family {
-            Some(name) => self
-                .faces
-                .iter()
-                .position(|face| face.family.eq_ignore_ascii_case(name))
-                .ok_or_else(|| MetricsError::UnknownFamily(name.to_string()))?,
-            None => 0,
-        };
+        let primary = self.primary_index(family)?;
         let primary_face = parse_face(&self.faces[primary])?;
         let upem = f32::from(primary_face.units_per_em().max(1));
         let ascent = f32::from(primary_face.ascender()) / upem * font_size;

@@ -12,6 +12,9 @@ pub mod request;
 /// CG-a：字体度量（装配期；运行期只查表）。
 #[cfg(feature = "metrics")]
 pub mod metrics;
+/// CG-b：场景图元文字（ttf 轮廓 + `TextRun`；与 typst 路径并行）。
+#[cfg(feature = "metrics")]
+pub mod text;
 
 #[cfg(feature = "typst")]
 pub mod typst;
@@ -20,6 +23,8 @@ pub use cache::ContentCache;
 pub use engine::{CompileFn, ContentEngine, InMemoryEngine};
 #[cfg(feature = "metrics")]
 pub use metrics::{FONT_DIR_ENV, MetricsDb, MetricsError};
+#[cfg(feature = "metrics")]
+pub use text::{DirectTextEngine, TextOutput};
 pub use placeholder::engine as placeholder_engine;
 pub use request::{
     CacheKey, ContentConfig, ContentError, ContentHandle, ContentResult, ContentStatus,
