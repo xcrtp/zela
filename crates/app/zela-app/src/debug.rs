@@ -34,7 +34,13 @@
 use serde::{Deserialize, Serialize};
 
 use ze_interact::Frame;
-use ze_scene_core::domain::{InjectError, InjectSource, TagId};
+use ze_scene_core::domain::{
+    InjectError, InjectSource, Injected, InjectedPayload, SceneInputContext, SceneEvent, TagId,
+};
+use zela_scene_ecs::contract::WorldView;
+use zela_scene_ecs::domain::{InputEvents, UiConfig};
+use zela_scene_ecs::hud::HudState;
+use zela_scene_ecs::{DriverCommand, DriverPod, Hud};
 
 /// 跨帧回执的默认上限（帧）。
 pub const DEFAULT_TRACE_FRAMES: u32 = 8;
@@ -215,6 +221,189 @@ pub enum TraceError {
     /// 注入 / 读取失败。
     #[error("{0}")]
     Input(String),
+}
+
+// ─── 驱动器级原语（GUI 与 headless 共用；零 egui 类型）────────────────────
+
+/// 当前帧的结构化快照（`None` = 本场景没有自研面板）。
+pub fn frame_of(driver: &DriverPod) -> Option<Frame> {
+    let mut hud = hud_of(driver)?;
+    Some(hud.frame())
+}
+
+/// 当前帧的 `Frame` JSON。
+pub fn frame_json_of(driver: &DriverPod) -> Option<String> {
+    serde_json::to_string(&frame_of(driver)?).ok()
+}
+
+/// 当前 HUD 快照（没有自研面板 ⇒ `None`）。
+pub fn hud_of(driver: &DriverPod) -> Option<Hud> {
+    driver.with_scheduler(|scheduler| scheduler.resources().get::<HudState>()?.hud().cloned())
+}
+
+/// 本帧状态机意图（镜像）。
+pub fn outcomes_of(driver: &DriverPod) -> Vec<OutcomeRecord> {
+    hud_of(driver)
+        .map(|hud| {
+            hud.outcomes()
+                .iter()
+                .map(|outcome| OutcomeRecord {
+                    control: outcome.control.0,
+                    name: outcome.name.clone(),
+                    kind: match outcome.kind {
+                        zela_scene_ecs::HudOutcomeKind::ValueChanged(value) => {
+                            OutcomeKind::ValueChanged { value }
+                        }
+                        zela_scene_ecs::HudOutcomeKind::Activated => OutcomeKind::Activated,
+                    },
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 派生态诊断（当前投递目标；没有可观察帧时给出说明）。
+pub fn diagnostics_of(driver: &DriverPod) -> Diagnostics {
+    let Some(hud) = hud_of(driver) else {
+        return Diagnostics {
+            routed: None,
+            note: Some("本场景没有结构化帧（无自研面板），只有事件层回执".into()),
+        };
+    };
+    Diagnostics {
+        routed: hud.routed_name().map(str::to_string),
+        note: None,
+    }
+}
+
+/// 从本帧视图声明取窗口输入上下文（与 GUI 的 `collect_events` 同一条）。
+pub fn input_context_of(driver: &DriverPod) -> Option<SceneInputContext> {
+    driver.with_scheduler(|scheduler| {
+        let config = scheduler
+            .resources()
+            .get::<UiConfig>()
+            .cloned()
+            .unwrap_or_default();
+        let view = zela_render::frame::build_scene_view(
+            &WorldView::new(scheduler.world()),
+            scheduler.resources(),
+            zela_render::FrameOptions::from_ui_config(&config),
+        );
+        let context = SceneInputContext::from_view(&view, config.viewport_camera);
+        (context.layer2d.is_some() || context.layer3d.is_some()).then_some(context)
+    })
+}
+
+/// **只投递，不驱动**：把一条带标记的事件放进本帧 `InputEvents`。
+pub fn inject_injected(driver: &DriverPod, injected: &Injected) -> Result<usize, String> {
+    injected.validate().map_err(|error| error.to_string())?;
+    let current = driver.frame();
+    if injected.frame != current {
+        return Err(format!(
+            "注入帧号 {} 与当前帧 {current} 不一致（要求分帧注入）",
+            injected.frame
+        ));
+    }
+    let events: Vec<SceneEvent> = match &injected.payload {
+        InjectedPayload::Window(input) => {
+            let context = input_context_of(driver)
+                .ok_or_else(|| "场景没有可操作的图层（2D / 3D 都没有）".to_string())?;
+            ze_scene_core::domain::collect_events(input, &context)
+        }
+        InjectedPayload::Scene(event) => vec![event.clone()],
+        InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
+    };
+    let count = events.len();
+    driver.with_scheduler_mut(|scheduler| {
+        scheduler
+            .resources_mut()
+            .insert(InputEvents::from_events(events));
+    });
+    Ok(count)
+}
+
+/// **注入 + 差分回执**（GUI 与 headless 共用同一实现）。
+pub fn trace_on(
+    driver: &DriverPod,
+    injected: &Injected,
+    max_frames: u32,
+) -> Result<TraceReport, TraceError> {
+    injected.validate()?;
+    let current = driver.frame();
+    if injected.frame != current {
+        return Err(TraceError::FrameMismatch {
+            requested: injected.frame,
+            current,
+        });
+    }
+    let max_frames = max_frames.max(1);
+
+    let derived_events: Vec<SceneEvent> = match &injected.payload {
+        InjectedPayload::Window(input) => {
+            let context = input_context_of(driver)
+                .ok_or_else(|| TraceError::Input("场景没有可操作的图层".into()))?;
+            ze_scene_core::domain::collect_events(input, &context)
+        }
+        InjectedPayload::Scene(event) => vec![event.clone()],
+        InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
+    };
+    driver.with_scheduler_mut(|scheduler| {
+        scheduler
+            .resources_mut()
+            .insert(InputEvents::from_events(derived_events.clone()));
+    });
+
+    let mut before = frame_of(driver);
+    let mut frames = Vec::new();
+    let mut quiet = false;
+    for index in 0..max_frames {
+        driver.submit(DriverCommand::Batch {
+            frames: 1,
+            dt: 1.0 / 60.0,
+        });
+        // 注入只发生在本帧：推进后立即清空，后续帧是"零输入"的纯传播。
+        driver.with_scheduler_mut(|scheduler| {
+            scheduler
+                .resources_mut()
+                .insert(InputEvents::from_events(Vec::new()));
+        });
+        let outcomes = outcomes_of(driver);
+        let after = frame_of(driver);
+        let frame_diff = diff_frames(before.as_ref(), after.as_ref());
+        let diagnostics = diagnostics_of(driver);
+        let derived = if index == 0 {
+            derived_events.iter().map(SceneEventRecord::from).collect()
+        } else {
+            Vec::new()
+        };
+        quiet = derived.is_empty() && outcomes.is_empty() && frame_diff.is_empty();
+        frames.push(FrameTrace {
+            frame: current + index + 1,
+            derived,
+            outcomes,
+            frame_diff,
+            diagnostics,
+        });
+        before = after;
+        if quiet {
+            break;
+        }
+    }
+
+    Ok(TraceReport {
+        tag: injected.tag,
+        label: injected.label.clone(),
+        source: injected.source,
+        injected_frame: current,
+        active: ActiveTags::new(injected.tag, current + max_frames),
+        frames,
+        truncated: !quiet,
+    })
+}
+
+/// 把 `TraceError` 变成 RPC 错误文本（保持类型在 app 层）。
+pub fn trace_error_text(error: &TraceError) -> String {
+    error.to_string()
 }
 
 #[cfg(test)]

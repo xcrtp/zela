@@ -24,17 +24,13 @@ use std::sync::Arc;
 
 use ze_interact::Frame;
 use ze_scene_core::domain::{
-    InjectError, Injected, InjectedPayload, SceneInputContext, SceneEvent, WindowInput,
+    Injected, SceneInputContext, SceneEvent, WindowInput,
 };
-use zela_scene_ecs::contract::WorldView;
-use zela_scene_ecs::domain::{InputEvents, UiConfig};
-use zela_scene_ecs::hud::{HudState};
-use zela_scene_ecs::{DriverCommand, DriverPod, Hud};
+use zela_scene_ecs::domain::InputEvents;
+use zela_scene_ecs::hud::HudState;
+use zela_scene_ecs::{DriverCommand, DriverPod};
 
-use crate::debug::{
-    ActiveTags, Diagnostics, FrameTrace, OutcomeKind, OutcomeRecord, SceneEventRecord,
-    TraceError, TraceReport, diff_frames,
-};
+use crate::debug::{Diagnostics, TraceError, TraceReport};
 use crate::{Result, SceneChoice};
 
 /// 一次 headless 装配：只有一个驱动器和一份时长（没有渲染上下文）。
@@ -69,20 +65,7 @@ impl HeadlessScene {
     /// 窗口坐标系 = `ViewRect`（headless 默认 800×600）；相机取景来自本帧视图声明。
     /// `None` = 场景没有任何可操作图层（纯空场景）⇒ 窗口输入无处可投。
     pub fn input_context(&self) -> Option<SceneInputContext> {
-        self.driver.with_scheduler(|scheduler| {
-            let config = scheduler
-                .resources()
-                .get::<UiConfig>()
-                .cloned()
-                .unwrap_or_default();
-            let view = zela_render::frame::build_scene_view(
-                &WorldView::new(scheduler.world()),
-                scheduler.resources(),
-                zela_render::FrameOptions::from_ui_config(&config),
-            );
-            let context = SceneInputContext::from_view(&view, config.viewport_camera);
-            (context.layer2d.is_some() || context.layer3d.is_some()).then_some(context)
-        })
+        crate::debug::input_context_of(&self.driver)
     }
 
     /// **CH-a**：注入**窗口输入**（逻辑像素 + 环境参数）—— 换算与窗口里真人
@@ -119,8 +102,26 @@ impl HeadlessScene {
         });
     }
 
+    /// 当前帧号（debug / RPC 的显式帧号来源）。
+    pub fn frame_number(&self) -> u32 {
+        self.driver.frame()
+    }
+
+    /// 当前派生态诊断（与 `trace` 里每帧的诊断同一口径）。
+    pub fn diagnostics_snapshot(&self) -> Diagnostics {
+        crate::debug::diagnostics_of(&self.driver)
+    }
+
+    /// **只投递，不驱动**：把一条带标记的事件放进本帧 `InputEvents`。
+    ///
+    /// 帧号必须等于当前帧（**一帧一个 active tag**）；不推进时间。
+    pub fn inject_injected(&self, injected: &Injected) -> std::result::Result<usize, String> {
+        crate::debug::inject_injected(&self.driver, injected)
+    }
+
     /// **CH-b**：注入一个带 tag 的事件并返回**差分回执**。
     ///
+    /// 与 GUI 的 debug RPC 共用 `crate::debug::trace_on`：
     /// - `max_frames` 是显式窗口上限（`0` 按 1 处理）；到达上限且最后一帧仍有变化
     ///   ⇒ `truncated = true`（如实说明，不假装收敛）；
     /// - 注入帧号必须等于当前帧（**一帧一个 active tag**）；
@@ -131,115 +132,8 @@ impl HeadlessScene {
         injected: &Injected,
         max_frames: u32,
     ) -> std::result::Result<TraceReport, TraceError> {
-        injected.validate()?;
-        let current = self.driver.frame();
-        if injected.frame != current {
-            return Err(TraceError::FrameMismatch {
-                requested: injected.frame,
-                current,
-            });
-        }
-        let max_frames = max_frames.max(1);
-
-        // 1) 派生事件：窗口输入走纯函数换算；场景事件原样投递。
-        let derived_events: Vec<SceneEvent> = match &injected.payload {
-            InjectedPayload::Window(input) => {
-                let context = self.input_context().ok_or_else(|| {
-                    TraceError::Input("场景没有可操作的图层（2D / 3D 都没有）".into())
-                })?;
-                ze_scene_core::domain::collect_events(input, &context)
-            }
-            InjectedPayload::Scene(event) => vec![event.clone()],
-            InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
-        };
-        self.driver.with_scheduler_mut(|scheduler| {
-            scheduler
-                .resources_mut()
-                .insert(InputEvents::from_events(derived_events.clone()));
-        });
-
-        // 2) 逐帧推进 + 差分（不因请求多跑一帧：注入只发生在本帧）。
-        let mut before = self.frame();
-        let mut frames = Vec::new();
-        let mut quiet = false;
-        for index in 0..max_frames {
-            self.advance(1, 1.0 / 60.0);
-            self.clear_events();
-            let outcomes = self.hud_outcomes();
-            let after = self.frame();
-            let frame_diff = diff_frames(before.as_ref(), after.as_ref());
-            let diagnostics = self.diagnostics();
-            let derived = if index == 0 {
-                derived_events.iter().map(SceneEventRecord::from).collect()
-            } else {
-                Vec::new()
-            };
-            quiet = derived.is_empty() && outcomes.is_empty() && frame_diff.is_empty();
-            frames.push(FrameTrace {
-                frame: current + index + 1,
-                derived,
-                outcomes,
-                frame_diff,
-                diagnostics,
-            });
-            before = after;
-            if quiet {
-                break;
-            }
-        }
-
-        Ok(TraceReport {
-            tag: injected.tag,
-            label: injected.label.clone(),
-            source: injected.source,
-            injected_frame: current,
-            active: ActiveTags::new(injected.tag, current + max_frames),
-            frames,
-            truncated: !quiet,
-        })
+        crate::debug::trace_on(&self.driver, injected, max_frames)
     }
-
-    /// 当前 HUD 快照（没有自研面板 ⇒ `None`）。
-    fn hud_snapshot(&self) -> Option<Hud> {
-        self.driver
-            .with_scheduler(|scheduler| scheduler.resources().get::<HudState>()?.hud().cloned())
-    }
-
-    /// 本帧状态机意图（镜像）。
-    fn hud_outcomes(&self) -> Vec<OutcomeRecord> {
-        self.hud_snapshot()
-            .map(|hud| {
-                hud.outcomes()
-                    .iter()
-                    .map(|outcome| OutcomeRecord {
-                        control: outcome.control.0,
-                        name: outcome.name.clone(),
-                        kind: match outcome.kind {
-                            zela_scene_ecs::HudOutcomeKind::ValueChanged(value) => {
-                                OutcomeKind::ValueChanged { value }
-                            }
-                            zela_scene_ecs::HudOutcomeKind::Activated => OutcomeKind::Activated,
-                        },
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// 派生态诊断：当前投递目标；没有可观察帧时给出说明。
-    fn diagnostics(&self) -> Diagnostics {
-        let Some(hud) = self.hud_snapshot() else {
-            return Diagnostics {
-                routed: None,
-                note: Some("本场景没有结构化帧（无自研面板），只有事件层回执".into()),
-            };
-        };
-        Diagnostics {
-            routed: hud.routed_name().map(str::to_string),
-            note: None,
-        }
-    }
-
     /// 推进 `frames` 帧（固定 `dt`；与 GUI 的固定步长路径同一入口）。
     pub fn advance(&self, frames: u32, dt: f32) {
         self.driver.submit(DriverCommand::Batch { frames, dt });
@@ -249,17 +143,12 @@ impl HeadlessScene {
     ///
     /// 取的是**当前状态**的快照：布局不重解（`Hud::frame` 只做纯值重算）。
     pub fn frame_json(&self) -> Option<String> {
-        self.driver.with_scheduler_mut(|scheduler| {
-            let mut hud = scheduler.resources().get::<HudState>()?.hud()?.clone();
-            let frame = hud.frame();
-            serde_json::to_string(&frame).ok()
-        })
+        crate::debug::frame_json_of(&self.driver)
     }
 
     /// 当前帧的 `Frame`（已解析的纯值；断言用）。
     pub fn frame(&self) -> Option<Frame> {
-        let json = self.frame_json()?;
-        serde_json::from_str(&json).ok()
+        crate::debug::frame_of(&self.driver)
     }
 
     /// 语义控件的**世界坐标**落点（Agent 把"点哪儿"换算成场景坐标的唯一入口）。

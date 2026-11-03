@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-app`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-core`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`、`zela-commands`、`zela-gui`
-- 源文件：11 个 · 8328 行
+- 源文件：12 个 · 8818 行
 
 ### 文件清单
 
@@ -20,18 +20,24 @@
 | `src/assembly.rs` | 1006 | — |
 | `src/bin/zela-parity.rs` | 788 | `zela-parity`：**作品级**双后端对拍（B13 Step 1/2）。 |
 | `src/bin/zela-render.rs` | 739 | `zela-render`：headless 薄壳 —— 脚本直接渲到视频。 |
-| `src/debug.rs` | 271 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
+| `src/debug.rs` | 460 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
 | `src/demos.rs` | 155 | 内置作品清单（GUI 的"作品"下拉；默认加载**全部** demo）。 |
 | `src/export.rs` | 467 | — |
 | `src/formula.rs` | 585 | — |
 | `src/frame_loop.rs` | 739 | 帧循环（B9 Step 3）：`zela-render` 与 `zela-verify` 共用的**唯一**渲染循环。 |
-| `src/headless.rs` | 290 | **CG-g**：Headless 出口 —— 零窗口 / 零 GPU / 零 egui 也能跑一帧结构化 UI。 |
-| `src/lib.rs` | 3147 | — |
+| `src/headless.rs` | 179 | **CG-g**：Headless 出口 —— 零窗口 / 零 GPU / 零 egui 也能跑一帧结构化 UI。 |
+| `src/lib.rs` | 3149 | — |
 | `src/python_env.rs` | 141 | 内嵌 Python 的**前置探测**（`feature = "python"`）。 |
+| `src/rpc.rs` | 410 | **CH-c**：debug RPC —— 把 [`crate::headless`] 的命令/响应形状套上 socket 传输。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
-（未解析到文件级 `use` 边）
+```mermaid
+graph LR
+    f1["src/headless.rs"]
+    f0["src/rpc.rs"]
+    f0 --> f1
+```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
 
@@ -52,6 +58,15 @@
 | `src/debug.rs` | `pub struct Diagnostics` |
 | `src/debug.rs` | `pub fn diff_frames(before: Option<&Frame>, after: Option<&Frame>) -> FrameDiff` |
 | `src/debug.rs` | `pub enum TraceError` |
+| `src/debug.rs` | `pub fn frame_of(driver: &DriverPod) -> Option<Frame>` |
+| `src/debug.rs` | `pub fn frame_json_of(driver: &DriverPod) -> Option<String>` |
+| `src/debug.rs` | `pub fn hud_of(driver: &DriverPod) -> Option<Hud>` |
+| `src/debug.rs` | `pub fn outcomes_of(driver: &DriverPod) -> Vec<OutcomeRecord>` |
+| `src/debug.rs` | `pub fn diagnostics_of(driver: &DriverPod) -> Diagnostics` |
+| `src/debug.rs` | `pub fn input_context_of(driver: &DriverPod) -> Option<SceneInputContext>` |
+| `src/debug.rs` | `pub fn inject_injected(driver: &DriverPod, injected: &Injected) -> Result<usize, String>` |
+| `src/debug.rs` | `pub fn trace_on(` |
+| `src/debug.rs` | `pub fn trace_error_text(error: &TraceError) -> String` |
 | `src/demos.rs` | `pub struct Demo` |
 | `src/demos.rs` | `pub fn demo(id: &str) -> Option<&'static Demo>` |
 | `src/export.rs` | `pub struct ExportSpec` |
@@ -92,6 +107,21 @@
 | `src/lib.rs` | `pub fn build_bundle_runtime(` |
 | `src/lib.rs` | `pub fn build_scene_runtime(render_ctx: RenderContext, choice: SceneChoice) -> Result<Runtime>` |
 | `src/python_env.rs` | `pub fn ensure() -> Result<(), String>` |
+| `src/rpc.rs` | `pub struct Request` |
+| `src/rpc.rs` | `pub enum Command` |
+| `src/rpc.rs` | `pub struct Response` |
+| `src/rpc.rs` | `pub trait DebugTarget` |
+| `src/rpc.rs` | `pub fn handle(target: &dyn DebugTarget, line: &str) -> String` |
+| `src/rpc.rs` | `pub fn serve_once(listener: &TcpListener, target: &dyn DebugTarget) -> std::io::Result<()>` |
+| `src/rpc.rs` | `pub fn serve_stream(stream: &TcpStream, target: &dyn DebugTarget) -> std::io::Result<()>` |
+| `src/rpc.rs` | `pub struct Job` |
+| `src/rpc.rs` | `pub struct GuiBridge` |
+| `src/rpc.rs` | `pub struct BridgeTarget` |
+| `src/rpc.rs` | `pub fn bridge(listener: TcpListener) -> std::io::Result<(GuiBridge, BridgeTarget)>` |
+| `src/rpc.rs` | `pub fn serve_forever(listener: TcpListener, target: &dyn DebugTarget) -> std::io::Result<()>` |
+| `src/rpc.rs` | `pub fn listen_from_env() -> std::io::Result<Option<TcpListener>>` |
+| `src/rpc.rs` | `pub fn trace_error_text(error: &TraceError) -> String` |
+| `src/rpc.rs` | `pub struct DriverTarget` |
 <!-- AUTO:END -->
 
 ## 职责

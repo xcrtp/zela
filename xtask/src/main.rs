@@ -1658,6 +1658,10 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ),
     // ── 历史领域重复（本批只登记，收敛属后续领域去重批次）────────────────
     ("Arrow", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    (
+        "Command",
+        "zela-app 的 debug RPC 命令 vs zela-node-editor 的编辑命令",
+    ),
     ("Axes2D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("BackgroundStroke", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("Camera2D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
@@ -1688,6 +1692,10 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("RayTrace", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("Rect", "scene-core 的几何组件 vs node-editor 的编辑框"),
     ("Reveal", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    (
+        "Response",
+        "zela-app 的 debug RPC 回执 vs zela-commands 的 CLI 响应",
+    ),
     ("SecondPaint", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("ShaderVariant", "render-ir 的着色参数 vs scene-api 的组件视图"),
     ("Surface", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
