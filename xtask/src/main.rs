@@ -118,12 +118,12 @@ const JQ_RENDER_LAYER: &str = r#"
 "#;
 
 /// 结构性判据 3：数学入口唯一（M0）—— 除豁免组外不得直接依赖 glam。
+///
+/// CF-a 起节点栈（editor / egui / egui-ui）**不再豁免**：它们的二维值改用
+/// `zela_node_editor::NodePos`（图坐标位置的专用类型），把渲染向量库挡在门外。
 const JQ_GLAM: &str = r#"
 .packages[]
-| select(.name | IN("ze-notion",
-                    "zela-node-editor",
-                    "zela-node-egui",
-                    "zela-node-egui-ui") | not)
+| select(.name | IN("ze-notion") | not)
 | .name as $n
 | .dependencies[]
 | select(.kind != "dev")
@@ -2702,9 +2702,9 @@ fn step_structure(root: &Path) -> Result<(), String> {
             "zela-render 的生产依赖边中出现了 zela-scene-ecs（渲染层只能依赖 ze-scene-hecs）：",
         ),
         (
-            "除 ze-notion 与节点图组豁免外无直接 glam（M0）",
+            "除 ze-notion 外无直接 glam（M0）",
             JQ_GLAM,
-            "依赖 ze-notion 的 crate 不得直接引 glam（数学入口唯一）：",
+            "除 ze-notion 外出现了直接 glam 生产依赖（M0 数学入口唯一）：",
         ),
     ];
 

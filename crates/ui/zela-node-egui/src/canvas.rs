@@ -8,9 +8,8 @@
 //! screen = viewport.min + pan + graph * zoom
 //! ```
 
-use egui::Pos2;
-use glam::Vec2;
-use zela_node_editor::Editor;
+use egui::{Pos2, Vec2};
+use zela_node_editor::{Editor, NodePos};
 
 /// Zoom clamp range.
 pub const MIN_ZOOM: f32 = 0.25;
@@ -46,15 +45,15 @@ impl GraphCanvas {
     }
 
     /// Screen point → graph-local point.
-    pub fn to_graph(&self, screen: Pos2) -> Vec2 {
-        Vec2::new(
+    pub fn to_graph(&self, screen: Pos2) -> NodePos {
+        NodePos::new(
             (screen.x - self.viewport.min.x - self.pan.x) / self.zoom,
             (screen.y - self.viewport.min.y - self.pan.y) / self.zoom,
         )
     }
 
     /// Graph-local point → screen point.
-    pub fn to_screen(&self, graph: Vec2) -> Pos2 {
+    pub fn to_screen(&self, graph: NodePos) -> Pos2 {
         Pos2::new(
             self.viewport.min.x + self.pan.x + graph.x * self.zoom,
             self.viewport.min.y + self.pan.y + graph.y * self.zoom,
@@ -86,8 +85,8 @@ impl GraphCanvas {
         if self.viewport.width() <= 0.0 || self.viewport.height() <= 0.0 {
             return;
         }
-        let mut min = Vec2::splat(f32::MAX);
-        let mut max = Vec2::splat(f32::MIN);
+        let mut min = NodePos::splat(f32::MAX);
+        let mut max = NodePos::splat(f32::MIN);
         let mut any = false;
         for id in editor.graph().all_nodes() {
             if let Some(rect) = editor.node_rect(id) {
@@ -99,9 +98,9 @@ impl GraphCanvas {
         if !any {
             return;
         }
-        let content = (max - min).max(Vec2::splat(1.0));
+        let content = (max - min).max(NodePos::splat(1.0));
         let margin = 60.0;
-        let avail = Vec2::new(
+        let avail = NodePos::new(
             (self.viewport.width() - margin * 2.0).max(50.0),
             (self.viewport.height() - margin * 2.0).max(50.0),
         );

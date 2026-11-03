@@ -2,12 +2,11 @@
 //! the in-flight connection, driven exclusively by [`Command`]s and observable
 //! through [`EditorEvent`]s.
 //!
-//! All coordinates in and out of this module are graph-local (`glam::Vec2`).
+//! All coordinates in and out of this module are graph-local ([`NodePos`]).
 //! The editor has no notion of pan/zoom.
 
 use std::collections::{HashSet, VecDeque};
 
-use glam::Vec2;
 use ze_node_core::{
     ConnectError, EdgeId, Graph, InputSocketId, NodeId, OutputSocketId, SimpleGraph, UnitEdge,
 };
@@ -16,7 +15,9 @@ use crate::command::Command;
 use crate::edge_geom::{EdgeGeometry, EdgePath};
 use crate::error::EditorError;
 use crate::event::EditorEvent;
-use crate::geometry::{HitTarget, RESIZE_HIT_RADIUS, Rect, SOCKET_HIT_RADIUS, SOCKET_SNAP_RADIUS};
+use crate::geometry::{
+    HitTarget, NodePos, RESIZE_HIT_RADIUS, Rect, SOCKET_HIT_RADIUS, SOCKET_SNAP_RADIUS,
+};
 use crate::hit_test::{DefaultHitTestPolicy, HitTestContext, HitTestPolicy};
 use crate::layout::{LayoutStrategy, NodeSizeMap};
 use crate::socket_layout::{DefaultSocketLayout, SocketLayout};
@@ -24,13 +25,13 @@ use crate::undo::UndoStack;
 use crate::validation::ConnectionValidator;
 
 /// Default card size when the UI layer has not measured a node yet.
-pub const DEFAULT_NODE_SIZE: Vec2 = Vec2::new(190.0, 110.0);
+pub const DEFAULT_NODE_SIZE: NodePos = NodePos::new(190.0, 110.0);
 
 /// A connection currently being dragged from an output socket.
 #[derive(Debug, Clone, Copy)]
 pub struct PendingConnection {
     pub from: OutputSocketId,
-    pub cursor: Vec2,
+    pub cursor: NodePos,
     /// Legal drop target under the cursor (computed during validation, stage
     /// 6); used by the UI to highlight valid inputs.
     pub hover_target: Option<InputSocketId>,
@@ -213,7 +214,7 @@ impl Editor {
         {
             self.pending = Some(PendingConnection {
                 from,
-                cursor: self.input_socket_pos(*to).unwrap_or(Vec2::ZERO),
+                cursor: self.input_socket_pos(*to).unwrap_or(NodePos::ZERO),
                 hover_target: None,
             });
         }
@@ -277,7 +278,7 @@ impl Editor {
                     .map(|n| {
                         let interaction = self.presentation.interaction(&n.meta().type_name);
                         let [w, h] = interaction.clamp_size(size.x, size.y);
-                        Vec2::new(w, h)
+                        NodePos::new(w, h)
                     })
                     .unwrap_or(size);
                 let old = self.sizes.get(&node).copied();
@@ -301,7 +302,7 @@ impl Editor {
                 }
                 self.pending = Some(PendingConnection {
                     from: source,
-                    cursor: self.output_socket_pos(source).unwrap_or(Vec2::ZERO),
+                    cursor: self.output_socket_pos(source).unwrap_or(NodePos::ZERO),
                     hover_target: None,
                 });
                 Ok(None)
@@ -419,7 +420,7 @@ impl Editor {
     }
 
     /// Absolute graph-local position of an input socket.
-    pub fn input_socket_pos(&self, socket: InputSocketId) -> Option<Vec2> {
+    pub fn input_socket_pos(&self, socket: InputSocketId) -> Option<NodePos> {
         let node = self.graph.get_node(socket.node())?;
         let rect = self.node_rect(socket.node())?;
         let count = node.inputs().len() as u32;
@@ -435,7 +436,7 @@ impl Editor {
     }
 
     /// Absolute graph-local position of an output socket.
-    pub fn output_socket_pos(&self, socket: OutputSocketId) -> Option<Vec2> {
+    pub fn output_socket_pos(&self, socket: OutputSocketId) -> Option<NodePos> {
         let node = self.graph.get_node(socket.node())?;
         let rect = self.node_rect(socket.node())?;
         let count = node.outputs().len() as u32;
@@ -504,8 +505,8 @@ impl Editor {
     /// `cursor`, with its graph-local position. Sockets on the source node
     /// itself are excluded (self-loops are rejected by validation anyway and
     /// would make the wire fold back on the card).
-    pub fn snap_target(&self, cursor: Vec2, from: OutputSocketId) -> Option<(InputSocketId, Vec2)> {
-        let mut best: Option<(InputSocketId, Vec2, f32)> = None;
+    pub fn snap_target(&self, cursor: NodePos, from: OutputSocketId) -> Option<(InputSocketId, NodePos)> {
+        let mut best: Option<(InputSocketId, NodePos, f32)> = None;
         for node in self.graph.all_nodes() {
             if node == from.node() {
                 continue;
@@ -525,7 +526,7 @@ impl Editor {
                 if ConnectionValidator::check_types(self.graph.as_ref(), from, id).is_err() {
                     continue;
                 }
-                if best.is_none_or(|b: (InputSocketId, Vec2, f32)| dist < b.2) {
+                if best.is_none_or(|b: (InputSocketId, NodePos, f32)| dist < b.2) {
                     best = Some((id, pos, dist));
                 }
             }
@@ -537,7 +538,7 @@ impl Editor {
     /// [`HitTestPolicy`]; the built-in policy resolves (high → low priority):
     /// output sockets → input sockets → resize grips → node cards → edges,
     /// honoring each node type's `NodeMeta::interaction` metadata.
-    pub fn hit_test(&self, pos: Vec2) -> HitTarget {
+    pub fn hit_test(&self, pos: NodePos) -> HitTarget {
         let ctx = HitTestContext {
             graph: self.graph.as_ref(),
             socket_hit_radius: SOCKET_HIT_RADIUS,
@@ -576,7 +577,7 @@ mod tests {
         )
     }
 
-    fn add_node(editor: &mut Editor, at: Vec2) -> NodeId {
+    fn add_node(editor: &mut Editor, at: NodePos) -> NodeId {
         editor
             .apply(Command::AddNode {
                 node: Box::new(TestNode::f32_passthrough()),
@@ -605,7 +606,7 @@ mod tests {
         editor
             .apply(Command::AddNode {
                 node: Box::new(TestNode::f32_passthrough()),
-                at: Vec2::new(10.0, 20.0),
+                at: NodePos::new(10.0, 20.0),
             })
             .unwrap();
         assert_eq!(editor.graph().node_count(), 1);
@@ -620,8 +621,8 @@ mod tests {
     #[test]
     fn move_node_updates_rect_and_emits_event() {
         let mut editor = make_editor();
-        let id = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let target = Vec2::new(50.0, 60.0);
+        let id = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let target = NodePos::new(50.0, 60.0);
         editor
             .apply(Command::MoveNode {
                 node: id,
@@ -637,8 +638,8 @@ mod tests {
     #[test]
     fn connect_two_nodes_creates_edge_and_path() {
         let mut editor = make_editor();
-        let a = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let b = add_node(&mut editor, Vec2::new(400.0, 0.0));
+        let a = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let b = add_node(&mut editor, NodePos::new(400.0, 0.0));
 
         let a_out = OutputSocketId::new(a, 0);
         let b_in = InputSocketId::new(b, 0);
@@ -665,36 +666,36 @@ mod tests {
     #[test]
     fn hit_test_finds_sockets_node_and_void() {
         let mut editor = make_editor();
-        let id = add_node(&mut editor, Vec2::new(100.0, 100.0));
+        let id = add_node(&mut editor, NodePos::new(100.0, 100.0));
 
         // Output socket: right edge (default width 190), first pin row below
         // the header: y = 100 + header 24 + margin 8 + half-row 12 = 144.
         let out = OutputSocketId::new(id, 0);
         let out_pos = editor.output_socket_pos(out).unwrap();
-        assert_eq!(out_pos, Vec2::new(290.0, 144.0));
+        assert_eq!(out_pos, NodePos::new(290.0, 144.0));
         assert_eq!(editor.hit_test(out_pos), HitTarget::OutputSocket(out));
 
         // Input socket: left edge.
         let inp = InputSocketId::new(id, 0);
         let in_pos = editor.input_socket_pos(inp).unwrap();
-        assert_eq!(in_pos, Vec2::new(100.0, 144.0));
+        assert_eq!(in_pos, NodePos::new(100.0, 144.0));
         assert_eq!(editor.hit_test(in_pos), HitTarget::InputSocket(inp));
 
         // Card interior → node.
         assert_eq!(
-            editor.hit_test(Vec2::new(180.0, 160.0)),
+            editor.hit_test(NodePos::new(180.0, 160.0)),
             HitTarget::Node(id)
         );
 
         // Empty space → nothing.
-        assert_eq!(editor.hit_test(Vec2::new(0.0, 0.0)), HitTarget::Nothing);
+        assert_eq!(editor.hit_test(NodePos::new(0.0, 0.0)), HitTarget::Nothing);
     }
 
     #[test]
     fn connection_drag_snaps_to_nearby_compatible_input() {
         let mut editor = make_editor();
-        let src = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let sink = add_node(&mut editor, Vec2::new(400.0, 0.0));
+        let src = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let sink = add_node(&mut editor, NodePos::new(400.0, 0.0));
         let target = InputSocketId::new(sink, 0);
         let pin_pos = editor.input_socket_pos(target).unwrap();
 
@@ -705,7 +706,7 @@ mod tests {
         // Cursor inside the snap radius but OUTSIDE the click hit radius:
         // the wire still locks onto the pin (hover armed) and its path
         // endpoint snaps to the pin position.
-        let near = pin_pos + Vec2::new(18.0, 4.0);
+        let near = pin_pos + NodePos::new(18.0, 4.0);
         editor.apply(Command::UpdateConnectionDrag(near)).unwrap();
         assert_eq!(editor.pending().unwrap().hover_target, Some(target));
         let EdgePath::Bezier { to, .. } = editor.pending_path().unwrap() else {
@@ -715,28 +716,28 @@ mod tests {
 
         // Far away → no snap, path follows the cursor.
         editor
-            .apply(Command::UpdateConnectionDrag(Vec2::new(0.0, 900.0)))
+            .apply(Command::UpdateConnectionDrag(NodePos::new(0.0, 900.0)))
             .unwrap();
         assert_eq!(editor.pending().unwrap().hover_target, None);
         let EdgePath::Bezier { to, .. } = editor.pending_path().unwrap() else {
             panic!("pending path must be bezier");
         };
-        assert_eq!(to, Vec2::new(0.0, 900.0));
+        assert_eq!(to, NodePos::new(0.0, 900.0));
     }
 
     #[test]
     fn pending_path_updates_with_cursor() {
         let mut editor = make_editor();
-        let a = add_node(&mut editor, Vec2::new(0.0, 0.0));
+        let a = add_node(&mut editor, NodePos::new(0.0, 0.0));
         let a_out = OutputSocketId::new(a, 0);
         assert!(editor.pending_path().is_none());
         editor.apply(Command::BeginConnection(a_out)).unwrap();
         editor
-            .apply(Command::UpdateConnectionDrag(Vec2::new(500.0, 500.0)))
+            .apply(Command::UpdateConnectionDrag(NodePos::new(500.0, 500.0)))
             .unwrap();
         let path = editor.pending_path().expect("pending path exists");
         match path {
-            EdgePath::Bezier { to, .. } => assert_eq!(to, Vec2::new(500.0, 500.0)),
+            EdgePath::Bezier { to, .. } => assert_eq!(to, NodePos::new(500.0, 500.0)),
             other => panic!("expected bezier, got {other:?}"),
         }
         editor.apply(Command::CancelConnection).unwrap();
@@ -767,8 +768,8 @@ mod tests {
     #[test]
     fn connect_compatible_types_succeeds() {
         let mut editor = make_editor();
-        let a = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let b = add_node(&mut editor, Vec2::new(400.0, 0.0));
+        let a = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let b = add_node(&mut editor, NodePos::new(400.0, 0.0));
         connect(&mut editor, a, b);
         assert_eq!(editor.all_edges().len(), 1);
     }
@@ -777,12 +778,12 @@ mod tests {
     fn connect_type_mismatch_is_rejected() {
         let mut editor = make_editor();
         // f32 source: 1 input + 1 output.
-        let src_id = add_node(&mut editor, Vec2::new(0.0, 0.0));
+        let src_id = add_node(&mut editor, NodePos::new(0.0, 0.0));
         // vec2 sink: 1 input, no output.
         editor
             .apply(Command::AddNode {
                 node: Box::new(TestNode::new("vec2", 1, 0)),
-                at: Vec2::new(400.0, 0.0),
+                at: NodePos::new(400.0, 0.0),
             })
             .unwrap();
         let sink_id = editor
@@ -814,9 +815,9 @@ mod tests {
     #[test]
     fn connect_creating_cycle_is_rejected() {
         let mut editor = make_editor();
-        let a = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let b = add_node(&mut editor, Vec2::new(300.0, 0.0));
-        let c = add_node(&mut editor, Vec2::new(600.0, 0.0));
+        let a = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let b = add_node(&mut editor, NodePos::new(300.0, 0.0));
+        let c = add_node(&mut editor, NodePos::new(600.0, 0.0));
         connect(&mut editor, a, b);
         connect(&mut editor, b, c);
         assert_eq!(editor.all_edges().len(), 2);
@@ -839,9 +840,9 @@ mod tests {
     #[test]
     fn second_connection_into_single_input_is_rejected() {
         let mut editor = make_editor();
-        let a = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let b = add_node(&mut editor, Vec2::new(300.0, 0.0));
-        let c = add_node(&mut editor, Vec2::new(600.0, 0.0));
+        let a = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let b = add_node(&mut editor, NodePos::new(300.0, 0.0));
+        let c = add_node(&mut editor, NodePos::new(600.0, 0.0));
         connect(&mut editor, a, b);
 
         // c -> b: b's input already carries a -> b.
@@ -866,12 +867,12 @@ mod tests {
     #[test]
     fn drag_hover_highlights_only_compatible_inputs() {
         let mut editor = make_editor();
-        let src = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let f32_sink = add_node(&mut editor, Vec2::new(300.0, 200.0));
+        let src = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let f32_sink = add_node(&mut editor, NodePos::new(300.0, 200.0));
         editor
             .apply(Command::AddNode {
                 node: Box::new(TestNode::new("vec2", 1, 0)),
-                at: Vec2::new(0.0, 300.0),
+                at: NodePos::new(0.0, 300.0),
             })
             .unwrap();
         let vec2_sink = editor
@@ -907,8 +908,8 @@ mod tests {
     #[test]
     fn undo_redo_move_node_restores_positions() {
         let mut editor = make_editor();
-        let id = add_node(&mut editor, Vec2::new(30.0, 40.0));
-        let new_pos = Vec2::new(150.0, 90.0);
+        let id = add_node(&mut editor, NodePos::new(30.0, 40.0));
+        let new_pos = NodePos::new(150.0, 90.0);
         editor
             .apply(Command::MoveNode {
                 node: id,
@@ -919,7 +920,7 @@ mod tests {
         assert!(editor.can_undo());
 
         editor.undo().unwrap();
-        assert_eq!(editor.node_rect(id).unwrap().min, Vec2::new(30.0, 40.0));
+        assert_eq!(editor.node_rect(id).unwrap().min, NodePos::new(30.0, 40.0));
         assert!(editor.can_redo());
 
         editor.redo().unwrap();
@@ -929,8 +930,8 @@ mod tests {
     #[test]
     fn undo_redo_connection_removes_and_restores_edge() {
         let mut editor = make_editor();
-        let a = add_node(&mut editor, Vec2::new(0.0, 0.0));
-        let b = add_node(&mut editor, Vec2::new(400.0, 0.0));
+        let a = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let b = add_node(&mut editor, NodePos::new(400.0, 0.0));
         connect(&mut editor, a, b);
         assert_eq!(editor.all_edges().len(), 1);
 
@@ -954,11 +955,11 @@ mod tests {
     #[test]
     fn new_action_clears_redo_stack() {
         let mut editor = make_editor();
-        let a = add_node(&mut editor, Vec2::new(0.0, 0.0));
+        let a = add_node(&mut editor, NodePos::new(0.0, 0.0));
         editor
             .apply(Command::MoveNode {
                 node: a,
-                to: Vec2::new(10.0, 10.0),
+                to: NodePos::new(10.0, 10.0),
             })
             .unwrap();
         editor.undo().unwrap();
@@ -967,7 +968,7 @@ mod tests {
         editor
             .apply(Command::MoveNode {
                 node: a,
-                to: Vec2::new(20.0, 20.0),
+                to: NodePos::new(20.0, 20.0),
             })
             .unwrap();
         assert!(!editor.can_redo());
@@ -990,7 +991,7 @@ mod tests {
         editor
             .apply(Command::AddNode {
                 node: Box::new(node),
-                at: Vec2::new(0.0, 0.0),
+                at: NodePos::new(0.0, 0.0),
             })
             .unwrap();
         let id = editor
@@ -1004,7 +1005,7 @@ mod tests {
         editor
             .apply(Command::SetNodeSize {
                 node: id,
-                size: Vec2::new(160.0, 120.0),
+                size: NodePos::new(160.0, 120.0),
             })
             .unwrap();
 
@@ -1012,23 +1013,23 @@ mod tests {
         editor
             .apply(Command::ResizeNode {
                 node: id,
-                size: Vec2::new(50.0, 10.0),
+                size: NodePos::new(50.0, 10.0),
             })
             .unwrap();
-        assert_eq!(editor.sizes()[&id], Vec2::new(100.0, 50.0));
+        assert_eq!(editor.sizes()[&id], NodePos::new(100.0, 50.0));
 
         // Above maximum → clamped down to max (same gesture: coalesced undo).
         editor
             .apply(Command::ResizeNode {
                 node: id,
-                size: Vec2::new(900.0, 900.0),
+                size: NodePos::new(900.0, 900.0),
             })
             .unwrap();
-        assert_eq!(editor.sizes()[&id], Vec2::new(300.0, 200.0));
+        assert_eq!(editor.sizes()[&id], NodePos::new(300.0, 200.0));
 
         // One undo reverts the whole coalesced drag to the pre-resize size.
         editor.undo().unwrap();
-        assert_eq!(editor.sizes()[&id], Vec2::new(160.0, 120.0));
+        assert_eq!(editor.sizes()[&id], NodePos::new(160.0, 120.0));
 
         // Resize grip is hit-testable at the card's bottom-right corner.
         let grip = editor.node_rect(id).unwrap().max;

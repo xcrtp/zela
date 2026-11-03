@@ -5,9 +5,8 @@
 //! layer stays unaware of pan/zoom state (owned by `GraphCanvas`).
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke};
-use glam::Vec2;
 use ze_node_core::{InputSocketId, NodeId, OutputSocketId};
-use zela_node_editor::{Command, EdgePath, Editor};
+use zela_node_editor::{Command, EdgePath, Editor, NodePos};
 
 use crate::edge_render::{EdgeRenderer, EdgeStyle};
 use crate::view::NodeView;
@@ -38,7 +37,7 @@ impl<'a> GraphPainter<'a> {
         &self,
         ui: &mut egui::Ui,
         editor: &mut Editor,
-        to_screen: impl Fn(Vec2) -> Pos2 + Copy,
+        to_screen: impl Fn(NodePos) -> Pos2 + Copy,
     ) {
         let painter = ui.painter().clone();
         draw_grid(&painter, painter.clip_rect(), ui.visuals());
@@ -83,15 +82,15 @@ impl<'a> GraphPainter<'a> {
             let region_h = editor.socket_layout().socket_region_height(n_in, n_out);
 
             let header_bottom =
-                to_screen(graph_rect.min + Vec2::new(graph_rect.size().x, header_h));
+                to_screen(graph_rect.min + NodePos::new(graph_rect.size().x, header_h));
             let header_rect = Rect::from_min_max(
                 screen_rect.min,
                 Pos2::new(screen_rect.right(), header_bottom.y),
             );
             // Pin rows live in the band below the header; body widgets start
             // under that band so sliders never collide with pins/labels.
-            let widgets_top = to_screen(graph_rect.min + Vec2::new(4.0, header_h + region_h));
-            let widgets_bottom = to_screen(graph_rect.max - Vec2::new(4.0, 6.0));
+            let widgets_top = to_screen(graph_rect.min + NodePos::new(4.0, header_h + region_h));
+            let widgets_bottom = to_screen(graph_rect.max - NodePos::new(4.0, 6.0));
             let body_rect = Rect::from_two_pos(
                 Pos2::new(screen_rect.left() + 4.0, widgets_top.y),
                 Pos2::new(screen_rect.right() - 4.0, widgets_bottom.y),
@@ -265,10 +264,10 @@ impl<'a> GraphPainter<'a> {
 }
 
 /// Map every point of a graph-local path through the screen transform.
-fn transform_path(path: &EdgePath, to_screen: impl Fn(Vec2) -> Pos2) -> EdgePath {
-    let v = |p: Vec2| {
+fn transform_path(path: &EdgePath, to_screen: impl Fn(NodePos) -> Pos2) -> EdgePath {
+    let v = |p: NodePos| {
         let s = to_screen(p);
-        Vec2::new(s.x, s.y)
+        NodePos::new(s.x, s.y)
     };
     match path {
         EdgePath::Straight { from, to } => EdgePath::Straight {

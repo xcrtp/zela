@@ -7067,7 +7067,6 @@ dependencies = [
 name = "zela-node-editor"
 version = "0.1.1"
 dependencies = [
- "glam",
  "thiserror 2.0.20",
  "ze-graph-algo",
  "ze-node-core",
@@ -7079,7 +7078,6 @@ version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
- "glam",
  "tracing",
  "ze-graph-algo",
  "ze-graph-eval",
@@ -7096,9 +7094,9 @@ version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
- "glam",
  "ze-node-core",
  "ze-node-schema",
+ "zela-node-editor",
  "zela-node-egui",
 ]
 

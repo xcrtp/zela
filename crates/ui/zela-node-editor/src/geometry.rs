@@ -3,21 +3,152 @@
 //! All coordinates are **graph local**: origin at the graph's top-left,
 //! y-axis pointing down, 1:1 with pixels. Viewport transforms (pan/zoom) live
 //! exclusively in the UI layer; this crate never sees screen coordinates.
-
-pub use glam::Vec2;
+//!
+//! # 为什么不用 `glam::Vec2`
+//!
+//! 这里的二维值**不是数学向量**，是「节点卡 / 插脚在图里的位置」。用专门的
+//! [`NodePos`] 承载它：语义靠类型名表达，且不把渲染侧的向量库引进来
+//! （节点栈因此自包含，门禁 `JQ_GLAM` 覆盖本 crate）。
 
 use ze_node_core::{EdgeId, InputSocketId, NodeId, OutputSocketId};
+
+/// 图坐标里的一个位置（`[x, y]`，原点在图左上、y 向下）。
+///
+/// 只提供几何运算所需的最小集合（加 / 减 / 数乘 / 点积 / 长度 / 线性插值）。
+/// 需要更多线性代数时用 `ze-notion` 的 `Vec2`，不要在这里扩。
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct NodePos {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl NodePos {
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
+
+    pub const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+
+    pub const fn splat(value: f32) -> Self {
+        Self {
+            x: value,
+            y: value,
+        }
+    }
+
+    pub fn is_zero(self) -> bool {
+        self.x == 0.0 && self.y == 0.0
+    }
+
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y
+    }
+
+    pub fn length_squared(self) -> f32 {
+        self.dot(self)
+    }
+
+    pub fn length(self) -> f32 {
+        self.length_squared().sqrt()
+    }
+
+    /// 线性插值：`t = 0` ⇒ `from`，`t = 1` ⇒ `to`。
+    pub fn lerp(from: Self, to: Self, t: f32) -> Self {
+        from + (to - from) * t
+    }
+
+    /// 逐分量最小值（包围盒用）。
+    pub fn min(self, other: Self) -> Self {
+        Self::new(self.x.min(other.x), self.y.min(other.y))
+    }
+
+    /// 逐分量最大值（包围盒用）。
+    pub fn max(self, other: Self) -> Self {
+        Self::new(self.x.max(other.x), self.y.max(other.y))
+    }
+}
+
+impl From<(f32, f32)> for NodePos {
+    fn from(value: (f32, f32)) -> Self {
+        Self::new(value.0, value.1)
+    }
+}
+
+impl From<[f32; 2]> for NodePos {
+    fn from(value: [f32; 2]) -> Self {
+        Self::new(value[0], value[1])
+    }
+}
+
+impl From<NodePos> for [f32; 2] {
+    fn from(value: NodePos) -> Self {
+        [value.x, value.y]
+    }
+}
+
+impl From<NodePos> for (f32, f32) {
+    fn from(value: NodePos) -> Self {
+        (value.x, value.y)
+    }
+}
+
+impl std::ops::Add for NodePos {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Self::new(self.x + rhs.x, self.y + rhs.y)
+    }
+}
+
+impl std::ops::AddAssign for NodePos {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl std::ops::Sub for NodePos {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        Self::new(self.x - rhs.x, self.y - rhs.y)
+    }
+}
+
+impl std::ops::SubAssign for NodePos {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl std::ops::Mul<f32> for NodePos {
+    type Output = Self;
+    fn mul(self, rhs: f32) -> Self {
+        Self::new(self.x * rhs, self.y * rhs)
+    }
+}
+
+impl std::ops::Div<f32> for NodePos {
+    type Output = Self;
+    fn div(self, rhs: f32) -> Self {
+        Self::new(self.x / rhs, self.y / rhs)
+    }
+}
+
+impl std::ops::Mul<NodePos> for f32 {
+    type Output = NodePos;
+    fn mul(self, rhs: NodePos) -> NodePos {
+        rhs * self
+    }
+}
 
 /// Axis-aligned rectangle in graph local coordinates.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
-    pub min: Vec2,
-    pub max: Vec2,
+    pub min: NodePos,
+    pub max: NodePos,
 }
 
 impl Rect {
     /// Build from a top-left corner and a (positive) size.
-    pub fn from_min_size(min: Vec2, size: Vec2) -> Self {
+    pub fn from_min_size(min: NodePos, size: NodePos) -> Self {
         Self {
             min,
             max: min + size,
@@ -25,17 +156,17 @@ impl Rect {
     }
 
     /// Width / height.
-    pub fn size(self) -> Vec2 {
+    pub fn size(self) -> NodePos {
         self.max - self.min
     }
 
     /// Center point.
-    pub fn center(self) -> Vec2 {
+    pub fn center(self) -> NodePos {
         (self.min + self.max) * 0.5
     }
 
     /// Point-in-rect test (inclusive on all edges, for hit-testing).
-    pub fn contains(self, p: Vec2) -> bool {
+    pub fn contains(self, p: NodePos) -> bool {
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
     }
 
@@ -43,8 +174,8 @@ impl Rect {
     /// Used to add hit-test tolerance.
     pub fn expand(self, r: f32) -> Self {
         Self {
-            min: self.min - Vec2::splat(r),
-            max: self.max + Vec2::splat(r),
+            min: self.min - NodePos::splat(r),
+            max: self.max + NodePos::splat(r),
         }
     }
 }
@@ -91,8 +222,8 @@ mod tests {
     #[test]
     fn rect_size_and_center() {
         let r = Rect::from_min_size((0.0, 0.0).into(), (10.0, 20.0).into());
-        assert_eq!(r.size(), Vec2::new(10.0, 20.0));
-        assert_eq!(r.center(), Vec2::new(5.0, 10.0));
+        assert_eq!(r.size(), NodePos::new(10.0, 20.0));
+        assert_eq!(r.center(), NodePos::new(5.0, 10.0));
     }
 
     #[test]
@@ -108,5 +239,19 @@ mod tests {
         let r = Rect::from_min_size((0.0, 0.0).into(), (10.0, 10.0).into());
         assert!(r.contains((0.0, 0.0).into()));
         assert!(r.contains((10.0, 10.0).into()));
+    }
+
+    #[test]
+    fn node_pos_arithmetic_and_roundtrip() {
+        let a = NodePos::new(1.0, 2.0);
+        let b = NodePos::from([3.0, 4.0]);
+        assert_eq!(a + b, NodePos::new(4.0, 6.0));
+        assert_eq!(b - a, NodePos::new(2.0, 2.0));
+        assert_eq!(a * 2.0, NodePos::new(2.0, 4.0));
+        assert_eq!(2.0 * a, NodePos::new(2.0, 4.0));
+        assert_eq!(NodePos::lerp(a, b, 0.5), NodePos::new(2.0, 3.0));
+        assert_eq!((a + b).length_squared(), 16.0 + 36.0);
+        assert_eq!(<[f32; 2]>::from(a), [1.0, 2.0]);
+        assert_eq!(<(f32, f32)>::from(a), (1.0, 2.0));
     }
 }

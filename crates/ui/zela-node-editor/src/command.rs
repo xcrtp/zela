@@ -5,10 +5,10 @@
 //! Note: `Command` holds `Box<dyn Node>` / `Box<dyn LayoutStrategy>` and is
 //! therefore not `Clone`. The undo stack moves commands by value.
 
-use glam::Vec2;
 use ze_node_core::{EdgeId, InputSocketId, Node, NodeId, OutputSocketId};
 
 use crate::edge_geom::EdgeGeometry;
+use crate::geometry::NodePos;
 use crate::layout::LayoutStrategy;
 
 /// All editor state changes expressed as one atomic command.
@@ -16,32 +16,32 @@ pub enum Command {
     /// Insert a node at a graph-local position.
     AddNode {
         node: Box<dyn Node>,
-        at: Vec2,
+        at: NodePos,
     },
     /// Remove a node (cascades to its edges).
     RemoveNode(NodeId),
     /// Move a node's top-left corner.
     MoveNode {
         node: NodeId,
-        to: Vec2,
+        to: NodePos,
     },
     /// Record a node card's measured size (from the UI layer).
     SetNodeSize {
         node: NodeId,
-        size: Vec2,
+        size: NodePos,
     },
     /// User-driven resize of a node card via the grip. The editor clamps
     /// `size` to the node type's `NodeInteraction` min/max bounds; live
     /// drags are coalesced onto one undo entry.
     ResizeNode {
         node: NodeId,
-        size: Vec2,
+        size: NodePos,
     },
 
     /// Start dragging a connection out of an output socket.
     BeginConnection(OutputSocketId),
     /// Update the in-flight connection's cursor position.
-    UpdateConnectionDrag(Vec2),
+    UpdateConnectionDrag(NodePos),
     /// Drop onto an input socket to complete the connection.
     CompleteConnection(InputSocketId),
     /// Abort the in-flight connection (dropped on empty space).
@@ -118,19 +118,19 @@ mod tests {
         let node = NodeId(7);
         let cmd = Command::MoveNode {
             node,
-            to: Vec2::new(12.0, 34.0),
+            to: NodePos::new(12.0, 34.0),
         };
         match cmd {
             Command::MoveNode { node: n, to } => {
                 assert_eq!(n, node);
-                assert_eq!(to, Vec2::new(12.0, 34.0));
+                assert_eq!(to, NodePos::new(12.0, 34.0));
             }
             _ => panic!("wrong variant"),
         }
 
         let ev = EditorEvent::NodeMoved {
             node,
-            to: Vec2::new(12.0, 34.0),
+            to: NodePos::new(12.0, 34.0),
         };
         match ev {
             EditorEvent::NodeMoved { node: n, to } => {

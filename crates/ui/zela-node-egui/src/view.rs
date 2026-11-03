@@ -7,7 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use egui::Color32;
-use glam::Vec2;
+use zela_node_editor::NodePos;
 use ze_node_core::{Node, NodePresentation};
 
 /// How a node type is presented as a card.
@@ -28,9 +28,9 @@ pub trait NodeView: Send + Sync + 'static {
     }
 
     /// Card size estimate in graph-local units (pixels at zoom 1.0).
-    fn size_hint(&self, node: &dyn Node) -> Vec2 {
+    fn size_hint(&self, node: &dyn Node) -> NodePos {
         let _ = node;
-        Vec2::new(160.0, 80.0)
+        NodePos::new(160.0, 80.0)
     }
 }
 

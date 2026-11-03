@@ -2,7 +2,7 @@
 //!
 //! This crate sits between the domain model (`zela-node`) and any UI layer.
 //! It owns **no** viewport / pan / zoom concept: all coordinates are graph
-//! local (`glam::Vec2`, origin at the graph's top-left, y down, 1:1 with
+//! local ([`NodePos`], origin at the graph's top-left, y down, 1:1 with
 //! pixels). The UI layer is responsible for screen <-> graph transforms.
 //!
 //! Hard constraint: this crate must never depend on `egui`/`eframe` or any
@@ -44,7 +44,7 @@ pub use editor::{Editor, PendingConnection};
 pub use error::EditorError;
 pub use event::EditorEvent;
 pub use geometry::{
-    HitTarget, RESIZE_HIT_RADIUS, Rect, SOCKET_HIT_RADIUS, SOCKET_SNAP_RADIUS, Vec2,
+    HitTarget, NodePos, RESIZE_HIT_RADIUS, Rect, SOCKET_HIT_RADIUS, SOCKET_SNAP_RADIUS,
 };
 pub use hit_test::{
     DEFAULT_RESIZE_HIT_RADIUS, DEFAULT_SOCKET_HIT_RADIUS, DefaultHitTestPolicy, HitTestContext,
