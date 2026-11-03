@@ -31,3 +31,6 @@ thiserror.workspace = true
 # CF-d 对拍：节点侧求值策略（逐帧折叠）与拓扑排序。
 ze-graph-algo = { path = "../../ze/graph/ze-graph-algo" }
 ze-graph-eval = { path = "../../ze/graph/ze-graph-eval" }
+# CF-f 端到端：节点编辑器状态机 + 帧调度（动画 / 面板 / 回放）。
+zela-node-editor = { path = "../../ui/zela-node-editor" }
+zela-schedule = { path = "../../schedule/zela-schedule" }
