@@ -213,7 +213,12 @@ pub fn build(
     metrics: HudMetrics,
     mut bake_label: impl FnMut(&str, Vec2, f32) -> Vec<Path2D>,
 ) -> Hud {
-    let mut set = ControlSet::new(specs);
+    // 行距 / 内边距**由 metrics 换算成布局单位**（否则 `metrics.gap` 只是注释里的数字，
+    // 标签按它算偏移、布局却按 `ControlSet` 的默认值走 ⇒ 文字仍会压到上一行）。
+    let unit = metrics.unit().max(f32::EPSILON);
+    let gap_units = f64::from(metrics.gap / unit);
+    let padding_units = f64::from(metrics.padding / unit);
+    let mut set = ControlSet::new(specs).with_spacing(gap_units, padding_units);
     // 布局只做一次：拿到每行的单位矩形。
     let frame = set.frame(Constraints::new(
         f64::from(metrics.width) / f64::from(metrics.unit().max(f32::EPSILON)).max(1e-6),
@@ -239,10 +244,16 @@ pub fn build(
             ])
             .expect("HUD：Rect / FillSolid 已登记");
 
-        // 标签：放在轨道左侧（世界坐标），字号由 metrics 一处定义。
+        // 标签放在**行距**里（轨道上方、下一行下方），不压到相邻控件。
+        //
+        // 为什么要按 `gap` 算偏移：文字的高度约 `font * 1.3`，若直接顶在
+        // `world.max.y` 上就会伸进上一行的轨道 —— 这正是「上方文字压在下一个按钮上」。
+        let text_height = metrics.label_font_size * 1.3;
+        let label_y = world.max.y + ((metrics.gap - text_height) * 0.5).max(0.0);
+        // 标签：与轨道左端对齐（世界坐标），字号由 metrics 一处定义。
         for glyph_path in bake_label(
             &spec_name(&set, placed.id),
-            Vec2::new(world.min.x, world.max.y + metrics.label_font_size * 0.5),
+            Vec2::new(world.min.x, label_y),
             metrics.label_font_size,
         ) {
             scene
@@ -456,6 +467,45 @@ mod tests {
             .and_then(HudState::hud)
             .and_then(|hud| hud.value(id))
             .expect("有滑块值")
+    }
+
+    /// **回归**：标签画在行距里，不得压到任何一行的轨道（"上方文字压在下一个按钮上"）。
+    #[test]
+    fn labels_sit_between_rows_without_overlapping_tracks() {
+        let mut scene = Scene::new();
+        let metrics = HudMetrics {
+            origin: Vec2::new(-5.0, 0.0),
+            width: 4.0,
+            row_height: 0.36,
+            gap: 0.29,
+            padding: 0.14,
+            label_font_size: 0.20,
+            knob_radius: 0.11,
+        };
+        let specs: Vec<ControlSpec> = (0..4)
+            .map(|index| ControlSpec::button(LayoutId(index), format!("b{index}")))
+            .collect();
+        let mut anchors = Vec::new();
+        let hud = build(&mut scene, specs, metrics, |_, anchor, _| {
+            anchors.push(anchor);
+            Vec::new()
+        });
+        assert_eq!(anchors.len(), 4);
+        let text_height = metrics.label_font_size * 1.3;
+        for (index, anchor) in anchors.iter().enumerate() {
+            let text_bottom = anchor.y;
+            let text_top = anchor.y + text_height;
+            for row in 0..4 {
+                let rect = hud.world_rect(LayoutId(row)).expect("有控件矩形");
+                let overlaps = text_bottom < rect.max.y && text_top > rect.min.y;
+                assert!(
+                    !overlaps,
+                    "第 {index} 行标签 [{text_bottom:.3}, {text_top:.3}] 压到第 {row} 行轨道 \
+                     [{:.3}, {:.3}]",
+                    rect.min.y, rect.max.y
+                );
+            }
+        }
     }
 
     /// **回归**：松手（`Released`）不产生 outcome，但必须清掉 capture —— 否则
