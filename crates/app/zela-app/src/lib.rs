@@ -49,6 +49,8 @@ pub mod demos;
 pub mod debug;
 pub mod export;
 mod formula;
+// **CH-e**：确定性字体的清单解析与环境快照（GUI / headless / CLI 共用）。
+pub mod fonts;
 // **CG-g**：Headless 出口（零窗口 / 零 GPU / 零 egui；注入事件 → 读一帧 Frame）。
 pub mod headless;
 // **CH-c**：debug RPC（只读 + 注入；NDJSON over TCP，只绑 127.0.0.1）。

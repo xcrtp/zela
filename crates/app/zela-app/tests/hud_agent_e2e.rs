@@ -229,6 +229,69 @@ fn trace_reports_derived_outcomes_diff_and_diagnostics() {
     assert_eq!(json, serde_json::to_string(&play()).expect("可序列化"));
 }
 
+/// **CH-e 判据**：环境参数显式进诊断快照 —— 窗口尺寸 / DPI / 视口如实回执，
+/// 且 **DPI 不参与换算**：同一个逻辑像素在 1× / 2× 上落到同一个控件、同一个值。
+///
+/// 字体 face 清单同样进快照（`Baked` 角色：回放端不执行、不进 required_capabilities），
+/// 缺 face 时如实报告而不是静默回退。
+#[test]
+fn diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit() {
+    use ze_scene_core::domain::{PointerState, WindowInput};
+
+    let play = |scale_factor: f32| {
+        let scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+        let name = param_scopes(&scene.frame().expect("有 Frame"))
+            .values()
+            .next()
+            .and_then(|params| params.first())
+            .cloned()
+            .expect("有参数滑块");
+        let (wx, wy) = scene.slider_point(&name, 0.7).expect("世界坐标");
+        let camera = scene
+            .input_context()
+            .expect("有输入上下文")
+            .layer2d
+            .expect("有 2D 图层")
+            .1;
+        let screen = camera.world_to_screen(ze_notion::Vec2::new(wx, wy));
+        let input = WindowInput {
+            pointer: PointerState {
+                position: Some(screen),
+                hovering: true,
+                primary_pressed: true,
+                ..PointerState::default()
+            },
+            viewport: camera.rect,
+            window_size: ze_notion::Vec2::new(camera.rect.max.x, camera.rect.max.y),
+            scale_factor,
+            ..WindowInput::default()
+        };
+        scene.inject_window(&input).expect("窗口输入可注入");
+        scene.advance(1, 1.0 / 60.0);
+        scene.clear_events();
+        let diagnostics = scene.diagnostics_snapshot();
+        (scene.frame_json().expect("有 JSON"), diagnostics, name)
+    };
+
+    let (frame_1x, diagnostics, name) = play(1.0);
+    let (frame_2x, _, _) = play(2.0);
+    assert_eq!(frame_1x, frame_2x, "DPI 不参与换算 ⇒ 同一条轨迹、逐位相同的帧");
+    assert_eq!(diagnostics.routed.as_deref(), Some(name.as_str()));
+
+    let environment = diagnostics.environment;
+    let window = environment.window_size.expect("窗口尺寸必须进快照");
+    assert!(window[0] > 0.0 && window[1] > 0.0, "窗口尺寸：{window:?}");
+    assert_eq!(environment.scale_factor, Some(1.0));
+    let viewport = environment.viewport.expect("视口必须进快照");
+    assert!(viewport[2] > viewport[0] && viewport[3] > viewport[1]);
+
+    let fonts = environment.fonts.expect("仓库里有字体清单");
+    assert!(!fonts.version.is_empty());
+    assert!(!fonts.faces.is_empty(), "face 清单不得为空");
+    // 缺失清单与 face 清单同源：要么全在，要么差额如实列出。
+    assert!(fonts.missing.iter().all(|name| fonts.faces.contains(name)));
+}
+
 /// **确定性**：同一场景、同一事件流 ⇒ 两帧 JSON 逐字节相同。
 #[test]
 fn same_events_give_bitwise_identical_frames() {

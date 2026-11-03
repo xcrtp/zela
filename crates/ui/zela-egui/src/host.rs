@@ -26,14 +26,12 @@ use ze_notion::Rect2D;
 use zela_render::ViewRect;
 use zela_render_backends::SceneCompositorCallback;
 use zela_scene_ecs::contract::WorldView;
-use zela_scene_ecs::domain::{
-    InputEvents, SceneEvent, SceneView,
-};
+use zela_scene_ecs::domain::{InputEvents, SceneView};
 #[cfg(test)]
 use zela_scene_ecs::domain::LayerKind;
 use zela_schedule::resource::Resources;
 
-use crate::resources::{UiConfig, ViewportCamera};
+use crate::resources::UiConfig;
 
 pub struct EguiSceneHost;
 
@@ -63,7 +61,12 @@ impl EguiSceneHost {
         let ui_config = res.get::<UiConfig>().cloned().unwrap_or_default();
         res.insert(crate::resources::post_filters(&ui_config));
         let viewport = Self::update_view_rect(ui, res);
-        let events = Self::collect_events(ui, view, target, viewport);
+        let context = ze_scene_core::domain::SceneInputContext::from_view(view, target);
+        let input = Self::window_input(ui, viewport);
+        let events = ze_scene_core::domain::collect_events(&input, &context);
+        // **CH-e**：窗口输入同时落资源 —— 诊断快照从这里读窗口尺寸 / DPI / 视口，
+        // 与 headless 注入走同一个来源（不各读一份系统状态）。
+        res.insert(input);
         res.insert(InputEvents::from_events(events));
     }
 
@@ -135,26 +138,11 @@ impl EguiSceneHost {
 
     // ─── UI → 场景：原始输入翻译 ───────────────────────────────────────────
 
-    /// 把 egui 原生输入翻译为相机语义命令与视口拾取事件。
-    ///
-    /// **CH-a**：换算本身已搬进 `ze_scene_core::domain::collect_events`（纯函数、
-    /// 零 egui 类型）；这里只把 `egui::InputState` 读成 [`WindowInput`]，再交给
-    /// 同一个函数 —— 真人与 Debug / RPC 从此走同一条 `WindowInput → SceneEvent`。
-    ///
-    /// 视口交互路由到 SceneView 中第一个 2D 图层（B 阶段单视口）；
-    /// 操作目标由 `target` 决定（K3，见 [`ViewportCamera`]）。
-    pub fn collect_events(
-        ui: &egui::Ui,
-        view: &SceneView,
-        target: ViewportCamera,
-        viewport: Rect2D,
-    ) -> Vec<SceneEvent> {
-        let context = ze_scene_core::domain::SceneInputContext::from_view(view, target);
-        let input = Self::window_input(ui, viewport);
-        ze_scene_core::domain::collect_events(&input, &context)
-    }
-
     /// egui 输入 → [`WindowInput`]（纯读取，不做任何场景换算）。
+    ///
+    /// **CH-a**：换算本身在 `ze_scene_core::domain::collect_events`（纯函数、零 egui
+    /// 类型）；本函数是**唯一**的 egui → `WindowInput` 适配点，真人与 Debug / RPC
+    /// 从此走同一条 `WindowInput → SceneEvent`。
     ///
     /// 坐标语义：egui 的指针位置已是**逻辑点**，与 `viewport` 同一坐标系 ⇒
     /// `scale_factor` 只记录、不参与换算（否则 2× DPI 落点会漂）。

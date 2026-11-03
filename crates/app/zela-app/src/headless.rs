@@ -85,6 +85,8 @@ impl HeadlessScene {
             .ok_or_else(|| "场景没有可操作的图层（2D / 3D 都没有）".to_string())?;
         let events = ze_scene_core::domain::collect_events(input, &context);
         let count = events.len();
+        // **CH-e**：窗口输入同时落资源 ⇒ 诊断快照如实报告尺寸 / DPI / 视口。
+        crate::debug::store_window_input(&self.driver, input);
         self.driver.with_scheduler_mut(|scheduler| {
             scheduler
                 .resources_mut()
