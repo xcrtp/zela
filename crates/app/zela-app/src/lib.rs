@@ -51,6 +51,8 @@ pub mod export;
 mod formula;
 // **CG-g**：Headless 出口（零窗口 / 零 GPU / 零 egui；注入事件 → 读一帧 Frame）。
 pub mod headless;
+// **CH-c**：debug RPC（只读 + 注入；NDJSON over TCP，只绑 127.0.0.1）。
+pub mod rpc;
 // 内嵌 Python 的前置探测：pyo3 初始化失败是 CPython 的 Fatal（abort），
 // Rust 侧捕获不到 ⇒ 必须在第一次碰 pyo3 之前先探测（见模块文档）。
 #[cfg(feature = "python")]

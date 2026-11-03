@@ -40,6 +40,8 @@ pub mod passes;
 pub mod dispatch;
 /// BR 批：Typed Pass 节点（`PassNode` / `AnyPass` / 驱动）。
 pub mod nodes;
+/// CH-d：debug-only 截图旁路（按需回读纹理；不进主循环）。
+pub mod screenshot;
 
 pub mod api;
 pub use api::{

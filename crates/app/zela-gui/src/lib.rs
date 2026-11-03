@@ -178,6 +178,10 @@ pub struct App {
     last_vector: Option<LastVector>,
     /// `ZELA_GUI_TIMING=1` 时的帧耗时统计（默认关：不付任何代价）。
     timing: Option<GuiTiming>,
+    /// **CH-c**：debug RPC 的 GUI 端（`ZELA_DEBUG_RPC=<port>` 时启用；默认关）。
+    ///
+    /// socket 线程只投递请求，真正的执行发生在 `ui()` 里（运行时是 `!Send`）。
+    debug_bridge: Option<zela_app::rpc::GuiBridge>,
 }
 
 /// 复用上一帧所需的全部条件（快照 + 画幅 + 背景 + 走的是哪条上屏路径）。
@@ -264,6 +268,12 @@ impl App {
         let progress = Arc::new(FrameProgress::new());
         attach_progress(&runtime, Arc::clone(&progress))?;
         let frame = recording_frame(SceneFrame::new(Arc::clone(&runtime.driver)), &runtime);
+        // **CH-c**：默认关；`ZELA_DEBUG_RPC=<port>` 才绑 127.0.0.1 并提供 debug RPC。
+        let debug_bridge = zela_app::rpc::listen_from_env()
+            .ok()
+            .flatten()
+            .and_then(|listener| zela_app::rpc::bridge(listener).ok())
+            .map(|(bridge, _worker)| bridge);
         Ok(Self {
             runtime,
             progress,
@@ -289,6 +299,7 @@ impl App {
                 render_ms: 0.0,
                 upload_ms: 0.0,
             }),
+            debug_bridge,
         })
     }
 
@@ -673,9 +684,64 @@ impl App {
     }
 }
 
+/// **CH-d**：GUI 的 debug 目标 —— 在 `DriverTarget` 之外补截图旁路（仅 Vector 后端）。
+///
+/// - 其余命令全部委托 `DriverTarget`（与 headless 同源，回执逐位相同）；
+/// - 截图读 `vector_target` 里**上一帧已呈现**的像素：RPC 在 `ui()` 顶部处理，
+///   本帧尚未重画。要拿 trace 之后的画面，先确认帧号推进再发截图；
+/// - PNG 只作视觉证据，**不进逐位基线**（像素随字体 / AA / GPU 漂移）。
+struct ScreenTarget<'a> {
+    inner: zela_app::rpc::DriverTarget,
+    vector_target: Option<&'a VectorTarget>,
+    device: &'a eframe::wgpu::Device,
+    queue: &'a eframe::wgpu::Queue,
+}
+
+impl zela_app::rpc::DebugTarget for ScreenTarget<'_> {
+    fn execute(&self, request: &zela_app::rpc::Request) -> zela_app::rpc::Response {
+        if let zela_app::rpc::Command::Screenshot { path } = &request.command {
+            return match self.screenshot(path) {
+                Ok((width, height)) => zela_app::rpc::Response::ok(
+                    request.id,
+                    serde_json::json!({ "path": path, "width": width, "height": height }),
+                ),
+                Err(error) => zela_app::rpc::Response::error(request.id, error),
+            };
+        }
+        self.inner.execute(request)
+    }
+
+    fn screenshot(&self, path: &str) -> std::result::Result<(u32, u32), String> {
+        let target = self
+            .vector_target
+            .ok_or_else(|| "当前作品没有矢量中间纹理（后端不是 Vector？）".to_string())?;
+        let (width, height) = target.size;
+        let rgba = zela_render_vector::screenshot::read_texture_rgba(
+            self.device,
+            self.queue,
+            &target.texture,
+            width,
+            height,
+        )?;
+        zela_app::export::write_png(std::path::Path::new(path), width, height, &rgba)
+            .map_err(|error| error.to_string())?;
+        Ok((width, height))
+    }
+}
+
 impl EframeApp for App {
     fn ui(&mut self, ui: &mut gui::Ui, _frame: &mut eframe::Frame) {
         let started = std::time::Instant::now();
+        // **CH-c/d**：debug RPC 的请求在主线程执行（运行时是 `!Send`）；没有请求时零开销。
+        // `ScreenTarget` 在 `DriverTarget` 之外补 Vector 截图旁路（见下）。
+        if let Some(bridge) = &self.debug_bridge {
+            bridge.poll(&ScreenTarget {
+                inner: zela_app::rpc::DriverTarget::new(self.driver()),
+                vector_target: self.vector_target.as_ref(),
+                device: &self.wgpu.device,
+                queue: &self.wgpu.queue,
+            });
+        }
         // 文件浏览器（独立窗口；选中即载入）。
         let picked = self.picker.as_mut().map(|picker| picker.show(ui.ctx()));
         if let Some((chosen, keep_open)) = picked {
