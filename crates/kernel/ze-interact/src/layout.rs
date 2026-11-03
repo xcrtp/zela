@@ -24,6 +24,7 @@
 use crate::hit::{Point, Rect};
 
 /// 布局中的控件 id（由宿主分配）。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct LayoutId(pub u32);
 
@@ -71,6 +72,7 @@ impl LayoutItem {
 }
 
 /// 布局结果：控件 id + 落点矩形。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlacedRect {
     pub id: LayoutId,

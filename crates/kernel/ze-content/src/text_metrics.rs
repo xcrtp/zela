@@ -17,8 +17,6 @@
 //! 拉丁 + CJK，**不做 shaping**：没有连字、没有上下文变形、没有 GSUB/GPOS。
 //! 换行只按「空格 / 连字符 / CJK 字边界」这三类机会贪心断行。
 
-use ze_notion::{Rect2D, Vec2};
-
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlyphMetrics {
@@ -181,64 +179,6 @@ pub fn is_cjk(ch: char) -> bool {
     )
 }
 
-/// 一个字符的可命中格。
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CharBox {
-    /// 字符在文本中的**标量下标**（不是字节下标）。
-    pub index: usize,
-    pub ch: char,
-    /// 字符格（与 [`ContentIR`](crate::ContentIR) 同一坐标系：y 向上）。
-    pub rect: Rect2D,
-}
-
-/// 文本的**逐字符盒**：字符下标 ↔ 矩形。
-///
-/// 一份数据同时服务四件事：光标定位、选区、读屏（语义帧）、命中反查（Agent 断言
-/// 也走它）。它比字形轮廓值钱——轮廓只决定"长什么样"，它决定"点在哪、念什么"。
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextRun {
-    /// 与文本同序的字符格（含空格；换行符不入盒）。
-    pub chars: Vec<CharBox>,
-    /// 行高（换行后的行距也用它）。
-    pub line_height: f32,
-}
-
-impl TextRun {
-    pub fn new(line_height: f32) -> Self {
-        Self {
-            chars: Vec::new(),
-            line_height,
-        }
-    }
-
-    /// 点 → 字符下标（**半开矩形** `[min, max)`，与 `ze-interact` 同一口径）。
-    ///
-    /// 相邻字符共享的边界点只属于后一个；点在所有盒之外 ⇒ `None`。
-    pub fn char_at(&self, point: Vec2) -> Option<usize> {
-        self.chars
-            .iter()
-            .find(|char_box| {
-                let rect = char_box.rect;
-                point.x >= rect.min.x
-                    && point.x < rect.max.x
-                    && point.y >= rect.min.y
-                    && point.y < rect.max.y
-            })
-            .map(|char_box| char_box.index)
-    }
-
-    /// 字符下标 → 盒。
-    pub fn char_box(&self, index: usize) -> Option<&CharBox> {
-        self.chars.iter().find(|char_box| char_box.index == index)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.chars.is_empty()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,18 +276,17 @@ mod tests {
     /// **CG-b**：字符盒与字符下标互为反查（半开矩形，边界唯一）。
     #[test]
     fn text_run_maps_points_back_to_characters() {
-        let mut run = TextRun::new(12.0);
-        for (index, (ch, x)) in [('a', 0.0), ('b', 10.0)].into_iter().enumerate() {
-            run.chars.push(CharBox {
-                index,
-                ch,
-                rect: Rect2D::new(Vec2::new(x, 0.0), Vec2::new(x + 10.0, 12.0)),
-            });
-        }
-        assert_eq!(run.char_at(Vec2::new(5.0, 6.0)), Some(0));
-        assert_eq!(run.char_at(Vec2::new(10.0, 6.0)), Some(1), "边界属于后一个");
-        assert_eq!(run.char_at(Vec2::new(20.0, 6.0)), None, "末尾之外不命中");
-        assert_eq!(run.char_at(Vec2::new(5.0, 12.0)), None, "上界之外不命中");
+        let mut run = ze_interact::TextRun::new(12.0);
+        run.push(0, 'a', ze_interact::Point::new(0.0, 0.0), 10.0);
+        run.push(1, 'b', ze_interact::Point::new(10.0, 0.0), 10.0);
+        assert_eq!(run.char_at(ze_interact::Point::new(5.0, 6.0)), Some(0));
+        assert_eq!(
+            run.char_at(ze_interact::Point::new(10.0, 6.0)),
+            Some(1),
+            "边界属于后一个"
+        );
+        assert_eq!(run.char_at(ze_interact::Point::new(20.0, 6.0)), None);
+        assert_eq!(run.char_at(ze_interact::Point::new(5.0, 12.0)), None);
         assert_eq!(run.char_box(1).map(|b| b.ch), Some('b'));
         assert_eq!(run.char_box(9), None);
     }

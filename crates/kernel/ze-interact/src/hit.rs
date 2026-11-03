@@ -12,6 +12,7 @@
 //! 同 z 时后插入者在上（与场景声明顺序一致）⇒ 排序必须**稳定**。
 
 /// 交互坐标点（内部口径 f64）。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
 pub struct Point {
     pub x: f64,
@@ -38,6 +39,7 @@ impl Point {
 }
 
 /// 轴对齐矩形（构造时规范化：`min ≤ max`）。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Rect {
     pub min: Point,

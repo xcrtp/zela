@@ -23,7 +23,7 @@
 
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
 use ze_content::ir::{ContentIR, ContentSource, Span, StyledPath};
-use ze_content::text_metrics::{CharBox, TextRun};
+use ze_interact::{CharBox, Point as IxPoint, Rect as IxRect, TextRun};
 use ze_notion::{Color32, Path2D, Rect2D, Transform2D, Vec2};
 
 use crate::metrics::{MetricsDb, MetricsError};
@@ -85,7 +85,7 @@ impl DirectTextEngine {
 
         let chars: Vec<(usize, char)> = text.char_indices().collect();
         let lines = metrics.wrap(wrap_width);
-        let mut run = TextRun::new(line_height);
+        let mut run = TextRun::new(f64::from(line_height));
         let mut items: Vec<StyledPath> = Vec::new();
         let mut missing_outlines = 0usize;
 
@@ -101,9 +101,9 @@ impl DirectTextEngine {
                 run.chars.push(CharBox {
                     index: glyph_index,
                     ch,
-                    rect: Rect2D::new(
-                        Vec2::new(pen, baseline - descent),
-                        Vec2::new(pen + advance, baseline + ascent),
+                    rect: IxRect::new(
+                        IxPoint::new(f64::from(pen), f64::from(baseline - descent)),
+                        IxPoint::new(f64::from(pen + advance), f64::from(baseline + ascent)),
                     ),
                 });
 
@@ -136,8 +136,13 @@ impl DirectTextEngine {
             for item in &mut items {
                 item.path = item.path.transformed(&transform);
             }
+            let dx = f64::from(shift.x);
+            let dy = f64::from(shift.y);
             for char_box in &mut run.chars {
-                char_box.rect = Rect2D::new(char_box.rect.min + shift, char_box.rect.max + shift);
+                char_box.rect = IxRect::new(
+                    IxPoint::new(char_box.rect.min.x + dx, char_box.rect.min.y + dy),
+                    IxPoint::new(char_box.rect.max.x + dx, char_box.rect.max.y + dy),
+                );
             }
         }
 
@@ -178,7 +183,7 @@ fn bounds_min(items: &[StyledPath], run: &TextRun) -> Option<Vec2> {
         None => run
             .chars
             .iter()
-            .map(|char_box| char_box.rect.min)
+            .map(|char_box| Vec2::new(char_box.rect.min.x as f32, char_box.rect.min.y as f32))
             .reduce(|a, b| Vec2::new(a.x.min(b.x), a.y.min(b.y))),
     }
 }
@@ -186,7 +191,12 @@ fn bounds_min(items: &[StyledPath], run: &TextRun) -> Option<Vec2> {
 fn union_of_boxes(run: &TextRun) -> Option<Rect2D> {
     run.chars
         .iter()
-        .map(|char_box| char_box.rect)
+        .map(|char_box| {
+            Rect2D::new(
+                Vec2::new(char_box.rect.min.x as f32, char_box.rect.min.y as f32),
+                Vec2::new(char_box.rect.max.x as f32, char_box.rect.max.y as f32),
+            )
+        })
         .reduce(|a, b| a.union(&b))
 }
 
@@ -270,7 +280,8 @@ mod tests {
         // 所有盒上方（y 超过上界）不命中。
         let top = output.run.chars[0].rect.max.y + 1.0;
         assert_eq!(
-            output.run.char_at(Vec2::new(output.run.chars[0].rect.min.x, top)),
+            output.run
+                .char_at(IxPoint::new(output.run.chars[0].rect.min.x, top)),
             None
         );
     }

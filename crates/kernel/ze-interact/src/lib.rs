@@ -1,17 +1,19 @@
-//! `ze-interact` — 交互骨架（命中 / 布局 / 路由）。
+//! `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。
 //!
-//! # 它回答三个问题
+//! # 它回答四个问题
 //!
 //! 1. **点到了谁** —— [`hit`]：矩形命中 + 线性索引（按 z-order 降序）；
 //! 2. **东西摆在哪** —— [`layout`]：盒子 / 流式布局（纯函数）；
-//! 3. **事件发给谁** —— [`route`]：hover / focus / capture 三档。
+//! 3. **事件发给谁** —— [`route`]：hover / focus / capture 三档；
+//! 4. **这一帧长什么样** —— [`frame`]：几何 / 语义 / 文本三条平行结构的快照。
 //!
 //! # 边界（写死，避免长成 grab bag）
 //!
-//! - **不绘制**：UI 只是场景对象（线 / 圆 / 由 typst 烘焙的文字轮廓）；
+//! - **不绘制**：UI 只是场景对象（线 / 圆 / 由轮廓烘焙的文字）；
 //! - **不认 egui**：宿主负责把原生输入翻译成语义事件；
 //! - **不做控件**（按钮 / 滑块 / 面板）：那是应用层的组合；
-//! - **不做文字排版**：只留度量接口形状，实现属后续批次；
+//! - **不做文字排版**：度量在 `ze-content` / `ze-prerender`；
+//!   [`text::TextRun`] 只承载「字符索引 ↔ 矩形」这份结果；
 //! - **不算深度模型**：只做「谁在前面就先命中谁」，**不解决 2D–3D 互遮挡**。
 //!
 //! # 精度口径（C1）
@@ -26,19 +28,24 @@
 //!
 //! # 依赖
 //!
-//! **零依赖**（纯 `core` / `std`）：不依赖 `glam`、不依赖 `ze-notion`。
+//! **默认零依赖**（纯 `core` / `std`）：不依赖 `glam`、不依赖 `ze-notion`。
+//! `serde` feature 只为 [`frame::Frame`] 的导出（`--features serde`）。
 //! 曲线求交（贝塞尔）只留 [`hit::CurveHitTester`] 接口 —— 现有实现在场景层
 //! 依赖 glam，直接搬进来会破坏本 crate 的零依赖约束。
 
 #![forbid(unsafe_code)]
 
+pub mod frame;
 pub mod hit;
 pub mod layout;
 pub mod route;
+pub mod text;
 
+pub use frame::{Frame, SemanticNode};
 pub use hit::{CurveHitTester, HitId, HitIndex, HitRegion, HitTarget, LinearHitIndex, Point, Rect};
 pub use layout::{
     apply_layout, BoxLayout, Constraints, FlowLayout, Layout, LayoutId, LayoutItem, PlacedRect,
     Size,
 };
 pub use route::{RouteKey, RoutePhase, Router};
+pub use text::{CharBox, TextRun};
