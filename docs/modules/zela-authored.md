@@ -9,9 +9,9 @@
 
 - 层：`app`（`crates/app`）
 - 路径：`crates/app/zela-authored`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-notion`、`ze-prerender`、`ze-render-ir`、`ze-scene-core`、`ze-time`、`zela-scene-ecs`
+- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-node-core`、`ze-node-lower`、`ze-node-schema`、`ze-notion`、`ze-prerender`、`ze-render-ir`、`ze-scene-core`、`ze-time`、`zela-scene-ecs`
 - 被依赖（下游）：`zela-app`
-- 源文件：5 个 · 1085 行
+- 源文件：7 个 · 1793 行
 
 ### 文件清单
 
@@ -19,13 +19,20 @@
 |---|---|---|
 | `src/capability_demo.rs` | 247 | — |
 | `src/demo3d.rs` | 135 | — |
-| `src/lib.rs` | 15 | — |
+| `src/lib.rs` | 19 | — |
+| `src/node_state.rs` | 464 | **CF-d**：节点状态 → 场景 `State` 的映射与校验（D1 / D4 的兑现点）。 |
 | `src/panels.rs` | 167 | **CE-e 作品**：两个 View + 两个参数面板（场景对象）。 |
+| `src/spring.rs` | 240 | **CF-d 作品**：节点编辑器里的弹簧（Vec2 状态）→ 场景 `State`。 |
 | `src/storyboard.rs` | 521 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
-（未解析到文件级 `use` 边）
+```mermaid
+graph LR
+    f1["src/node_state.rs"]
+    f0["src/spring.rs"]
+    f0 --> f1
+```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
 
@@ -35,8 +42,16 @@
 | `src/capability_demo.rs` | `pub fn build(scene: &mut Scene) -> CapabilityDemo` |
 | `src/demo3d.rs` | `pub struct Demo3D` |
 | `src/demo3d.rs` | `pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Demo3D` |
+| `src/node_state.rs` | `pub fn state_shape(type_name: &str) -> Option<StateShape>` |
+| `src/node_state.rs` | `pub struct NodeState` |
+| `src/node_state.rs` | `pub enum NodeStateError` |
+| `src/node_state.rs` | `pub fn verify_states(` |
 | `src/panels.rs` | `pub struct Panels` |
 | `src/panels.rs` | `pub fn build(scene: &mut Scene) -> Panels` |
+| `src/spring.rs` | `pub struct SpringNode` |
+| `src/spring.rs` | `pub struct SpringExecutor` |
+| `src/spring.rs` | `pub fn rule_spring(node: &dyn Node, inputs: &[Expr]) -> Result<Vec<Expr>, RuleError>` |
+| `src/spring.rs` | `pub fn lowering() -> Lowering` |
 | `src/storyboard.rs` | `pub struct Storyboard` |
 | `src/storyboard.rs` | `pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Storyboard` |
 <!-- AUTO:END -->
