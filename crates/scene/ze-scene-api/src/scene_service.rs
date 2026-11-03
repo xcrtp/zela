@@ -921,10 +921,17 @@ fn scene_reveal_path(pod: &dyn Pod, shape: RevealPath) -> Handle {
     let this = service(pod);
     let mut rec = this.rec.borrow_mut();
     match this.paths.get(&shape.path.path) {
-        Ok(path) => rec.components.insert(vec![
-            Box::new(NativeReveal::new(path)),
-            Box::new(world_stroke(shape.path)),
-        ]),
+        Ok(path) => {
+            let mut components: Vec<Box<dyn ze_scene_contract::Component>> = vec![
+                Box::new(NativeReveal::new(path)),
+                Box::new(world_stroke(shape.path)),
+            ];
+            // **CD-b**：源与烘焙同时进产物（无源 ⇒ 不挂，老 payload 行为不变）。
+            if let Some(source) = this.paths.source(&shape.path.path) {
+                components.push(Box::new(source));
+            }
+            rec.components.insert(components)
+        }
         Err(e) => {
             rec.fail(format!("内容路径句柄无效：{e}"));
             rec.components.insert(Vec::new())
@@ -936,10 +943,16 @@ fn scene_path_shape(pod: &dyn Pod, shape: PathShape) -> Handle {
     let this = service(pod);
     let mut rec = this.rec.borrow_mut();
     match this.paths.get(&shape.path.path) {
-        Ok(path) => rec.components.insert(vec![
-            Box::new(NativePath::new(path)),
-            Box::new(world_stroke(shape.path)),
-        ]),
+        Ok(path) => {
+            let mut components: Vec<Box<dyn ze_scene_contract::Component>> = vec![
+                Box::new(NativePath::new(path)),
+                Box::new(world_stroke(shape.path)),
+            ];
+            if let Some(source) = this.paths.source(&shape.path.path) {
+                components.push(Box::new(source));
+            }
+            rec.components.insert(components)
+        }
         Err(e) => {
             rec.fail(format!("内容路径句柄无效：{e}"));
             rec.components.insert(Vec::new())

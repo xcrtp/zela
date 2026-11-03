@@ -68,7 +68,9 @@ pub use ze_scene_contract::{
 
 use crate::composer::Composer;
 use crate::domain::CameraMode;
-use crate::scene::components::{ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal};
+use crate::scene::components::{
+    ContentSource, ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
+};
 
 // B3-1 收尾：hecs 只读适配器与身份互转已抽到 `ze-scene-hecs`
 // （渲染层需要它，但不应依赖本 ECS 实现 crate）。
