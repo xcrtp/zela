@@ -46,6 +46,13 @@ pub enum InjectSource {
     External,
 }
 
+/// **CH-f**：本帧窗口输入的来源标记（作为资源写入）。
+///
+/// 真人交互为 `None`；debug 注入时由 `zela-app::debug` 写入，GUI 的录制器据此把
+/// tag 记进**窗口层流** —— 否则回放时分不清"这一帧是真点的还是注入的"。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FrameTag(pub Option<TagId>);
+
 /// 注入载荷。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

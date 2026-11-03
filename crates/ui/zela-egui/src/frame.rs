@@ -8,9 +8,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use zela_scene_bundle::{Pairing, Recorder};
+use zela_scene_bundle::{Pairing, WindowRecorder};
 use zela_scene_ecs::director_state::DirectorState;
-use zela_scene_ecs::domain::{InputEvents, SceneView};
+use zela_scene_ecs::domain::SceneView;
 use zela_scene_ecs::{DriverCommand, DriverPod};
 
 use crate::health::HealthOverlay;
@@ -54,8 +54,10 @@ pub struct SceneFrame {
     /// 墙钟时间基准：每帧用 `Instant::now() - last_frame` 算 dt，
     /// 不依赖渲染帧间隔（帧率波动、卡顿都不影响 Director 时间流速）。
     last_frame: Instant,
-    /// **BZ-b**：输入流录制（默认 `disabled()` ⇒ 每帧纯 no-op）。
-    recorder: Recorder,
+    /// **BZ-b / CH-f**：输入流录制（默认 `disabled()` ⇒ 每帧纯 no-op）。
+    ///
+    /// CH-f 起录的是**窗口层**（`WindowInput` + tag），不是换算后的场景事件。
+    recorder: WindowRecorder,
     /// 录制输出路径；`Some` 且录制开启 ⇒ `Drop` 时写盘（窗口关闭 / 换作品）。
     record_path: Option<PathBuf>,
 }
@@ -66,16 +68,18 @@ impl SceneFrame {
             driver,
             health: HealthOverlay::new(),
             last_frame: Instant::now(),
-            recorder: Recorder::disabled(),
+            recorder: WindowRecorder::disabled(),
             record_path: None,
         }
     }
 
-    /// **BZ-b**：开启输入流录制（GUI 会话 / 导出）。
+    /// **BZ-b / CH-f**：开启输入流录制（GUI 会话 / 导出）。
     ///
     /// `pairing` 指向本作品对应的 ZSB；写盘发生在 [`Drop`]。
+    /// **CH-f**：接点已上游到 `WindowInput`（窗口坐标 + 环境参数 + tag），
+    /// 所以换机器 / 换 DPI 回放仍走同一条 `collect_events`。
     pub fn with_input_recording(mut self, pairing: Pairing, path: impl Into<PathBuf>) -> Self {
-        self.recorder = Recorder::recording(pairing);
+        self.recorder = WindowRecorder::recording(pairing);
         self.record_path = Some(path.into());
         self
     }
@@ -107,24 +111,38 @@ impl SceneFrame {
                 .unwrap_or_default()
         });
 
-        // **BZ-b**：录制本帧实际喂给场景的事件（推进前 ⇒ 帧号 = 当前
+        // **BZ-b / CH-f**：录本帧喂给场景的**窗口输入**（推进前 ⇒ 帧号 = 当前
         // `Director.frame`，与输入流重放的"推进前装填"口径一致）。
         // 关闭录制时连资源读取都跳过 ⇒ 零开销。
         if self.recorder.is_enabled() {
-            let (frame, events) = driver.with_scheduler(|scheduler| {
+            let (frame, input, tag) = driver.with_scheduler(|scheduler| {
                 let frame = scheduler
                     .resources()
                     .get::<DirectorState>()
                     .map(|state| state.director.frame)
                     .unwrap_or(0);
-                let events = scheduler
+                let input = scheduler
                     .resources()
-                    .get::<InputEvents>()
-                    .cloned()
-                    .unwrap_or_default();
-                (frame, events)
+                    .get::<ze_scene_core::domain::WindowInput>()
+                    .cloned();
+                let tag = scheduler
+                    .resources()
+                    .get::<ze_scene_core::domain::FrameTag>()
+                    .and_then(|tag| tag.0)
+                    .map(|tag| tag.0);
+                (frame, input, tag)
             });
-            self.recorder.capture(frame as u32, &events);
+            if let Some(input) = &input {
+                self.recorder.capture(frame as u32, input, tag);
+            }
+            // tag 只属于本帧：录完即清，避免后续帧被误标成注入。
+            if tag.is_some() {
+                driver.with_scheduler_mut(|scheduler| {
+                    scheduler
+                        .resources_mut()
+                        .insert(ze_scene_core::domain::FrameTag(None));
+                });
+            }
         }
 
         // 3. **命令推进**：GUI 与 headless 共用同一条 `Advance(dt)` 命令。
@@ -202,7 +220,7 @@ impl SceneFrame {
     }
 }
 
-/// **BZ-b**：窗口关闭 / 换作品时把录到的输入流落盘。
+/// **BZ-b / CH-f**：窗口关闭 / 换作品时把录到的**窗口层**输入流落盘。
 ///
 /// 没开录制 ⇒ `record_path` 为 `None`，什么都不做（不是"写一个空流"）。
 impl Drop for SceneFrame {
@@ -217,7 +235,7 @@ impl Drop for SceneFrame {
         match stream.to_json() {
             Ok(text) => match std::fs::write(&path, text) {
                 Ok(()) => eprintln!(
-                    "[record] 输入流已写入 {}（{} 个帧有事件）",
+                    "[record] 窗口层输入流已写入 {}（{} 个帧有窗口变化）",
                     path.display(),
                     stream.frames.len()
                 ),

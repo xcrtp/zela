@@ -38,6 +38,7 @@ pub mod sha256;
 
 pub use input_stream::{
     FrameEvents, INPUT_FORMAT, InputError, InputStream, LibraryId, Pairing, Recorder,
+    WINDOW_INPUT_FORMAT, WindowFrame, WindowRecorder, WindowStream,
 };
 
 use zela_scene_ecs::scene_script::SceneScript;

@@ -292,6 +292,117 @@ fn diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit() {
     assert!(fonts.missing.iter().all(|name| fonts.faces.contains(name)));
 }
 
+/// **CH-f 判据**：窗口层录制 → 回放是同一条轨迹，**换 DPI 也一样**。
+///
+/// 录的是换算之前的东西（窗口坐标 + 窗口尺寸 + DPI + 视口 + tag），回放端用同一条
+/// `collect_events` 重算 ⇒ 不回放"上一次机器的换算结果"。
+#[test]
+fn recorded_window_stream_replays_the_same_trajectory() {
+    use ze_scene_core::domain::{PointerState, WindowInput};
+    use zela_app::debug::replay_window_stream;
+    use zela_scene_bundle::{Pairing, WindowStream};
+
+    let pairing = Pairing {
+        zsb_payload_hash: "test".to_string(),
+        libraries: Vec::new(),
+    };
+
+    let scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+    let name = param_scopes(&scene.frame().expect("有 Frame"))
+        .values()
+        .next()
+        .and_then(|params| params.first())
+        .cloned()
+        .expect("有参数滑块");
+    let camera = scene
+        .input_context()
+        .expect("有输入上下文")
+        .layer2d
+        .expect("有 2D 图层")
+        .1;
+    let point = |t: f32| {
+        let (wx, wy) = scene.slider_point(&name, t).expect("世界坐标");
+        camera.world_to_screen(ze_notion::Vec2::new(wx, wy))
+    };
+    let base = WindowInput {
+        viewport: camera.rect,
+        window_size: ze_notion::Vec2::new(camera.rect.max.x, camera.rect.max.y),
+        ..WindowInput::default()
+    };
+    // 轨迹：第 0 帧按下，第 2 帧拖到 0.85，第 4 帧抬起。
+    let frames = vec![
+        (
+            0,
+            WindowInput {
+                pointer: PointerState {
+                    position: Some(point(0.2)),
+                    hovering: true,
+                    primary_pressed: true,
+                    primary_down: true,
+                    ..PointerState::default()
+                },
+                ..base.clone()
+            },
+        ),
+        (
+            2,
+            WindowInput {
+                pointer: PointerState {
+                    position: Some(point(0.85)),
+                    hovering: true,
+                    primary_down: true,
+                    ..PointerState::default()
+                },
+                ..base.clone()
+            },
+        ),
+        (
+            4,
+            WindowInput {
+                pointer: PointerState {
+                    position: Some(point(0.85)),
+                    hovering: true,
+                    primary_released: true,
+                    ..PointerState::default()
+                },
+                ..base.clone()
+            },
+        ),
+    ];
+    let mut stream = WindowStream::new(pairing.clone());
+    for (frame, input) in &frames {
+        stream.record(*frame, input, None);
+    }
+    // 纯值：JSON 往返逐字节相同。
+    let text = stream.to_json().expect("规范化");
+    assert_eq!(
+        WindowStream::from_json(&text).expect("读回").to_json().expect("再写"),
+        text
+    );
+
+    let play = |scale_factor: f32| {
+        let mut scaled = stream.clone();
+        for entry in &mut scaled.frames {
+            entry.input.scale_factor = scale_factor;
+        }
+        let scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+        let played = replay_window_stream(&scene.driver(), &scaled).expect("回放必须成功");
+        assert_eq!(played, 3, "三帧窗口变化都要被投递");
+        // 回放后清空，final 帧只由轨迹决定。
+        scene.clear_events();
+        scene.frame_json().expect("有 JSON")
+    };
+    assert_eq!(play(1.0), play(2.0), "换 DPI 回放仍是同一条轨迹");
+
+    // 稀疏：连续两帧只差 `stable_dt` ⇒ 只记一帧。
+    let mut sparse = WindowStream::new(pairing);
+    sparse.record(0, &base, None);
+    let mut same = base.clone();
+    same.stable_dt = 0.016;
+    sparse.record(1, &same, None);
+    assert_eq!(sparse.frames.len(), 1, "dt 不是窗口轨迹的一部分");
+}
+
 /// **确定性**：同一场景、同一事件流 ⇒ 两帧 JSON 逐字节相同。
 #[test]
 fn same_events_give_bitwise_identical_frames() {
