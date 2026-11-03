@@ -90,6 +90,25 @@ function scene.text(source, opts)
     return root
 end
 
+--- 在一个**作用域**里执行一段脚本（CC-a）。
+--
+-- 作用域自带时钟：`shift` / `rate` 决定它的时间轴；作用域内 `scene.spawn` 出来的
+-- 对象在 commit 后拥有独立时间轴，`expr.bind` 的绑定继承目标对象的作用域。
+-- 同一段脚本调用 N 次（每次一个不同 path / shift）⇒ N 组对象、N 条时间轴。
+--
+-- @param path string  对外路径（进产物；同一脚本内必须唯一）
+-- @param shift number 作用域时钟的零点偏移（秒；缺省 0）
+-- @param fn function  作用域内的录制函数
+-- @param rate number   作用域时钟的速率（缺省 1）
+function scene.with_scope(path, shift, fn, rate)
+    local token = scene.scope_begin(path, shift or 0.0, rate or 1.0)
+    local ok, err = pcall(fn)
+    scene.scope_end(token)
+    if not ok then
+        error(err)
+    end
+end
+
 --- 把一串「段」展开成现有的 `expr.bind` + `clock.shift(起点)` + `duration`。
 --
 -- **纯展开**：每一步产出的绑定与手写 `expr.bind { clock = clock.shift(…), duration = … }`

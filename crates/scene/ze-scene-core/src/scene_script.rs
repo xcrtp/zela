@@ -48,6 +48,7 @@ use ze_time::{ClockForest, ClockProgram};
 
 use crate::animation::affine::StateUnsupported;
 use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
+use crate::animation::scope::ScopeSpec;
 use crate::animation::target::target_ctor_by_name;
 use crate::animation::timeline::Timeline;
 use crate::surface::SurfaceTextureRef;
@@ -230,6 +231,7 @@ fn record_expression(
     predicate: Option<Expr>,
     reset: ResetBehavior,
     duration: f64,
+    scope: Option<ScopeSpec>,
 ) -> Result<(), ExprBindError> {
     validate_expression(&expr)?;
     if let Some(predicate) = &predicate {
@@ -269,7 +271,16 @@ fn record_expression(
     if object.0 >= object_count {
         return Err(ExprBindError::UnknownObject(object.0));
     }
-    timeline.bind_expr_pending(expr, library, clock, predicate, reset, make, object.0);
+    match scope {
+        Some(scope) => {
+            timeline.bind_expr_pending_scoped(
+                expr, library, clock, predicate, reset, make, object.0, Some(scope),
+            );
+        }
+        None => {
+            timeline.bind_expr_pending(expr, library, clock, predicate, reset, make, object.0);
+        }
+    }
     Ok(())
 }
 
@@ -380,11 +391,40 @@ pub struct SceneEncoder {
     creates: Vec<Components>,
     despawns: Vec<Handle>,
     timeline: Timeline,
+    /// **CC-a**：与 `creates` 平行的作用域归属（`None` = 根作用域）。
+    object_scopes: Vec<Option<ScopeSpec>>,
+    /// 当前的 scope 栈（`begin_scope` / `end_scope` 维护）。
+    scope_stack: Vec<ScopeSpec>,
 }
+
+/// `begin_scope` 返回的令牌：`end_scope` 用它把栈截断回进入前的深度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeToken(pub usize);
 
 impl SceneEncoder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// **CC-a**：进入一个作用域。
+    ///
+    /// 作用域自带时钟（`clock`；空链 = 全局时间轴），其内创建的对象在
+    /// `commit` 后拥有**独立的时间轴**；表达式绑定继承目标对象的作用域。
+    ///
+    /// 路径是**声明式**的（进产物）；序号由首次出现顺序在编译期重新分配。
+    pub fn begin_scope(&mut self, path: impl Into<String>, clock: ClockProgram) -> ScopeToken {
+        let token = ScopeToken(self.scope_stack.len());
+        self.scope_stack.push(ScopeSpec::new(path, clock));
+        token
+    }
+
+    /// 退出作用域（恢复进入前的栈深度）。
+    pub fn end_scope(&mut self, token: ScopeToken) {
+        self.scope_stack.truncate(token.0);
+    }
+
+    fn current_scope(&self) -> Option<ScopeSpec> {
+        self.scope_stack.last().cloned()
     }
 
     /// 录一条创建命令，返回**局部句柄**。
@@ -393,6 +433,7 @@ impl SceneEncoder {
     pub fn spawn(&mut self, components: Components) -> Handle {
         let h = Handle(self.creates.len());
         self.creates.push(components);
+        self.object_scopes.push(self.current_scope());
         h
     }
 
@@ -452,6 +493,13 @@ impl SceneEncoder {
         reset: ResetBehavior,
         duration: f64,
     ) -> Result<(), ExprBindError> {
+        // **CC-a**：绑定继承目标对象的作用域（对象在哪个 scope 里创建，
+        // 它的动画就属于哪条时间轴）。
+        let scope = self
+            .object_scopes
+            .get(object.0)
+            .cloned()
+            .flatten();
         record_expression(
             &mut self.timeline,
             self.creates.len(),
@@ -463,6 +511,7 @@ impl SceneEncoder {
             predicate,
             reset,
             duration,
+            scope,
         )
     }
 
@@ -472,6 +521,7 @@ impl SceneEncoder {
             creates: self.creates,
             despawns: self.despawns,
             timeline: self.timeline,
+            object_scopes: self.object_scopes,
         }
     }
 }
@@ -578,6 +628,11 @@ pub struct SceneScript {
     creates: Vec<Components>,
     despawns: Vec<Handle>,
     timeline: Timeline,
+    /// **CC-a**：与 `creates` 平行的作用域归属（`None` = 根作用域）。
+    ///
+    /// 只含声明式路径 + 作用域时钟；序号在编译期按首次出现重新分配 ⇒
+    /// 产物里没有运行期分配的 id。空列表不序列化（既有 payload 逐字节不变）。
+    object_scopes: Vec<Option<ScopeSpec>>,
 }
 
 impl SceneScript {
@@ -622,6 +677,8 @@ impl serde::Serialize for SceneScript {
             creates: Vec<Vec<crate::persist::TaggedComponent>>,
             despawns: &'a [Handle],
             timeline: &'a Timeline,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            object_scopes: &'a Vec<Option<ScopeSpec>>,
         }
 
         let creates = self
@@ -636,6 +693,7 @@ impl serde::Serialize for SceneScript {
             creates,
             despawns: &self.despawns,
             timeline: &self.timeline,
+            object_scopes: &self.object_scopes,
         }
         .serialize(serializer)
     }
@@ -651,6 +709,8 @@ impl<'de> serde::Deserialize<'de> for SceneScript {
             creates: Vec<Vec<crate::persist::TaggedComponent>>,
             despawns: Vec<Handle>,
             timeline: Timeline,
+            #[serde(default)]
+            object_scopes: Vec<Option<ScopeSpec>>,
         }
 
         let repr = <Repr as serde::Deserialize>::deserialize(deserializer)?;
@@ -664,6 +724,7 @@ impl<'de> serde::Deserialize<'de> for SceneScript {
             creates,
             despawns: repr.despawns,
             timeline: repr.timeline,
+            object_scopes: repr.object_scopes,
         })
     }
 }
@@ -720,6 +781,8 @@ impl SceneScript {
         reset: ResetBehavior,
         duration: f64,
     ) -> Result<(), ExprBindError> {
+        // **CC-a**：成品脚本入口同样继承目标对象的作用域。
+        let scope = self.object_scopes.get(object.0).cloned().flatten();
         record_expression(
             &mut self.timeline,
             self.creates.len(),
@@ -731,6 +794,7 @@ impl SceneScript {
             predicate,
             reset,
             duration,
+            scope,
         )
     }
 }
@@ -780,6 +844,8 @@ impl SceneScript {
             shift_component_refs(components, base);
         }
         self.creates.append(&mut other.creates);
+        // 作用域与 creates 平行 ⇒ 直接接在后面（下标自然对齐）。
+        self.object_scopes.append(&mut other.object_scopes);
 
         // 2. 销毁命令：句柄偏移。
         for h in &mut other.despawns {

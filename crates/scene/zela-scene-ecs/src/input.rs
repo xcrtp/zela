@@ -247,6 +247,8 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: ClockId(0),
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Sin {
                 base: 1.0,
                 amp: 0.4,
@@ -264,6 +266,8 @@ mod tests {
         });
         table.add(Binding {
             clock: ClockId(1),
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 5.0,
                 axis: ze_notion::Vec3::Y,
@@ -330,6 +334,8 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: ClockId(0),
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Sin {
                 base: 0.0,
                 amp: 1.0,

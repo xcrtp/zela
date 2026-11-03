@@ -16,6 +16,7 @@ use ze_comb::CompiledExpr;
 use ze_time::{AnimValue, ClockId, Curve};
 
 use crate::animation::predicate::MultiIntervalSet;
+use crate::animation::scope::ScopeId;
 use crate::animation::target::Target;
 
 /// predicate 失效时的行为（`Reset.hold` / `reset` / `skip`）。
@@ -129,6 +130,14 @@ pub struct LibraryRef {
 #[derive(Debug, Clone)]
 pub struct Binding {
     pub clock: ClockId,
+    /// **CC-a**：所属作用域（`ScopeId::ROOT` = 既有脚本 / 根作用域）。
+    ///
+    /// 作用域只做**归属**；时间轴来自 `clock`（已接在作用域时钟之下）。
+    pub scope: ScopeId,
+    /// **CC-c**：字段级仲裁优先级（大的胜；同优先级 ⇒ 后声明者胜）。
+    ///
+    /// 声明**就近放在绑定侧**（不集中成表，避免第二个真源）；脚本装配默认 0。
+    pub priority: u8,
     /// 曲线或表达式（S3）。
     pub driver: BindingDriver,
     /// 驱动目标（类型擦除：`BindingTable` 要装异构的所有 target）。
@@ -156,25 +165,66 @@ impl Binding {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct BindingTable {
     pub bindings: Vec<Binding>,
+    /// 作用域路径表（下标 = [`ScopeId`] 的序号；`[0]` 恒为空串 = 根作用域）。
+    ///
+    /// **只进装配期 + 参数地址显示**：声明顺序即序号，产物里只出现路径。
+    scopes: Vec<String>,
+}
+
+impl Default for BindingTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BindingTable {
     pub fn new() -> Self {
         Self {
             bindings: Vec::new(),
+            scopes: vec![String::new()],
         }
     }
     pub fn add(&mut self, binding: Binding) {
         self.bindings.push(binding);
     }
+
+    /// 登记一条作用域路径（首次出现即分配序号；重复路径复用同一序号）。
+    ///
+    /// 空路径 = 根作用域（恒为 0）。
+    pub fn declare_scope(&mut self, path: &str) -> ScopeId {
+        if path.is_empty() {
+            return ScopeId::ROOT;
+        }
+        if let Some(index) = self.scopes.iter().position(|known| known == path) {
+            return ScopeId(index as u32);
+        }
+        self.scopes.push(path.to_string());
+        ScopeId((self.scopes.len() - 1) as u32)
+    }
+
+    /// 作用域的对外路径（根作用域返回空串）。
+    pub fn scope_path(&self, id: ScopeId) -> &str {
+        self.scopes
+            .get(id.0 as usize)
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+
+    /// 全部作用域路径（下标 = 序号）。
+    pub fn scopes(&self) -> &[String] {
+        &self.scopes
+    }
+
     /// 用**类型擦除的目标**添加一条曲线绑定，`seek_kind` 取 [`SeekKind::O1`]
     /// （当前所有绑定都是纯函数 O1）。Timeline 的编译产物在此落地。
     pub fn bind_arc(&mut self, clock: ClockId, curve: Curve, target: Arc<dyn Target>) {
         self.add(Binding {
             clock,
+            scope: ScopeId::ROOT,
+            priority: 0,
             driver: BindingDriver::Curve(curve),
             target,
             predicate: None,
@@ -232,6 +282,32 @@ impl BindingTable {
         reset: ResetBehavior,
         state_plans: Vec<crate::animation::affine::StatePlan>,
     ) {
+        self.bind_expr_gated_with_states_scoped(
+            clock,
+            program,
+            target,
+            predicate,
+            active,
+            reset,
+            state_plans,
+            ScopeId::ROOT,
+        );
+    }
+
+    /// **CC-a**：与 [`bind_expr_gated_with_states`](Self::bind_expr_gated_with_states)
+    /// 相同，但显式指定作用域。
+    #[allow(clippy::too_many_arguments)]
+    pub fn bind_expr_gated_with_states_scoped(
+        &mut self,
+        clock: ClockId,
+        program: impl Into<ExprProgram>,
+        target: Arc<dyn Target>,
+        predicate: Option<CompiledExpr>,
+        active: Option<MultiIntervalSet>,
+        reset: ResetBehavior,
+        state_plans: Vec<crate::animation::affine::StatePlan>,
+        scope: ScopeId,
+    ) {
         let program = program.into();
         let seek_kind = seek_kind_for(
             program.requires_replay(),
@@ -243,6 +319,8 @@ impl BindingTable {
         );
         self.add(Binding {
             clock,
+            scope,
+            priority: 0,
             driver: BindingDriver::Expr(program),
             target,
             predicate,

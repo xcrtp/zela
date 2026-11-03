@@ -217,6 +217,8 @@ mod tests {
             let cam2d_bindings = vec![
                 Binding {
                     clock: c_center,
+                    scope: Default::default(),
+                    priority: 0,
                     driver: BindingDriver::Curve(Curve::Keyframes {
                         keys: vec![
                             (0.0, crate::AnimValue::Vec2((0.0, 0.0).into())),
@@ -236,6 +238,8 @@ mod tests {
                 },
                 Binding {
                     clock: c_scale,
+                    scope: Default::default(),
+                    priority: 0,
                     driver: BindingDriver::Curve(Curve::Keyframes {
                         keys: vec![
                             (0.0, crate::AnimValue::Scalar(40.0)),
@@ -256,6 +260,8 @@ mod tests {
             ];
             let orbit = Binding {
                 clock: c_orbit,
+                scope: Default::default(),
+                priority: 0,
                 driver: BindingDriver::Curve(Curve::Orbit {
                     radius: 5.0,
                     axis: ze_notion::Vec3::Y,
@@ -416,6 +422,8 @@ mod tests {
         // 模拟脚本绑定：另一条 `CameraEye`，写同一台 3D 相机、用不同的时钟。
         let script = Binding {
             clock: ClockId(999),
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 3.0,
                 axis: ze_notion::Vec3::Y,
@@ -464,6 +472,8 @@ mod tests {
         res.insert(Camera3DHandle::default());
         let orbit = Binding {
             clock: ClockId(0),
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Phase { omega: 1.0 }),
             target: Arc::new(CameraEye {
                 id: crate::contract::ObjectId::DANGLING,

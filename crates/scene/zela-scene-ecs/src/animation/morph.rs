@@ -73,6 +73,8 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: root,
+            scope: Default::default(),
+            priority: 0,
             // Phase：sample(t) = omega * t = 0.5 → 形变参数 0.5
             driver: BindingDriver::Curve(Curve::Phase { omega: 1.0 }),
             target: std::sync::Arc::new(MorphT {

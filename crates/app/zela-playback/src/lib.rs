@@ -231,6 +231,8 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     let orbit_clock = forest.insert(ClockNode::new(None)).unwrap();
     let orbit_binding = Binding {
         clock: orbit_clock,
+        scope: Default::default(),
+        priority: 0,
         driver: BindingDriver::Curve(Curve::Orbit {
             radius: 5.0,
             axis: Vec3::Y,
@@ -291,6 +293,8 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     resources.insert(bindings);
     // **CA-b**：参数地址 → Property 的 side table（只读；UI 按它生成控件）。
     resources.insert(parameters);
+    // **CC-c**：字段级写入仲裁的可观测结果（每帧由 BindingApplySystem 重算）。
+    resources.insert(zela_scene_ecs::animation::WriteResolution::default());
     resources.insert(DirectorState::new());
     resources.insert(group_visibility);
     resources.insert(DeferredCommands::new());

@@ -16,6 +16,7 @@ use crate::animation::binding::BindingDriver;
 use crate::animation::binding::BindingTable;
 use crate::animation::binding::ResetBehavior;
 use crate::animation::event_log::StateEventLog;
+use crate::animation::resolve::{self, WriteResolution};
 use crate::contract::WorldScene;
 use crate::domain::InputEvents;
 use crate::expr_mono::{SceneMono, anim_value};
@@ -26,7 +27,8 @@ pub struct BindingApplySystem;
 impl System for BindingApplySystem {
     type Reads = (TimeState, ClockForest, BindingTable, InputEvents);
     /// **BZ-c**：事件 predicate 的稀疏推进日志（帧间累积）。
-    type Writes = (StateEventLog,);
+    /// **CC-c**：字段级仲裁的可观测结果（每帧重算）。
+    type Writes = (StateEventLog, WriteResolution);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         // 先从 ctx.get 取出所有数据（&mut ctx 的借用到此释放），
@@ -47,6 +49,10 @@ impl System for BindingApplySystem {
             .get::<InputEvents>()
             .is_some_and(|events| !events.is_empty());
         let mut event_log = ctx.get::<StateEventLog>().cloned().unwrap_or_default();
+        // **CC-c**：字段级仲裁的胜者预计算（不需要求值）。
+        let winners = resolve::field_winners(&table);
+        let mut resolution = ctx.get::<WriteResolution>().cloned().unwrap_or_default();
+        resolution.begin_frame();
         // 事件日志槽位 = 全局 `Step::State` 序号（绑定顺序 × 绑定内计划顺序）。
         let mut log_offsets = Vec::with_capacity(table.bindings.len());
         let mut log_total = 0usize;
@@ -126,6 +132,24 @@ impl System for BindingApplySystem {
                     }
                 }
             };
+            // **CC-c**：字段级仲裁（绑定 vs 绑定）。同优先级后者胜；复合目标全或无。
+            // 只在"本帧确实会写"时判定（`Skip` 且不生效 ⇒ 不算一次写入）。
+            let may_write = active || !matches!(b.reset, ResetBehavior::Skip);
+            if may_write && !resolve::wins_all(b, index, &winners) {
+                for field in b.target.write_fields() {
+                    let winner = winners
+                        .get(&(b.target.target_id(), field))
+                        .map(|(_, winner)| table.bindings[*winner].target.name())
+                        .unwrap_or("");
+                    resolution.suppressed.push(resolve::SuppressedWrite {
+                        object: b.target.target_id(),
+                        field,
+                        source: b.target.name().to_string(),
+                        winner: winner.to_string(),
+                    });
+                }
+                continue;
+            }
             // 本帧要**在哪个局部时间求值**：
             // - 生效 ⇒ 当前局部时间；
             // - `reset = Reset` ⇒ 写回初值（不评价 root）；
@@ -190,6 +214,9 @@ impl System for BindingApplySystem {
         drop(scene);
         if let Some(log) = ctx.get_mut::<StateEventLog>() {
             *log = event_log;
+        }
+        if let Some(resource) = ctx.get_mut::<WriteResolution>() {
+            *resource = resolution;
         }
     }
 }
@@ -308,6 +335,8 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: root,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Sin {
                 base: 1.0,
                 amp: 0.5,
@@ -379,6 +408,8 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: root,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Expr(program.into()),
             target: std::sync::Arc::new(CircleRadius {
                 id: crate::contract::object_id_of(entity),
@@ -676,6 +707,8 @@ mod tests {
         let mut bind = |curve: Curve, target: Arc<dyn crate::animation::Target>| {
             table.add(Binding {
                 clock: root,
+                scope: Default::default(),
+                priority: 0,
                 driver: BindingDriver::Curve(curve),
                 target,
                 predicate: None,
@@ -797,6 +830,56 @@ mod tests {
         }
     }
 
+    /// **CC-c 验收**：同字段两条绑定按优先级仲裁；被抑制写入可观测（来源 + 字段 + 胜者）。
+    #[test]
+    fn field_level_resolution_records_suppressed_write() {
+        use crate::animation::WriteResolution;
+        use std::sync::Arc;
+        use ze_time::AnimValue;
+
+        let mut world = World::new();
+        let entity = world.spawn((Circle::new(vec2(0.0, 0.0), 0.0),));
+        let id = crate::contract::object_id_of(entity);
+
+        let mut forest = XcClockForest::new();
+        let clock = forest.insert(ClockNode::new(None)).unwrap();
+        let mut table = BindingTable::new();
+        for (value, priority) in [(1.0f32, 0u8), (7.0f32, 5u8)] {
+            table.add(Binding {
+                clock,
+                scope: crate::animation::ScopeId::ROOT,
+                priority,
+                driver: BindingDriver::Curve(Curve::Const(AnimValue::Scalar(value))),
+                target: Arc::new(CircleRadius { id }),
+                predicate: None,
+                active: None,
+                reset: crate::animation::ResetBehavior::Hold,
+                initial: None,
+                state_plans: Vec::new(),
+                seek_kind: SeekKind::O1,
+            });
+        }
+
+        let mut resources = Resources::new();
+        resources.insert(TimeState::at(0.0));
+        resources.insert(forest);
+        resources.insert(table);
+        resources.insert(WriteResolution::default());
+
+        let mut sched = Scheduler::new(world, resources);
+        sched.add_system(Phase::SceneSync, BindingApplySystem);
+        sched.init_resources();
+        sched.run_frame(0.0);
+
+        assert!((sched.world().get::<&Circle>(entity).unwrap().radius - 7.0).abs() < 1e-6);
+        let resolution = sched.resources().get::<WriteResolution>().unwrap();
+        assert_eq!(resolution.suppressed.len(), 1, "{resolution:?}");
+        let suppressed = &resolution.suppressed[0];
+        assert_eq!(suppressed.field, "Circle.radius");
+        assert_eq!(suppressed.winner, "CircleRadius");
+        assert_eq!(suppressed.source, "CircleRadius");
+    }
+
     /// **G 批集成**：写者（时钟起点靠前）写 `Circle.radius`，读者表达式绑定
     /// （时钟起点靠后）`sin(read(Circle.radius))` 写 `PhaseAnim.phase`
     /// ⇒ 一帧后 phase == 半径**本帧值**的 sin（读端看到写者的新值，不是旧值）。
@@ -827,6 +910,8 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: writer,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Const(AnimValue::Scalar(0.5))),
             target: Arc::new(FieldTarget {
                 id: circle_id,
@@ -851,6 +936,8 @@ mod tests {
         .expect("Read 是叶子，必然可编译");
         table.add(Binding {
             clock: reader,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Expr(program.into()),
             target: Arc::new(FieldTarget {
                 id: phase_id,

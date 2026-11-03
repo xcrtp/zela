@@ -627,6 +627,77 @@ mod tests {
         assert!(damp.iter().all(|value| (value - 0.97).abs() < 1e-6));
     }
 
+    /// **CC-b 主判据**：同一段脚本调用 N 次（每次一个作用域）⇒ N 组对象、N 条时间轴、
+    /// 各实例参数独立；产物只含声明式路径（无运行期 id）。
+    #[test]
+    fn scoped_instances_get_independent_clocks_and_parameters() {
+        use ze_property::PropertyValue;
+
+        let source = r#"
+local function instance(name, shift, stiff)
+    scene.with_scope(name, shift, function()
+        local ball = scene.spawn({ Circle { x = 0.0, y = 0.0, r = 0.1 } })
+        local prev = expr.rec_prev()
+        local x = expr.x { v = prev }
+        local v = expr.y { v = prev }
+        local state = expr.state {
+            init = expr.vec2 { x = expr.pure(1.0), y = expr.pure(0.0) },
+            step = expr.vec2 {
+                x = Add { a = x, b = v },
+                y = Add {
+                    a = Scale { k = 0.97, of = v },
+                    b = Scale { k = -stiff, of = x },
+                },
+            },
+        }
+        expr.bind {
+            object = ball,
+            target = Circle.channel.center,
+            root = expr.vec2 {
+                x = expr.x { v = state },
+                y = expr.pure(0.0),
+            },
+            duration = 4.0,
+        }
+    end)
+end
+instance("panel_a", 0.0, 0.02)
+instance("panel_b", 1.0, 0.01)
+"#;
+        let assembly = crate::assembly::assemble(Arc::new(crate::formula::build_engine()))
+            .expect("脚本 Pod 装配成功");
+        let script = assembly.run_script(source).expect("脚本执行成功");
+        // 产物只含声明式路径，不出现运行期分配的作用域 id。
+        let json = script.to_json().expect("可序列化");
+        assert!(json.contains("\"path\":\"panel_a\""), "{json}");
+        assert!(json.contains("\"path\":\"panel_b\""), "{json}");
+        assert!(!json.contains("ordinal"), "产物不得出现运行期作用域 id：{json}");
+
+        let mut scene = Scene::new();
+        let recipe = script.commit(&mut scene).expect("commit");
+        let a = recipe.bindings.scope_path(zela_scene_ecs::animation::ScopeId(1));
+        let b = recipe.bindings.scope_path(zela_scene_ecs::animation::ScopeId(2));
+        assert_eq!((a, b), ("panel_a", "panel_b"));
+        assert_ne!(
+            recipe.bindings.bindings[0].clock,
+            recipe.bindings.bindings[1].clock,
+            "两个实例必须是两条时间轴"
+        );
+
+        let registry = zela_scene_ecs::animation::params::build_registry(&recipe.bindings);
+        let stiff: Vec<f32> = registry
+            .iter()
+            .filter(|entry| entry.address.ends_with(":stiff"))
+            .filter_map(|entry| match entry.property.value() {
+                PropertyValue::Scalar(value) => Some(value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stiff.len(), 2);
+        assert!(stiff.iter().any(|v| (v - 0.02).abs() < 1e-6), "{stiff:?}");
+        assert!(stiff.iter().any(|v| (v - 0.01).abs() < 1e-6), "{stiff:?}");
+    }
+
     /// **B3 Step 5 / 作品 A（非像素断言）**：`surface_matrix.lua` 的每种
     /// 脚本可表达组合都真的录进了内容层（Circle/Arrow 各 Fill+Stroke、Path Stroke）。
     #[test]
@@ -753,6 +824,8 @@ mod tests {
         let clock = forest.insert(ClockNode::new(None)).unwrap();
         let orbit = Binding {
             clock,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 5.0,
                 axis: ze_notion::Vec3::Y,
@@ -773,6 +846,8 @@ mod tests {
         let cam2d_clock = forest.insert(ClockNode::new(None)).unwrap();
         let cam2d_framing = Binding {
             clock: cam2d_clock,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Keyframes {
                 keys: vec![
                     (0.0, AnimValue::Scalar(40.0)),
