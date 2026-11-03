@@ -47,6 +47,8 @@ pub mod surface;
 pub mod time_state;
 pub mod transform;
 pub mod types;
+/// UI 面的空间声明（CE-d）：`View` + `ViewMapping`（作用域复用 CC，不新建）。
+pub mod view;
 /// 每帧派生的世界矩阵容器（生产在 ECS 层，消费在渲染层）。
 pub mod world_transforms;
 /// 每帧派生的样式继承结果（与 `WorldTransforms` 同批生产）。
@@ -68,6 +70,7 @@ pub use surface::{
     SurfaceRenderer, SurfaceTexture, SurfaceTextureRef, TextureFilter,
 };
 pub use time_state::TimeState;
+pub use view::{View, ViewMapping};
 pub use transform::{Transform2D, Transform2DInto};
 pub use types::{Color32, Rect2D, Vec2, Vec3, Vec4};
 pub use world_transforms::WorldTransforms;

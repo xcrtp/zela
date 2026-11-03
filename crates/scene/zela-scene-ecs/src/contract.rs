@@ -71,6 +71,7 @@ use crate::domain::CameraMode;
 use crate::scene::components::{
     ContentOrigin, ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
 };
+use ze_scene_core::View;
 
 // B3-1 收尾：hecs 只读适配器与身份互转已抽到 `ze-scene-hecs`
 // （渲染层需要它，但不应依赖本 ECS 实现 crate）。

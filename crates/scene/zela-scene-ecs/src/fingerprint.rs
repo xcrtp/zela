@@ -53,6 +53,7 @@ use crate::scene::components::{
     ContentOrigin, ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow,
     PhaseAnim, Reveal,
 };
+use ze_scene_core::View;
 
 /// FNV-1a（与 `ze_pod_core::capability_fingerprint` 同一算法：跨 Rust 版本稳定）。
 #[derive(Debug, Clone, Copy)]

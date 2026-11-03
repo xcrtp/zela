@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：46 个 · 13058 行
+- 源文件：47 个 · 13199 行
 
 ### 文件清单
 
@@ -38,7 +38,7 @@
 | `src/domain/mod.rs` | 24 | — |
 | `src/domain/view.rs` | 263 | — |
 | `src/domain/view_rect.rs` | 38 | — |
-| `src/lib.rs` | 75 | — |
+| `src/lib.rs` | 78 | — |
 | `src/math_pod.rs` | 107 | — |
 | `src/mesh_primitives/cube.rs` | 196 | — |
 | `src/mesh_primitives/parametric_surface.rs` | 193 | — |
@@ -54,13 +54,14 @@
 | `src/object/primitives.rs` | 475 | — |
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
-| `src/registry.rs` | 222 | — |
-| `src/scene_script.rs` | 1133 | — |
+| `src/registry.rs` | 225 | — |
+| `src/scene_script.rs` | 1140 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
 | `src/transform.rs` | 221 | — |
 | `src/types.rs` | 14 | — |
+| `src/view.rs` | 128 | View（CE-d）：给 UI 面一个**空间**与**映射**的声明。 |
 | `src/world_inherit.rs` | 84 | — |
 | `src/world_transforms.rs` | 73 | — |
 
@@ -98,11 +99,12 @@ graph LR
     f11["src/object/primitives.rs"]
     f28["src/persist.rs"]
     f29["src/registry.rs"]
-    f31["src/scene_script.rs"]
-    f32["src/surface.rs"]
+    f32["src/scene_script.rs"]
+    f33["src/surface.rs"]
     f15["src/types.rs"]
-    f34["src/world_inherit.rs"]
-    f33["src/world_transforms.rs"]
+    f31["src/view.rs"]
+    f35["src/world_inherit.rs"]
+    f34["src/world_transforms.rs"]
     f0 --> f1
     f2 --> f1
     f2 --> f3
@@ -143,15 +145,17 @@ graph LR
     f28 --> f19
     f29 --> f30
     f29 --> f7
-    f31 --> f0
-    f31 --> f2
-    f31 --> f4
-    f31 --> f5
-    f31 --> f12
+    f29 --> f31
+    f32 --> f0
+    f32 --> f2
+    f32 --> f4
+    f32 --> f5
+    f32 --> f12
+    f32 --> f33
+    f33 --> f13
+    f33 --> f19
     f31 --> f32
-    f32 --> f13
-    f32 --> f19
-    f33 --> f34
+    f34 --> f35
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -312,6 +316,8 @@ graph LR
 | `src/time_state.rs` | `pub struct TimeState` |
 | `src/transform.rs` | `pub trait Transform2D` |
 | `src/transform.rs` | `pub trait Transform2DInto` |
+| `src/view.rs` | `pub enum ViewMapping` |
+| `src/view.rs` | `pub struct View` |
 | `src/world_inherit.rs` | `pub struct WorldInherit` |
 | `src/world_transforms.rs` | `pub struct WorldTransforms` |
 <!-- AUTO:END -->
