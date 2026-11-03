@@ -367,12 +367,16 @@ GUI 用墙钟算 `dt`，导出用固定 `dt = 1/fps`；场景、系统图、渲�
 ```
 Input:         DirectorAdvance · CameraDrive · CameraInput
 LogicUpdate:   TimeControl · ParamPanel
-SceneSync:     BindingApply
-Prepare:       TransformHierarchy · AxesRefresh · FunctionGraphRefresh
+SceneSync:     BindingApply · PathFollowApply
+Prepare:       Replay · Composer · TransformHierarchy · AxesRefresh · FunctionGraphRefresh
 RenderCommit:  SceneRecord (2D) · SceneRecord3D (3D) · ContentTextureRecord · MorphRecord · RevealRecord
-FrameEnd:      —（内容提交由 host.present 承担；
-                 面板 chrome 与 ViewRect 由 host.begin_frame 在 run_frame 前写入）
+FrameEnd:      DeferredApply · LifetimeFlush · Hud
+               （内容提交由 host.present 承担；ViewRect 由 host.begin_frame 在 run_frame 前写入）
 ```
+
+**CG-f 起控件是场景图元**：`Hud`（`zela-scene-ecs::hud`）消费视口事件、跑 `ControlSet`
+状态机并回写 `DirectorState` / `UiConfig` / 参数地址；host 只做 `UiConfig →
+PostFilterChain` 同步与输入收集，不再绘制任何 egui 控件。
 
 **M4 起，几何不再出现在 UI 层**：坐标轴 / 网格（相机裁剪、步长自适应、刻度线）
 归 `ze_scene_core::Axes2D`，函数采样归 `ze_scene_core::FunctionGraph`；`Prepare` 阶段的两个

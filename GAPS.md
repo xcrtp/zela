@@ -2086,11 +2086,11 @@
 | CE-03 | 路由只有 `WidgetId` 纯 ID 匹配（无 hover / focus / capture） | 场景 / UI | **已关闭** | `Router`：hover 每帧重算、focus 点击后保持、capture 按下建立 / 抬起解除；投递按 capture > focus > hover。路由键 = 作用域路径 + 命中目标（两个面板的同号控件是两个目标）。路由状态**不进产物**（类型不派生 serde），靠事件流重建。用例 `capture_wins_even_when_the_pointer_moves_out` / `focus_survives_pointer_leaving_until_the_next_press` / `scope_is_part_of_the_route_key`。 |
 | CE-04 | View 缺空间与事件两个面（CC 作用域没有消费者；R-08 冻结条件未成立） | 场景 / UI | **已关闭** | `ze_scene_core::view::{View, ViewMapping}`（bounds + Screen\|World），进入组件登记表可持久化；嵌套走既有 `Parent`；命名空间**复用** CC 的 `object_scopes`（新增 `SceneScript::object_scope` / `views`），不新建第二套来源。`Surface` 的 5 个生产消费者零改动（组合而非提升）。用例 `views_nest_and_reuse_the_cc_scope` / `view_survives_tagged_json_roundtrip`。R-08 的冻结条件由此成立：交互接口已稳定，节点编辑器迁移留 CF。 |
 | CE-05 | 参数面板只在 egui 覆盖层，无法实例化两个且不进场景 | 场景 / UI | **已关闭** | `zela-scene-ecs::interact`：`build_panel` 用场景图元生成面板（`Rect` 轨道 + `Circle` 滑块 + typst 烘焙的 `Path` 标签），`build_panels_for_views` 按 View 的作用域吸收该作用域的标量参数；`ParamPanelSystem` 消费 `ViewportHover` / `ViewportClick` / 新增的 `ViewportRelease`，经命中 → 路由 → `params::apply` 回写（与 CA 注册表同一条入口；与 egui 控件 id 分支共用同一个 System，避免两个 System 抢写同一对资源）。装配期在 `zela-playback` 与 `zela-app` 为每个 View 生成面板并注入资源；作品 `zela_authored::panels` + `SceneChoice::Panels` + GUI 入口是生产消费者。用例 `interact_system_writes_only_the_captured_panel`（按 A 的 75% 只改 A，B 保持 0.5）/ `dragging_one_panel_does_not_touch_the_other` / `panels_are_scoped_and_do_not_share_addresses`。 |
-| CE-06 | 场景内面板不在 GPU 像素基线里 | 作品 / 门禁 | **记账** | `SceneChoice::Panels` 是内置场景（GUI 入口），不属 `demo/manifest.txt` 的作品集，因此没有帧序列基线；本批用 headless 交互用例覆盖"命中 → 路由 → 回写"，像素层由 GUI 手测。触发条件：出现 GUI 截图基线机制，或把它提升为 manifest 作品（需同时录 GPU 基线）。 |
+| CE-06 | 场景内面板不在 GPU 像素基线里 | 作品 / 门禁 | **已关闭**（CG 段定案） | 触发条件由 CG-f 改写的门面满足：面板不再是宿主覆盖层 —— 控件是 `Rect` / `Circle` / `Path` 场景图元，与普通 2D 图元走**同一条录制 / 合成路径**（`HudSystem` 只改滑块圆心），因此像素覆盖由既有 2D 图元基线兜底，不再存在"宿主层没有基线"的独立面。交互面由 `tests/hud_agent_e2e.rs` 覆盖（注入 tagged JSON → 读一帧 `Frame` 的值）。**HUD 仍未单独进 `demo/manifest.txt`**（若将来要它自己的帧序列基线，按新作品登记并录基线）。 |
 | CE-07 | CD-05：`ContentMode::Rebuild` 只有用例消费，回放端仍走 restore | 回放 / 产物 | **已关闭** | `SceneScript::rebuild_content` 用源重算并替换 `Path` / `Reveal` 几何（闭包返回 `None` ⇒ 保留烘焙数据）；`zela-playback::build_bundle_runtime_with` 按 `Bundle::content_mode` 决定是否调用，`rebuild_script_content` 把判定与替换分开（可 headless 测）；`Runtime.content_mode` 如实报告。`zela-app` 用现有 typst 作重建后端，且只在 payload 带源 / 场景有 View 时初始化引擎。用例 `rebuild_replaces_geometry_and_reports_the_mode` / `failed_rebuild_falls_back_to_restore` / `without_content_capability_the_hook_is_not_called`。口径按计划定死：**重建后不重录像素基线**。 |
 | CE-08 | 统一深度 / 2D–3D 互遮挡（issue #9 §6） | 渲染 | **记账** | 本批只做「谁在前面就先命中谁」（z-order），**不解决** 2D–3D 互遮挡 —— 与 CC-05 同一件事，继续推迟。触发条件：单独批次论证深度模型。 |
 
-**CE 段小计**：已关闭 6（CE-01 / CE-02 / CE-03 / CE-04 / CE-05 / CE-07）· 部分关闭 0 · 记账 2（CE-06 / CE-08）· 未执行 0 · 已记录 0。
+**CE 段小计**：已关闭 7（CE-01 / CE-02 / CE-03 / CE-04 / CE-05 / CE-06 / CE-07）· 部分关闭 0 · 记账 1（CE-08）· 未执行 0 · 已记录 0。
 
 ---
 
@@ -2115,11 +2115,33 @@
 
 ---
 
+## CG. 字体度量与结构化帧 UI（2026-11-03）
+
+> 计划《CG 批次执行计划：字体度量与结构化帧 UI》。二期第一批：让已有的内核第一次
+> **被看见、被机器断言** —— 字体度量与直排文字、结构化帧（`Frame`）、控件状态机、
+> 布局缓存、GUI 门面换成场景图元、headless 出口跑通 Agent 判据。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CG-01 | 文字只能靠 typst：度量与轮廓都在排版引擎里，运行期无法"查表 + 摆放" | 内容 / 内核 | **已关闭** | `ze_content::text_metrics`：`GlyphMetrics` / `TextMetrics`（逐字符 advance + ascent / line_height / width）/ `TextLine`，`char_index_at` 半开、`wrap` 支持空格 / 连字符 / CJK 断点与硬断；`ze_prerender::metrics::MetricsDb` 用 `fontdb` 找面、`ttf-parser` 取 upem / 升降部 / 行距 / advance / 轮廓，面按 `(family, index)` 排序（确定性），主面缺字按排序回退并记 `fallback_families` / `missing`。用例 `width_is_the_sum_of_advances` / `char_index_is_half_open_and_bounded` / `wrap_breaks_at_spaces_and_cjk_between_chars` / `wrap_hard_breaks_a_single_wide_glyph` / `newline_forces_a_break...` + 两条 serde 用例。 |
+| CG-02 | 文字没有命中口径（点到字符无法反查） | 内容 / 交互 | **已关闭** | `ze_interact::TextRun` / `CharBox`（f64、`Point` / `Rect`、半开命中）住在交互 crate（与 `Frame` / 布局同口径，保持零 glam）；`ze_prerender::text::DirectTextEngine::layout` 装配期产出 `TextOutput { ir, run, missing_outlines }`，`ContentIR.runs` 直接引用它。用例 `text_run_maps_points_back_to_characters`。 |
+| CG-03 | 没有"一帧 UI"的纯值描述（几何 / 语义 / 文本混在宿主里） | 交互 / 内核 | **已关闭** | `ze_interact::Frame`：三条**平行**结构（`geometry: Vec<PlacedRect>` / `semantics: Vec<SemanticNode>` / `text: Vec<TextRun>`），五个语义锚点（`role` / `name` / `value` / `bounds` / `focusable`）不扩；可序列化、无运行期句柄、**不进 payload**（与路由状态那条纪律分开写进模块文档）。用例 `semantics_and_geometry_are_parallel` / `same_declaration_and_events_give_bitwise_identical_frames` / `frame_serializes_to_json_without_runtime_handles`。 |
+| CG-04 | 控件只有"画"没有"描述"：宿主画什么、事件怎么回写各写一套 | 交互 / UI | **已关闭** | `ze_interact::control`：`ControlSpec`（`Slider{min,max}` / `Button` / `Label`）→ `ControlSet`（复用 `Router` 的 hover / focus / capture）→ 几何 + 语义；滑块 capture 期间拖出仍写并 clamp，按钮"按下 + 抬起同控件"才 `Activated`，`Label` 不产结果。`SceneEvent` 顺带定下四类输入形状（`Pointer` / `Key` / `Text` / `Command`），**只定形状不实现**（`Copy` → `Clone`，旧 payload 仍可解）。用例 `slider_drag_writes_value_and_keeps_capture` / `button_activates_only_when_released_inside` / `four_input_shapes_round_trip_through_json` / `legacy_payload_still_decodes`。 |
+| CG-05 | 布局若每帧重解，就是浏览器那条"reflow"老路 | 交互 / 性能 | **已关闭** | `ConstraintSet`（`BTreeMap` 稳定序 + 自然高度）与 `layout_for_constraints`；`LayoutCache { revision, cached, solves }` 只在结构变化时重解。用例 `constraint_set_is_order_independent` / `layout_cache_solves_only_when_structure_changes`（60 帧只 1 次求解）。未引入 kasuari（约束求解留给后续批次）。 |
+| CG-06 | GUI 的 control / time / param 三块是 egui 覆盖层（不进场景、不可 headless） | GUI / 场景 | **已关闭** | `zela_scene_ecs::hud`：`Hud`（`ControlSet` + 世界坐标口径）+ `HudSystem`（视口事件 → 状态机 → `DirectorState` / `UiConfig` / `params::apply` 回写 + 滑块圆心跟随），注册在 `Phase::FrameEnd`（与 `ParamPanelSystem` 同资源、避免同相位冲突）；`zela_authored::hud` 声明 control（网格 / 场 / 三个滤镜开关）+ time（播放 / 重播 / 速度 / seek）+ param（注册表地址）三组，标签用直排文字引擎烘焙成 `Path`；`SceneChoice::Hud` 装配，GUI 默认启动它。`zela_egui::host` 删除三块面板，`begin_frame` 只保留 `UiConfig → PostFilterChain` 同步 + 视口事件收集。判据 `host.rs` 不再出现 `egui::Slider` / `Button` / `Label`；`cargo verify` 全绿。 |
+| CG-07 | 三层（布局 / 排版 / 控件）没有零窗口 / 零 GPU / 零 egui 的出口 | 装配 / 门禁 | **已关闭** | `zela_playback` 拆出 `assemble_scheduler`（资源 + 系统图，GPU 无关）与 `assemble_runtime`（附加渲染上下文）；`zela_app::headless`：`inject_json`（tagged JSON 事件流）→ `advance` → `frame_json`（一帧 `Frame` 的 JSON）→ `slider_point`（按名字找控件并转世界坐标）。`tests/hud_agent_e2e.rs`：拖 A 的参数只改 A（断言读 `Frame::value_of("slider", 地址)`，不是像素 hash、不是 Rust 内部字段）；同声明同事件 ⇒ 帧 JSON 逐字节相同。 |
+| CG-08 | 自研面板只迁了 control 三块开关与 time / param；图层与相机开关仍在宿主侧 | GUI / 场景 | **记账** | `show_2d` / `show_3d` / `viewport_camera`（单选三态）/ `free_2d_camera` / `flip_layer_order` 尚无对应控件形状（需要单选组 / 枚举控件，`ControlKind` 本批只做三种）。触发条件：控件层加入单选 / 下拉形状，或改为启动参数。 |
+| CG-09 | 标签烘焙依赖本机字体（无字体 ⇒ 无标签，缺字 ⇒ 回退或计入 `missing`） | 内容 / 装配 | **记账** | `MetricsDb` 已记录 `fallback_families` / `missing`，`zela_authored::hud` 在无可用字体时退化为"有轨道 / 滑块、无标签"。触发条件：需要跨机器逐位一致的标签（打包字体子集 + 固定 face），届时把 face 清单写进装配产物。 |
+
+**CG 段小计**：已关闭 7（CG-01 / CG-02 / CG-03 / CG-04 / CG-05 / CG-06 / CG-07）· 部分关闭 0 · 记账 2（CG-08 / CG-09）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CF**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CF 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CG**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CG 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
