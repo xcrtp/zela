@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：49 个 · 14038 行
+- 源文件：49 个 · 14045 行
 
 ### 文件清单
 
@@ -35,7 +35,7 @@
 | `src/domain/camera.rs` | 121 | — |
 | `src/domain/config.rs` | 76 | — |
 | `src/domain/event.rs` | 313 | — |
-| `src/domain/inject.rs` | 212 | **CH-a**：`Injected` envelope —— 给每一次注入打标记。 |
+| `src/domain/inject.rs` | 219 | **CH-a**：`Injected` envelope —— 给每一次注入打标记。 |
 | `src/domain/input_window.rs` | 393 | **CH-a**：窗口输入 —— `collect_events` 的纯函数形态。 |
 | `src/domain/mod.rs` | 30 | — |
 | `src/domain/view.rs` | 263 | — |
@@ -261,6 +261,7 @@ graph LR
 | `src/domain/event.rs` | `pub struct InputEvents` |
 | `src/domain/inject.rs` | `pub struct TagId(pub u32)` |
 | `src/domain/inject.rs` | `pub enum InjectSource` |
+| `src/domain/inject.rs` | `pub struct FrameTag(pub Option<TagId>)` |
 | `src/domain/inject.rs` | `pub enum InjectedPayload` |
 | `src/domain/inject.rs` | `pub struct Injected` |
 | `src/domain/inject.rs` | `pub enum InjectError` |

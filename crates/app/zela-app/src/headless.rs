@@ -45,6 +45,13 @@ impl HeadlessScene {
         self.duration
     }
 
+    /// 驱动器句柄（**CH-f**：窗口层流回放等驱动器级原语需要它）。
+    ///
+    /// 与 GUI 的 `App::driver()` 同一个对象类型，因此回放走的是同一份运行时。
+    pub fn driver(&self) -> Arc<DriverPod> {
+        Arc::clone(&self.driver)
+    }
+
     /// **注入 tagged JSON 事件流**（与跨进程输入流同一格式）。
     ///
     /// 返回注入的事件数；解析失败 ⇒ 明确错误（不静默丢事件）。

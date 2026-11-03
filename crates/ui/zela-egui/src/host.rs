@@ -67,7 +67,15 @@ impl EguiSceneHost {
         // **CH-e**：窗口输入同时落资源 —— 诊断快照从这里读窗口尺寸 / DPI / 视口，
         // 与 headless 注入走同一个来源（不各读一份系统状态）。
         res.insert(input);
-        res.insert(InputEvents::from_events(events));
+        // **CH-f**：本帧已经投递的事件（debug RPC 注入的那批）必须**保留** ——
+        // 覆盖会让 GUI 上的 `inject` / `probe` 静默失效（headless 没有窗口输入，
+        // 所以那一路看不出这个问题）。注入在前、窗口事件在后，顺序稳定。
+        let mut events_now: Vec<ze_scene_core::domain::SceneEvent> = res
+            .get::<InputEvents>()
+            .map(|current| current.iter().cloned().collect())
+            .unwrap_or_default();
+        events_now.extend(events);
+        res.insert(InputEvents::from_events(events_now));
     }
 
     // ─── 宿主环境（平台相关）──────────────────────────────────────────────

@@ -35,8 +35,8 @@ use serde::{Deserialize, Serialize};
 
 use ze_interact::Frame;
 use ze_scene_core::domain::{
-    InjectError, InjectSource, Injected, InjectedPayload, SceneInputContext, SceneEvent, TagId,
-    WindowInput,
+    FrameTag, InjectError, InjectSource, Injected, InjectedPayload, SceneInputContext, SceneEvent,
+    TagId, WindowInput,
 };
 use zela_scene_ecs::contract::WorldView;
 use zela_scene_ecs::domain::{InputEvents, UiConfig};
@@ -380,6 +380,10 @@ pub fn inject_injected(driver: &DriverPod, injected: &Injected) -> Result<usize,
         scheduler
             .resources_mut()
             .insert(InputEvents::from_events(events));
+        // **CH-f**：本帧输入来自注入 ⇒ 窗口层录制要记下这个 tag。
+        scheduler
+            .resources_mut()
+            .insert(FrameTag(Some(injected.tag)));
     });
     Ok(count)
 }
@@ -463,6 +467,43 @@ pub fn trace_on(
         frames,
         truncated: !quiet,
     })
+}
+
+/// **CH-f**：窗口层流回放 —— 每帧用**当前**场景上下文重算 `collect_events`。
+///
+/// 与真人完全相同的一条链：录到的是窗口坐标 + 环境参数，回放端不存"换算结果"，
+/// 所以换机器 / 换 DPI 仍然落到同一个控件（`scale_factor` 不参与换算）。
+///
+/// 帧号是索引：`0..=最后一帧`。稀疏帧按"零输入"推进（不是跳过帧）。
+pub fn replay_window_stream(
+    driver: &DriverPod,
+    stream: &zela_scene_bundle::WindowStream,
+) -> Result<usize, TraceError> {
+    let last = stream.frames.last().map(|entry| entry.frame).unwrap_or(0);
+    let mut played = 0;
+    for frame in 0..=last {
+        let events: Vec<SceneEvent> = match stream.input_at(frame) {
+            Some(input) => {
+                let context = input_context_of(driver)
+                    .ok_or_else(|| TraceError::Input("场景没有可操作的图层".into()))?;
+                let events = ze_scene_core::domain::collect_events(input, &context);
+                store_window_input(driver, input);
+                played += 1;
+                events
+            }
+            None => Vec::new(),
+        };
+        driver.with_scheduler_mut(|scheduler| {
+            scheduler
+                .resources_mut()
+                .insert(InputEvents::from_events(events));
+        });
+        driver.submit(DriverCommand::Batch {
+            frames: 1,
+            dt: 1.0 / 60.0,
+        });
+    }
+    Ok(played)
 }
 
 /// 把 `TraceError` 变成 RPC 错误文本（保持类型在 app 层）。
