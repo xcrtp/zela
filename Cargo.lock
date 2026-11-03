@@ -6580,6 +6580,7 @@ name = "ze-content"
 version = "0.1.1"
 dependencies = [
  "serde",
+ "serde_json",
  "ze-notion",
 ]
 
@@ -6808,6 +6809,7 @@ dependencies = [
  "derive_more",
  "ecow",
  "fontdb 0.16.2",
+ "serde_json",
  "thiserror 2.0.20",
  "tracing",
  "ttf-parser 0.25.1",

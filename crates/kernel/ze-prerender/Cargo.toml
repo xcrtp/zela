@@ -27,16 +27,19 @@ ttf-parser = { version = "0.25", optional = true }
 
 [dev-dependencies]
 ze-content = { path = "../ze-content" }
+serde_json.workspace = true
 
 [features]
 default = []
+# CG-a：字体度量（`fontdb` 找字体 + `ttf-parser` 取 advance）。
+# 与 typst 共用同一批可选依赖，但**不依赖 typst**：度量是独立验收面。
+metrics = ["dep:fontdb", "dep:ttf-parser", "ze-content/serde"]
 # Typst 排版引擎。打开时会引入 typst workspace 共 ~15 个 crate。
 typst = [
     "dep:typst",
     "dep:typst-library",
     "dep:ecow",
-    "dep:fontdb",
-    "dep:ttf-parser",
+    "metrics",
 ]
 # 占位引擎（用 ze-content placeholder；默认可用，不需要额外依赖）。
 placeholder = []
