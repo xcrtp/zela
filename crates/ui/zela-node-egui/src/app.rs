@@ -1,6 +1,6 @@
 //! Per-frame driver tying together viewport, input handling and painting.
 
-use glam::Vec2;
+use zela_node_editor::NodePos;
 use zela_node_editor::{Editor, EditorEvent};
 
 use crate::canvas::GraphCanvas;
@@ -67,7 +67,7 @@ impl NodeGraphApp {
     }
 
     /// Pops a right-click-on-empty-canvas request (graph-local position).
-    pub fn take_context_menu_pos(&mut self) -> Option<Vec2> {
+    pub fn take_context_menu_pos(&mut self) -> Option<NodePos> {
         self.input.take_context_menu_pos()
     }
 

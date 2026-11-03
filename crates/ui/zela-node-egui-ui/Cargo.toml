@@ -9,8 +9,9 @@ description = "egui widget mappings for ze-node-schema property nodes (draw_prop
 ze-node-core = { path = "../../ze/graph/ze-node-core" }
 ze-node-schema = { path = "../../ze/graph/ze-node-schema" }
 zela-node-egui = { path = "../zela-node-egui" }
+# `NodePos`（图坐标位置）来自状态机层；尺寸提示必须与编辑器同一口径。
+zela-node-editor = { path = "../zela-node-editor" }
 egui = { workspace = true }
-glam = { workspace = true }
 
 [dev-dependencies]
 eframe = { workspace = true, features = ["default_fonts"] }

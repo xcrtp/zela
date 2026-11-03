@@ -5,21 +5,25 @@
 //! layer measures node sizes and injects them via [`NodeSizeMap`], while
 //! automatic strategies (stage 10) may rearrange nodes topologically.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
-use glam::Vec2;
 use ze_node_core::{Graph, NodeId};
+
+use crate::geometry::NodePos;
 
 /// Measured node card sizes, keyed by node. Populated by the UI layer after
 /// laying out each card's body; the editor layer treats it as read-only input.
-pub type NodeSizeMap = HashMap<NodeId, Vec2>;
+///
+/// `BTreeMap`（不是 `HashMap`）：节点栈的遍历 / 布局结果必须是**确定序**
+/// （按 `NodeId` 升序），否则同一张图两次布局可能给出不同的落点。
+pub type NodeSizeMap = BTreeMap<NodeId, NodePos>;
 
 /// Where nodes live in graph space.
 pub trait LayoutStrategy: Send + Sync + 'static {
     /// Current position of a node's top-left corner, if known.
-    fn position_of(&self, node: NodeId) -> Option<Vec2>;
+    fn position_of(&self, node: NodeId) -> Option<NodePos>;
     /// Record/override a node position (user drag or spawn).
-    fn set_position(&mut self, node: NodeId, pos: Vec2);
+    fn set_position(&mut self, node: NodeId, pos: NodePos);
     /// Forget a node (called when the node is removed).
     fn remove(&mut self, node: NodeId);
     /// Drop all positions.
@@ -41,17 +45,18 @@ pub trait LayoutStrategy: Send + Sync + 'static {
 /// on top of each other.
 #[derive(Debug, Clone)]
 pub struct FreeLayout {
-    positions: HashMap<NodeId, Vec2>,
-    spawn_origin: Vec2,
-    spawn_step: Vec2,
+    /// 按 `NodeId` 升序（确定序）；数量决定下一个落点。
+    positions: BTreeMap<NodeId, NodePos>,
+    spawn_origin: NodePos,
+    spawn_step: NodePos,
 }
 
 impl Default for FreeLayout {
     fn default() -> Self {
         Self {
-            positions: HashMap::new(),
-            spawn_origin: Vec2::new(64.0, 64.0),
-            spawn_step: Vec2::new(40.0, 40.0),
+            positions: BTreeMap::new(),
+            spawn_origin: NodePos::new(64.0, 64.0),
+            spawn_step: NodePos::new(40.0, 40.0),
         }
     }
 }
@@ -62,7 +67,7 @@ impl FreeLayout {
     }
 
     /// Customize the diagonal spawn staircase.
-    pub fn with_spawn(origin: Vec2, step: Vec2) -> Self {
+    pub fn with_spawn(origin: NodePos, step: NodePos) -> Self {
         Self {
             spawn_origin: origin,
             spawn_step: step,
@@ -74,17 +79,17 @@ impl FreeLayout {
     /// `spawn_origin + n * spawn_step`, where `n` is the number of placed
     /// nodes. Consecutive calls (without nodes being added in between) return
     /// the same spot; the editor calls this once per spawn.
-    pub fn next_spawn_position(&self) -> Vec2 {
+    pub fn next_spawn_position(&self) -> NodePos {
         self.spawn_origin + self.spawn_step * self.positions.len() as f32
     }
 }
 
 impl LayoutStrategy for FreeLayout {
-    fn position_of(&self, node: NodeId) -> Option<Vec2> {
+    fn position_of(&self, node: NodeId) -> Option<NodePos> {
         self.positions.get(&node).copied()
     }
 
-    fn set_position(&mut self, node: NodeId, pos: Vec2) {
+    fn set_position(&mut self, node: NodeId, pos: NodePos) {
         self.positions.insert(node, pos);
     }
 
@@ -111,13 +116,13 @@ mod tests {
         let a = NodeId(1);
         let b = NodeId(2);
         assert_eq!(l.position_of(a), None);
-        l.set_position(a, Vec2::new(10.0, 20.0));
-        l.set_position(b, Vec2::new(30.0, 40.0));
-        assert_eq!(l.position_of(a), Some(Vec2::new(10.0, 20.0)));
-        assert_eq!(l.position_of(b), Some(Vec2::new(30.0, 40.0)));
+        l.set_position(a, NodePos::new(10.0, 20.0));
+        l.set_position(b, NodePos::new(30.0, 40.0));
+        assert_eq!(l.position_of(a), Some(NodePos::new(10.0, 20.0)));
+        assert_eq!(l.position_of(b), Some(NodePos::new(30.0, 40.0)));
         l.remove(a);
         assert_eq!(l.position_of(a), None);
-        assert_eq!(l.position_of(b), Some(Vec2::new(30.0, 40.0)));
+        assert_eq!(l.position_of(b), Some(NodePos::new(30.0, 40.0)));
         l.clear();
         assert_eq!(l.position_of(b), None);
     }
@@ -140,5 +145,16 @@ mod tests {
     #[test]
     fn free_layout_does_not_support_auto_layout() {
         assert!(!FreeLayout::new().auto_layout_supported());
+    }
+
+    /// `NodeSizeMap` 的遍历顺序按 `NodeId` 升序（与插入顺序无关）。
+    #[test]
+    fn node_size_map_iterates_in_node_id_order() {
+        let mut sizes = NodeSizeMap::new();
+        sizes.insert(NodeId(7), NodePos::new(1.0, 1.0));
+        sizes.insert(NodeId(2), NodePos::new(2.0, 2.0));
+        sizes.insert(NodeId(5), NodePos::new(3.0, 3.0));
+        let order: Vec<u64> = sizes.keys().map(|id| id.0).collect();
+        assert_eq!(order, vec![2, 5, 7]);
     }
 }

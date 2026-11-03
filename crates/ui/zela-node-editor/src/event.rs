@@ -1,7 +1,8 @@
 //! Logical events emitted by the editor after applying commands.
 
-use glam::Vec2;
 use ze_node_core::{ConnectError, EdgeId, InputSocketId, NodeId, OutputSocketId};
+
+use crate::geometry::NodePos;
 
 /// Notifications produced by the editor, drained by the UI layer after each
 /// batch of commands.
@@ -11,12 +12,12 @@ pub enum EditorEvent {
     NodeRemoved(NodeId),
     NodeMoved {
         node: NodeId,
-        to: Vec2,
+        to: NodePos,
     },
     /// A node card was user-resized (already clamped to interaction bounds).
     NodeResized {
         node: NodeId,
-        size: Vec2,
+        size: NodePos,
     },
     Connected(EdgeId),
     Disconnected(EdgeId),

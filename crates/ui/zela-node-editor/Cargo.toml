@@ -8,7 +8,6 @@ description = "Pure-logic node editor state machine for ze-node-core (no UI depe
 [dependencies]
 ze-node-core = { path = "../../ze/graph/ze-node-core" }
 ze-graph-algo = { path = "../../ze/graph/ze-graph-algo" }
-glam = { workspace = true }
 thiserror.workspace = true
 
 [features]

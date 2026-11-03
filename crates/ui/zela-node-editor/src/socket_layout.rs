@@ -18,7 +18,7 @@
 //! └──────────────────────────────┘
 //! ```
 
-use glam::Vec2;
+use crate::geometry::NodePos;
 
 /// Header band height: title only, sockets never overlap the header.
 pub const CARD_HEADER_HEIGHT: f32 = 24.0;
@@ -33,9 +33,9 @@ pub const SOCKET_BOTTOM_GAP: f32 = 6.0;
 pub trait SocketLayout: Send + Sync + 'static {
     /// Offset of input socket `index` (out of `count` inputs) on a card of
     /// size `node_size`.
-    fn input_offset(&self, index: u32, count: u32, node_size: Vec2) -> Vec2;
+    fn input_offset(&self, index: u32, count: u32, node_size: NodePos) -> NodePos;
     /// Offset of output socket `index` (out of `count` outputs).
-    fn output_offset(&self, index: u32, count: u32, node_size: Vec2) -> Vec2;
+    fn output_offset(&self, index: u32, count: u32, node_size: NodePos) -> NodePos;
 
     /// Height of the title band. Property widgets must not be drawn above
     /// this offset.
@@ -90,12 +90,12 @@ impl SocketLayout for DefaultSocketLayout {
         self.header_height
     }
 
-    fn input_offset(&self, index: u32, _count: u32, _node_size: Vec2) -> Vec2 {
-        Vec2::new(0.0, self.row_y(index))
+    fn input_offset(&self, index: u32, _count: u32, _node_size: NodePos) -> NodePos {
+        NodePos::new(0.0, self.row_y(index))
     }
 
-    fn output_offset(&self, index: u32, _count: u32, node_size: Vec2) -> Vec2 {
-        Vec2::new(node_size.x, self.row_y(index))
+    fn output_offset(&self, index: u32, _count: u32, node_size: NodePos) -> NodePos {
+        NodePos::new(node_size.x, self.row_y(index))
     }
 }
 
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn inputs_are_left_edge_strictly_increasing_and_within_card() {
         let l = DefaultSocketLayout::default();
-        let size = Vec2::new(160.0, 160.0);
+        let size = NodePos::new(160.0, 160.0);
         let ys: Vec<f32> = (0..3).map(|i| l.input_offset(i, 3, size).y).collect();
         assert!(ys[1] > ys[0] && ys[2] > ys[1]);
         for y in ys {
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn outputs_hug_right_edge_with_same_row_y() {
         let l = DefaultSocketLayout::default();
-        let size = Vec2::new(160.0, 160.0);
+        let size = NodePos::new(160.0, 160.0);
         for i in 0..3 {
             let out = l.output_offset(i, 3, size);
             assert_eq!(out.x, size.x);

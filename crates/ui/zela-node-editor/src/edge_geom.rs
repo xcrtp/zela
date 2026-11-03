@@ -4,36 +4,36 @@
 //! Pure geometry — no rendering types appear here. The UI layer converts the
 //! sampled points into painter calls.
 
-use glam::Vec2;
+use crate::geometry::NodePos;
 
 /// Intermediate representation of a connection's shape, in graph-local
 /// coordinates.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EdgePath {
     Straight {
-        from: Vec2,
-        to: Vec2,
+        from: NodePos,
+        to: NodePos,
     },
     Bezier {
-        from: Vec2,
-        ctrl1: Vec2,
-        ctrl2: Vec2,
-        to: Vec2,
+        from: NodePos,
+        ctrl1: NodePos,
+        ctrl2: NodePos,
+        to: NodePos,
     },
     Polyline {
-        points: Vec<Vec2>,
+        points: Vec<NodePos>,
     },
 }
 
 impl EdgePath {
     /// Sample the path into `segments + 1` points (plus endpoints). Used for
     /// hit-testing and arrow placement. Polylines return their own vertices.
-    pub fn sample(&self, segments: usize) -> Vec<Vec2> {
+    pub fn sample(&self, segments: usize) -> Vec<NodePos> {
         match self {
             EdgePath::Straight { from, to } => (0..=segments)
                 .map(|i| {
                     let t = i as f32 / segments.max(1) as f32;
-                    Vec2::lerp(*from, *to, t)
+                    NodePos::lerp(*from, *to, t)
                 })
                 .collect(),
             EdgePath::Bezier {
@@ -67,7 +67,7 @@ impl EdgePath {
 
     /// Shortest distance from `p` to the path (hit-testing). Beziers are
     /// approximated by 32 sampled segments.
-    pub fn distance_to(&self, p: Vec2) -> f32 {
+    pub fn distance_to(&self, p: NodePos) -> f32 {
         match self {
             EdgePath::Straight { from, to } => point_segment_distance(p, *from, *to),
             EdgePath::Bezier { .. } => min_segment_distance(p, &self.sample(32)),
@@ -76,18 +76,18 @@ impl EdgePath {
     }
 }
 
-fn polyline_length(points: &[Vec2]) -> f32 {
+fn polyline_length(points: &[NodePos]) -> f32 {
     points.windows(2).map(|w| (w[1] - w[0]).length()).sum()
 }
 
-fn min_segment_distance(p: Vec2, points: &[Vec2]) -> f32 {
+fn min_segment_distance(p: NodePos, points: &[NodePos]) -> f32 {
     points
         .windows(2)
         .map(|w| point_segment_distance(p, w[0], w[1]))
         .fold(f32::INFINITY, f32::min)
 }
 
-fn point_segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+fn point_segment_distance(p: NodePos, a: NodePos, b: NodePos) -> f32 {
     let ab = b - a;
     let len_sq = ab.length_squared();
     if len_sq <= f32::EPSILON {
@@ -100,7 +100,7 @@ fn point_segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 
 /// Builds an [`EdgePath`] between two socket positions.
 pub trait EdgeGeometry: Send + Sync + 'static {
-    fn build_path(&self, from: Vec2, to: Vec2) -> EdgePath;
+    fn build_path(&self, from: NodePos, to: NodePos) -> EdgePath;
 }
 
 /// Cubic bezier with horizontal tangents: the control points are pushed
@@ -125,12 +125,12 @@ impl BezierGeometry {
 }
 
 impl EdgeGeometry for BezierGeometry {
-    fn build_path(&self, from: Vec2, to: Vec2) -> EdgePath {
+    fn build_path(&self, from: NodePos, to: NodePos) -> EdgePath {
         let dx = (to.x - from.x).abs().max(40.0) * self.curvature;
         EdgePath::Bezier {
             from,
-            ctrl1: from + Vec2::new(dx, 0.0),
-            ctrl2: to - Vec2::new(dx, 0.0),
+            ctrl1: from + NodePos::new(dx, 0.0),
+            ctrl2: to - NodePos::new(dx, 0.0),
             to,
         }
     }
@@ -163,15 +163,15 @@ impl OrthogonalGeometry {
 }
 
 impl EdgeGeometry for OrthogonalGeometry {
-    fn build_path(&self, from: Vec2, to: Vec2) -> EdgePath {
+    fn build_path(&self, from: NodePos, to: NodePos) -> EdgePath {
         let points = if to.x - from.x >= 2.0 * self.min_offset {
             // Forward: S-curve through a vertical midline.
             let mid_x = (from.x + to.x) / 2.0;
-            vec![from, Vec2::new(mid_x, from.y), Vec2::new(mid_x, to.y), to]
+            vec![from, NodePos::new(mid_x, from.y), NodePos::new(mid_x, to.y), to]
         } else {
             // Reverse (or nearly vertical): detour below both endpoints.
             let y_off = from.y.max(to.y) + self.min_offset * 2.0;
-            vec![from, Vec2::new(from.x, y_off), Vec2::new(to.x, y_off), to]
+            vec![from, NodePos::new(from.x, y_off), NodePos::new(to.x, y_off), to]
         };
         EdgePath::Polyline { points }
     }
@@ -184,8 +184,8 @@ mod tests {
     #[test]
     fn bezier_controls_pull_outward_forward() {
         let g = BezierGeometry::default();
-        let from = Vec2::new(0.0, 0.0);
-        let to = Vec2::new(200.0, 100.0);
+        let from = NodePos::new(0.0, 0.0);
+        let to = NodePos::new(200.0, 100.0);
         match g.build_path(from, to) {
             EdgePath::Bezier { ctrl1, ctrl2, .. } => {
                 assert!(ctrl1.x > from.x);
@@ -198,8 +198,8 @@ mod tests {
     #[test]
     fn orthogonal_forward_is_four_points_with_exact_endpoints() {
         let g = OrthogonalGeometry::default();
-        let from = Vec2::new(0.0, 0.0);
-        let to = Vec2::new(200.0, 100.0);
+        let from = NodePos::new(0.0, 0.0);
+        let to = NodePos::new(200.0, 100.0);
         match g.build_path(from, to) {
             EdgePath::Polyline { points } => {
                 assert_eq!(points.len(), 4);
@@ -213,8 +213,8 @@ mod tests {
     #[test]
     fn orthogonal_reverse_detours_below() {
         let g = OrthogonalGeometry::default();
-        let from = Vec2::new(200.0, 0.0);
-        let to = Vec2::new(0.0, 0.0);
+        let from = NodePos::new(200.0, 0.0);
+        let to = NodePos::new(0.0, 0.0);
         match g.build_path(from, to) {
             EdgePath::Polyline { points } => {
                 assert_eq!(points.len(), 4);
@@ -232,20 +232,20 @@ mod tests {
     #[test]
     fn distance_to_straight_path() {
         let path = EdgePath::Straight {
-            from: Vec2::new(0.0, 0.0),
-            to: Vec2::new(100.0, 0.0),
+            from: NodePos::new(0.0, 0.0),
+            to: NodePos::new(100.0, 0.0),
         };
-        assert!(path.distance_to(Vec2::new(50.0, 0.0)) < 1e-4);
-        assert!(path.distance_to(Vec2::new(50.0, 30.0)) > 29.0);
+        assert!(path.distance_to(NodePos::new(50.0, 0.0)) < 1e-4);
+        assert!(path.distance_to(NodePos::new(50.0, 30.0)) > 29.0);
         // Point beyond the endpoint clamps to the endpoint.
-        assert!(path.distance_to(Vec2::new(150.0, 0.0)) > 49.0);
+        assert!(path.distance_to(NodePos::new(150.0, 0.0)) > 49.0);
     }
 
     #[test]
     fn bezier_length_is_positive_and_samples_include_endpoints() {
         let g = BezierGeometry::default();
-        let from = Vec2::new(0.0, 0.0);
-        let to = Vec2::new(100.0, 60.0);
+        let from = NodePos::new(0.0, 0.0);
+        let to = NodePos::new(100.0, 60.0);
         let path = g.build_path(from, to);
         // A bowed curve is strictly longer than the chord.
         let chord = (to - from).length();

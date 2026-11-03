@@ -12,7 +12,8 @@
 //! header drags, non-resizable cards expose no grip); the hit policy itself
 //! is pluggable via `Editor::set_hit_policy`.
 
-use glam::Vec2;
+use egui::Vec2;
+use zela_node_editor::NodePos;
 use ze_node_core::{EdgeId, NodeId};
 use zela_node_editor::{Command, Editor, EditorError, HitTarget};
 
@@ -43,10 +44,10 @@ fn report_history(result: Result<(), EditorError>) {
 #[derive(Debug, Clone, Copy)]
 enum DragState {
     /// Dragging a card by its header.
-    Node { node: NodeId, grab_offset: Vec2 },
+    Node { node: NodeId, grab_offset: NodePos },
     /// Dragging the bottom-right resize grip; `anchor` is the card's top-left
     /// corner (fixed for the whole gesture).
-    Resize { node: NodeId, anchor: Vec2 },
+    Resize { node: NodeId, anchor: NodePos },
     /// Dragging a connection out of an output socket.
     Connection,
     /// Panning the canvas with the middle / right mouse button.
@@ -59,7 +60,7 @@ pub struct InputHandler {
     drag: Option<DragState>,
     /// Right-click on empty canvas: graph position the host may turn into a
     /// spawn menu (consumed via [`Self::take_context_menu_pos`]).
-    context_menu_at: Option<Vec2>,
+    context_menu_at: Option<NodePos>,
 }
 
 impl InputHandler {
@@ -68,7 +69,7 @@ impl InputHandler {
     }
 
     /// Pops a pending right-click-on-empty-canvas request.
-    pub fn take_context_menu_pos(&mut self) -> Option<Vec2> {
+    pub fn take_context_menu_pos(&mut self) -> Option<NodePos> {
         self.context_menu_at.take()
     }
 
