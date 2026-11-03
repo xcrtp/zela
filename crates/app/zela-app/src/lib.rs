@@ -199,7 +199,7 @@ fn compile_script_on_this_thread(
     Ok(CompiledScript {
         script,
         capabilities: used_capabilities(scene_used, content_used),
-        required_capabilities: required_playback_capabilities(),
+        required_capabilities: required_playback_capabilities(content_used),
         pods: runtime_pods(scene_used, content_used),
         required_pods: required_playback_pods(),
         source_sha256: zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(
@@ -223,7 +223,12 @@ fn scene_capability() -> zela_scene_bundle::Capability {
 }
 
 fn content_capability() -> zela_scene_bundle::Capability {
+    // **CD-d**：内容能力的角色是 **Source** —— payload 同时带烘焙轮廓与源文本
+    // （`ContentSource`）。回放端有同名能力 ⇒ 可重建；没有 ⇒ 用烘焙数据，不失败。
+    //
+    // CE 引入真字体库 / 排版引擎时**沿用同一 role**（只换后端，不重新论证）。
     capability_of::<zela_scene_ecs::pod::ContentApi<'static>>()
+        .with_role(zela_scene_bundle::CapabilityRole::Source)
 }
 
 /// 脚本**实际用到的最小 capability 集**（ZSB Meta 口径）。
@@ -264,11 +269,18 @@ fn runtime_pods(scene_used: bool, content_used: bool) -> Vec<zela_scene_bundle::
     out
 }
 
-/// **回放期实际需要的能力集**：payload 是已烘焙的纯数据 ⇒ 只需要 scene 运行时。
+/// **回放期实际需要的能力集**：payload 是已烘焙的纯数据 ⇒ 运行时只需要 scene。
 ///
-/// 装配期调用的 content 能力不写进这里（否则无内容引擎的回放端会被误拒）。
-fn required_playback_capabilities() -> Vec<zela_scene_bundle::Capability> {
-    vec![scene_capability()]
+/// **CD-d**：用到内容时把 content 能力以 `role = Source` 写进这里 ——
+/// 它表达"有同名能力可重建"，缺了**不失败**（回放端用烘焙轮廓）。
+/// 无内容引擎的浏览器因此不会被误拒，同时 `Bundle::content_mode` 能报告
+/// 该产物具备 rebuild 条件。
+fn required_playback_capabilities(content_used: bool) -> Vec<zela_scene_bundle::Capability> {
+    let mut out = vec![scene_capability()];
+    if content_used {
+        out.push(content_capability());
+    }
+    out
 }
 
 /// **回放期实际需要的 Pod 集**：payload 是已烘焙的纯数据 ⇒ 只需要 scene 运行时。
@@ -1896,6 +1908,18 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             .collect();
         assert!(names.contains(&"zela.scene"), "names = {names:?}");
         assert!(names.contains(&"zela.content"), "names = {names:?}");
+
+        // **CD-d**：内容能力在 Meta 里带 role = Source（可重建；缺失不失败）。
+        let content = compiled
+            .capabilities
+            .iter()
+            .find(|c| c.name == "zela.content")
+            .expect("用到 content 时必须记录该能力");
+        assert_eq!(
+            content.role,
+            zela_scene_bundle::CapabilityRole::Source,
+            "CE 的字体库 / 排版引擎沿用同一 role"
+        );
     }
 
     /// **S4 验收**：`CompiledScript.pods` 与 capabilities 同口径 ——
@@ -1958,7 +1982,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             &script,
             MetaInput {
                 capabilities: available.capabilities.clone(),
-                required_capabilities: required_playback_capabilities(),
+                required_capabilities: required_playback_capabilities(
+                    !script.content_sources().is_empty(),
+                ),
                 pods: available.pods.clone(),
                 required_pods: required_playback_pods(),
                 downgrades: Vec::new(),
@@ -2023,9 +2049,14 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         )
         .expect("编译文本脚本");
 
-        // 内容能力标为 Source（CD-d 起 zela-app 自动写入；此处显式表达契约）。
-        let mut required = compiled.required_capabilities.clone();
-        required.push(content_capability().with_role(CapabilityRole::Source));
+        // 内容能力由 `compile_script` 以 `role = Source` 写入 Meta（CD-d）。
+        let required = compiled.required_capabilities.clone();
+        assert!(
+            required.iter().any(|c| {
+                c.name == "zela.content" && c.role == CapabilityRole::Source
+            }),
+            "内容能力必须以 Source 角色进 Meta：{required:?}"
+        );
 
         let bundle = Bundle::encode(
             &compiled.script,
@@ -2114,7 +2145,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             &script,
             MetaInput {
                 capabilities: available.capabilities.clone(),
-                required_capabilities: required_playback_capabilities(),
+                required_capabilities: required_playback_capabilities(
+                    !script.content_sources().is_empty(),
+                ),
                 pods: available.pods.clone(),
                 required_pods: required_playback_pods(),
                 downgrades: Vec::new(),
