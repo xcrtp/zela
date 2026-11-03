@@ -50,7 +50,7 @@ use crate::composer::Composer;
 use crate::contract::{entity_of, object_id_of};
 use crate::domain::CameraMode;
 use crate::scene::components::{
-    ContentSource, ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow,
+    ContentOrigin, ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow,
     PhaseAnim, Reveal,
 };
 

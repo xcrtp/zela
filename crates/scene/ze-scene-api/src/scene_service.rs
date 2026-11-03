@@ -927,8 +927,8 @@ fn scene_reveal_path(pod: &dyn Pod, shape: RevealPath) -> Handle {
                 Box::new(world_stroke(shape.path)),
             ];
             // **CD-b**：源与烘焙同时进产物（无源 ⇒ 不挂，老 payload 行为不变）。
-            if let Some(source) = this.paths.source(&shape.path.path) {
-                components.push(Box::new(source));
+            if let Some(origin) = this.paths.origin(&shape.path.path) {
+                components.push(Box::new(origin));
             }
             rec.components.insert(components)
         }
@@ -948,8 +948,8 @@ fn scene_path_shape(pod: &dyn Pod, shape: PathShape) -> Handle {
                 Box::new(NativePath::new(path)),
                 Box::new(world_stroke(shape.path)),
             ];
-            if let Some(source) = this.paths.source(&shape.path.path) {
-                components.push(Box::new(source));
+            if let Some(origin) = this.paths.origin(&shape.path.path) {
+                components.push(Box::new(origin));
             }
             rec.components.insert(components)
         }
