@@ -193,6 +193,14 @@ impl Hud {
             .find(|spec| spec.name == name)
             .map(|spec| spec.id)
     }
+
+    /// 控件在**世界坐标**里的矩形 —— Agent 把"点哪儿"换算成场景坐标的唯一入口。
+    ///
+    /// 布局只在装配期算过一次；这里只是换算单位（不改状态、不重排）。
+    pub fn world_rect(&self, id: LayoutId) -> Option<Rect2D> {
+        let row = self.rows.iter().find(|row| row.id == id)?;
+        Some(self.metrics.to_world(row.rect))
+    }
 }
 
 /// **装配期**：把一组控件摆成场景图元，返回可交互的 [`Hud`]。

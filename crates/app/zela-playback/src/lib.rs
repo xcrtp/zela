@@ -301,8 +301,21 @@ pub fn check_render_params_supported(
         .map_err(|e| PlaybackError::Assembly(format!("回放端不支持该渲染参数：{e}")))
 }
 
-/// **唯一的装配尾**：资源插入序列 + System 注册 + Driver pod。
-pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> Runtime {
+/// [`assemble_scheduler`] 的产物：**GPU 无关**的装配结果。
+///
+/// GUI / headless / 浏览器共用同一份调度器；渲染上下文只在
+/// [`assemble_runtime`] 里附加（CG-g：零 GPU 也能跑帧）。
+pub struct AssembledScene {
+    pub scheduler: Scheduler,
+    pub duration: f64,
+    pub pairing: Option<Pairing>,
+}
+
+/// **GPU 无关的装配尾**：资源插入序列 + System 注册。
+///
+/// 不碰 `RenderContext` ⇒ 测试 / Agent 可以只跑场景系统（HUD 的输入 → 状态机 →
+/// 资源回写），完全不建窗口、不建 GPU 设备。
+pub fn assemble_scheduler(assembly: SceneAssembly) -> AssembledScene {
     let SceneAssembly {
         world,
         mut forest,
@@ -418,6 +431,20 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     zela_scene_ecs::register::register_systems(&mut scheduler, cam2d_bindings, orbit_binding);
     zela_render::register_record_systems(&mut scheduler);
 
+    AssembledScene {
+        scheduler,
+        duration,
+        pairing,
+    }
+}
+
+/// **唯一的装配尾**：资源插入序列 + System 注册 + Driver pod。
+pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> Runtime {
+    let AssembledScene {
+        scheduler,
+        duration,
+        pairing,
+    } = assemble_scheduler(assembly);
     Runtime {
         driver: Arc::new(DriverPod::new(scheduler)),
         render_ctx,
