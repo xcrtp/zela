@@ -1358,6 +1358,7 @@
 | ze-node-core | 节点图 trait 层 | `Graph` / `Node` / `NodeMeta` / socket |
 | ze-graph-algo | 图算法实现 | Kahn / Tarjan / BFS dirty |
 | ze-graph-eval | 图求值策略 | `LazyPullEval` |
+| ze-node-lower | 节点图 → 表达式 lowering | `Lowering` / `Lowered`（拓扑序确定；规则按类型名登记） |
 | ze-node-schema | 动态节点与属性 | `DynamicNode` / `Property` |
 | ze-node-schema-macros | 动态节点派生宏 | `#[derive(NodeSchema)]` |
 | ze-node | 节点图门面 | re-export core + schema + algo + eval |
