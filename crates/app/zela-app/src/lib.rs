@@ -2005,6 +2005,93 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         );
     }
 
+    /// **CD-c 主判据**：同一 payload，`restore`（烘焙轮廓）与 `rebuild`
+    /// （源 + 本地引擎重算）得到**逐位相同**的路径；诊断能区分两条路。
+    ///
+    /// 引擎口径由 `formula::build_engine` 决定（开 typst ⇒ 真字形；关 ⇒ 占位块），
+    /// 两侧用**同一个**引擎 ⇒ 本用例在两种构建下都成立。
+    #[test]
+    fn content_restore_and_rebuild_agree() {
+        use ze_scene_core::components::ContentSource;
+        use ze_scene_core::Path as ObjectPath;
+        use zela_scene_bundle::{Bundle, CapabilityRole, ContentMode, MetaInput};
+        use zela_scene_ecs::contract::SceneRead;
+
+        let compiled = compile_script(
+            r#"scene.text("Hi", { size = 32.0, x = 1.0, y = 2.0 })"#,
+            ScriptLanguage::Lua,
+        )
+        .expect("编译文本脚本");
+
+        // 内容能力标为 Source（CD-d 起 zela-app 自动写入；此处显式表达契约）。
+        let mut required = compiled.required_capabilities.clone();
+        required.push(content_capability().with_role(CapabilityRole::Source));
+
+        let bundle = Bundle::encode(
+            &compiled.script,
+            MetaInput {
+                capabilities: compiled.capabilities.clone(),
+                required_capabilities: required,
+                pods: compiled.pods.clone(),
+                required_pods: compiled.required_pods.clone(),
+                downgrades: Vec::new(),
+                source_sha256: Some(compiled.source_sha256.clone()),
+                render_params: Default::default(),
+            },
+        )
+        .expect("编码 ZSB");
+        // 走真实回放路径：字节往返后再读。
+        let bundle = Bundle::from_bytes(&bundle.to_bytes()).expect("解析 ZSB");
+
+        // ── 诊断：本机有内容引擎 ⇒ rebuild；只有 scene ⇒ restore ──
+        assert_eq!(
+            bundle.content_mode(&available_runtime_caps()).expect("诊断"),
+            ContentMode::Rebuild,
+            "有内容能力且有源 ⇒ rebuild"
+        );
+        let scene_only = zela_scene_bundle::Available::new(vec![scene_capability()], Vec::new());
+        assert_eq!(
+            bundle.content_mode(&scene_only).expect("诊断"),
+            ContentMode::Restore,
+            "无内容能力 ⇒ 用烘焙数据（不失败）"
+        );
+
+        // ── restore：payload 里的烘焙轮廓（按描边序号归档）──
+        let sources = bundle.text_sources().expect("源");
+        assert!(!sources.is_empty(), "文本必须带源");
+        assert!(sources.iter().all(|s| s.text == "Hi"), "sources = {sources:?}");
+
+        let mut scene = Scene::new();
+        bundle
+            .script()
+            .expect("还原 SceneScript")
+            .commit(&mut scene)
+            .expect("commit");
+        let mut restored: Vec<(usize, ze_notion::Path2D)> = Vec::new();
+        scene.for_each::<ContentSource>(|id, source| {
+            if let Some(path) = scene.with::<ObjectPath, _>(id, |p| p.0.clone()) {
+                restored.push((source.path_index, path));
+            }
+        });
+        restored.sort_by_key(|(index, _)| *index);
+        assert!(!restored.is_empty(), "文本必须至少产生一条路径");
+
+        // ── rebuild：源 + 本地引擎重算（与装配期同一条管线）──
+        let engine = crate::formula::build_engine();
+        let rebuilt = ze_scene_core::content::compile(
+            &engine,
+            &ze_content::text_literal_source(&sources[0].text),
+            sources[0].font_size,
+            ze_notion::Vec2::new(sources[0].x, sources[0].y),
+            false,
+        );
+
+        assert_eq!(restored.len(), rebuilt.len(), "路径数必须一致");
+        for ((index, path), outline) in restored.iter().zip(rebuilt.iter()) {
+            assert_eq!(*path, outline.path, "path_index {index} 的轮廓必须逐位相同");
+        }
+    }
+
     /// **B1-D 验收**：3D 场景的 ZSB 三路径同构。
     ///
     /// demo3d.lua（Camera3D / Cube / Transform3D / Material3D / Light）经
