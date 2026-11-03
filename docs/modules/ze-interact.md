@@ -10,7 +10,7 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-interact`
 - 生产依赖（上游，dev-deps 不计）：（无）
-- 被依赖（下游）：（无）
+- 被依赖（下游）：`zela-scene-ecs`
 - 源文件：4 个 · 769 行
 
 ### 文件清单

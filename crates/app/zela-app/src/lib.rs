@@ -78,6 +78,8 @@ pub enum SceneChoice {
     CapabilityDemo,
     ScriptStoryboard,
     PythonStoryboard,
+    /// **CE-e**：两个 View + 两个参数面板（场景对象；拖动互不干扰）。
+    Panels,
 }
 
 /// 一次装配的产物：**GUI 与 headless 共用**（定义在回放运行时 crate）。
@@ -180,6 +182,9 @@ pub fn compile_script(source: &str, language: ScriptLanguage) -> Result<Compiled
 
 /// 编译线程的栈大小（见 [`compile_script`] 的说明）。
 const COMPILE_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+/// **CE-e**：场景内参数面板标签的标称字号（世界单位；装配期烘焙一次）。
+pub const PANEL_LABEL_FONT_SIZE: f32 = 0.9;
 
 fn compile_script_on_this_thread(
     source: &str,
@@ -323,12 +328,16 @@ pub fn build_bundle_runtime(
 ) -> Result<Runtime> {
     // **CE-f**：用现有 typst 作为重建后端（不引入新字体库）。
     // 编译失败 ⇒ 返回 `None` ⇒ 该对象保留烘焙数据（显式降级，不是错误）。
-    // 只有 payload 真的带源时才初始化引擎（纯几何产物不为重建付代价）。
+    // **CE-e**：面板标签也在装配期用同一个引擎烘成轮廓。
     let has_sources = bundle
         .text_sources()
         .map(|sources| !sources.is_empty())
         .unwrap_or(false);
-    let engine = has_sources.then(formula::build_engine);
+    let has_views = bundle
+        .script()
+        .map(|script| !script.views().is_empty())
+        .unwrap_or(false);
+    let engine = (has_sources || has_views).then(formula::build_engine);
     let rebuild = |origin: &ze_scene_core::components::ContentOrigin| {
         let engine = engine.as_ref()?;
         let outlines = ze_scene_core::content::compile(
@@ -342,11 +351,27 @@ pub fn build_bundle_runtime(
             .get(origin.path_index)
             .map(|outline| outline.path.clone())
     };
+    let bake_label = |text: &str, anchor: ze_notion::Vec2| -> Vec<ze_notion::Path2D> {
+        let Some(engine) = engine.as_ref() else {
+            return Vec::new();
+        };
+        ze_scene_core::content::compile(
+            engine,
+            &ze_content::text_literal_source(text),
+            crate::PANEL_LABEL_FONT_SIZE,
+            anchor,
+            false,
+        )
+        .into_iter()
+        .map(|outline| outline.path)
+        .collect()
+    };
     let runtime = zela_playback::build_bundle_runtime_with(
         render_ctx,
         bundle,
         &available_runtime_caps(),
         has_sources.then_some(&rebuild as &zela_playback::ContentRebuild<'_>),
+        has_views.then_some(&bake_label as &zela_playback::LabelBake<'_>),
     )
     .map_err(|e| Error::InitializationError(e.to_string()))?;
     install_native_clock(&runtime);
@@ -421,7 +446,7 @@ fn build_runtime(
     // ── 2D 场景：脚本 / 能力 demo（启动参数切换，见 `SceneChoice`）──────────
     // 两条来源产出**同形的三样东西**：时钟树 + 绑定表 + 主 2D 相机句柄；
     // demo 额外产出一个"待插入的组级开关"（N2 的组控制）。
-    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint, pairing) =
+    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint, pairing, interact) =
         build_scene_source(&mut scene, &engine, &source)?;
 
     // S3-3 内容纹理：由场景中的 `Surface(Renderer2D)` 生成（唯一装配入口）。
@@ -441,6 +466,7 @@ fn build_runtime(
         camera3d: demo3d.as_ref().map(|demo| demo.camera3d),
         content_textures,
         pairing,
+        interact,
     };
     let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
     install_native_clock(&runtime);
@@ -463,6 +489,8 @@ fn build_scene_source(
     Option<f64>,
     // **BZ-b**：录制输入流所需的 ZSB 配对信息（脚本路径可推导；纯内置 demo 为 `None`）。
     Option<zela_scene_bundle::Pairing>,
+    // **CE-e**：场景内参数面板的命中表（有 View 才有）。
+    Option<zela_scene_ecs::InteractSet>,
 )> {
     // ── 任意脚本（headless）──
     if let SceneSource::Script { source, language } = source {
@@ -503,6 +531,7 @@ fn build_scene_source(
             GroupVisibility::default(),
             record_hint,
             pairing,
+            None,
         ));
     }
 
@@ -538,6 +567,40 @@ fn build_scene_source(
                 d.group_visibility,
                 None,
                 None,
+                None,
+            ))
+        }
+        SceneChoice::Panels => {
+            // **CE-e**：两个 View + 两个参数面板（场景对象），拖动互不干扰。
+            eprintln!("[zela-app] 场景 = 参数面板（View 空间面 + ze-interact 命中 / 路由）");
+            let p = zela_authored::panels::build(scene);
+            let set = zela_scene_ecs::interact::build_panels_for_views(
+                scene,
+                &zela_scene_ecs::animation::params::build_registry(&p.bindings),
+                &p.views,
+                p.bindings.scopes(),
+                zela_scene_ecs::interact::default_panel_metrics(),
+                |text, anchor| {
+                    ze_scene_core::content::compile(
+                        engine.as_ref(),
+                        &ze_content::text_literal_source(text),
+                        PANEL_LABEL_FONT_SIZE,
+                        anchor,
+                        false,
+                    )
+                    .into_iter()
+                    .map(|outline| outline.path)
+                    .collect()
+                },
+            );
+            Ok((
+                p.forest,
+                p.bindings,
+                Some(p.camera),
+                GroupVisibility::default(),
+                None,
+                None,
+                (!set.is_empty()).then_some(set),
             ))
         }
         SceneChoice::PythonStoryboard => {
@@ -805,7 +868,7 @@ instance("panel_b", 1.0, 0.01)
 
         let engine = Arc::new(placeholder_engine());
         let mut scene_default = Scene::new();
-        let (_forest_a, bindings_a, camera_a, _, duration_a, _) = build_scene_source(
+        let (_forest_a, bindings_a, camera_a, _, duration_a, _, _) = build_scene_source(
             &mut scene_default,
             &engine,
             &SceneSource::Choice(SceneChoice::Storyboard),
@@ -813,7 +876,7 @@ instance("panel_b", 1.0, 0.01)
         .expect("默认场景装配成功");
 
         let mut scene_script = Scene::new();
-        let (_forest_b, bindings_b, camera_b, _, duration_b, _) = build_scene_source(
+        let (_forest_b, bindings_b, camera_b, _, duration_b, _, _) = build_scene_source(
             &mut scene_script,
             &engine,
             &SceneSource::Choice(SceneChoice::ScriptStoryboard),

@@ -312,8 +312,14 @@ impl EguiSceneHost {
                         layer,
                         scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
                     });
-                    if i.pointer.primary_clicked() {
+                    if i.pointer.primary_pressed() {
                         events.push(SceneEvent::ViewportClick {
+                            layer,
+                            scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
+                        });
+                    }
+                    if i.pointer.primary_released() {
+                        events.push(SceneEvent::ViewportRelease {
                             layer,
                             scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
                         });

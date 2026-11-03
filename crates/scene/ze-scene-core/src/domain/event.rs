@@ -62,6 +62,14 @@ pub enum SceneEvent {
         layer: LayerId,
         scene_pos: Vec2,
     },
+    /// **CE-e**：按键抬起（与 `ViewportClick` 配对）。
+    ///
+    /// 拖拽需要"按下 / 抬起"两个端点：只有按下会让交互进入 capture（锁定目标），
+    /// 抬起才解除。缺了它，拖拽期间指针移出就会"丢抓"或永久锁定。
+    ViewportRelease {
+        layer: LayerId,
+        scene_pos: Vec2,
+    },
 
     // ─── 相机命令（语义化，不含 center/scale/eye 等字段名）───
     // 命令如何改变相机状态由相机控制器按 CameraMode 决定（PanZoom/Orbit/Path）。

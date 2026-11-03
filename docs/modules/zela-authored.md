@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-authored`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-notion`、`ze-prerender`、`ze-render-ir`、`ze-scene-core`、`ze-time`、`zela-scene-ecs`
 - 被依赖（下游）：`zela-app`
-- 源文件：4 个 · 916 行
+- 源文件：5 个 · 1085 行
 
 ### 文件清单
 
@@ -19,7 +19,8 @@
 |---|---|---|
 | `src/capability_demo.rs` | 247 | — |
 | `src/demo3d.rs` | 135 | — |
-| `src/lib.rs` | 13 | — |
+| `src/lib.rs` | 15 | — |
+| `src/panels.rs` | 167 | **CE-e 作品**：两个 View + 两个参数面板（场景对象）。 |
 | `src/storyboard.rs` | 521 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -34,6 +35,8 @@
 | `src/capability_demo.rs` | `pub fn build(scene: &mut Scene) -> CapabilityDemo` |
 | `src/demo3d.rs` | `pub struct Demo3D` |
 | `src/demo3d.rs` | `pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Demo3D` |
+| `src/panels.rs` | `pub struct Panels` |
+| `src/panels.rs` | `pub fn build(scene: &mut Scene) -> Panels` |
 | `src/storyboard.rs` | `pub struct Storyboard` |
 | `src/storyboard.rs` | `pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Storyboard` |
 <!-- AUTO:END -->

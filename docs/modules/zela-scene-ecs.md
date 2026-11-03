@@ -9,9 +9,9 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/zela-scene-ecs`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
+- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：26 个 · 9932 行
+- 源文件：27 个 · 10546 行
 
 ### 文件清单
 
@@ -36,9 +36,10 @@
 | `src/fingerprint.rs` | 376 | — |
 | `src/geometry.rs` | 258 | — |
 | `src/input.rs` | 384 | — |
-| `src/lib.rs` | 102 | — |
+| `src/interact.rs` | 605 | 参数面板进场景（CE-e）：**真消费者**。 |
+| `src/lib.rs` | 107 | — |
 | `src/lifetime.rs` | 403 | — |
-| `src/register.rs` | 75 | — |
+| `src/register.rs` | 79 | — |
 | `src/scene.rs` | 234 | — |
 | `src/scene_script_tests.rs` | 974 | — |
 | `src/transform_hierarchy.rs` | 740 | — |
@@ -66,11 +67,12 @@ graph LR
     f16["src/fingerprint.rs"]
     f17["src/geometry.rs"]
     f18["src/input.rs"]
-    f19["src/lifetime.rs"]
-    f20["src/register.rs"]
+    f19["src/interact.rs"]
+    f20["src/lifetime.rs"]
+    f21["src/register.rs"]
     f14["src/scene.rs"]
-    f22["src/scene_script_tests.rs"]
-    f21["src/transform_hierarchy.rs"]
+    f23["src/scene_script_tests.rs"]
+    f22["src/transform_hierarchy.rs"]
     f0 --> f1
     f2 --> f1
     f2 --> f3
@@ -94,17 +96,20 @@ graph LR
     f18 --> f1
     f18 --> f6
     f18 --> f12
-    f19 --> f6
-    f20 --> f8
-    f20 --> f9
-    f20 --> f12
-    f20 --> f19
-    f20 --> f21
+    f19 --> f1
+    f19 --> f14
+    f20 --> f6
+    f21 --> f8
+    f21 --> f9
+    f21 --> f12
+    f21 --> f19
+    f21 --> f20
+    f21 --> f22
     f14 --> f6
     f14 --> f10
-    f22 --> f1
-    f22 --> f14
-    f21 --> f6
+    f23 --> f1
+    f23 --> f14
+    f22 --> f6
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -143,6 +148,15 @@ graph LR
 | `src/geometry.rs` | `pub struct FunctionGraphRefreshSystem` |
 | `src/input.rs` | `pub struct TimeControlSystem` |
 | `src/input.rs` | `pub struct ParamPanelSystem` |
+| `src/interact.rs` | `pub struct PanelSpec` |
+| `src/interact.rs` | `pub struct PanelEntry` |
+| `src/interact.rs` | `pub struct SliderSpec` |
+| `src/interact.rs` | `pub struct InteractSet` |
+| `src/interact.rs` | `pub struct InteractState` |
+| `src/interact.rs` | `pub struct InteractSystem` |
+| `src/interact.rs` | `pub fn build_panel(` |
+| `src/interact.rs` | `pub fn default_panel_metrics() -> PanelSpec` |
+| `src/interact.rs` | `pub fn build_panels_for_views(` |
 | `src/lifetime.rs` | `pub enum LifetimeEventKind` |
 | `src/lifetime.rs` | `pub struct LifetimeEvent` |
 | `src/lifetime.rs` | `pub struct LifetimeEvents` |

@@ -32,6 +32,8 @@ ze-scene-contract = { path = "../../kernel/ze-scene-contract" }
 ze-time = { path = "../../kernel/ze-time" }
 # CA-c：参数面板回写用 kernel 级 Property / ParameterRegistry 词汇。
 ze-property = { path = "../../kernel/ze-property" }
+# CE-a：命中 / 布局 / 路由骨架（参数面板进场景的真消费者）。
+ze-interact = { path = "../../kernel/ze-interact" }
 # 脚本 Pod 的 domain 侧（B2）：内容编译能力经 Injector 提供，不再住在解释器里。
 ze-content = { path = "../../kernel/ze-content" }
 ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }

@@ -882,6 +882,22 @@ impl SceneScript {
         report
     }
 
+    /// **CE-e**：按声明顺序列出携带 [`View`](crate::view::View) 的对象句柄。
+    ///
+    /// 装配期据此为每个 View 生成参数面板（View → 作用域 → 该作用域的控件）。
+    pub fn views(&self) -> Vec<Handle> {
+        self.creates
+            .iter()
+            .enumerate()
+            .filter(|(_, components)| {
+                components
+                    .iter()
+                    .any(|component| component.as_any().is::<crate::view::View>())
+            })
+            .map(|(index, _)| Handle(index))
+            .collect()
+    }
+
     /// **CD-b**：payload 里记录的**内容源**（`ContentOrigin` 组件）。
     ///
     /// `restore` 不读它（用烘焙轮廓）；`rebuild` 用它 + 本地能力重算。

@@ -114,6 +114,8 @@ pub struct SceneAssembly {
     pub content_textures: Option<ContentTextureSpecs>,
     /// **BZ-b**：录制输入流所需配对信息（见 [`Runtime::pairing`]）。
     pub pairing: Option<Pairing>,
+    /// **CE-e**：场景内参数面板的命中表（装配期生成；`None` = 场景没有 View）。
+    pub interact: Option<zela_scene_ecs::InteractSet>,
 }
 
 /// **回放端能解释什么**：payload 是已烘焙的纯数据 ⇒ 只需要 scene 能力与 scene Pod。
@@ -167,9 +169,13 @@ pub fn rebuild_script_content(
     })
 }
 
+/// **CE-e**：把标签文字烘成轮廓（由宿主提供；浏览器没有排版引擎 ⇒ 不传）。
+pub type LabelBake<'a> =
+    dyn Fn(&str, ze_notion::Vec2) -> Vec<ze_notion::Path2D> + 'a;
+
 /// **ZSB → Runtime**（无内容重建钩子）：等价于 restore。
 pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Result<Runtime> {
-    build_bundle_runtime_with(render_ctx, bundle, &available_playback_caps(), None)
+    build_bundle_runtime_with(render_ctx, bundle, &available_playback_caps(), None, None)
 }
 
 /// **ZSB → Runtime**：可还原性检查 → 渲染参数校验 → 还原 `SceneScript`
@@ -177,11 +183,13 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
 ///
 /// `available` 是**宿主能力集**：它决定 `ContentMode::Rebuild` 是否成立
 /// （回放端自带的最小集只有 scene，够用于 restore）。
+/// `bake_label` 用于场景内参数面板的文字标签（`None` ⇒ 面板只有轨道 + 滑块）。
 pub fn build_bundle_runtime_with(
     render_ctx: RenderContext,
     bundle: &Bundle,
     available: &Available,
     rebuild: Option<&ContentRebuild<'_>>,
+    bake_label: Option<&LabelBake<'_>>,
 ) -> Result<Runtime> {
     bundle.check_restorable(available)?;
     // B4 Step 2 / D1：参数非法 ⇒ 显式错误（不静默纠正）。
@@ -204,6 +212,15 @@ pub fn build_bundle_runtime_with(
         content_mode = rebuild_script_content(bundle, available, &mut script, rebuild)?;
     }
 
+    // **CE-e**：View → 作用域的声明对（句柄在 commit 前读，id 在 commit 后解析）。
+    let view_scopes: Vec<(zela_scene_ecs::Handle, String)> = script
+        .views()
+        .into_iter()
+        .filter_map(|handle| {
+            Some((handle, script.object_scope(handle)?.path.clone()))
+        })
+        .collect();
+
     let mut scene = Scene::new();
     let recipe = script
         .commit(&mut scene)
@@ -213,6 +230,30 @@ pub fn build_bundle_runtime_with(
     let content_textures = zela_scene_ecs::domain::content_texture_specs(&scene)
         .map_err(|error| PlaybackError::Assembly(format!("Surface 纹理装配失败：{error}")))?;
     let content_textures = (!content_textures.is_empty()).then_some(content_textures);
+
+    // **CE-e**：有 View 就在装配期把该作用域的参数摆成场景面板。
+    let interact = if view_scopes.is_empty() {
+        None
+    } else {
+        let registry = zela_scene_ecs::animation::params::build_registry(&recipe.bindings);
+        let views: Vec<(ObjectId, String)> = view_scopes
+            .iter()
+            .filter_map(|(handle, scope)| Some((recipe.id(*handle)?, scope.clone())))
+            .collect();
+        let set = zela_scene_ecs::interact::build_panels_for_views(
+            &mut scene,
+            &registry,
+            &views,
+            recipe.bindings.scopes(),
+            zela_scene_ecs::interact::default_panel_metrics(),
+            |text, anchor| match bake_label {
+                Some(bake) => bake(text, anchor),
+                None => Vec::new(),
+            },
+        );
+        (!set.is_empty()).then_some(set)
+    };
+
     let world = scene.into_world();
 
     let mut runtime = assemble_runtime(
@@ -227,6 +268,7 @@ pub fn build_bundle_runtime_with(
             camera3d: None,
             content_textures,
             pairing: Pairing::for_bundle(bundle).ok(),
+            interact,
         },
     );
     runtime.content_mode = content_mode;
@@ -267,6 +309,7 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         camera3d,
         content_textures,
         pairing,
+        interact,
     } = assembly;
 
     // 2D 相机取景绑定（`center` + `scale`）交给 `CameraDriveSystem` 托管。
@@ -356,6 +399,11 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     resources.insert(LifetimeTracker::new());
     resources.insert(LifetimeEvents::new());
     resources.insert(ComposerQueue::new());
+    // **CE-e**：场景内参数面板（有 View 才有；命中表 + 路由状态）。
+    if let Some(interact) = interact {
+        resources.insert(interact);
+        resources.insert(zela_scene_ecs::InteractState::default());
+    }
 
     let mut scheduler = Scheduler::new(world, resources);
     zela_scene_ecs::register::register_systems(&mut scheduler, cam2d_bindings, orbit_binding);

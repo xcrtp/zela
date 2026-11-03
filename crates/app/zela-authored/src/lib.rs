@@ -10,4 +10,6 @@
 
 pub mod capability_demo;
 pub mod demo3d;
+/// CE-e：两个 View + 两个参数面板（场景对象；`ze-interact` 的真消费者）。
+pub mod panels;
 pub mod storyboard;

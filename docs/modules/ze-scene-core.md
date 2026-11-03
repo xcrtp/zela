@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：47 个 · 13265 行
+- 源文件：47 个 · 13289 行
 
 ### 文件清单
 
@@ -34,7 +34,7 @@
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
 | `src/domain/config.rs` | 76 | — |
-| `src/domain/event.rs` | 167 | — |
+| `src/domain/event.rs` | 175 | — |
 | `src/domain/mod.rs` | 24 | — |
 | `src/domain/view.rs` | 263 | — |
 | `src/domain/view_rect.rs` | 38 | — |
@@ -55,7 +55,7 @@
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
 | `src/registry.rs` | 225 | — |
-| `src/scene_script.rs` | 1206 | — |
+| `src/scene_script.rs` | 1222 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
