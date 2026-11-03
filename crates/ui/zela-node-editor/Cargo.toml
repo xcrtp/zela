@@ -8,6 +8,8 @@ description = "Pure-logic node editor state machine for ze-node-core (no UI depe
 [dependencies]
 ze-node-core = { path = "../../ze/graph/ze-node-core" }
 ze-graph-algo = { path = "../../ze/graph/ze-graph-algo" }
+# CF-e：命中（半开矩形 + z-order 索引）与 hover/focus/capture 路由与场景面板共用。
+ze-interact = { path = "../../kernel/ze-interact" }
 thiserror.workspace = true
 
 [features]

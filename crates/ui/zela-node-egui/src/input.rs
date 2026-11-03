@@ -111,6 +111,14 @@ impl InputHandler {
         };
         let graph_pos = canvas.to_graph(pos);
 
+        // 每帧把指针位置交给编辑器的路由（hover 在编辑器里，UI 不重复保存）。
+        let hit = if canvas.viewport().contains(pos) {
+            editor.pointer_moved(graph_pos)
+        } else {
+            editor.pointer_left();
+            HitTarget::Nothing
+        };
+
         let primary_pressed = ui.input(|i| i.pointer.primary_pressed());
         let pan_pressed = ui.input(|i| {
             i.pointer.secondary_pressed() || i.pointer.button_pressed(egui::PointerButton::Middle)
@@ -122,7 +130,7 @@ impl InputHandler {
             // Right-click on empty canvas requests the spawn menu.
             if ui.input(|i| i.pointer.secondary_pressed())
                 && canvas.viewport().contains(pos)
-                && matches!(editor.hit_test(graph_pos), HitTarget::Nothing)
+                && matches!(hit, HitTarget::Nothing)
             {
                 self.context_menu_at = Some(graph_pos);
             }
@@ -130,7 +138,8 @@ impl InputHandler {
 
         // Left-button presses only start interactions inside the canvas.
         if primary_pressed && canvas.viewport().contains(pos) {
-            match editor.hit_test(graph_pos) {
+            // 按下走编辑器的路由：建立 focus + capture（拖拽期间不跟命中走）。
+            match editor.pointer_pressed(graph_pos) {
                 HitTarget::OutputSocket(id) => {
                     if apply(editor, Command::BeginConnection(id)) {
                         self.drag = Some(DragState::Connection);
@@ -200,7 +209,7 @@ impl InputHandler {
         // --- hover cursor feedback (no button pressed) ---
         if !ui.input(|i| i.pointer.any_down())
             && canvas.viewport().contains(pos)
-            && matches!(editor.hit_test(graph_pos), HitTarget::ResizeHandle(_))
+            && matches!(hit, HitTarget::ResizeHandle(_))
         {
             ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeNwSe);
         }
@@ -246,13 +255,15 @@ impl InputHandler {
                 || i.pointer.button_released(egui::PointerButton::Middle)
         });
         if released {
+            // 抬起：解除 capture（focus 保留到下一次按下）。
+            editor.pointer_released();
             if matches!(self.drag, Some(DragState::Connection)) && canvas.viewport().contains(pos) {
                 // Prefer the magnetic snap target (the pin the wire is locked
-                // onto); fall back to a direct hit test for a precise drop.
+                // onto); fall back to the direct hit for a precise drop.
                 let target = editor
                     .pending()
                     .and_then(|p| p.hover_target)
-                    .or_else(|| match editor.hit_test(graph_pos) {
+                    .or_else(|| match hit {
                         HitTarget::InputSocket(id) => Some(id),
                         _ => None,
                     });

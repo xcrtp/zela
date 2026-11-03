@@ -11,14 +11,14 @@
 - 路径：`crates/ze/graph/ze-node-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-type`
 - 被依赖（下游）：`ze-graph-algo`、`ze-graph-eval`、`ze-node`、`ze-node-lower`、`ze-node-schema`、`zela-authored`、`zela-node-editor`、`zela-node-egui`、`zela-node-egui-ui`
-- 源文件：15 个 · 1729 行
+- 源文件：15 个 · 1734 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/algo.rs` | 48 | Graph-algorithm trait interfaces. |
-| `src/edge.rs` | 120 | Edges and edge-carried data. |
+| `src/edge.rs` | 125 | Edges and edge-carried data. |
 | `src/error.rs` | 181 | Evaluation errors and the recovery handle protocol. |
 | `src/exec.rs` | 69 | Execution context — the interface a node executor sees while a node runs. |
 | `src/executor.rs` | 71 | Node executors and evaluation strategies. |

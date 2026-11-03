@@ -9,9 +9,9 @@
 
 - 层：`ui`（`crates/ui`）
 - 路径：`crates/ui/zela-node-editor`
-- 生产依赖（上游，dev-deps 不计）：`ze-graph-algo`、`ze-node-core`
+- 生产依赖（上游，dev-deps 不计）：`ze-graph-algo`、`ze-interact`、`ze-node-core`
 - 被依赖（下游）：`zela-node-egui`、`zela-node-egui-ui`
-- 源文件：14 个 · 2737 行
+- 源文件：14 个 · 2918 行
 
 ### 文件清单
 
@@ -19,11 +19,11 @@
 |---|---|---|
 | `src/command.rs` | 143 | Atomic state-change commands — the only contract between the UI layer and |
 | `src/edge_geom.rs` | 257 | Edge path geometry: a renderer-agnostic intermediate representation plus |
-| `src/editor.rs` | 1038 | The [`Editor`] state machine: graph, layout, edge geometry, selection and |
+| `src/editor.rs` | 1143 | The [`Editor`] state machine: graph, layout, edge geometry, selection and |
 | `src/error.rs` | 16 | Editor-level errors. |
 | `src/event.rs` | 40 | Logical events emitted by the editor after applying commands. |
-| `src/geometry.rs` | 257 | Pure geometry types shared by the editor state machine and the UI layer. |
-| `src/hit_test.rs` | 347 | Pluggable hit-testing: resolving a graph-local pointer position to a |
+| `src/geometry.rs` | 282 | Pure geometry types shared by the editor state machine and the UI layer. |
+| `src/hit_test.rs` | 398 | Pluggable hit-testing: resolving a graph-local pointer position to a |
 | `src/layout.rs` | 160 | Node placement strategies. |
 | `src/lib.rs` | 60 | `zela-node-editor` — pure-logic node editor state machine. |
 | `src/presentation.rs` | 59 | **UI side table**：`type_name → NodePresentation`。 |
@@ -82,6 +82,7 @@ graph LR
 | `src/event.rs` | `pub enum EditorEvent` |
 | `src/geometry.rs` | `pub struct NodePos` |
 | `src/geometry.rs` | `pub struct Rect` |
+| `src/geometry.rs` | `pub fn interact_point(p: NodePos) -> ze_interact::Point` |
 | `src/geometry.rs` | `pub enum HitTarget` |
 | `src/hit_test.rs` | `pub struct HitTestContext<'a>` |
 | `src/hit_test.rs` | `pub trait HitTestPolicy: Send + Sync + 'static` |
@@ -103,8 +104,11 @@ graph LR
 
 14 个文件按职责分层：几何、布局、端口布局、边几何四者只算数据（卡片矩形、端口偏移、贝塞尔或正交路径）；命令是 UI 与状态机之间唯一的契约，原子且可逆，撤销栈按值保存其逆操作；编辑器状态机应用命令并产出逻辑事件，同时把命中结果与待连接状态留在自身；命中测试把指针位置解析成命中目标，连接校验做端口类型兼容与成环检查，展示数据表存类型名到节点外观的映射。视口平移缩放不在本 crate。
 
+命中与路由与场景面板**共用** `ze-interact`：卡片是半开矩形 `[min, max)`（贴边不双命中），层次由 `LinearHitIndex` 的 z-order 决定；hover / focus / capture 三档由 `ze_interact::Router` 承载（指针移出卡片时 capture 仍锁定按下目标），编辑器只把命中目标映射成稳定路由键。
+
 ## 边界与不做什么
 
 - 绝不依赖 egui / eframe，也不依赖场景、渲染与 app 层。
 - 不做屏幕与图坐标的变换，也不绘制任何东西（在 zela-node-egui）。
 - 不拥有节点数据本身：图与节点仍由节点核心 trait 提供。
+- 不做求值与 lowering（在 ze-node-lower）；状态类型到场景 `State` 的映射在装配层。
