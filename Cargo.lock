@@ -6655,6 +6655,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-node-lower"
+version = "0.1.1"
+dependencies = [
+ "thiserror 2.0.20",
+ "ze-comb",
+ "ze-graph-algo",
+ "ze-node-core",
+]
+
+[[package]]
 name = "ze-node-schema"
 version = "0.1.1"
 dependencies = [

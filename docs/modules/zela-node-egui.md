@@ -11,18 +11,18 @@
 - 路径：`crates/ui/zela-node-egui`
 - 生产依赖（上游，dev-deps 不计）：`ze-node-core`、`zela-node-editor`
 - 被依赖（下游）：`zela-node-egui-ui`
-- 源文件：7 个 · 1151 行
+- 源文件：7 个 · 1150 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/app.rs` | 78 | Per-frame driver tying together viewport, input handling and painting. |
-| `src/canvas.rs` | 118 | Viewport transform: pan/zoom lives exclusively in the UI layer. |
+| `src/canvas.rs` | 117 | Viewport transform: pan/zoom lives exclusively in the UI layer. |
 | `src/edge_render.rs` | 250 | Edge painting: bezier / orthogonal renderers, styles and arrowheads. |
-| `src/input.rs` | 270 | Translates egui pointer/keyboard input into editor `Command`s. |
+| `src/input.rs` | 271 | Translates egui pointer/keyboard input into editor `Command`s. |
 | `src/lib.rs` | 41 | `zela-node-egui` — egui rendering and interaction for `zela-node-editor`. |
-| `src/painter.rs` | 324 | Full-scene painting: background grid, edges, node cards, sockets and the |
+| `src/painter.rs` | 323 | Full-scene painting: background grid, edges, node cards, sockets and the |
 | `src/view.rs` | 70 | Node card appearance: titles, header colors and per-node body widgets. |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

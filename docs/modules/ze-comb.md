@@ -10,7 +10,7 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-comb`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-type`
-- 被依赖（下游）：`ze-func`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
+- 被依赖（下游）：`ze-func`、`ze-node-lower`、`ze-pod-func`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
 - 源文件：13 个 · 6628 行
 
 ### 文件清单

@@ -1882,6 +1882,8 @@ fn check_no_hashmap_in_graph_paths(root: &Path) -> Result<(), String> {
         "crates/kernel/ze-alg/src",
         // CE-a：命中 / 布局 / 路由的输出顺序会被交互层继承 ⇒ 不得用哈希容器。
         "crates/kernel/ze-interact/src",
+        // CF-b：lowering 的顺序（拓扑序 / 输出表）是产物的一部分。
+        "crates/ze/graph/ze-node-lower/src",
         "crates/kernel/ze-func/src/simplify.rs",
         "crates/scene/ze-scene-core/src/scene_script.rs",
         // CA-b：参数地址 → 控件顺序必须确定（注册表本身升序）。

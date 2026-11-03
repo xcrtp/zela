@@ -51,11 +51,12 @@
       "name": "graph",
       "path": "crates/ze/graph",
       "prefix": "ze-",
-      "description": "图论 + 节点结构契约，禁止依赖 egui/zela-*/领域类型；ze-node 为门面（core+schema+algo+eval）",
+      "description": "图论 + 节点结构契约，禁止依赖 egui/zela-*/领域类型；ze-node 为门面（core+schema+algo+eval）；ze-node-lower 把节点图投影成表达式层（确定性拓扑序）",
       "crates": [
         "ze-node-core",
         "ze-graph-algo",
         "ze-graph-eval",
+        "ze-node-lower",
         "ze-node-schema",
         "ze-node-schema-macros",
         "ze-node"

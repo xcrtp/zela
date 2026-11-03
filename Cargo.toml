@@ -29,6 +29,8 @@ members = [
     "crates/ze/graph/ze-node-core",
     "crates/ze/graph/ze-graph-algo",
     "crates/ze/graph/ze-graph-eval",
+    # CF-b：节点图 → 表达式层的 lowering（确定性拓扑序）。
+    "crates/ze/graph/ze-node-lower",
     "crates/ze/graph/ze-node-schema",
     "crates/ze/graph/ze-node-schema-macros",
     "crates/ze/graph/ze-node",

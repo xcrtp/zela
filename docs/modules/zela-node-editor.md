@@ -10,8 +10,8 @@
 - 层：`ui`（`crates/ui`）
 - 路径：`crates/ui/zela-node-editor`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-algo`、`ze-node-core`
-- 被依赖（下游）：`zela-node-egui`
-- 源文件：14 个 · 2575 行
+- 被依赖（下游）：`zela-node-egui`、`zela-node-egui-ui`
+- 源文件：14 个 · 2737 行
 
 ### 文件清单
 
@@ -19,12 +19,12 @@
 |---|---|---|
 | `src/command.rs` | 143 | Atomic state-change commands — the only contract between the UI layer and |
 | `src/edge_geom.rs` | 257 | Edge path geometry: a renderer-agnostic intermediate representation plus |
-| `src/editor.rs` | 1037 | The [`Editor`] state machine: graph, layout, edge geometry, selection and |
+| `src/editor.rs` | 1038 | The [`Editor`] state machine: graph, layout, edge geometry, selection and |
 | `src/error.rs` | 16 | Editor-level errors. |
-| `src/event.rs` | 39 | Logical events emitted by the editor after applying commands. |
-| `src/geometry.rs` | 112 | Pure geometry types shared by the editor state machine and the UI layer. |
-| `src/hit_test.rs` | 348 | Pluggable hit-testing: resolving a graph-local pointer position to a |
-| `src/layout.rs` | 144 | Node placement strategies. |
+| `src/event.rs` | 40 | Logical events emitted by the editor after applying commands. |
+| `src/geometry.rs` | 257 | Pure geometry types shared by the editor state machine and the UI layer. |
+| `src/hit_test.rs` | 347 | Pluggable hit-testing: resolving a graph-local pointer position to a |
+| `src/layout.rs` | 160 | Node placement strategies. |
 | `src/lib.rs` | 60 | `zela-node-editor` — pure-logic node editor state machine. |
 | `src/presentation.rs` | 59 | **UI side table**：`type_name → NodePresentation`。 |
 | `src/socket_layout.rs` | 149 | Socket geometry inside a node card. |
@@ -38,26 +38,33 @@
 graph LR
     f0["src/command.rs"]
     f1["src/edge_geom.rs"]
-    f4["src/editor.rs"]
-    f5["src/error.rs"]
+    f5["src/editor.rs"]
+    f6["src/error.rs"]
     f2["src/event.rs"]
-    f9["src/hit_test.rs"]
-    f3["src/layout.rs"]
-    f6["src/test_util.rs"]
-    f7["src/undo.rs"]
-    f8["src/validation.rs"]
+    f3["src/geometry.rs"]
+    f10["src/hit_test.rs"]
+    f4["src/layout.rs"]
+    f11["src/socket_layout.rs"]
+    f7["src/test_util.rs"]
+    f8["src/undo.rs"]
+    f9["src/validation.rs"]
     f0 --> f1
     f0 --> f2
     f0 --> f3
-    f4 --> f0
-    f4 --> f5
-    f4 --> f2
-    f4 --> f6
-    f4 --> f7
-    f4 --> f8
-    f9 --> f1
-    f9 --> f6
-    f7 --> f0
+    f0 --> f4
+    f1 --> f3
+    f5 --> f0
+    f5 --> f6
+    f5 --> f2
+    f5 --> f7
+    f5 --> f8
+    f5 --> f9
+    f2 --> f3
+    f10 --> f1
+    f10 --> f7
+    f4 --> f3
+    f11 --> f3
+    f8 --> f0
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -73,6 +80,7 @@ graph LR
 | `src/editor.rs` | `pub struct Editor` |
 | `src/error.rs` | `pub enum EditorError` |
 | `src/event.rs` | `pub enum EditorEvent` |
+| `src/geometry.rs` | `pub struct NodePos` |
 | `src/geometry.rs` | `pub struct Rect` |
 | `src/geometry.rs` | `pub enum HitTarget` |
 | `src/hit_test.rs` | `pub struct HitTestContext<'a>` |
