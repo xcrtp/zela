@@ -17,7 +17,8 @@ use zela_scene_ecs::animation::{
     Binding, BindingDriver, BindingTable, CircleRadius, ResetBehavior,
 };
 use zela_scene_ecs::{ClockForest, ClockNode, Scene, SeekKind};
-use ze_notion::{Rect2D, Vec2};
+use ze_notion::{Color32, Rect2D, Vec2};
+use ze_render_ir::FillSolid;
 use ze_scene_core::scene_script::SceneEncoder;
 use ze_scene_core::{Camera2DHandle, Circle, Framing2D, View, ViewMapping};
 use ze_time::{ClockProgram, Curve};
@@ -33,8 +34,11 @@ const PANEL_B_ORIGIN: Vec2 = Vec2::new(2.0, -4.0);
 /// 面板尺寸（世界单位）。
 const PANEL_SIZE: Vec2 = Vec2::new(6.0, 3.2);
 /// 被驱动的圆（各自在一个面板作用域内）。
-const CIRCLE_A: Vec2 = Vec2::new(-11.0, 2.5);
-const CIRCLE_B: Vec2 = Vec2::new(0.0, 2.5);
+///
+/// 位置选在**左边距**：右侧留给 3D demo（3D 图层在 2D 之上），HUD 占住 `x ∈ [-9, -4]`，
+/// 放进这两块区域都会被盖住 —— 这正是"两个圆看不见"的另一半原因。
+const CIRCLE_A: Vec2 = Vec2::new(-13.0, 3.0);
+const CIRCLE_B: Vec2 = Vec2::new(-13.0, 1.0);
 
 /// [`build`] 的产物：装配尾需要的三样 + View 的空间声明。
 pub struct Panels {
@@ -52,11 +56,20 @@ pub fn build(scene: &mut Scene) -> Panels {
     let camera_h = enc.spawn(vec![Box::new(Framing2D::new(Vec2::ZERO, CAMERA_SCALE))]);
 
     // 两个圆各自在**自己的作用域**里（绑定继承目标对象的作用域）。
+    //
+    // `FillSolid` 不能省：渲染层按「图元 + 样式」成组录制（`Circle` × `FillSolid` /
+    // `StrokeSolid`），只有 `Circle` 组件什么都画不出来 —— 这就是"两个圆看不见"。
     let token_a = enc.begin_scope("panel_a", ClockProgram::new());
-    let circle_a = enc.spawn(vec![Box::new(Circle::new(CIRCLE_A, 0.35))]);
+    let circle_a = enc.spawn(vec![
+        Box::new(Circle::new(CIRCLE_A, 0.35)),
+        Box::new(FillSolid::new(Color32::new(110, 180, 255, 255))),
+    ]);
     enc.end_scope(token_a);
     let token_b = enc.begin_scope("panel_b", ClockProgram::new());
-    let circle_b = enc.spawn(vec![Box::new(Circle::new(CIRCLE_B, 0.35))]);
+    let circle_b = enc.spawn(vec![
+        Box::new(Circle::new(CIRCLE_B, 0.35)),
+        Box::new(FillSolid::new(Color32::new(255, 190, 110, 255))),
+    ]);
     enc.end_scope(token_b);
 
     // 两个 View：屏幕坐标、并排摆放；`Parent` 不挂（两块面板是同级）。
@@ -122,6 +135,25 @@ mod tests {
     use super::*;
     use zela_scene_ecs::animation::params;
     use zela_scene_ecs::interact::build_panels_for_views;
+
+    /// **回归**：两个圆必须带填充样式 —— 渲染层按「图元 + 样式」成组录制，
+    /// 只有 `Circle` 组件什么都画不出来（"两个圆没显示"）。
+    #[test]
+    fn circles_carry_a_fill_so_they_are_visible() {
+        let mut scene = Scene::new();
+        build(&mut scene);
+        let world = scene.world();
+        let circles = world.query::<&Circle>().iter().count();
+        let fills = world.query::<&ze_render_ir::FillSolid>().iter().count();
+        let visible = world
+            .query::<(&Circle, &ze_render_ir::FillSolid)>()
+            .iter()
+            .count();
+        assert_eq!(
+            visible, 2,
+            "两个被驱动的圆都要有 FillSolid（circles={circles}, fills={fills}）"
+        );
+    }
 
     /// **CE-e**：作品产出两块 View；装配期为每个 View 生成一组滑块，
     /// 且两个面板吸附的参数地址互不相同（拖 A 不可能改到 B）。
