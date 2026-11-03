@@ -1,5 +1,7 @@
 # ze-resource
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-resource.md`](../../../docs/modules/ze-resource.md)。
+
 > **GPU 资源契约与缓存** — 只声明「资源怎么被标识、怎么被缓存、怎么被回收」，
 > **零依赖**（仅 `std`），不依赖任何后端。
 
@@ -17,7 +19,7 @@ zela-render  (RenderBackend trait / 队列 / hecs 兼容层)
 zela-render-backends (wgpu / egui 实现)
 ```
 
-**硬约束（依赖铁律）**：本 crate 必须能编译到 `wasm32`，因此
+**强制约束（依赖约定）**：本 crate 必须能编译到 `wasm32`，因此
 
 - ❌ 禁止 `hecs` / `wgpu` / `egui` / 任何 `zela-*` / 任何外部依赖；
 - ✅ 需要 wgpu 类型的后端 trait（`RenderBackend` / `RenderBackend3D`）留在 `zela-render`；

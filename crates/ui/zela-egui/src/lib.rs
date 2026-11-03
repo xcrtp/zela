@@ -28,7 +28,7 @@ pub mod host;
 pub mod progress;
 pub mod resources;
 
-pub use frame::{SceneFrame, install_visuals, window_options};
+pub use frame::{FrameBegin, SceneFrame, install_visuals, window_options};
 pub use health::HealthOverlay;
 pub use host::EguiSceneHost;
 pub use progress::FrameProgress;

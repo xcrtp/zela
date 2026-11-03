@@ -11,7 +11,9 @@
 mod bfs_dirty;
 mod kahn_sort;
 mod tarjan_scc;
+mod topology;
 
 pub use bfs_dirty::BfsDirtyTracker;
 pub use kahn_sort::KahnSorter;
 pub use tarjan_scc::TarjanSccDetector;
+pub use topology::GraphTopology;

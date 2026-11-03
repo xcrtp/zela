@@ -6,10 +6,11 @@
 //
 // [`InputEvents`] 是普通 Vec，可 headless 构造 → 场景 System 可以脱离窗口单测。
 
+use serde::{Deserialize, Serialize};
 use ze_notion::Vec2;
 
 /// 控件唯一标识（场景契约的一部分，UI 侧按 ID 发事件）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WidgetId(pub u32);
 
 /// 集中定义的控件 ID（当前全部控件；新增控件在此登记）。
@@ -46,7 +47,11 @@ pub mod ids {
 ///
 /// 注：不派生 `PartialEq`——`Vec2` 包装类型未实现（含 f32 语义问题）；
 /// 测试中用 `matches!` 按字段断言。
-#[derive(Debug, Clone, Copy)]
+///
+/// **输入流**（D 批）把它按 tagged JSON 写进独立文件：帧索引 + 事件，
+/// 因此这里是跨进程格式的一部分（字段改名 = 新格式）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum SceneEvent {
     // ─── 视口拾取（坐标已换算为场景坐标；非相机操作）───
     ViewportHover {

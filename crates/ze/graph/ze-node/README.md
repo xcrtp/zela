@@ -1,5 +1,7 @@
 # ze-node
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-node.md`](../../../../docs/modules/ze-node.md)。
+
 zela 的节点图统一入口。
 
 聚合四个平台无关的 crate：

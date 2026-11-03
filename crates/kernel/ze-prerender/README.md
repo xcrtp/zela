@@ -1,5 +1,7 @@
 # ze-prerender
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-prerender.md`](../../../docs/modules/ze-prerender.md)。
+
 > **内容预渲染（排版引擎接入）层** — 把公式 / 文本源码编译为引擎无关的
 > [ContentIR](../ze-content)（含源码锚点）。kernel 层唯一的「重 crate」：
 > 所有重型引擎依赖（Typst 等）必须放在 feature 后，**默认零重依赖可独立编译**。
@@ -19,7 +21,7 @@ ze-prerender（本 crate：引擎抽象 + 缓存 + Typst 接入）
 ```
 
 **依赖方向**：`ze-notion ← ze-content ← ze-prerender`。
-**铁律**：禁止依赖任何 graph / render / ui / app（`ze-*` / `zela-*` 上层）；
+**约定**：禁止依赖任何 graph / render / ui / app（`ze-*` / `zela-*` 上层）；
 重引擎依赖全部 `optional`，未启用 feature 时零重依赖。
 
 ---

@@ -1,4 +1,4 @@
-//! **语言无关**的文档导出：JSON 是唯一真源。
+//! **语言无关**的文档导出：JSON 是唯一来源。
 //!
 //! 各语言适配器从同一份 [`CapabilityDocs`] 生成自己的注解（LuaLS / stub …），
 //! 不再各自维护一份类型表。
@@ -13,6 +13,17 @@ use ze_pod_core::{CapabilityMeta, ErasedFn, FnDoc, ScalarKind, TypeSpec};
 
 use crate::plan::collect_types;
 
+/// 文档 JSON 的 schema 版本（**解析器兼容用**）。
+///
+/// 与 capability 的 `version` 分开：后者描述**函数集合**，本常量描述
+/// `capabilities_json` 的**顶层结构**。加函数不递增它；改 JSON 形态才递增。
+///
+/// `1 → 2`（L2 类型化 A 批）：每个 capability 增加 `ops`（算子签名表），
+/// 每个 channel 增加 `value`（字段的 `TypeSpec`），并带 `display` 文本。
+/// `2 → 3`（类型存根优化）：每个 op 增加 `spec`（构造器 PodType 全名），
+/// 存根据此把签名挂到 `Sin` / `Mul` 上并生成 `Expr<T>` 返回类型。
+pub const DOCS_SCHEMA_VERSION: u32 = 3;
+
 /// 一个 capability 的导出视图。
 #[derive(Clone, Copy)]
 pub struct CapabilityDocs {
@@ -20,6 +31,12 @@ pub struct CapabilityDocs {
     pub calls: &'static [ErasedFn],
     pub docs: &'static [FnDoc],
     pub meta: CapabilityMeta,
+    /// 该能力挂到组件构造器上的**通道常量**（`Circle.channel.radius` …；默认空）。
+    pub channels: &'static [ze_pod_core::ChannelDecl],
+    /// 该能力挂到组件构造器上的**方法**（`Reveal.current_pos(obj)`；默认空）。
+    pub methods: &'static [ze_pod_core::MethodDecl],
+    /// 该能力的**算子签名表**（L2 类型化；只有 `zela.math` 非空）。
+    pub ops: &'static [ze_pod_core::OpDef],
 }
 
 /// 所有能力可达的类型（递归收集、按名字去重）。
@@ -68,6 +85,7 @@ fn scalar_name(kind: ScalarKind) -> &'static str {
         ScalarKind::F32 => "f32",
         ScalarKind::F64 => "f64",
         ScalarKind::I32 => "i32",
+        ScalarKind::I64 => "i64",
         ScalarKind::U32 => "u32",
         ScalarKind::U64 => "u64",
         ScalarKind::U8 => "u8",
@@ -88,11 +106,22 @@ fn spec_ref(spec: &'static TypeSpec) -> String {
         TypeSpec::Enum { name, .. } => {
             format!("{{\"kind\":\"enum\",\"name\":\"{}\"}}", escape(name))
         }
-        TypeSpec::Array { elem } => {
+        TypeSpec::Array { elem, .. } => {
             format!("{{\"kind\":\"array\",\"elem\":{}}}", spec_ref(elem))
         }
         TypeSpec::Opaque(name) => {
             format!("{{\"kind\":\"opaque\",\"name\":\"{}\"}}", escape(name))
+        }
+        TypeSpec::Var(name) => {
+            format!("{{\"kind\":\"var\",\"name\":\"{}\"}}", escape(name))
+        }
+        TypeSpec::App { ty, args } => {
+            let items: Vec<String> = args.iter().map(spec_ref).collect();
+            format!(
+                "{{\"kind\":\"app\",\"name\":\"{}\",\"args\":[{}]}}",
+                escape(ty),
+                items.join(",")
+            )
         }
     }
 }
@@ -114,7 +143,7 @@ fn fields_json(fields: &'static [ze_pod_core::Field]) -> String {
 /// 类型**定义**（只用于顶层 `types` 表）。
 fn spec_def(spec: &'static TypeSpec) -> String {
     match spec {
-        TypeSpec::Struct { name, fields } => format!(
+        TypeSpec::Struct { name, fields, .. } => format!(
             "{{\"kind\":\"struct\",\"name\":\"{}\",\"fields\":{}}}",
             escape(name),
             fields_json(fields)
@@ -144,7 +173,10 @@ fn spec_def(spec: &'static TypeSpec) -> String {
 pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
     let types = reachable_types(capabilities);
     let mut out = String::new();
-    out.push_str("{\n  \"api\": \"zela.script\",\n  \"capabilities\": {\n");
+    let _ = writeln!(
+        out,
+        "{{\n  \"schema_version\": {DOCS_SCHEMA_VERSION},\n  \"api\": \"zela.script\",\n  \"capabilities\": {{"
+    );
 
     for (cap_index, capability) in capabilities.iter().enumerate() {
         if cap_index > 0 {
@@ -203,6 +235,63 @@ pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
             );
             out.push_str("        }");
         }
+        out.push_str("\n      ],\n      \"channels\": [");
+        for (index, channel) in capability.channels.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "\n        {{\"namespace\":\"{}\",\"component\":\"{}\",\"name\":\"{}\",\
+                 \"address\":\"{}\",\"type\":\"{}\",\"value\":{}}}",
+                escape(channel.namespace),
+                escape(channel.component),
+                escape(channel.name),
+                escape(channel.address),
+                escape(channel.value_type),
+                spec_ref(channel.ty)
+            );
+        }
+        out.push_str("\n      ],\n      \"ops\": [");
+        for (index, op) in capability.ops.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            let _ = write!(
+                out,
+                "\n        {{\"name\":\"{}\",\"spec\":\"{}\",\"signatures\":[",
+                escape(op.name),
+                escape(op.spec)
+            );
+            for (sig_index, sig) in op.sigs.iter().enumerate() {
+                if sig_index > 0 {
+                    out.push(',');
+                }
+                let params: Vec<String> = sig.params.iter().map(|ty| spec_ref(ty)).collect();
+                let vars: Vec<String> = sig
+                    .vars
+                    .iter()
+                    .map(|(name, kind)| {
+                        format!(
+                            "{{\"name\":\"{}\",\"kind\":\"{}\"}}",
+                            escape(name),
+                            kind.name()
+                        )
+                    })
+                    .collect();
+                let _ = write!(
+                    out,
+                    "{{\"params\":[{}],\"returns\":{},\"vars\":[{}],\"variadic\":{},\
+                     \"display\":\"{}\"}}",
+                    params.join(","),
+                    spec_ref(sig.ret),
+                    vars.join(","),
+                    sig.variadic,
+                    escape(&sig.render())
+                );
+            }
+            out.push_str("]}");
+        }
         out.push_str("\n      ]\n    }");
     }
 
@@ -215,6 +304,48 @@ pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
     }
     out.push_str("\n  ]\n}\n");
     out
+}
+
+/// 按函数名查算子（跨 capability；存根生成器用）。
+pub fn op_by_name<'a>(
+    capabilities: &'a [CapabilityDocs],
+    name: &str,
+) -> Option<&'a ze_pod_core::OpDef> {
+    capabilities
+        .iter()
+        .flat_map(|capability| capability.ops.iter())
+        .find(|op| op.name == name)
+}
+
+/// 按构造器 PodType 全名查算子（`zela.math.Sin` → `sin` 的签名）。
+pub fn op_by_spec<'a>(
+    capabilities: &'a [CapabilityDocs],
+    spec: &str,
+) -> Option<&'a ze_pod_core::OpDef> {
+    capabilities
+        .iter()
+        .flat_map(|capability| capability.ops.iter())
+        .find(|op| op.spec == spec)
+}
+
+/// 某个类型的**构造器**（"单 struct 参数 + 返回 opaque"的那条能力函数）。
+///
+/// 存根生成器用它把构造函数的返回值也写准（算子走 [`op_by_spec`]，
+/// 非算子的构造器如 `zela.math.Exists` 走这里 ⇒ `exists { … }` 是 `Expr<bool>`）。
+pub fn component_ctor_of(
+    capabilities: &[CapabilityDocs],
+    type_name: &'static str,
+) -> Option<ze_pod_core::ErasedFn> {
+    capabilities.iter().find_map(|capability| {
+        crate::plan::BindingPlan::new(capability.calls).component_ctor(type_name)
+    })
+}
+
+/// 是否存在算子签名（决定存根是否导出 `Expr<T>`）。
+pub fn has_ops(capabilities: &[CapabilityDocs]) -> bool {
+    capabilities
+        .iter()
+        .any(|capability| !capability.ops.is_empty())
 }
 
 

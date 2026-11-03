@@ -1,4 +1,4 @@
-//! S3/S6/S7 验收：27 个组件逐条 serde、`Components` 往返、`SceneScript`
+//! S3/S6/S7 验收：33 个组件逐条 serde、`Components` 往返、`SceneScript`
 //! 持久化往返与"克隆后重新 commit"。
 
 use ze_notion::{FunctionX2Y, Path2D, Rect2D, Sampler1D, Vec2, Vec3};
@@ -6,8 +6,9 @@ use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
     Path, Projection, Rect, Transform, ZOrder,
 };
-use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
-use zela_scene_ecs::animation::Timeline;
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
+};
 use zela_scene_ecs::contract::{
     Components, Group, GroupId, Name, ObjectId, Parent, SceneRead, Visibility,
 };
@@ -16,10 +17,12 @@ use zela_scene_ecs::persist::{
     PersistError, TaggedComponent, deserialize_components, serialize_components,
 };
 use zela_scene_ecs::scene::Scene;
-use zela_scene_ecs::scene::components::{ContentTextureItem, MorphShape, PhaseAnim, Reveal};
-use zela_scene_ecs::{AnimValue, Curve, Interp, SceneEncoder, SceneScript};
+use zela_scene_ecs::scene::components::{
+    ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
+};
+use zela_scene_ecs::{SceneEncoder, SceneScript};
 
-/// 27 个登记组件的样例（与 `known_component_table!` 一一对应）。
+/// 33 个登记组件的样例（与 `known_component_table!` 一一对应）。
 fn samples() -> zela_scene_ecs::contract::Components {
     vec![
         Box::new(Circle::new((0.0, 0.0), 1.0)),
@@ -50,6 +53,27 @@ fn samples() -> zela_scene_ecs::contract::Components {
         Box::new(FpsView::new(0.0, 0.0)),
         Box::new(StrokeSolid::new(1.0, (0, 0, 0, 255))),
         Box::new(FillSolid::new((0, 0, 0, 255))),
+        Box::new(Gradient {
+            stops: vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
+            from: [0.0; 3],
+            to: [1.0, 0.0, 0.0],
+        }),
+        Box::new(Dash {
+            period: 0.1,
+            duty: 0.5,
+            phase: 0.0,
+        }),
+        Box::new(SecondPaint {
+            fill: [1.0; 4],
+            stroke: [1.0; 4],
+            background: [1.0; 4],
+            mix: 0.5,
+        }),
+        Box::new(BackgroundStroke {
+            color: [1.0; 4],
+            width: 2.0,
+        }),
+        Box::new(CurveWindow { lo: 0.0, hi: 1.0 }),
         Box::new(Axes2D::new((-1.0, 1.0), (-1.0, 1.0))),
         Box::new(AxesLine {
             owner: ObjectId::DANGLING,
@@ -62,16 +86,17 @@ fn samples() -> zela_scene_ecs::contract::Components {
         Box::new(MorphShape::new(Path2D::new(), Path2D::new())),
         Box::new(ContentTextureItem),
         Box::new(Reveal::new(Path2D::new())),
+        Box::new(PathFollow::new(Path2D::new())),
         Box::new(Parent(ObjectId::DANGLING)),
     ]
 }
 
-/// 验收 1/2（S3）：27 个组件**逐个**可序列化 + 解码后重编码一致。
+/// 验收 1/2（S3）：33 个组件**逐个**可序列化 + 解码后重编码一致。
 #[test]
 fn every_registered_component_round_trips() {
     let original = samples();
-    let tagged = serialize_components(&original).expect("27 个组件都应可序列化");
-    assert_eq!(tagged.len(), 27);
+    let tagged = serialize_components(&original).expect("33 个组件都应可序列化");
+    assert_eq!(tagged.len(), 33);
 
     let mut names: Vec<&str> = tagged.iter().map(|t| t.type_name.as_str()).collect();
     names.sort_unstable();
@@ -95,6 +120,11 @@ fn every_registered_component_round_trips() {
         "FpsView",
         "StrokeSolid",
         "FillSolid",
+        "Gradient",
+        "Dash",
+        "SecondPaint",
+        "BackgroundStroke",
+        "CurveWindow",
         "Axes2D",
         "AxesLine",
         "FunctionGraph",
@@ -102,13 +132,14 @@ fn every_registered_component_round_trips() {
         "MorphShape",
         "ContentTextureItem",
         "Reveal",
+        "PathFollow",
         "Parent",
     ];
     expected.sort_unstable();
-    assert_eq!(names, expected, "登记表 27 条必须逐条出现");
+    assert_eq!(names, expected, "登记表 33 条必须逐条出现");
 
     let decoded = deserialize_components(tagged.clone()).expect("全部可解码");
-    assert_eq!(decoded.len(), 27);
+    assert_eq!(decoded.len(), 33);
 
     // 再编码一次 ⇒ 与第一次逐项相等（往返一致；函数组件比较名字）。
     let again = serialize_components(&decoded).expect("解码后的组件仍可序列化");
@@ -189,15 +220,14 @@ fn scene_script_round_trips_through_json() {
         Box::new(Name::new("hero")),
         Box::new(Opacity::new(0.75)),
     ]);
-    enc.animate::<zela_scene_ecs::animation::OpacityValue>(h, ramp(1.0), 1.0);
-    enc.wait(0.5);
+    bind_fade(&mut enc, h, 1.0);
     let script = enc.finish();
 
     let json = script.to_json().expect("序列化成功");
     let back = SceneScript::from_json(&json).expect("反序列化成功");
 
     assert_eq!(back.len(), script.len());
-    assert!((back.duration() - script.duration()).abs() < 1e-9);
+    assert_eq!(back.still_time(), script.still_time());
 
     let mut a = Scene::new();
     let mut b = Scene::new();
@@ -234,7 +264,7 @@ fn cloned_script_can_be_committed_again() {
         Box::new(Circle::new((0.0, 0.0), 2.0)),
         Box::new(Name::new("dot")),
     ]);
-    enc.animate::<zela_scene_ecs::animation::OpacityValue>(h, ramp(2.0), 2.0);
+    bind_fade(&mut enc, h, 2.0);
     let script = enc.finish();
     let twin = script.clone();
 
@@ -260,30 +290,47 @@ fn cloned_script_can_be_committed_again() {
     );
 }
 
-/// `Ready` 目标不可持久化（明确错误）。
-#[test]
-fn ready_target_is_not_persistable() {
-    let mut tl = Timeline::new();
-    tl.play(
-        Curve::Const(AnimValue::Scalar(1.0)),
-        zela_scene_ecs::animation::CircleRadius {
-            id: ObjectId::DANGLING,
-        },
-        1.0,
-    );
-    let err = serde_json::to_string(&tl).expect_err("Ready 目标必须报错");
-    assert!(
-        err.to_string().contains("不可持久化"),
-        "错误信息必须明确，实际 {err}"
-    );
-}
+/// 一条**可持久化**的表达式绑定：`Opacity.value` 在 `[0, dur)` 恒为 1（Hold）。
+///
+/// 旧 `Timeline::play` 的曲线绑定已随 5b 退役；`Step::Expr` 的待解析目标
+/// （`PendingTarget`）仍是唯一可序列化形态 —— 本用例钉住它仍能往返。
+fn bind_fade(enc: &mut SceneEncoder, object: zela_scene_ecs::Handle, dur: f64) {
+    use ze_comb::{ChannelRef, Expr};
+    use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
+    use zela_scene_ecs::ClockProgram;
 
-fn ramp(dur: f64) -> Curve {
-    Curve::Keyframes {
-        keys: vec![
-            (0.0, zela_scene_ecs::AnimValue::Scalar(0.0)),
-            (dur, zela_scene_ecs::AnimValue::Scalar(1.0)),
+    let window = Expr::call(
+        ze_comb::OpRef::new("zela.math", "and"),
+        [
+            Expr::call(
+                ze_comb::OpRef::new("zela.math", "ge"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(0.0),
+                ],
+            ),
+            Expr::call(
+                ze_comb::OpRef::new("zela.math", "lt"),
+                [
+                    Expr::channel(ChannelRef::builtin("time")),
+                    Expr::pure(dur),
+                ],
+            ),
         ],
-        interpolation: Interp::Linear,
-    }
+    );
+    enc.bind_expr_gated(
+        object,
+        "Opacity.value",
+        Expr::pure(1.0),
+        LibraryRef {
+            namespace: "zela.math".to_string(),
+            version: "17".to_string(),
+            op_revisions: Default::default(),
+        },
+        ClockProgram::new(),
+        Some(window),
+        ResetBehavior::Hold,
+        0.0,
+    )
+    .expect("表达式绑定合法");
 }

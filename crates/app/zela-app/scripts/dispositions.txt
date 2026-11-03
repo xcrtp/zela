@@ -1,0 +1,61 @@
+# 脚本覆盖处置（执行计划阶段 5：**不许「无保护且不声明」**）
+#
+# 每个 `scripts/*.lua|py|js` 必须在这里有一行：
+#   <文件名> = baseline            # 有像素基线（baselines.txt 的 [native] / [vector] / [smoke]）
+#   <文件名> = exempt: <理由>       # 显式豁免（理由必填；空理由 = 失败）
+#
+# 门禁：`cargo verify --step hashes` 读本文件 ——
+#   · 未登记的脚本 ⇒ fail（新作品自动被要求处置）
+#   · 声明 baseline 但基线里没有 ⇒ fail（不许假声明）
+# 这终结了「43 个脚本只有 14 个有基线、其余改坏了不会红」的状态：
+# 要么真的被保护，要么理由写在纸面上。
+
+# ─── 有像素基线（[native] / [vector] / [smoke]）───────────────────────────
+atlas.lua = baseline
+cap_background.lua = baseline
+cap_channels2d.lua = baseline
+cap_channels3d.lua = baseline
+cap_codegen.lua = baseline
+cap_dash.lua = baseline
+cap_gradient.lua = baseline
+cap_mix.lua = baseline
+cap_parent_inherit.lua = baseline
+cap_path_follow.lua = baseline
+cap_plot.lua = baseline
+cap_raytrace.lua = baseline
+cap_sdf.lua = baseline
+cap_second.lua = baseline
+cap_sequence.lua = baseline
+cap_shader_3d.lua = baseline
+cap_shader_alpha.lua = baseline
+cap_stroke_width.lua = baseline
+cap_text_group.lua = baseline
+cap_window.lua = baseline
+capability_gaps.lua = baseline
+demo3d.lua = baseline
+expr_demo.lua = baseline
+expr_read.lua = baseline
+fourier.lua = baseline
+fusion.lua = baseline
+orbit.lua = baseline
+pbr_lights.lua = baseline
+pbr_materials.lua = baseline
+pbr_scene.lua = baseline
+pendulum.lua = baseline
+shaded_meshes.lua = baseline
+sine_trace.lua = baseline
+smoke.lua = baseline
+spring.lua = baseline
+spring_state.lua = baseline
+spring_array.lua = baseline
+storyboard.lua = baseline
+surface_matrix.js = baseline
+surface_matrix.lua = baseline
+vector_paths.lua = baseline
+
+# ─── 显式豁免（理由 = 当前用什么保护它；不是「不重要」）──────────────────
+# 两件 Python 翻译：与 Lua 版同场景有专门用例 / 参照实现，像素由 Lua 版守护。
+# 批量对拍固定 `--no-default-features --features typst,js`，不加载 pyo3 运行时 ⇒
+# 这两件无法进同一条像素基线链路，理由与「待补」不同。
+fourier.py = exempt: Python 翻译；`fourier_lua_and_python_produce_same_scene` 断言与 fourier.lua 同场景；像素由 fourier.lua 守护
+storyboard.py = exempt: Python 翻译；zela-authored/storyboard.rs 是等价性参照；像素由 storyboard.lua 守护

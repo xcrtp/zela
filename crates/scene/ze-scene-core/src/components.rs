@@ -50,8 +50,16 @@ pub use three_d::*;
 /// 由 `SceneRecordSystem` 采样时取 `x + phase` 实现曲线水平平移。
 /// `omega` 为常量；`phase` 由 `BindingApplySystem` 每帧覆盖。
 #[derive(
-    Debug, Clone, derive_builder::Builder, derive_new::new, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    derive_builder::Builder,
+    derive_new::new,
+    ze_scene_macros::Channels,
+    serde::Serialize,
+    serde::Deserialize,
 )]
+// F 批：phase 用持久化名覆盖（既有 payload 兼容）；omega 是常量不注册。
+#[channel(name = "Phase", phase: f32)]
 pub struct PhaseAnim {
     pub phase: f32,
     pub omega: f32,
@@ -63,7 +71,9 @@ pub struct PhaseAnim {
 /// 设计（S1 计划 §3.3）：**只写 `t`**（一个 f32），不每帧重建 `from`/`to` —— 为 S3
 /// 上 GPU 预留（from/to 上传一次，t 每帧一个 float）。描边样式（`StrokeSolid`）
 /// 由 zela-render 提供，作为同一实体上的独立组件，本组件只管几何。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+// F 批：只注册 `t`（设计上唯一每帧变量，见类型文档）；from/to/samples 不是通道。
+#[channel(name = "MorphT", t: f32)]
 pub struct MorphShape {
     pub from: ze_notion::Path2D,
     pub to: ze_notion::Path2D,
@@ -102,7 +112,10 @@ pub struct ContentTextureItem;
 /// 本组件不在 `record_scene` 的组件组合枚举里 ⇒ 天然互斥。
 ///
 /// 默认 `start = 0` / `end = 1` = **完整可见**（与不带 reveal 的绘制等价）。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+// F 批：start / end 全量注册（end 缺省名 = 规范地址 "Reveal.end"）；path 不是通道。
+#[channel(start: f32)]
+#[channel(end: f32)]
 pub struct Reveal {
     pub path: ze_notion::Path2D,
     /// 可见区间起点（归一化弧长 ∈ [0,1]），由 `RevealRange` 写入。
@@ -128,6 +141,67 @@ impl Reveal {
             start: 0.0,
             end: 1.0,
         }
+    }
+
+    /// 书写**笔尖**位置：归一化弧长 `end` 处的点（派生量，不落字段）。
+    ///
+    /// 口径与渲染侧裁剪（`clip_reveal`）一致：路径先 `flatten(0.25)`，再按**累计弦长**
+    /// 定位；`end ≤ 0` ⇒ 起点，`end ≥ 1` ⇒ 终点。这是 `Reveal.current_pos`
+    /// 只读通道的实现，也是"小球跟随笔尖"能走读端管道的前提。
+    ///
+    /// 弧长逻辑只有一份：[`ze_notion::Path2D::point_at`]（`tolerance = 0.25` 为默认口径，
+    /// 与 `Reveal.point_at` 方法同源 ⇒ 两处采样不可能分叉）。
+    pub fn current_pos(&self) -> ze_notion::Vec2 {
+        self.path.point_at(self.end, REVEAL_TOLERANCE)
+    }
+}
+
+/// reveal / 路径跟随共用的**展平容差**（写成常量：两侧口径一致是契约，不是巧合）。
+pub const REVEAL_TOLERANCE: f32 = 0.25;
+
+/// **路径跟随**：对象沿一条折线按归一化弧长 `t` 移动（`orient` 时同时转向）。
+///
+/// 与 [`Reveal`] 同一口径（`Path2D::from_polyline` + 同一展平容差），但**不绘制**：
+/// 它只提供"路径 + 参数"这一对数据，位置由
+/// `PathFollowApplySystem`（ECS 层，SceneSync）每帧写进同实体的 `Transform`。
+///
+/// 为什么不是"给 `Transform` 加个字段"：路径跟随是**派生**（位置 = f(path, t)），
+/// 与 `MorphShape.t → Path` 同型；把 `path` 塞进摆放组件会让 Transform 不再可序列化
+/// 成三个数，并破坏父子累乘的单一口径。
+///
+/// 与 [`MorphShape`] 的差别：那里 `t` 驱动几何插值（几何每帧变），这里 `t` 驱动
+/// **摆放**（几何恒定、位置变）；因此本组件不产生 `Path`，也不参与绘制。
+#[derive(Debug, Clone, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+// F 批：只注册 `t`（`path` / `orient` 是静态数据，不是每帧变量）。
+#[channel(t: f32)]
+pub struct PathFollow {
+    /// 被跟随的路径（装配期由折线点表构造，帧间不变）。
+    pub path: ze_notion::Path2D,
+    /// 归一化弧长 ∈ [0, 1]，由 `BindingApplySystem`（地址 `PathFollow.t`）写入。
+    pub t: f32,
+    /// `true` ⇒ 同时把切线方向写进 `Transform.rotation`；`false` ⇒ 只写位置。
+    pub orient: bool,
+}
+
+impl PathFollow {
+    /// 构造（`t = 0`，不转向）——`orient` 由脚本显式给，不在构造器里猜。
+    pub fn new(path: ze_notion::Path2D) -> Self {
+        Self {
+            path,
+            t: 0.0,
+            orient: false,
+        }
+    }
+
+    /// `t` 处的位置（与 [`Reveal::current_pos`] 同一份弧长实现、同一容差）。
+    pub fn position_at(&self, t: f32) -> ze_notion::Vec2 {
+        self.path.point_at(t, REVEAL_TOLERANCE)
+    }
+
+    /// `t` 处的**朝向角**（绕 Z，弧度 = `atan2(tangent.y, tangent.x)`）。
+    pub fn angle_at(&self, t: f32) -> f32 {
+        let tangent = self.path.tangent_at(t, REVEAL_TOLERANCE);
+        tangent.y.atan2(tangent.x)
     }
 }
 

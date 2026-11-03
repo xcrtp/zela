@@ -7,6 +7,8 @@ repository.workspace = true
 description = "Node editor core trait layer for zela (pure, no project dependencies)"
 
 [dependencies]
+# 阶段 4：类型标签（TypeTag / TypeCast）收敛到 kernel 的 ze-type（no_std）。
+ze-type = { path = "../../../kernel/ze-type" }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true

@@ -1,7 +1,7 @@
 // content.rs — 内容编译的**宿主侧适配**（排版引擎 → IR → 世界坐标轮廓）。
 //
 // 纯逻辑（IR → 展平子路径 → 世界坐标 / 描边回退 / 阅读顺序）已下沉
-// `ze-content::stroke`，只剩一个真源；本模块只把 `ze-prerender` 的
+// `ze-content::stroke`，只剩一个来源；本模块只把 `ze-prerender` 的
 // `request` / `take` 包成函数，供场景作者（storyboard）与 Pod 内容服务
 // （`pod::content_service`）共用，避免两处各写一遍引擎调用。
 

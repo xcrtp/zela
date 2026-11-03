@@ -26,9 +26,10 @@
 //   组织与可见性（N 阶段）：`Name` / `Group` / `Visibility` / `Opacity`
 //   相机：      `Camera2D` / `Camera3D` / `Projection` / `Framing2D`（2D 取景参数，P1-2）/
 //               `CameraMode`（相机交互模式，K0）/ `FpsView`（FPS 朝向状态，K1）
-//   样式：      `StrokeSolid` / `FillSolid`
+//   样式：      `StrokeSolid` / `FillSolid` / `Gradient` / `Dash` / `SecondPaint` /
+//               `BackgroundStroke` / `CurveWindow`（PE 起）
 //   装配对象：  `Axes2D` / `AxesLine` / `FunctionGraph`（M4：网格与函数图像归对象层）
-//   动画与标记：`PhaseAnim` / `MorphShape` / `ContentTextureItem` / `Reveal`
+//   动画与标记：`PhaseAnim` / `MorphShape` / `ContentTextureItem` / `Reveal` / `PathFollow`
 //   关系：      `Parent`
 //
 // 未登记的组件类型 ⇒ `spawn_dyn` 返回 `None`（**不静默丢组件**——宁可失败也不
@@ -39,12 +40,15 @@ use hecs::{EntityBuilder, World};
 
 use crate::scene::components::{Light, Material3D, MeshGeometry};
 use std::sync::Arc;
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, ShaderPaint,
+    StrokeSolid,
+};
 use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
-    Path, Projection, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef, Transform,
-    ZOrder,
+    Path, Projection, RayTrace, Rect, Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef,
+    Transform, ZOrder,
 };
-use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
 
 /// 契约层的**只读 / 读写**能力在此处对外转发：
 /// 消费方（UI 层 / 装配层 / App）只需 `zela_scene_ecs::contract::*` 一个入口，
@@ -58,13 +62,13 @@ use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
 /// [`Scene`]（`spawn_dyn` 的宿主）与载荷类型 [`Components`] **没有对外路径**
 /// ⇒ 装配层无法走"经 `add_known` 登记表"的动态创建入口。二者在此补发。
 pub use ze_scene_contract::{
-    Component, Components, Group, GroupId, GroupVisibility, LifetimeTracked, Name, ObjectId, Parent,
-    Scene, SceneRead, Visibility, VisibilityTag,
+    Component, Components, Group, GroupId, GroupVisibility, LifetimeTracked, Name, ObjectId,
+    Parent, ParentInherit, Scene, SceneRead, Visibility, VisibilityTag,
 };
 
 use crate::composer::Composer;
 use crate::domain::CameraMode;
-use crate::scene::components::{ContentTextureItem, MorphShape, PhaseAnim, Reveal};
+use crate::scene::components::{ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal};
 
 // B3-1 收尾：hecs 只读适配器与身份互转已抽到 `ze-scene-hecs`
 // （渲染层需要它，但不应依赖本 ECS 实现 crate）。
@@ -283,6 +287,90 @@ impl ze_scene_core::scene_write::SceneWrite for crate::scene::Scene {
     }
 }
 
+// ─── 提案 #6：SceneRead（SceneWrite 的对称形态）──────────────────────────
+impl ze_scene_core::scene_write::SceneRead for WorldScene<'_> {
+    fn with_component_ref(
+        &self,
+        id: ObjectId,
+        type_id: std::any::TypeId,
+        f: &mut dyn FnMut(&dyn std::any::Any),
+    ) -> bool {
+        let Some(e) = entity_of(id) else {
+            return false;
+        };
+        macro_rules! ref_arms {
+            (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+                $(
+                    if type_id == std::any::TypeId::of::<$c>() {
+                        return match self.world.get::<&$c>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )+
+                $(
+                    if type_id == std::any::TypeId::of::<$m>() {
+                        return match self.world.get::<&$m>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )*
+            }};
+        }
+        ze_scene_core::known_component_table!(ref_arms);
+        false
+    }
+}
+
+impl ze_scene_core::scene_write::SceneRead for crate::scene::Scene {
+    fn with_component_ref(
+        &self,
+        id: ObjectId,
+        type_id: std::any::TypeId,
+        f: &mut dyn FnMut(&dyn std::any::Any),
+    ) -> bool {
+        let Some(e) = entity_of(id) else {
+            return false;
+        };
+        let world = self.world();
+        macro_rules! ref_arms {
+            (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+                $(
+                    if type_id == std::any::TypeId::of::<$c>() {
+                        return match world.get::<&$c>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )+
+                $(
+                    if type_id == std::any::TypeId::of::<$m>() {
+                        return match world.get::<&$m>(e) {
+                            Ok(v) => {
+                                f(&*v);
+                                true
+                            }
+                            Err(_) => false,
+                        };
+                    }
+                )*
+            }};
+        }
+        ze_scene_core::known_component_table!(ref_arms);
+        false
+    }
+}
+
 impl Scene for WorldScene<'_> {
     fn spawn_dyn(&mut self, components: Components) -> Option<ObjectId> {
         let mut builder = EntityBuilder::new();
@@ -448,7 +536,7 @@ mod tests {
 
     // ─── 登记表双向化（本轮）────────────────────────────────────────────
 
-    /// 反向 ①：27 个登记类型**逐个**有稳定名字；未登记 ⇒ `None`。
+    /// 反向 ①：30 个登记类型**逐个**有稳定名字；未登记 ⇒ `None`。
     ///
     /// ⚠️ 本用例是**覆盖度绊线**（新增类型时提醒补样例），不是注册表 ——
     /// 生产侧的登记表只有 `known_component_table!` 一处。
@@ -484,7 +572,14 @@ mod tests {
         );
         assert_eq!(known_type_name::<Reveal>(), Some("Reveal"));
         assert_eq!(known_type_name::<Parent>(), Some("Parent"));
-        assert_eq!(known_type_name::<LifetimeTracked>(), Some("LifetimeTracked"));
+        assert_eq!(
+            known_type_name::<ParentInherit>(),
+            Some("ParentInherit")
+        );
+        assert_eq!(
+            known_type_name::<LifetimeTracked>(),
+            Some("LifetimeTracked")
+        );
         assert_eq!(known_type_name::<Composer>(), Some("Composer"));
 
         #[derive(Clone)]
@@ -496,7 +591,7 @@ mod tests {
         );
     }
 
-    /// 反向 ②：27 个登记类型**逐个**可克隆（不能只测一两个）。
+    /// 反向 ②：30 个登记类型**逐个**可克隆（不能只测一两个）。
     ///
     /// `AxesLine` 未 derive `Clone` —— 由登记表的 `manual:` 段显式重构
     /// （**没有改它的定义**）。
@@ -547,10 +642,11 @@ mod tests {
             Box::new(ContentTextureItem),
             Box::new(Reveal::new(ze_notion::Path2D::new())),
             Box::new(Parent(ObjectId::DANGLING)),
+            Box::new(ParentInherit::default()),
             Box::new(LifetimeTracked),
             Box::new(Composer::default()),
         ];
-        assert_eq!(samples.len(), 29, "登记表当前应为 29 个类型");
+        assert_eq!(samples.len(), 30, "登记表当前应为 30 个类型");
 
         for (i, c) in samples.iter().enumerate() {
             let cloned =
@@ -650,9 +746,10 @@ mod tests {
         assert!(scene.contains(handle));
     }
 
-    /// M4-3b 消费方：`FunctionGraph::refresh` 用 `Scene::set` 覆盖既有 `Path`。
+    /// **阶段 2**：`FunctionGraph::refresh` 在边距内**只移动 `CurveWindow`**，
+    /// 几何（`Path`）逐位不变；超出边距才回落为重采样 + 整窗。
     #[test]
-    fn function_graph_refresh_rewrites_path() {
+    fn function_graph_refresh_moves_the_window() {
         let mut scene = crate::scene::Scene::new();
         let graph = FunctionGraph::new(
             ze_notion::FunctionX2Y::new(|x: f32| x),
@@ -661,23 +758,48 @@ mod tests {
         let handle = graph
             .build(&mut scene, StrokeSolid::new(1.0, (0, 0, 0, 255)))
             .expect("FunctionGraph 已登记");
+        let sampled: Vec<ze_notion::PathCommand> = scene
+            .get_mut::<Path>(handle)
+            .expect("Path 组件在")
+            .0
+            .commands
+            .clone();
 
-        assert!(graph.refresh(&mut scene, handle, 1.0));
-        let path = scene.get_mut::<Path>(handle).expect("Path 组件在");
+        // 边距内（span = 1，phase = 0.5）：只改窗口，不改几何。
+        assert!(graph.refresh(&mut scene, handle, 0.5));
+        let window = *scene.get_mut::<CurveWindow>(handle).expect("窗口组件在");
+        let expected = graph.window_for(0.5).expect("相位在边距内");
+        assert_eq!([window.lo, window.hi], expected);
+        let after: Vec<ze_notion::PathCommand> = scene
+            .get_mut::<Path>(handle)
+            .expect("Path 组件在")
+            .0
+            .commands
+            .clone();
+        assert_eq!(sampled, after, "边距内刷新不得重写几何");
+
+        // 超出边距（phase = 5 > span）：回落重采样，Path 变成 [0,1] 上的 f(x + 5)。
+        assert!(graph.refresh(&mut scene, handle, 5.0));
         let mut pts = Vec::new();
-        for cmd in &path.0.commands {
+        for cmd in &scene
+            .get_mut::<Path>(handle)
+            .expect("Path 组件在")
+            .0
+            .commands
+        {
             if let ze_notion::PathCommand::MoveTo(p) | ze_notion::PathCommand::LineTo(p) = cmd {
                 pts.push(*p);
             }
         }
-        // 相位 1.0 加在自变量上：x = {0,1} ⇒ y = {1,2}。
         assert_eq!(
             pts,
             vec![
-                ze_notion::Vec2::new(0.0, 1.0),
-                ze_notion::Vec2::new(1.0, 2.0)
+                ze_notion::Vec2::new(0.0, 5.0),
+                ze_notion::Vec2::new(1.0, 6.0)
             ]
         );
+        let window = *scene.get_mut::<CurveWindow>(handle).expect("窗口组件在");
+        assert_eq!([window.lo, window.hi], [0.0, 1.0], "重采样后窗口应为整条");
 
         // 句柄失效 ⇒ 写入失败（不 panic）。
         assert!(!graph.refresh(&mut scene, ObjectId::DANGLING, 0.0));

@@ -21,7 +21,8 @@
 //!   两者共用 [`run_with`]，忙标志保证同一时刻只有一个有限帧循环。
 #![cfg(target_arch = "wasm32")]
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::Mutex;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
@@ -31,9 +32,11 @@ use web_sys::{Document, HtmlCanvasElement, Response, UrlSearchParams, Window};
 use zela_playback::{
     build_bundle_runtime, end_frame, set_view_rect, step_frame, to_rgba,
 };
+use zela_playback::vector_frame::VectorFrame;
 use zela_render_backends::{
-    DEFAULT_TARGET_FORMAT, RenderContext, ScreenParams, StandardBackends,
-    render_frame_headless_async, render_frame_to_view,
+    AdapterFacts, BackendKind, BackendRegistry, DEFAULT_TARGET_FORMAT, RenderContext,
+    RoutingDecision, ScreenParams, StandardBackends, render_frame_headless_async,
+    render_frame_to_view, routing::{LoopBackend, route},
 };
 use zela_scene_bundle::Bundle;
 use zela_scene_bundle::frame_hash::FrameSequenceHash;
@@ -46,13 +49,125 @@ const FPS: f64 = 30.0;
 /// 单个 ZSB 的体积上限（32 MB）：**解析之前**校验，防止坏长度字段诱导巨量分配。
 const MAX_BUNDLE_BYTES: usize = 32 * 1024 * 1024;
 
-/// 忙标志：`run()` 是**有限**帧循环（`for index in 0..frames`），不并发；
-/// 播放中拒绝第二次启动即可，不需要 generation 机制。
-static PLAYING: AtomicBool = AtomicBool::new(false);
+/// 播放代次（B11 Step 5）：每次 start / 切后端 +1。
+///
+/// 旧循环在下一个 rAF 发现代次变了就**安静退出**（不再渲染），因此切后端 =
+/// 「重播」而不是整页重载；同一时刻最多一条循环在画。
+static GENERATION: AtomicU32 = AtomicU32::new(0);
+
+/// 最近一次加载的产物：切后端直接重播它，不重新 fetch。
+static LAST_BUNDLE: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+/// B15 Step 0：浏览器侧 adapter 能力实测（**先量后动**）。
+///
+/// 落档在控制台（`[adapter-facts]`）与页面侧（[`adapter_facts`]）；单行、可复制、可 diff。
+static ADAPTER_FACTS: Mutex<String> = Mutex::new(String::new());
+
+/// B15 Step 0：最近一次探测到的 adapter 能力（键=值，空格分隔）。
+///
+/// 页面 / 控制台可直接读：`zela_web.adapter_facts()`。未初始化时为空串（不是默认值）。
+#[wasm_bindgen]
+pub fn adapter_facts() -> String {
+    ADAPTER_FACTS
+        .lock()
+        .map(|facts| facts.clone())
+        .unwrap_or_default()
+}
+
+/// 探测 adapter 是否自述某项 feature（`Features` 的命名位）。
+fn feature(adapter: &wgpu::Adapter, feature: wgpu::Features) -> bool {
+    adapter.features().contains(feature)
+}
+
+/// 探测某个纹理格式能否作为 `STORAGE_BINDING`（乙的前提）。
+fn storage_bindable(adapter: &wgpu::Adapter, format: wgpu::TextureFormat) -> bool {
+    adapter
+        .get_texture_format_features(format)
+        .allowed_usages
+        .contains(wgpu::TextureUsages::STORAGE_BINDING)
+}
+
+/// B15 Step 0：把 adapter 能力压成一行可落档的事实（不含时间 / 随机数 / 负载）。
+fn probe_adapter_facts(adapter: &wgpu::Adapter, surface_format: wgpu::TextureFormat) -> String {
+    let downlevel = adapter.get_downlevel_capabilities();
+    let bits = adapter.features().bits().0;
+    let limits = adapter.limits();
+    format!(
+        "features={:x?} can_compute={} indirect_first_instance={} float32_blendable={} \
+         depth32float_stencil8={} adapter_specific_formats={} r32float_blendable={} \
+         rgba32float_storage={} rgba8unorm_storage={} surface_format={:?} \
+         max_samples={} max_storage_buffer_binding_size={} max_texture_dimension_2d={}",
+        bits,
+        downlevel
+            .flags
+            .contains(wgpu::DownlevelFlags::COMPUTE_SHADERS),
+        feature(adapter, wgpu::Features::INDIRECT_FIRST_INSTANCE),
+        feature(adapter, wgpu::Features::FLOAT32_BLENDABLE),
+        feature(adapter, wgpu::Features::DEPTH32FLOAT_STENCIL8),
+        feature(
+            adapter,
+            wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+        ),
+        adapter
+            .get_texture_format_features(wgpu::TextureFormat::R32Float)
+            .flags
+            .contains(wgpu::TextureFormatFeatureFlags::BLENDABLE),
+        storage_bindable(adapter, wgpu::TextureFormat::Rgba32Float),
+        storage_bindable(adapter, wgpu::TextureFormat::Rgba8Unorm),
+        surface_format,
+        zela_render_vector::msaa_samples(adapter),
+        limits.max_storage_buffer_binding_size,
+        limits.max_texture_dimension_2d,
+    )
+}
+
+/// 后端偏好：0 = auto（按能力），1 = wgpu，2 = vector。
+static BACKEND_MODE: AtomicU8 = AtomicU8::new(0);
+
+fn backend_preference() -> LoopBackend {
+    match BACKEND_MODE.load(Ordering::SeqCst) {
+        1 => LoopBackend::Wgpu,
+        2 => LoopBackend::Vector,
+        _ => LoopBackend::Auto,
+    }
+}
+
+/// 页面工具栏切换后端（B11 §7.3）：**重播**，不整页重载、不重新申请 device。
+#[wasm_bindgen]
+pub fn set_backend(kind: &str) -> Result<(), JsValue> {
+    let mode = match kind {
+        "auto" => 0u8,
+        "wgpu" => 1,
+        "vector" => 2,
+        other => {
+            return Err(js_err(format!(
+                "未知后端：{other}（只接受 auto | wgpu | vector）"
+            )));
+        }
+    };
+    BACKEND_MODE.store(mode, Ordering::SeqCst);
+    let bytes = LAST_BUNDLE.lock().ok().and_then(|bundle| bundle.clone());
+    match bytes {
+        Some(bytes) => {
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Err(error) = start_playback(bytes, false).await {
+                    show_error(&error);
+                }
+            });
+            Ok(())
+        }
+        // 尚未加载作品：偏好已记下，下次 start 生效。
+        None => Ok(()),
+    }
+}
 
 /// 播放速度（0.1×–8×）。帧循环每个 rAF 读取一次，因此播放中可即时调速。
 /// compare 模式强制 1×（见 [`playback_speed`]），不参与调速。
 static SPEED_BITS: AtomicU32 = AtomicU32::new(1.0f32.to_bits());
+
+/// **B18 排查**：`?copy=1` ⇒ 矢量目标与 surface 同格式时用 `copy_texture_to_texture`
+/// 直接呈现，绕过全屏 blit 渲染通道。用来分辨条纹在合成侧还是呈现侧。
+static PRESENT_COPY: AtomicBool = AtomicBool::new(false);
 
 const MIN_SPEED: f32 = 0.1;
 const MAX_SPEED: f32 = 8.0;
@@ -64,21 +179,10 @@ fn playback_speed(compare: bool) -> f32 {
     f32::from_bits(SPEED_BITS.load(Ordering::Relaxed)).clamp(MIN_SPEED, MAX_SPEED)
 }
 
-struct PlayGuard;
-
-impl PlayGuard {
-    fn acquire() -> Result<Self, JsValue> {
-        if PLAYING.swap(true, Ordering::SeqCst) {
-            return Err(js_err("正在播放，请等待完成"));
-        }
-        Ok(Self)
-    }
-}
-
-impl Drop for PlayGuard {
-    fn drop(&mut self) {
-        PLAYING.store(false, Ordering::SeqCst);
-    }
+/// 重新播放一份已加载的产物（`set_backend` 用；不 compare）。
+async fn start_playback(bytes: Vec<u8>, compare: bool) -> Result<(), JsValue> {
+    let (window, document) = prepare()?;
+    run_with(window, document, bytes, compare, "重新播放 …").await
 }
 
 /// 页面显示的短 hash：`991068e3…1cc4`（完整值留在控制台）。
@@ -105,6 +209,17 @@ fn fnv(text: &str) -> u64 {
 fn set_status(document: &Document, message: &str) {
     if let Some(element) = document.get_element_by_id("zela-status") {
         element.set_text_content(Some(message));
+    }
+}
+
+/// 取一帧 surface 纹理：必须在**同一个任务**里画完并 present（见帧循环里的注释）。
+fn current_texture(surface: &wgpu::Surface<'_>) -> Result<wgpu::SurfaceTexture, JsValue> {
+    match surface.get_current_texture() {
+        wgpu::CurrentSurfaceTexture::Success(texture)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => Ok(texture),
+        other => Err(js_err(format!(
+            "get_current_texture 未取得可用帧：{other:?}"
+        ))),
     }
 }
 
@@ -178,6 +293,105 @@ fn prepare() -> Result<(Window, Document), JsValue> {
     Ok((window, document))
 }
 
+/// 渲染环境（surface / device / adapter）：整个页面生命周期**只建一次**。
+///
+/// 切后端（B11 §7.3）只重建 Runtime 并重播 ⇒ 同一块 device 复用，
+/// 矢量后端的注入也只发生一次（`init_gpu` 本来就只能设一次）。
+struct Display {
+    surface: wgpu::Surface<'static>,
+    ctx: RenderContext,
+}
+
+thread_local! {
+    static DISPLAY: std::cell::RefCell<Option<std::rc::Rc<Display>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+async fn display_for(document: &Document) -> Result<std::rc::Rc<Display>, JsValue> {
+    if let Some(display) = DISPLAY.with(|slot| slot.borrow().clone()) {
+        return Ok(display);
+    }
+    let display = std::rc::Rc::new(create_display(document).await?);
+    DISPLAY.with(|slot| *slot.borrow_mut() = Some(display.clone()));
+    Ok(display)
+}
+
+async fn create_display(document: &Document) -> Result<Display, JsValue> {
+    let canvas: HtmlCanvasElement = document
+        .get_element_by_id("zela-canvas")
+        .ok_or_else(|| js_err("缺少 <canvas id=\"zela-canvas\">"))?
+        .dyn_into()
+        .map_err(|_| js_err("zela-canvas 不是 canvas"))?;
+    canvas.set_width(WIDTH);
+    canvas.set_height(HEIGHT);
+    set_status(document, "WebGPU 初始化…");
+
+    let instance = wgpu::Instance::default();
+    let surface = instance
+        .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+        .map_err(|e| js_err(format!("create_surface 失败：{e}")))?;
+    // B11 Step 1：device features = 已注册且可用后端之并（矢量要求 float32 覆盖混合 +
+    // float32 深度带模板）。不可用的后端不会被算进去 ⇒ 不会拒绝本来能起的机器。
+    let mut registry = BackendRegistry::with_standard();
+    registry
+        .register(BackendKind::Vector)
+        .map_err(|e| js_err(e.to_string()))?;
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+            apply_limit_buckets: false,
+        })
+        .await
+        .map_err(|e| js_err(format!("No suitable GPU adapter: {e}")))?;
+    // B12 Step 4：GPU 计时可用性**显式探测**（不假设；结果进控制台，便于浏览器侧记账）。
+    let timing = zela_render_backends::gpu_timing::probe(&adapter);
+    web_sys::console::log_1(&JsValue::from_str(&format!(
+        "[gpu-timing] {}",
+        timing.json()
+    )));
+    let caps = surface.get_capabilities(&adapter);
+    let format = *caps
+        .formats
+        .first()
+        .ok_or_else(|| js_err("surface 没有可用纹理格式"))?;
+    // B15 Step 0：能力实测先于任何渲染决策（缺 required ⇒ 路由显式拒绝，不硬上）。
+    let facts = probe_adapter_facts(&adapter, format);
+    if let Ok(mut slot) = ADAPTER_FACTS.lock() {
+        *slot = facts.clone();
+    }
+    web_sys::console::log_1(&JsValue::from_str(&format!("[adapter-facts] {facts}")));
+    let (device, queue) = RenderContext::request_device_with_registry(&adapter, &registry)
+        .await
+        .map_err(|e| js_err(e.to_string()))?;
+    // B11 Step 5.3：adapter 必须随注入一起带上（否则能力校验静默消失）。
+    let ctx = RenderContext::new(device.clone(), queue.clone(), format).with_adapter(adapter.clone());
+    if registry.select_on(BackendKind::Vector, &adapter).is_ok() {
+        zela_render_vector::init_gpu(device, queue, &adapter)
+            .map_err(|e| js_err(format!("矢量后端注入失败：{e}")))?;
+    }
+    surface.configure(
+        &ctx.device,
+        &wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            format,
+            color_space: wgpu::SurfaceColorSpace::Auto,
+            width: WIDTH,
+            height: HEIGHT,
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: caps
+                .alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(wgpu::CompositeAlphaMode::Auto),
+            view_formats: Vec::new(),
+        },
+    );
+    Ok(Display { surface, ctx })
+}
+
 /// fetch 入口：URL 参数 → 字节 → 公共播放实现。
 async fn run() -> Result<(), JsValue> {
     let (window, document) = prepare()?;
@@ -187,6 +401,47 @@ async fn run() -> Result<(), JsValue> {
         .get("zsb")
         .unwrap_or_else(|| "./fourier.zsb".to_string());
     let compare = params.get("compare").as_deref() == Some("1");
+    // B18 Step 0（判别实验）：?msaa=1 强制 1x、?msaa=4 恢复；0 或省略 = 不覆盖。
+    if let Some(samples) = params.get("msaa").and_then(|value| value.parse::<u32>().ok()) {
+        zela_render_vector::set_sample_override(samples);
+        web_sys::console::log_1(&JsValue::from_str(&format!(
+            "[msaa] override={samples}（0 = 关闭）"
+        )));
+    }
+    // B18 排查：?skip=ao,shadow,bloom,env 逐项关掉矢量 3D 的输入（默认全开）。
+    if let Some(list) = params.get("skip") {
+        let mut mask = 0;
+        for name in list.split(',').map(str::trim) {
+            mask |= match name {
+                "ao" => zela_render_vector::SKIP_AO,
+                "shadow" => zela_render_vector::SKIP_SHADOW,
+                "bloom" => zela_render_vector::SKIP_BLOOM,
+                "env" => zela_render_vector::SKIP_ENVIRONMENT,
+                "lit" => zela_render_vector::SKIP_LIGHT,
+                "depth" => zela_render_vector::SKIP_DEPTH,
+                "stencil" => zela_render_vector::SKIP_STENCIL,
+                other => {
+                    web_sys::console::warn_1(&JsValue::from_str(&format!(
+                        "[skip] 未知项 {other}（只认 ao | shadow | bloom | env | lit | depth | stencil）"
+                    )));
+                    0
+                }
+            };
+        }
+        zela_render_vector::set_skip(mask);
+        web_sys::console::log_1(&JsValue::from_str(&format!("[skip] mask={mask:#x}")));
+    }
+    // B18 排查：?copy=1 绕过呈现侧的全屏 blit。
+    if params.get("copy").as_deref() == Some("1") {
+        PRESENT_COPY.store(true, Ordering::Relaxed);
+        web_sys::console::log_1(&JsValue::from_str("[copy] 呈现改用 copy_texture_to_texture"));
+    }
+    // PB Step 1（V-01）：?shadows=1 / 0 显式开关阴影（默认开，PI-3 按 M-3 实测拍板）。
+    if let Some(value) = params.get("shadows") {
+        let on = matches!(value.as_str(), "1" | "on" | "true");
+        zela_playback::vector3d::set_shadows(on);
+        web_sys::console::log_1(&JsValue::from_str(&format!("[shadows] on={on}")));
+    }
 
     let loading = format!("加载 {zsb_url} …");
     set_status(&document, &loading);
@@ -202,7 +457,14 @@ async fn run_with(
     compare: bool,
     loading: &str,
 ) -> Result<(), JsValue> {
-    let _playing = PlayGuard::acquire()?;
+    // B11 Step 5：新一代播放；旧循环在下一个 rAF 退出。
+    let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Ok(mut slot) = LAST_BUNDLE.lock() {
+        *slot = Some(bytes.clone());
+    }
+
+    // B12 Step 1.1：浏览器入口也接上订阅器（默认 warn，不淹没控制台）。
+    zela_playback::init_tracing();
 
     // 体积上限必须在解析之前校验（坏长度字段可能诱导巨量分配）。
     if bytes.len() > MAX_BUNDLE_BYTES {
@@ -214,56 +476,13 @@ async fn run_with(
 
     set_status(&document, loading);
 
-    let canvas: HtmlCanvasElement = document
-        .get_element_by_id("zela-canvas")
-        .ok_or_else(|| js_err("缺少 <canvas id=\"zela-canvas\">"))?
-        .dyn_into()
-        .map_err(|_| js_err("zela-canvas 不是 canvas"))?;
-    canvas.set_width(WIDTH);
-    canvas.set_height(HEIGHT);
-    set_status(&document, "WebGPU 初始化…");
-
-    // ── 1. canvas + WebGPU（格式取自 capabilities，不硬编码）────────────
-    let instance = wgpu::Instance::default();
-    let surface = instance
-        .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
-        .map_err(|e| js_err(format!("create_surface 失败：{e}")))?;
-    let (adapter, device, queue) = RenderContext::request_adapter_and_device(
-        &instance,
-        wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-            apply_limit_buckets: false,
-        },
-    )
-    .await
-    .map_err(|e| js_err(e.to_string()))?;
-
-    let caps = surface.get_capabilities(&adapter);
-    let format = *caps
-        .formats
-        .first()
-        .ok_or_else(|| js_err("surface 没有可用纹理格式"))?;
-    let display_ctx = RenderContext::new(device, queue, format);
-    surface.configure(
-        &display_ctx.device,
-        &wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            color_space: wgpu::SurfaceColorSpace::Auto,
-            width: WIDTH,
-            height: HEIGHT,
-            present_mode: wgpu::PresentMode::Fifo,
-            desired_maximum_frame_latency: 2,
-            alpha_mode: caps
-                .alpha_modes
-                .first()
-                .copied()
-                .unwrap_or(wgpu::CompositeAlphaMode::Auto),
-            view_formats: Vec::new(),
-        },
-    );
+    // ── 1. canvas + WebGPU（只建一次；切后端重播时复用同一块 device）──────
+    let display = display_for(&document).await?;
+    // B17：这一次播放会新建离屏目标；复用中的 player 必须丢掉上一份目标缓存，
+    // 否则它会继续往上一代那张已弃用的纹理里画（进度照走、画面全黑）。
+    zela_render_vector::forget_player_targets();
+    let display_ctx = display.ctx.clone();
+    let surface = &display.surface;
 
     // ── 2. 字节 → 还原 → Runtime（fetch 与上传共用同一条路）────────────
     let bundle = Bundle::from_bytes(&bytes).map_err(|e| js_err(e.to_string()))?;
@@ -275,9 +494,13 @@ async fn run_with(
     set_status(
         &document,
         &format!(
-            "已加载：{} 个对象 / {:.3}s / payload {} / {:.2}×；{}",
+            "已加载：{} 个对象 / 静止时刻 {} / payload {} / {:.2}×；{}",
             bundle.meta().object_count,
-            bundle.meta().duration,
+            if runtime.duration > 0.0 {
+                format!("≈ {:.3}s", runtime.duration)
+            } else {
+                "不可推导".to_string()
+            },
             payload_short,
             playback_speed(compare),
             if compare { "对拍模式" } else { "播放" }
@@ -291,10 +514,19 @@ async fn run_with(
     let mut display_backends = StandardBackends::new(&display_ctx);
 
     // ── S6：对拍用独立上下文（离屏 Srgb）与独立后端 ─────────────────────
+    //
+    // B12 Step 2：**带 adapter**。此前这里走 `RenderContext::new` ⇒ `caps = None`
+    // ⇒ 渲染参数按 `Default` 兜底而非 `default_for(caps)`，能力校验静默消失。
     let compare_ctx = RenderContext::new(
         display_ctx.device.clone(),
         display_ctx.queue.clone(),
         DEFAULT_TARGET_FORMAT,
+    )
+    .with_adapter(
+        display_ctx
+            .adapter()
+            .cloned()
+            .ok_or_else(|| js_err("display 上下文缺少 adapter（B11 Step 5.3）"))?,
     );
     let mut compare_backends = StandardBackends::new(&compare_ctx);
     let mut hasher = FrameSequenceHash::new(WIDTH, HEIGHT);
@@ -321,9 +553,38 @@ async fn run_with(
     let mut index: u32 = 0;
     let mut credit: f64 = 0.0;
     let mut next_status: u32 = 0;
+    // B11：作品级路由（第一帧决定；`set_backend` 会重新播放 ⇒ 每次播放重新决策）。
+    let mut pinned: Option<RoutingDecision> = None;
+    let mut scratch: Option<wgpu::Texture> = None;
+    // B15（乙）：显示路径的离屏目标 + GPU 内 present（首次真正用矢量时建）。
+    let mut vector_target: Option<VectorTarget> = None;
+    // B17 Step 0：本播放是否真的走过矢量（状态栏只在那时报资源数）。
+    let mut vector_used = false;
+    // B18 Step 2：链表溢出累计（0 = 没有片元被丢弃；播放结束在控制台落一行）。
+    let _ = zela_render_vector::take_overflow_totals();
+    let mut vector_overflow = zela_render_vector::OverflowTotals::default();
+    // PB Step 1：投影光源超限累计（0 = 没有光源被静默丢弃）。
+    let _ = zela_render_vector::take_shadow_totals();
+    let mut vector_shadows = zela_render_vector::ShadowTotals::default();
+    // 状态栏常驻的后端决策行（B11 §7.4：选了谁、为什么、谁被拒）。
+    let mut backend_line = String::new();
+    // 矢量后端的默认渲染参数（`PostCaps::all()` ⇒ 着色栈默认开，与 native 同口径）。
+    let mut vector_params = zela_scene_bundle::RenderParams::default_for(
+        &ze_render_ir::Capabilities {
+            max_sample_count: 4,
+            color_format: ze_render_ir::ColorFormat::Rgba8UnormSrgb,
+            depth_format: ze_render_ir::DepthFormat::Depth32Float,
+            post: BackendKind::Vector.post_caps(),
+        },
+    );
+    vector_params.size = (WIDTH, HEIGHT);
 
     while index < frames {
         next_animation_frame(&window).await?;
+        // 切后端 / 重新开始时，旧循环安静退出（不再抢 surface、不再画）。
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return Ok(());
+        }
 
         credit += f64::from(playback_speed(compare));
         let mut steps = credit.floor() as u32;
@@ -341,63 +602,145 @@ async fn run_with(
         }
 
         // ── 渲染最后一步 ──
-        let output = match surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            other => {
-                return Err(js_err(format!(
-                    "get_current_texture 未取得可用帧：{other:?}"
-                )));
-            }
-        };
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
-
+        //
+        // **帧纹理不跨 `await` 持有**：矢量渲染要等 GPU（OIT 计数回读），让出事件循环后
+        // 浏览器会回收已取到的 surface 纹理 ⇒ blit 写进已销毁的纹理、画面全黑，且合成器
+        // 随后停跑（rAF 不再回调）。因此矢量分支在渲染**之后**才取帧纹理（见下）。
         // 与 native 导出循环逐字一致：Advance → 构造回调 → 渲染 → end_frame。
         let Some(callback) = step_frame(&runtime, dt) else {
+            let output = current_texture(&surface)?;
             end_frame(&runtime);
             display_ctx.queue.present(output);
             index += 1;
             continue;
         };
 
-        render_frame_to_view(
-            &display_ctx,
-            &mut display_backends,
-            &callback,
-            screen,
-            clear,
-            &view,
-        );
-        display_ctx.queue.present(output);
+        // ── B11 Step 4：作品级路由（帧内容 × 后端自述能力）──────────────
+        let preference = backend_preference();
+        let mut pending: Option<VectorFrame> = None;
+        let wanted = if preference == LoopBackend::Wgpu {
+            backend_line = "后端：wgpu（显式） · ".to_string();
+            BackendKind::Wgpu
+        } else {
+            let snapshot = VectorFrame::take(&runtime).map_err(js_err)?;
+            let decision = match &pinned {
+                Some(decision) if preference != LoopBackend::AutoFrame => decision.clone(),
+                _ => route(
+                    preference,
+                    snapshot.content(),
+                    display_ctx.adapter().map(AdapterFacts::of),
+                )
+                .map_err(js_err)?,
+            };
+            if pinned.as_ref() != Some(&decision) {
+                // 决策与理由常驻状态栏（B11 §7.4）：进度 / 完成文案都把它带上，
+                // 否则第一帧之后就被"帧 x/216"覆盖掉。
+                backend_line = format!("后端：{} · ", decision.report());
+                web_sys::console::log_1(&JsValue::from_str(backend_line.trim_end_matches(" · ")));
+                pinned = Some(decision.clone());
+            }
+            pending = Some(snapshot);
+            decision.backend
+        };
 
-        if compare {
-            let objects = runtime
-                .driver
-                .with_scheduler(|scheduler| scheduler.world().len());
-            structure_lines.push(format!(
-                "frame={index} objects={objects} {}",
-                callback.debug_structure().replace(';', " ")
-            ));
-            let pixels = render_frame_headless_async(
-                &compare_ctx,
-                &mut compare_backends,
+        if wanted == BackendKind::Vector {
+            vector_used = true;
+            let snapshot = pending.take().expect("矢量路径已有快照");
+            let background = [
+                clear.r as f32,
+                clear.g as f32,
+                clear.b as f32,
+                clear.a as f32,
+            ];
+            if compare {
+                // B15（甲）+ compare：对拍**必须拿像素** ⇒ 走异步回读；显示仍走 CPU 上传
+                // （与改动前同一条路径，便于把"显示"与"对拍"分开归因）。
+                let rgba = snapshot
+                    .render_async(&runtime, WIDTH, HEIGHT, &vector_params, background)
+                    .await
+                    .map_err(js_err)?;
+                let output = current_texture(&surface)?;
+                present_vector_frame(&display_ctx, &mut scratch, &output, &rgba)?;
+                display_ctx.queue.present(output);
+                hasher.push_frame(&rgba);
+            } else if snapshot.content().has_content_texture {
+                // PC（路线 A）：内容纹理层在 CPU 上叠加（`VectorFrame::render_async`），
+                // 零拷贝路径明确不支持它（会报错）。这里退回回读 + 上传 —— 只为这些作品付。
+                let rgba = snapshot
+                    .render_async(&runtime, WIDTH, HEIGHT, &vector_params, background)
+                    .await
+                    .map_err(js_err)?;
+                let output = current_texture(&surface)?;
+                present_vector_frame(&display_ctx, &mut scratch, &output, &rgba)?;
+                display_ctx.queue.present(output);
+            } else {
+                // B15（乙）：显示路径——合成进 Rgba8Unorm 目标，GPU 内 blit 到 surface。
+                // **零 CPU 往返**（不再有 1.2 MB 回读 + 1.2 MB 上传），但仍有一步
+                // GPU→GPU 转换（Rgba8Unorm → surface 格式），因此不是"零拷贝"。
+                let target = vector_target.get_or_insert_with(|| VectorTarget::new(&display_ctx));
+                snapshot
+                    .render_to_texture_async(
+                        &runtime,
+                        &target.texture,
+                        WIDTH,
+                        HEIGHT,
+                        &vector_params,
+                        background,
+                    )
+                    .await
+                    .map_err(js_err)?;
+                let output = current_texture(&surface)?;
+                target.present(&display_ctx, &output);
+                display_ctx.queue.present(output);
+            }
+        } else {
+            let output = current_texture(&surface)?;
+            let view = output
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            render_frame_to_view(
+                &display_ctx,
+                &mut display_backends,
                 &callback,
                 screen,
                 clear,
-            )
-            .await;
-            hasher.push_frame(&to_rgba(&compare_ctx, &pixels));
+                &view,
+            );
+            display_ctx.queue.present(output);
+
+            if compare {
+                let objects = runtime
+                    .driver
+                    .with_scheduler(|scheduler| scheduler.world().len());
+                structure_lines.push(format!(
+                    "frame={index} objects={objects} {}",
+                    callback.debug_structure().replace(';', " ")
+                ));
+                let pixels = render_frame_headless_async(
+                    &compare_ctx,
+                    &mut compare_backends,
+                    &callback,
+                    screen,
+                    clear,
+                )
+                .await;
+                hasher.push_frame(&to_rgba(&compare_ctx, &pixels));
+            }
         }
 
         end_frame(&runtime);
+        vector_overflow = vector_overflow.plus(zela_render_vector::take_overflow_totals());
+        vector_shadows = vector_shadows.plus(zela_render_vector::take_shadow_totals());
         index += 1;
 
         if index >= next_status {
             set_status(
                 &document,
-                &format!("帧 {index}/{frames} · {:.2}×", playback_speed(compare)),
+                &format!(
+                    "{backend_line}帧 {index}/{frames} · {:.2}×{}",
+                    playback_speed(compare),
+                    vector_resource_note(vector_used)
+                ),
             );
             next_status = index.saturating_add(30);
         }
@@ -422,9 +765,262 @@ async fn run_with(
     } else {
         set_status(
             &document,
-            &format!("播放完成：{frames} 帧 · payload {payload_short}"),
+            &format!(
+                "{backend_line}播放完成：{frames} 帧 · payload {payload_short}{}",
+                vector_resource_note(vector_used)
+            ),
         );
     }
+    if vector_overflow.events > 0 {
+        // 静默失败不得静默：装不下的片元被丢弃时，明确落一行（vConsole 可直接看到）。
+        web_sys::console::warn_1(&JsValue::from_str(&format!(
+            "[vector-overflow] {}",
+            vector_overflow.json()
+        )));
+    }
+    if vector_shadows.events > 0 {
+        // PB Step 1：投影光源超过上限被丢弃时，同样落一行（不静默）。
+        web_sys::console::warn_1(&JsValue::from_str(&format!(
+            "[vector-shadows] {}",
+            vector_shadows.json()
+        )));
+    }
+    Ok(())
+}
+
+/// **B17 Step 0**：矢量侧资源累计的一行后缀（只在本播放走过矢量时出现）。
+///
+/// 稳态（Player 复用生效）下它只在第一帧增长；之后数字不动 = churn 已修，可直接在页面上看。
+fn vector_resource_note(used: bool) -> String {
+    if !used {
+        return String::new();
+    }
+    let totals = zela_render_vector::resource_totals();
+    format!(
+        " · 矢量资源累计 tex {} / buf {}（{:.1} MB，累计创建数，非当前占用）",
+        totals.textures,
+        totals.buffers,
+        (totals.texture_bytes + totals.buffer_bytes) as f64 / 1e6
+    )
+}
+
+/// B15（乙）：显示路径的离屏合成目标 + GPU 内 present。
+///
+/// 矢量合成写的是 `Rgba8Unorm` 的 **storage texture**；surface 通常是 `Bgra8Unorm`
+/// （WebGPU 核心不支持 storage binding）⇒ 宿主维持一张离屏目标，再全屏 blit 到 surface。
+/// **零 CPU 往返，但不是零拷贝**：`Rgba8Unorm → surface` 的这一步仍在。
+struct VectorTarget {
+    texture: wgpu::Texture,
+    blit: Blit,
+}
+
+impl VectorTarget {
+    fn new(ctx: &RenderContext) -> Self {
+        let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("zela-vector-target"),
+            size: wgpu::Extent3d {
+                width: WIDTH,
+                height: HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // 与 `zela-render-vector` 的合成目标同格式（公共入口会再校验一次）。
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        Self {
+            texture,
+            blit: Blit::new(ctx),
+        }
+    }
+
+    fn present(&self, ctx: &RenderContext, output: &wgpu::SurfaceTexture) {
+        // B18 排查：?copy=1 且格式相同 ⇒ 直接拷贝（不经过 blit 渲染通道）。
+        if PRESENT_COPY.load(Ordering::Relaxed) && self.texture.format() == output.texture.format() {
+            let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("zela-vector-copy"),
+            });
+            encoder.copy_texture_to_texture(
+                self.texture.as_image_copy(),
+                output.texture.as_image_copy(),
+                wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+            );
+            ctx.queue.submit([encoder.finish()]);
+        } else {
+            self.blit.draw(ctx, &self.texture, output);
+        }
+    }
+}
+
+/// 一像素对一像素的全屏拷贝（`textureLoad`，无采样 / 无过滤）。
+///
+/// 与 CPU 路径的 `rgba_to_target`（RGBA→BGRA 换位）等价：写入 surface 格式时通道顺序
+/// 由硬件按目标格式排列，数值逐字节不变。
+const BLIT_WGSL: &str = r#"
+@group(0) @binding(0) var src: texture_2d<f32>;
+
+@vertex
+fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let xy = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);
+}
+
+@fragment
+fn fs_main(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    return textureLoad(src, vec2<i32>(p.xy), 0);
+}
+"#;
+
+struct Blit {
+    pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+impl Blit {
+    fn new(ctx: &RenderContext) -> Self {
+        let device = &ctx.device;
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("zela-vector-blit"),
+            source: wgpu::ShaderSource::Wgsl(BLIT_WGSL.into()),
+        });
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("zela-vector-blit"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("zela-vector-blit"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("zela-vector-blit"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: ctx.target_format(),
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self { pipeline, layout }
+    }
+
+    fn draw(&self, ctx: &RenderContext, src: &wgpu::Texture, output: &wgpu::SurfaceTexture) {
+        let source = src.create_view(&wgpu::TextureViewDescriptor::default());
+        let group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("zela-vector-blit"),
+            layout: &self.layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&source),
+            }],
+        });
+        let target = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("zela-vector-blit"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("zela-vector-blit"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        ctx.queue.submit([encoder.finish()]);
+    }
+}
+
+/// 矢量帧（RGBA8）→ surface 纹理：写进一张目标格式的纹理，再拷到 surface。
+///
+/// 为什么这样而不是一条全屏绘制管线：两者的**格式一致**（surface 配置已加 `COPY_DST`），
+/// 一次 `copy_texture_to_texture` 就够，且不引入新的 shader / 顶点格式。
+fn present_vector_frame(
+    ctx: &RenderContext,
+    scratch: &mut Option<wgpu::Texture>,
+    output: &wgpu::SurfaceTexture,
+    rgba: &[u8],
+) -> Result<(), JsValue> {
+    let target = zela_playback::rgba_to_target(ctx, rgba);
+    let extent = wgpu::Extent3d {
+        width: WIDTH,
+        height: HEIGHT,
+        depth_or_array_layers: 1,
+    };
+    let texture = scratch.get_or_insert_with(|| {
+        ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("zela-vector-frame"),
+            size: extent,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: ctx.target_format(),
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
+    });
+    ctx.queue.write_texture(
+        texture.as_image_copy(),
+        &target,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(WIDTH * 4),
+            rows_per_image: Some(HEIGHT),
+        },
+        extent,
+    );
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("zela-vector-copy"),
+    });
+    encoder.copy_texture_to_texture(texture.as_image_copy(), output.texture.as_image_copy(), extent);
+    ctx.queue.submit([encoder.finish()]);
     Ok(())
 }
 

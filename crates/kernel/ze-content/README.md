@@ -1,5 +1,7 @@
 # ze-content
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-content.md`](../../../docs/modules/ze-content.md)。
+
 > **内容中间表示（Content IR）内核** — 公式/文本排版结果的引擎无关数据模型。
 > 纯数据 + 纯函数：只依赖 [ze-notion](../ze-notion)（及可选 `serde`），
 > 无 typst / egui / wgpu / hecs，可被任何上层 crate 安全复用。

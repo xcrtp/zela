@@ -19,6 +19,8 @@ pub enum PodError {
     HandleReleased { slot: u64 },
     /// 句柄属于另一个 Pod —— 第一版明确禁止跨 Pod 传递。
     CrossPodHandle { expected: u64, actual: u64 },
+    /// 函数句柄的 generation 不匹配：槽位已被重新登记（防 ABA）。
+    StaleFunction { slot: u64, generation: u32 },
     /// Pod 内部调用失败（自定义 Pod 的扩展点）。
     CallFailed(String),
 }
@@ -38,6 +40,10 @@ impl fmt::Display for PodError {
             Self::CrossPodHandle { expected, actual } => {
                 write!(f, "跨 Pod 句柄：句柄属于 Pod {actual}，当前 Pod 是 {expected}")
             }
+            Self::StaleFunction { slot, generation } => write!(
+                f,
+                "函数句柄已失效（槽位 {slot}，generation {generation}）"
+            ),
             Self::CallFailed(msg) => write!(f, "调用失败：{msg}"),
         }
     }

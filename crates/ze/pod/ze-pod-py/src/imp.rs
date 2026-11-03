@@ -12,7 +12,7 @@
 use std::any::Any;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -23,7 +23,7 @@ use ze_pod_core::{
     Capability, ErasedFn, Field, FunctionId, QualifiedName, RegistryPod, ScalarKind, ScalarValue,
     ServiceRequirement, SyncPod, TypeSpec, Pod, PodError, PodId,
 };
-use ze_pod_binding::{BindingPlan, ValueCodec, invoke, short_name};
+use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, invoke, short_name};
 
 use crate::{ENTRY_SERVICE, FINISH_PATH, FloatList, PythonApi, RESET_PATH, RUN_PATH};
 
@@ -120,6 +120,7 @@ impl<'py> ValueCodec for PyCodec<'py> {
                 ScalarKind::F32 => ScalarValue::F32(bound.extract::<f32>()?),
                 ScalarKind::F64 => ScalarValue::F64(bound.extract::<f64>()?),
                 ScalarKind::I32 => ScalarValue::I32(bound.extract::<i32>()?),
+                ScalarKind::I64 => ScalarValue::I64(bound.extract::<i64>()?),
                 ScalarKind::U32 => ScalarValue::U32(bound.extract::<u32>()?),
                 ScalarKind::U64 => ScalarValue::U64(bound.extract::<u64>()?),
                 ScalarKind::U8 => ScalarValue::U8(bound.extract::<u8>()?),
@@ -127,7 +128,7 @@ impl<'py> ValueCodec for PyCodec<'py> {
                 ScalarKind::String => ScalarValue::String(bound.extract::<String>()?),
             })),
             TypeSpec::Opaque(_) => Err(PyErr::new::<PyTypeError, _>("期望 zela 句柄（PyHandle）")),
-            TypeSpec::Array { elem } => {
+            TypeSpec::Array { elem, .. } => {
                 let list = bound.cast::<PyList>()?;
                 let mut values = Vec::with_capacity(list.len());
                 for item in list.iter() {
@@ -135,7 +136,7 @@ impl<'py> ValueCodec for PyCodec<'py> {
                 }
                 Ok(ze_pod_core::PodValue::Array(values))
             }
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let dict = bound.cast::<PyDict>()?;
                 let mut values = Vec::with_capacity(fields.len());
                 for field in *fields {
@@ -149,6 +150,14 @@ impl<'py> ValueCodec for PyCodec<'py> {
             TypeSpec::Enum { name, .. } => Err(PyErr::new::<PyTypeError, _>(format!(
                 "枚举 `{name}` 请用构造器创建"
             ))),
+            // 泛型 / 类型变量没有 PodValue 形态：它们是**装配期类型**，
+            // 具体转换必须由绑定层显式提供（S1 只保证 schema 能表达）。
+            TypeSpec::Var(name) => Err(PyErr::new::<PyTypeError, _>(format!(
+                "类型变量 `{name}` 没有运行时表示"
+            ))),
+            TypeSpec::App { ty, .. } => Err(PyErr::new::<PyTypeError, _>(format!(
+                "泛型类型 `{ty}` 没有通用运行时转换"
+            ))),
         }
     }
 
@@ -159,6 +168,7 @@ impl<'py> ValueCodec for PyCodec<'py> {
                 ScalarValue::F32(v) => v.into_pyobject(py)?.into_any(),
                 ScalarValue::F64(v) => v.into_pyobject(py)?.into_any(),
                 ScalarValue::I32(v) => v.into_pyobject(py)?.into_any(),
+                ScalarValue::I64(v) => v.into_pyobject(py)?.into_any(),
                 ScalarValue::U32(v) => v.into_pyobject(py)?.into_any(),
                 ScalarValue::U64(v) => v.into_pyobject(py)?.into_any(),
                 ScalarValue::U8(v) => v.into_pyobject(py)?.into_any(),
@@ -217,6 +227,14 @@ fn make_function<'py>(
     )
 }
 
+/// 构造器：**可调用对象**（`functools.partial` 包一层 C 函数）。
+///
+/// 提案 #6 C：`PyCFunction` 不能挂属性，而组件构造器要带通道常量
+/// （`Circle.channel.radius`）⇒ 必须换成支持 `setattr` 的可调用对象。`partial`
+/// 保留 C 函数的调用语义，又带 `__dict__`。
+///
+/// 参数形态：位置参数（按字段顺序，可省略有默认值的尾部字段）或 kwargs；
+/// 缺字段读默认值白名单（`Color.a = 255`）。
 fn make_ctor<'py>(
     py: Python<'py>,
     fields: &'static [Field],
@@ -224,8 +242,8 @@ fn make_ctor<'py>(
     variant: Option<&'static str>,
     ctor: Option<ErasedFn>,
     service: Arc<dyn SyncPod>,
-) -> PyResult<Bound<'py, PyCFunction>> {
-    PyCFunction::new_closure(
+) -> PyResult<Bound<'py, PyAny>> {
+    let inner = PyCFunction::new_closure(
         py,
         None,
         None,
@@ -234,16 +252,22 @@ fn make_ctor<'py>(
             let codec = PyCodec { py };
             let mut values = Vec::with_capacity(fields.len());
             for (index, field) in fields.iter().enumerate() {
-                let item: Bound<'_, PyAny> = match kwargs {
-                    Some(dict) => dict.get_item(field.name)?.ok_or_else(|| {
-                        PyErr::new::<PyTypeError, _>(format!(
-                            "`{type_name}` 缺少字段 `{}`",
-                            field.name
-                        ))
-                    })?,
-                    None => args.get_item(index)?,
+                let item: Option<Bound<'_, PyAny>> = match kwargs {
+                    Some(dict) => dict.get_item(field.name)?,
+                    None => args.get_item(index).ok(),
                 };
-                values.push((field.name, codec.to_pod(&item, field.ty)?));
+                let value = match item {
+                    Some(item) => codec.to_pod(&item, field.ty)?,
+                    None => ze_pod_binding::field_default(type_name, field.name).ok_or_else(
+                        || {
+                            PyErr::new::<PyTypeError, _>(format!(
+                                "`{type_name}` 缺少字段 `{}`",
+                                field.name
+                            ))
+                        },
+                    )?,
+                };
+                values.push((field.name, value));
             }
             let value = match variant {
                 Some(variant) => ze_pod_core::PodValue::Enum(type_name, variant, values),
@@ -261,7 +285,10 @@ fn make_ctor<'py>(
                     .unbind()),
             }
         },
-    )
+    )?;
+    let functools = py.import("functools")?;
+    let partial = functools.getattr("partial")?.call1((inner,))?;
+    Ok(partial)
 }
 
 /// 一个已注册能力的绑定器（泛型在注册时单态化，运行时只留 fn 指针）。
@@ -319,12 +346,42 @@ fn bind_capability<C: Capability<'static>>(
         parent.bind(py).setattr(name, &service_module)?;
     }
     this.module.bind(py).setattr(service_name, &service_module)?;
+    install_clock_alias(py, this, &service_module, plan.calls)?;
 
-    register_types(py, this, &service_module, &plan, service)?;
+    register_types(py, this, &service_module, namespace, &plan, service)?;
     this.modules
         .lock()
         .expect("Python 模块表锁中毒")
         .insert(namespace.to_string(), service_module.unbind());
+    Ok(())
+}
+
+/// `clock_*` 前缀的函数同时挂到 **`clock` 命名空间**（`clock.shift` / `clock.scale` /
+/// `clock.nest` / `clock.time`）。
+///
+/// 与 Lua / JS 同一约定：同一份 capability 暴露两个名字，不需要新增 Service。
+fn install_clock_alias(
+    py: Python<'_>,
+    this: &PyPod,
+    service_module: &Bound<'_, PyModule>,
+    calls: &'static [ErasedFn],
+) -> PyResult<()> {
+    if !calls
+        .iter()
+        .any(|item| item.signature.name.starts_with("clock_"))
+    {
+        return Ok(());
+    }
+    let clock = py.import("types")?.getattr("SimpleNamespace")?.call0()?;
+    for item in calls {
+        let Some(short) = item.signature.name.strip_prefix("clock_") else {
+            continue;
+        };
+        clock.setattr(short, service_module.getattr(item.signature.name)?)?;
+    }
+    // 两个入口同一份对象：根包（`zela.clock`）与能力模块（`zela.math.clock`）。
+    this.module.bind(py).setattr("clock", &clock)?;
+    service_module.setattr("clock", &clock)?;
     Ok(())
 }
 
@@ -335,6 +392,7 @@ fn register_types(
     py: Python<'_>,
     this: &PyPod,
     service_module: &Bound<'_, PyModule>,
+    namespace: &str,
     plan: &BindingPlan,
     service: Arc<dyn SyncPod>,
 ) -> PyResult<()> {
@@ -346,12 +404,17 @@ fn register_types(
             .unwrap_or("");
         let home_module = if home.is_empty() {
             None
+        } else if home == namespace {
+            // 类型自己的 home 就是本能力的模块（`zela.math.Mix` → `zela.math`）：
+            // 复用**已注册的服务模块**。若走 `ensure_package` 会新建同名包并覆盖
+            // `zela.math`，把 `bind` / `pure` 等函数从模块上抹掉。
+            Some(service_module.clone().unbind())
         } else {
             Some(ensure_package(py, this, home)?)
         };
 
         match spec {
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let ctor = plan.component_ctor(name);
                 let function =
                     make_ctor(py, fields, name, None, ctor, Arc::clone(&service))?;
@@ -396,6 +459,158 @@ fn register_types(
             _ => {}
         }
     }
+    attach_channels(py, this, service_module, &service)?;
+    attach_methods(py, this, service_module, &service)?;
+    Ok(())
+}
+
+/// 表达式能力的模块（方法糖经它的 `method` 入口；与脚本里 `import zela.math as expr` 同源）。
+const EXPR_MODULE: &str = "zela.math";
+
+/// 方法名 → `&'static CStr`（`PyCFunction::new_closure` 的 `name` 参数）。
+///
+/// pyo3 0.30 的签名是 `Option<&'static CStr>`（它存裸指针，不能是临时值）；
+/// 方法名来自**静态登记表**（`MethodDecl.name: &'static str`），方法总数固定
+/// ⇒ 每个名字泄漏一次是**有界**的，不随 Pod 实例数增长。
+fn method_name_cstr(name: &'static str) -> &'static CStr {
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<&'static str, &'static CStr>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+    if let Some(cached) = cache.get(name) {
+        return *cached;
+    }
+    let leaked: &'static CStr = Box::leak(
+        CString::new(name)
+            .expect("方法名不应含 NUL")
+            .into_boxed_c_str(),
+    );
+    cache.insert(name, leaked);
+    leaked
+}
+
+/// 把 `Pod::methods()` 的**方法**挂到组件构造器上：`Reveal.current_pos(curve)`。
+///
+/// 与通道常量同一套路（`Reveal.channel.*`），区别是值是函数：调用时组
+/// `MethodCallSpec { name, object, args }` 再走 `zela.math.method`。
+///
+/// 表达式能力在**后**注册 ⇒ 模块在调用时才解析（拿父包 `zela` 现取 `math`）。
+fn attach_methods(
+    py: Python<'_>,
+    this: &PyPod,
+    service_module: &Bound<'_, PyModule>,
+    service: &Arc<dyn SyncPod>,
+) -> PyResult<()> {
+    let methods = service.methods();
+    if methods.is_empty() {
+        return Ok(());
+    }
+    let root = match EXPR_MODULE.rsplit_once('.') {
+        Some((root, _)) => root,
+        None => return Ok(()),
+    };
+    let Some(parent) = this
+        .packages
+        .lock()
+        .expect("Python 包表锁中毒")
+        .get(root)
+        .map(|module| module.clone_ref(py))
+    else {
+        return Ok(());
+    };
+    let child = EXPR_MODULE.rsplit('.').next().unwrap_or(EXPR_MODULE);
+    for method in methods {
+        let qualified = method.qualified;
+        let arity = method.arity;
+        let parent = parent.clone_ref(py);
+        let function = PyCFunction::new_closure(
+            py,
+            Some(method_name_cstr(method.name)),
+            None,
+            move |args: &Bound<'_, PyTuple>,
+                  _kwargs: Option<&Bound<'_, PyDict>>|
+                  -> PyResult<Py<PyAny>> {
+                let py = args.py();
+                if args.len() != arity + 1 {
+                    return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                        "`{qualified}(object, …)` 需要 1 个接收者 + {arity} 个参数，实际 {}",
+                        args.len()
+                    )));
+                }
+                let expr = parent.bind(py).getattr(child)?;
+                let method_fn = expr.getattr("method")?;
+                let spec = PyDict::new(py);
+                spec.set_item("name", qualified)?;
+                spec.set_item("object", args.get_item(0)?)?;
+                let list = PyList::empty(py);
+                for index in 1..args.len() {
+                    list.append(args.get_item(index)?)?;
+                }
+                spec.set_item("args", list)?;
+                // 返回 `Py<PyAny>`（**不带生命周期**）：闭包被 pyo3 以 HRTB 调用，
+                // 返回 `Bound<'_, _>` 会让「闭包参数的生命周期」逃进返回值
+                // （E0521 / IntoPyCallbackOutput is not general enough）。
+                method_fn.call1((spec,)).map(|value| value.unbind())
+            },
+        )?;
+        for module in [this.module.bind(py), service_module] {
+            let Ok(ctor) = module.getattr(method.component) else {
+                continue;
+            };
+            ctor.setattr(method.name, &function)?;
+        }
+    }
+    Ok(())
+}
+
+/// 把 `Pod::channels()` 的常量挂到**构造器对象的 `channel` 字段**上
+/// （`Circle.channel.radius`）。
+///
+/// 常量是普通 dict `{ "namespace": ..., "name": ... }` —— 与 `expr.bind` 的
+/// `ChannelDecl` 同形；三种语言不需要专用令牌。
+///
+/// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
+/// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
+fn attach_channels(
+    py: Python<'_>,
+    this: &PyPod,
+    service_module: &Bound<'_, PyModule>,
+    service: &Arc<dyn SyncPod>,
+) -> PyResult<()> {
+    for channel in service.channels() {
+        let value = PyDict::new(py);
+        value.set_item("namespace", channel.namespace)?;
+        value.set_item("name", channel.address)?;
+        // 第 2 批：类型随常量过边界（结构化枚举值，不再是脚本手写字符串）。
+        value.set_item(
+            "ty",
+            Py::new(
+                py,
+                PyPodValue {
+                    value: ze_pod_core::PodValue::Enum(
+                        "zela.math.ChannelType",
+                        channel_type_variant(channel.ty),
+                        Vec::new(),
+                    ),
+                },
+            )?,
+        )?;
+        for module in [this.module.bind(py), service_module] {
+            let Ok(ctor) = module.getattr(channel.component) else {
+                continue;
+            };
+            // 组件首次出现时建 `channel`（SimpleNamespace）；后续常量往里塞。
+            let holder = match ctor.getattr("channel") {
+                Ok(holder) => holder,
+                Err(_) => {
+                    let holder = py.import("types")?.getattr("SimpleNamespace")?.call0()?;
+                    ctor.setattr("channel", &holder)?;
+                    holder
+                }
+            };
+            holder.setattr(channel.name, &value)?;
+        }
+    }
     Ok(())
 }
 
@@ -423,8 +638,8 @@ pub struct PyPod {
     registry: RegistryPod,
     module: Py<PyModule>,
     injected: Mutex<Vec<String>>,
-    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**）。
-    binders: Mutex<BTreeMap<String, BinderEntry>>,
+    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**；同一 Service 可有多个能力）。
+    binders: Mutex<BTreeMap<String, Vec<BinderEntry>>>,
     /// 已注入 Service 的线程安全视图（`Drop` 时随 `Arc` 一起释放）。
     slots: Mutex<HashMap<String, Arc<dyn SyncPod>>>,
     /// capability 包树（`zela` 等）；脚本执行前安装到 `sys.modules`。
@@ -437,6 +652,8 @@ pub struct PyPod {
 struct BinderEntry {
     /// 协商 + 建 Python 侧模块。
     bind: BindFn,
+    /// 能力在脚本里的命名空间名（缺省 = Service 名；`zela.sugar` 与 `expr` 同源）。
+    global: String,
     /// 自述需求（`required` 由注册时决定）。
     requirements: Vec<ServiceRequirement>,
 }
@@ -509,6 +726,16 @@ impl PyPod {
     ///
     /// `required = false` ⇒ 该 Service 是 **optional**：没有提供者也能装配。
     pub fn register_capability<C: Capability<'static>>(&self, service: &str, required: bool) {
+        self.register_capability_as::<C>(service, service, required);
+    }
+
+    /// 注册一个能力，并指定它在脚本里的命名空间名（可以与 Service 名不同）。
+    pub fn register_capability_as<C: Capability<'static>>(
+        &self,
+        service: &str,
+        global: &str,
+        required: bool,
+    ) {
         let requirements = C::signatures()
             .iter()
             .map(|sig| ServiceRequirement::new(service, &sig.qualified().to_string(), required))
@@ -516,13 +743,13 @@ impl PyPod {
         self.binders
             .lock()
             .expect("Python 绑定表锁中毒")
-            .insert(
-                service.to_string(),
-                BinderEntry {
-                    bind: bind_capability::<C>,
-                    requirements,
-                },
-            );
+            .entry(service.to_string())
+            .or_default()
+            .push(BinderEntry {
+                bind: bind_capability::<C>,
+                global: global.to_string(),
+                requirements,
+            });
     }
 
     /// 宿主 → 脚本：执行一段 Python 源码，取回入口 Service 的产物 `T`。
@@ -597,7 +824,7 @@ fn py_requirements(pod: &dyn Pod) -> Vec<ServiceRequirement> {
         .lock()
         .expect("Python 绑定表锁中毒")
         .values()
-        .flat_map(|entry| entry.requirements.iter().cloned())
+        .flat_map(|entries| entries.iter().flat_map(|entry| entry.requirements.iter().cloned()))
         .collect()
 }
 
@@ -617,16 +844,23 @@ fn py_inject_sync(
     service_pod: Arc<dyn SyncPod>,
 ) -> Result<(), PodError> {
     let this = py_pod(pod);
-    let binder = this
-        .binders
-        .lock()
-        .expect("Python 绑定表锁中毒")
-        .get(&service)
-        .map(|entry| entry.bind);
-    let Some(binder) = binder else {
-        return Err(PodError::CallFailed(format!(
-            "未知 Service `{service}`（能力未注册；先调用 `PyPod::register_capability`）"
-        )));
+    let entries: Vec<(BindFn, String)> = {
+        match this
+            .binders
+            .lock()
+            .expect("Python 绑定表锁中毒")
+            .get(&service)
+        {
+            Some(entries) => entries
+                .iter()
+                .map(|entry| (entry.bind, entry.global.clone()))
+                .collect(),
+            None => {
+                return Err(PodError::CallFailed(format!(
+                    "未知 Service `{service}`（能力未注册；先调用 `PyPod::register_capability`）"
+                )));
+            }
+        }
     };
 
     this.slots
@@ -638,7 +872,12 @@ fn py_inject_sync(
         .expect("Python 注入表锁中毒")
         .push(service.clone());
 
-    let result = Python::attach(|py| binder(py, this, &service, service_pod));
+    let result = Python::attach(|py| -> PyResult<()> {
+        for (binder, global) in entries {
+            binder(py, this, &global, Arc::clone(&service_pod))?;
+        }
+        Ok(())
+    });
     if let Err(error) = result {
         this.slots
             .lock()

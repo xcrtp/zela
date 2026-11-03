@@ -1,11 +1,13 @@
 # ze-pod-macro
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-macro.md`](../../../../docs/modules/ze-pod-macro.md)。
+
 > **`ze-pod-core` 的过程宏支撑**。
 > 提供 `#[capability]`（把「函数集合」struct 变成运行时协商出的 typed 句柄）
 > 与 `#[derive(PodType)]`（类型定义 → `TypeSpec` + 双向转换）。
 >
 > 单独成 crate 是 Rust 的硬性要求：proc-macro 必须独立编译；
-> `ze-pod-core` 本身保持零依赖。
+> `ze-pod-core` 本身只依赖同仓 kernel 的 `ze-type`（类型代数）/ `ze-reflect`（句柄机制）。
 
 ---
 

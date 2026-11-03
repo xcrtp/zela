@@ -15,8 +15,12 @@
 use std::sync::Arc;
 
 use ze_pod_core::{
-    AssemblyPlan, Broker, BrokerError, Capability, FnSig, NodeSpec, Pod, PodNode,
-    ServiceRequirement,
+    AssemblyPlan, Broker, BrokerError, Capability, FnSig, NodeSpec, Pod, PodError, PodNode,
+    ScalarKind, ServiceRequirement, TypeSpec,
+};
+use ze_pod_func::{
+    ChannelType, ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SCENE_NAMESPACE,
+    SERVICE as EXPR_SERVICE, SugarApi,
 };
 use ze_pod_lua::LuaPod;
 use ze_prerender::InMemoryEngine;
@@ -36,10 +40,13 @@ pub fn plan(with_python: bool, with_js: bool) -> AssemblyPlan {
     let mut nodes = vec![
         NodeSpec::new("scene", &["scene"], Vec::new()),
         NodeSpec::new("content", &["content"], Vec::new()),
+        // 函子库：独立 Service / 独立 namespace ⇒ 加算子不动 `zela.scene` 的指纹。
+        NodeSpec::new(EXPR_SERVICE, &[EXPR_SERVICE], Vec::new()),
     ];
 
     let mut lua_requires = requirements("scene", SceneApi::signatures(), true);
     lua_requires.extend(requirements("content", ContentApi::signatures(), true));
+    lua_requires.extend(requirements(EXPR_SERVICE, MathApi::signatures(), true));
 
     #[cfg(feature = "python")]
     {
@@ -51,6 +58,7 @@ pub fn plan(with_python: bool, with_js: bool) -> AssemblyPlan {
         if with_python {
             let mut python_requires = requirements("scene", SceneApi::signatures(), true);
             python_requires.extend(requirements("content", ContentApi::signatures(), true));
+            python_requires.extend(requirements(EXPR_SERVICE, MathApi::signatures(), true));
             nodes.push(NodeSpec::new("python", &["python"], python_requires));
         }
     }
@@ -67,6 +75,7 @@ pub fn plan(with_python: bool, with_js: bool) -> AssemblyPlan {
     if with_js {
         let mut js_requires = requirements("scene", SceneApi::signatures(), true);
         js_requires.extend(requirements("content", ContentApi::signatures(), true));
+        js_requires.extend(requirements(EXPR_SERVICE, MathApi::signatures(), true));
         nodes.push(NodeSpec::new("js", &["js"], js_requires));
     }
     #[cfg(not(feature = "js"))]
@@ -84,20 +93,16 @@ fn requirements(service: &str, signatures: &[FnSig], required: bool) -> Vec<Serv
         .collect()
 }
 
-/// 装配失败：语言节点初始化或 Broker 校验。
+/// 装配失败：Broker 校验（语言节点初始化失败不再算装配失败，见 [`assemble`]）。
 #[derive(Debug)]
 pub enum AssemblyError {
     Broker(BrokerError),
-    #[cfg(feature = "python")]
-    Python(ze_pod_core::PodError),
 }
 
 impl std::fmt::Display for AssemblyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Broker(error) => write!(f, "{error}"),
-            #[cfg(feature = "python")]
-            Self::Python(error) => write!(f, "Python 适配器初始化失败：{error}"),
         }
     }
 }
@@ -117,6 +122,10 @@ pub struct PodAssembly {
     // 保留：默认构建无读取点，但 python feature 的测试会用到；属"排查句柄"而非漏接线。
     #[allow(dead_code)]
     pub lua: Arc<LuaPod>,
+    /// 函子库 Pod 句柄：脚本结束后取走表达式绑定，并入 `SceneScript`。
+    pub(crate) expr: Arc<ExprPod>,
+    /// 场景 Service 句柄：表达式绑定的 pod 句柄 → 脚本句柄（装配期转换）。
+    pub(crate) scene: Arc<pod::SceneServicePod>,
     /// 内容 Service 句柄：`compile_script` 用它读"内容能力是否被实际使用"。
     pub(crate) content: Arc<pod::ContentServicePod>,
     /// JS Pod 句柄（`js` feature）：只用于测试 / 排查。
@@ -131,46 +140,588 @@ impl PodAssembly {
         self.content.used()
     }
 
-    /// 宿主 → Lua：执行分镜脚本，取回 `SceneScript`。
+    /// Python 节点是否真的装上了（解释器缺失 / 嵌入失败时会跳过，见 [`assemble`]）。
+    #[cfg(all(test, feature = "python"))]
+    pub fn has_python(&self) -> bool {
+        self.broker.nodes().iter().any(|node| node.name == "python")
+    }
+
+    /// 宿主 → Lua：执行分镜脚本，取回 `SceneScript`（含表达式绑定合并）。
     pub fn run_script(&self, source: &str) -> Result<SceneScript, BrokerError> {
+        self.clear_expr_bindings();
         let owned = source.to_string();
         let arg: &dyn std::any::Any = &owned;
-        self.broker.run_with("lua", ze_pod_lua::RUN_ENTRY, &[arg])
+        let script = self.broker.run_with("lua", ze_pod_lua::RUN_ENTRY, &[arg])?;
+        self.merge_expr_bindings(script)
     }
 
     /// 宿主 → Python：执行分镜脚本，取回 `SceneScript`。
     #[cfg(feature = "python")]
     pub fn run_python_script(&self, source: &str) -> Result<SceneScript, BrokerError> {
+        self.clear_expr_bindings();
         let owned = source.to_string();
         let arg: &dyn std::any::Any = &owned;
-        self.broker.run_with("python", ze_pod_py::RUN_ENTRY, &[arg])
+        let script = self
+            .broker
+            .run_with("python", ze_pod_py::RUN_ENTRY, &[arg])?;
+        self.merge_expr_bindings(script)
     }
 
     /// 宿主 → JS：执行分镜脚本，取回 `SceneScript`。
     #[cfg(feature = "js")]
     pub fn run_js_script(&self, source: &str) -> Result<SceneScript, BrokerError> {
+        self.clear_expr_bindings();
         let owned = source.to_string();
         let arg: &dyn std::any::Any = &owned;
-        self.broker.run_with("js", ze_pod_js::RUN_ENTRY, &[arg])
+        let script = self.broker.run_with("js", ze_pod_js::RUN_ENTRY, &[arg])?;
+        self.merge_expr_bindings(script)
+    }
+
+    /// 清掉上一轮残留（脚本执行失败时也可能留下半成品）。
+    fn clear_expr_bindings(&self) {
+        let _ = self.expr.take_bindings();
+        let _ = self.expr.take_bind_each();
+        let _ = self.expr.take_shaders();
+        let _ = self.expr.take_plots();
+    }
+
+    /// 把脚本登记的表达式动画并入成品脚本（S3 / 提案 #6 B）。
+    ///
+    /// 对象是脚本拿到的 **pod 句柄**：这里（装配期）转成本脚本内的句柄，
+    /// 产物只存后者。装配期错误（未知目标 / 越界句柄 / 未注入通道）在这里**显式失败**。
+    fn merge_expr_bindings(&self, mut script: SceneScript) -> Result<SceneScript, BrokerError> {
+        let (bindings, errors) = self.expr.take_bindings();
+        let bind_each = self.expr.take_bind_each();
+        if let Some(message) = errors.into_iter().next() {
+            return Err(BrokerError::Injection {
+                node: EXPR_SERVICE.to_string(),
+                source: PodError::CallFailed(message),
+            });
+        }
+        let library_namespace = LIBRARY_NAMESPACE.to_string();
+        let library_version = LIBRARY_VERSION.to_string();
+        // 对象集在脚本结束后冻结 ⇒ `exists` 在这里就折成常量（B4 Query）。
+        let component_names = self.scene.component_names();
+        for pending in bindings {
+            let expr = fold_exists(&pending.expr, &component_names)?;
+            let predicate = pending
+                .predicate
+                .as_ref()
+                .map(|predicate| fold_exists(predicate, &component_names))
+                .transpose()?;
+            let namespace = pending.target.namespace.as_str();
+            if !namespace.is_empty() && namespace != SCENE_NAMESPACE {
+                return Err(BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "表达式绑定目标的命名空间未知：`{namespace}`（只接受 `{SCENE_NAMESPACE}`）"
+                    )),
+                });
+            }
+            let object = self.scene.object_handle(&pending.object).ok_or_else(|| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "表达式绑定的对象句柄无效：{}",
+                        pending.object
+                    )),
+                }
+            })?;
+            // 根表达式类型 vs 目标字段类型：装配期显式失败（硬约束 5）。
+            if let Some(entry) = zela_scene_ecs::target_entry(&pending.target.name) {
+                if let Some(expected) = expected_value_type(entry.spec.ty) {
+                    if expected != pending.root_type {
+                        return Err(BrokerError::Injection {
+                            node: EXPR_SERVICE.to_string(),
+                            source: PodError::CallFailed(format!(
+                                "表达式绑定 `{}` 的目标 `{}` 期望 {}，根表达式是 {}",
+                                pending.object,
+                                pending.target.name,
+                                expected.name(),
+                                pending.root_type.name()
+                            )),
+                        });
+                    }
+                }
+            }
+            // 时钟是**数据**：Pod 侧的扁平链在这里转成产物类型（与通道同一套路）。
+            let clock = zela_scene_ecs::ClockProgram {
+                links: pending
+                    .clock
+                    .links
+                    .iter()
+                    .map(|link| zela_scene_ecs::ClockLink {
+                        shift: link.shift,
+                        rate: link.rate,
+                    })
+                    .collect(),
+            };
+            // predicate / reset 也是数据：Pod 侧的枚举在这里映射成产物侧的策略。
+            let reset = match pending.reset {
+                ze_pod_func::ResetSpec::Hold => zela_scene_ecs::animation::ResetBehavior::Hold,
+                ze_pod_func::ResetSpec::Reset => zela_scene_ecs::animation::ResetBehavior::Reset,
+                ze_pod_func::ResetSpec::Skip => zela_scene_ecs::animation::ResetBehavior::Skip,
+            };
+            // 第 BB 批（阶段 6）：`duration` 在这里**先**展开成 `clock.range(0, d)`，
+            // 让 predicate 的算子 revision 与手写 predicate 走同一条收集路径
+            // （否则产物里会少 `and` / `ge` / `lt` 三条）。冲突检查仍留给场景层。
+            let (predicate, duration) = match (&predicate, pending.duration) {
+                (None, duration) if duration > 0.0 => (
+                    Some(zela_scene_ecs::scene_script::duration_predicate(duration)),
+                    0.0,
+                ),
+                _ => (predicate, pending.duration),
+            };
+            // **第 4 批**：把这条绑定**实际用到的算子** revision 写进产物
+            // （predicate 是独立表达式，同样记录；算子身份与 revision 同源于函子库）。
+            let mut op_revisions = ze_pod_func::collect_op_revisions(&expr);
+            if let Some(predicate) = &predicate {
+                op_revisions.extend(ze_pod_func::collect_op_revisions(predicate));
+            }
+            let library = zela_scene_ecs::animation::LibraryRef {
+                namespace: library_namespace.clone(),
+                version: library_version.clone(),
+                op_revisions,
+            };
+            script
+                .bind_expr_gated(
+                    object,
+                    &pending.target.name,
+                    expr,
+                    library,
+                    clock,
+                    predicate,
+                    reset,
+                    duration,
+                )
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(error.to_string()),
+                })?;
+        }
+        self.expand_bind_each(&mut script, bind_each)?;
+        // **动画层阶段 1（plot）**：装配期采样成折线（一次性，不进运行期）。
+        self.sample_plots(&mut script, self.expr.take_plots())?;
+        // **阶段 2（着色 codegen）**：脚本登记的 `expr.shader` 挂成对象组件（装饰性）。
+        for pending in self.expr.take_shaders() {
+            let object = self.scene.object_handle(&pending.object).ok_or_else(|| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "着色 codegen 的对象句柄无效：{}",
+                        pending.object
+                    )),
+                }
+            })?;
+            script
+                .shader_fill(
+                    object,
+                    ze_render_ir::ShaderPaint {
+                        source: pending.source,
+                        params: pending
+                            .params
+                            .into_iter()
+                            .map(|param| ze_render_ir::ShaderParam {
+                                channel: param.channel,
+                                kind: match param.kind {
+                                    ze_comb::SlotType::F64 => ze_render_ir::ShaderParamKind::F32,
+                                    ze_comb::SlotType::I64 => ze_render_ir::ShaderParamKind::I32,
+                                    ze_comb::SlotType::Vec2 => ze_render_ir::ShaderParamKind::Vec2,
+                                    ze_comb::SlotType::Vec3 => ze_render_ir::ShaderParamKind::Vec3,
+                                    // **BT-1**：四维出口（`rgba`）。
+                                    ze_comb::SlotType::Vec4 => ze_render_ir::ShaderParamKind::Vec4,
+                                    ze_comb::SlotType::Bool => ze_render_ir::ShaderParamKind::F32,
+                                },
+                                offset: param.offset,
+                            })
+                            .collect(),
+                        size: pending.size,
+                        fragment: pending.fragment,
+                        // **BT-3**：手写来源要一路带到 IR（路由理由按它区分）。
+                        hand_written: pending.hand_written,
+                        // **BT-4**：vec4 出口（w = 着色器给的透明度）。
+                        rgba: pending.rgba,
+                    },
+                )
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(error),
+                })?;
+        }
+        Ok(script)
+    }
+
+    /// **动画层阶段 1（plot）**：装配期逐点求值，把结果挂成对象的折线。
+    ///
+    /// 采样只发生一次（脚本结束后），参数（`lo` / `hi` / `samples`）随脚本固定 ⇒
+    /// 运行期每帧不重算。自变量由 [`PlotMono::x_at`] 给出（与运行期语义同一份实现）。
+    fn sample_plots(
+        &self,
+        script: &mut SceneScript,
+        pendings: Vec<ze_pod_func::PendingPlot>,
+    ) -> Result<(), BrokerError> {
+        for pending in pendings {
+            let object = self.scene.object_handle(&pending.object).ok_or_else(|| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "函数图像的对象句柄无效：{}",
+                        pending.object
+                    )),
+                }
+            })?;
+            let program = ze_comb::CompiledExpr::compile(&pending.y).map_err(|error| {
+                BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!("函数图像的表达式非法：{error}")),
+                }
+            })?;
+            let mono = PlotMono {
+                lo: pending.lo,
+                hi: pending.hi,
+                samples: pending.samples,
+            };
+            let values = program
+                .eval_elements(&mono, pending.samples)
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!("函数图像采样失败：{error}")),
+                })?;
+            let mut points = Vec::with_capacity(values.len());
+            for (index, value) in values.items().iter().enumerate() {
+                let y = value.as_f64().ok_or_else(|| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "函数图像第 {index} 个采样点不是数值（实际 {}）",
+                        value.kind()
+                    )),
+                })?;
+                points.push((mono.x_at(index as u32) as f32, y as f32));
+            }
+            script
+                .attach_polyline(object, &points)
+                .map_err(|error| BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(error),
+                })?;
+        }
+        Ok(())
+    }
+
+    /// **B4 Query**：把批量绑定在**装配期**展开成 N 条具体绑定。
+    ///
+    /// 三条硬约束：
+    /// 1. 结果集按 `ObjectId` 升序（脚本句柄下标即 create 序）；不依赖任何容器迭代序；
+    /// 2. 过滤条件只能是组件类型组合（装配期可判定）；未知组件名 ⇒ 显式失败；
+    /// 3. 展开数 **N 必须可见**（`N = 0` 打印但不报错，与 `Sum{n=0}` 同类）。
+    fn expand_bind_each(
+        &self,
+        script: &mut SceneScript,
+        pendings: Vec<ze_pod_func::PendingBindEach>,
+    ) -> Result<(), BrokerError> {
+        if pendings.is_empty() {
+            return Ok(());
+        }
+        let component_names = self.scene.component_names();
+        for pending in pendings {
+            let namespace = pending.target.namespace.as_str();
+            if !namespace.is_empty() && namespace != SCENE_NAMESPACE {
+                return Err(BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "批量绑定目标的命名空间未知：`{namespace}`（只接受 `{SCENE_NAMESPACE}`）"
+                    )),
+                });
+            }
+            for name in pending.requires.iter().chain(pending.excludes.iter()) {
+                if ze_scene_core::registry::known_component_type_id(name).is_none() {
+                    return Err(BrokerError::Injection {
+                        node: EXPR_SERVICE.to_string(),
+                        source: PodError::CallFailed(format!(
+                            "批量绑定的过滤组件名未知：`{name}`（必须是已登记组件的稳定名）"
+                        )),
+                    });
+                }
+            }
+            if let Some(entry) = zela_scene_ecs::target_entry(&pending.target.name) {
+                if let Some(expected) = expected_value_type(entry.spec.ty) {
+                    if expected != pending.root_type {
+                        return Err(BrokerError::Injection {
+                            node: EXPR_SERVICE.to_string(),
+                            source: PodError::CallFailed(format!(
+                                "批量绑定目标 `{}` 期望 {}，根表达式是 {}",
+                                pending.target.name,
+                                expected.name(),
+                                pending.root_type.name()
+                            )),
+                        });
+                    }
+                }
+            }
+
+            let reset = reset_behavior(pending.reset);
+            let clock = clock_program(&pending.clock);
+            let expr = fold_exists(&pending.expr, &component_names)?;
+            let predicate = pending
+                .predicate
+                .as_ref()
+                .map(|predicate| fold_exists(predicate, &component_names))
+                .transpose()?;
+            let mut expanded = 0usize;
+            // 句柄下标 = create 顺序 = `ObjectId` 升序 ⇒ 这里**天然**是稳定排序。
+            for (index, components) in component_names.iter().enumerate() {
+                if index >= script.len() {
+                    break;
+                }
+                let matched = pending
+                    .requires
+                    .iter()
+                    .all(|name| components.contains(&name.as_str()))
+                    && pending
+                        .excludes
+                        .iter()
+                        .all(|name| !components.contains(&name.as_str()));
+                if !matched {
+                    continue;
+                }
+                let expr = substitute_query_self(&expr, index as u64);
+                let mut op_revisions = ze_pod_func::collect_op_revisions(&expr);
+                if let Some(predicate) = &predicate {
+                    op_revisions.extend(ze_pod_func::collect_op_revisions(predicate));
+                }
+                let library = zela_scene_ecs::animation::LibraryRef {
+                    namespace: LIBRARY_NAMESPACE.to_string(),
+                    version: LIBRARY_VERSION.to_string(),
+                    op_revisions,
+                };
+                script
+                    .bind_expr_gated(
+                        ze_scene_core::scene_script::Handle(index),
+                        &pending.target.name,
+                        expr,
+                        library,
+                        clock.clone(),
+                        predicate.clone(),
+                        reset,
+                        0.0,
+                    )
+                    .map_err(|error| BrokerError::Injection {
+                        node: EXPR_SERVICE.to_string(),
+                        source: PodError::CallFailed(error.to_string()),
+                    })?;
+                expanded += 1;
+            }
+            println!(
+                "[query] 批量绑定 `{}` 展开 {expanded} 条（requires=[{}] excludes=[{}]）",
+                pending.target.name,
+                pending.requires.join(","),
+                pending.excludes.join(",")
+            );
+        }
+        Ok(())
+    }
+}
+
+/// **动画层阶段 1（plot）**：装配期采样单子。
+///
+/// 只提供一条逐元素通道 `plot.x`（第 `i` 个采样点的自变量）；其余通道**显式失败**
+/// —— 采样发生在装配期，`time` / 组件字段此刻没有值。
+struct PlotMono {
+    lo: f64,
+    hi: f64,
+    samples: u32,
+}
+
+impl PlotMono {
+    /// 第 `element` 个采样点的自变量：`lo + (hi - lo) * i / (samples - 1)`。
+    fn x_at(&self, element: u32) -> f64 {
+        let u = f64::from(element) / f64::from(self.samples - 1);
+        self.lo + (self.hi - self.lo) * u
+    }
+}
+
+impl ze_comb::Mono for PlotMono {
+    fn read(
+        &self,
+        channel: &ze_comb::ChannelRef,
+    ) -> Result<ze_comb::Value, ze_comb::EvalError> {
+        Err(ze_comb::EvalError::MissingChannel {
+            channel: channel.clone(),
+        })
+    }
+
+    fn call(
+        &self,
+        op: &ze_comb::OpRef,
+        args: &[ze_comb::Value],
+    ) -> Result<ze_comb::Value, ze_comb::EvalError> {
+        ze_pod_func::eval_op(op, args)
+    }
+
+    fn read_element(
+        &self,
+        channel: &ze_comb::ChannelRef,
+        element: u32,
+    ) -> Result<ze_comb::Value, ze_comb::EvalError> {
+        match (channel.namespace.as_str(), channel.name.as_str()) {
+            ("plot", "x") => Ok(ze_comb::Value::f64(self.x_at(element))),
+            _ => Err(ze_comb::EvalError::MissingElementChannel {
+                channel: channel.clone(),
+            }),
+        }
+    }
+}
+
+/// 装配期**常量折叠** `exists`（B4 Query）。
+///
+/// 对象集在脚本结束后已冻结 ⇒ `exists` 的值是常量（折叠**先于**区间代数：
+/// 区间代数只认依赖连续变量的表达式）。过滤组件名必须已登记，否则显式失败。
+fn fold_exists(
+    expr: &ze_comb::Expr,
+    component_names: &[Vec<&'static str>],
+) -> Result<ze_comb::Expr, BrokerError> {
+    if let Some((requires, excludes)) = expr.node.exists() {
+        for name in requires.iter().chain(excludes.iter()) {
+            if ze_scene_core::registry::known_component_type_id(name).is_none() {
+                return Err(BrokerError::Injection {
+                    node: EXPR_SERVICE.to_string(),
+                    source: PodError::CallFailed(format!(
+                        "`exists` 的过滤组件名未知：`{name}`（必须是已登记组件的稳定名）"
+                    )),
+                });
+            }
+        }
+        let found = component_names.iter().any(|components| {
+            requires
+                .iter()
+                .all(|name| components.contains(&name.as_str()))
+                && excludes
+                    .iter()
+                    .all(|name| !components.contains(&name.as_str()))
+        });
+        return Ok(ze_comb::Expr::pure(ze_comb::Literal::Bool(found)));
+    }
+    let mut failure = None;
+    let folded = expr.map_children(|child| match fold_exists(child, component_names) {
+        Ok(child) => child,
+        Err(error) => {
+            failure.get_or_insert(error);
+            child.clone()
+        }
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(folded),
+    }
+}
+
+/// 把表达式树里的 `it` 占位对象替换成具体脚本句柄下标。
+fn substitute_query_self(expr: &ze_comb::Expr, object: u64) -> ze_comb::Expr {
+    if let Some((channel, current)) = expr.node.read() {
+        if current == ze_pod_func::QUERY_SELF_OBJECT {
+            return ze_comb::Expr {
+                id: expr.id.clone(),
+                node: ze_comb::Node::Read {
+                    channel: channel.clone(),
+                    object,
+                },
+            };
+        }
+    }
+    if let Some((method, current, args)) = expr.node.method() {
+        if current == ze_pod_func::QUERY_SELF_OBJECT {
+            return ze_comb::Expr {
+                id: expr.id.clone(),
+                node: ze_comb::Node::Method {
+                    method: method.clone(),
+                    object,
+                    args: args
+                        .iter()
+                        .map(|arg| substitute_query_self(arg, object))
+                        .collect(),
+                },
+            };
+        }
+    }
+    expr.map_children(|child| substitute_query_self(child, object))
+}
+
+/// Pod 侧时钟（扁平链）→ 产物侧 `ClockProgram`。
+fn clock_program(clock: &ze_pod_func::ClockSpec) -> zela_scene_ecs::ClockProgram {
+    zela_scene_ecs::ClockProgram {
+        links: clock
+            .links
+            .iter()
+            .map(|link| zela_scene_ecs::ClockLink {
+                shift: link.shift,
+                rate: link.rate,
+            })
+            .collect(),
+    }
+}
+
+/// Pod 侧 `ResetSpec` → 产物侧 `ResetBehavior`。
+fn reset_behavior(reset: ze_pod_func::ResetSpec) -> zela_scene_ecs::animation::ResetBehavior {
+    match reset {
+        ze_pod_func::ResetSpec::Hold => zela_scene_ecs::animation::ResetBehavior::Hold,
+        ze_pod_func::ResetSpec::Reset => zela_scene_ecs::animation::ResetBehavior::Reset,
+        ze_pod_func::ResetSpec::Skip => zela_scene_ecs::animation::ResetBehavior::Skip,
+    }
+}
+
+/// 目标字段类型（pod `TypeSpec`）→ 表达式层粗类型。
+///
+/// 未知形状返回 `None`（不阻断）：类型系统只覆盖数值 / 布尔 / 向量，
+/// 其它字段由 `Target::write` 在运行期显式报 `TypeMismatch`。
+fn expected_value_type(ty: &TypeSpec) -> Option<ChannelType> {
+    match ty {
+        TypeSpec::Scalar(ScalarKind::F32 | ScalarKind::F64) => Some(ChannelType::Number),
+        TypeSpec::Scalar(ScalarKind::Bool) => Some(ChannelType::Bool),
+        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } | TypeSpec::Opaque(name) => {
+            match name.strip_prefix("zela.").unwrap_or(name) {
+                "Vec2" => Some(ChannelType::Vec2),
+                "Vec3" => Some(ChannelType::Vec3),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
 /// 静态装配：scene / content / lua（+ feature 开启时的 python / js）。
 pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyError> {
     // `nodes` 在开启 python / js feature 时需要追加节点。
-    #[cfg_attr(
-        not(any(feature = "python", feature = "js")),
-        allow(unused_mut)
-    )]
-    let (lua, content, mut nodes) = base_nodes(engine);
+    #[cfg_attr(not(any(feature = "python", feature = "js")), allow(unused_mut))]
+    let (lua, scene, content, expr, mut nodes) = base_nodes(engine);
 
     #[cfg(feature = "python")]
     {
-        let python = Arc::new(ze_pod_py::PyPod::new().map_err(AssemblyError::Python)?);
-        python.register_capability::<SceneApi>("scene", true);
-        python.register_capability::<ContentApi>("content", true);
-        // P1：Python 闭包要求 `Send + Sync` ⇒ 登记 SyncPod 徽章，Broker 走 inject_sync。
-        nodes.push(PodNode::new_sync("python", python, &["python"]));
+        // 内嵌 Python 的初始化失败是 CPython 的 **Fatal**（`Py_InitializeEx` 直接
+        // `abort()`），Rust 侧既捕获不到也没机会提示。所以：
+        //   1. 先起子进程探测"有一个能 import encodings 的解释器"，并把它指给
+        //      `PYTHONHOME`（`python_env` 的文档里写了真因）；
+        //   2. 探测或 `PyPod::new()` 任一步失败 ⇒ **只提示、跳过本节点**，
+        //      其余 Pod（scene / content / lua）照常装配。
+        match crate::python_env::ensure() {
+            Ok(()) => match ze_pod_py::PyPod::new() {
+                Ok(python) => {
+                    let python = Arc::new(python);
+                    python.register_capability::<SceneApi>("scene", true);
+                    python.register_capability::<ContentApi>("content", true);
+                    python.register_capability::<MathApi>(EXPR_SERVICE, true);
+                    // 第 BB 批（阶段 4）：糖层——同一个 expr Pod，脚本里是 `sugar` 表。
+                    python.register_capability_as::<SugarApi>(EXPR_SERVICE, "sugar", true);
+                    // P1：Python 闭包要求 `Send + Sync` ⇒ 登记 SyncPod 徽章，Broker 走 inject_sync。
+                    nodes.push(PodNode::new_sync("python", python, &["python"]));
+                }
+                Err(error) => {
+                    eprintln!("[zela-app] Python Pod 未装配（其余 Pod 照常）：{error}")
+                }
+            },
+            Err(why) => {
+                eprintln!("[zela-app] Python Pod 未装配（其余 Pod 照常）：{why}")
+            }
+        }
     }
 
     #[cfg(feature = "js")]
@@ -178,6 +729,9 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
         let js = Arc::new(ze_pod_js::JsPod::new());
         js.register_capability::<SceneApi>("scene", true);
         js.register_capability::<ContentApi>("content", true);
+        js.register_capability::<MathApi>(EXPR_SERVICE, true);
+        // 第 BB 批（阶段 4）：糖层（`sugar.ramp` …）。
+        js.register_capability_as::<SugarApi>(EXPR_SERVICE, "sugar", true);
         // boa 的 `Context` 是 `!Send + !Sync`（`examples/send_probe.rs` 实测）
         // ⇒ 与 LuaPod 一样不登记 SyncPod 徽章。
         nodes.push(PodNode::new("js", Arc::clone(&js) as Arc<dyn Pod>, &["js"]));
@@ -188,38 +742,48 @@ pub fn assemble(engine: Arc<InMemoryEngine>) -> Result<PodAssembly, AssemblyErro
     Ok(PodAssembly {
         broker,
         lua,
+        expr,
+        scene,
         content,
         #[cfg(feature = "js")]
         js,
     })
 }
 
-/// 三个内置节点 + Lua 的能力注册。
+/// 四个内置节点 + Lua 的能力注册。
 fn base_nodes(
     engine: Arc<InMemoryEngine>,
 ) -> (
     Arc<LuaPod>,
+    Arc<pod::SceneServicePod>,
     Arc<pod::ContentServicePod>,
+    Arc<ExprPod>,
     Vec<PodNode>,
 ) {
     let paths = PathStore::new();
     let scene = pod::scene_service(paths.clone());
     let content = pod::content_service(engine, paths);
+    let expr = Arc::new(ExprPod::new());
 
-    let lua = Arc::new(LuaPod::new());
+    // 前置块：`scene.text`（组合调用糖）。领域文本在 `ze-scene-api`，LuaPod 只当脚本执行。
+    let lua = Arc::new(LuaPod::new().with_prelude(pod::LUA_PRELUDE));
     lua.register_capability::<SceneApi>("scene", true);
     lua.register_capability::<ContentApi>("content", true);
+    lua.register_capability::<MathApi>(EXPR_SERVICE, true);
+    // 第 BB 批（阶段 4）：糖层（`sugar.ramp` / `sugar.wave` …）。
+    lua.register_capability_as::<SugarApi>(EXPR_SERVICE, "sugar", true);
     #[cfg(feature = "python")]
     lua.register_capability::<ze_pod_py::PythonApi>("python", false);
 
     let nodes = vec![
-        // scene / content 只含装配期状态（内部用锁），登记 SyncPod 徽章供 Python 闭包捕获。
-        PodNode::new_sync("scene", scene, &["scene"]),
+        // scene / content / expr 只含装配期状态（内部用锁），登记 SyncPod 徽章供 Python 闭包捕获。
+        PodNode::new_sync("scene", Arc::clone(&scene), &["scene"]),
         PodNode::new_sync("content", Arc::clone(&content), &["content"]),
+        PodNode::new_sync(EXPR_SERVICE, Arc::clone(&expr), &[EXPR_SERVICE]),
         // LuaPod 持有 mlua 解释器（非 Send + Sync）⇒ 不登记徽章。
         PodNode::new("lua", Arc::clone(&lua) as Arc<dyn Pod>, &["script"]),
     ];
-    (lua, content, nodes)
+    (lua, scene, content, expr, nodes)
 }
 
 fn run_broker(nodes: &[PodNode]) -> Result<Broker, AssemblyError> {
@@ -253,6 +817,74 @@ fn run_broker(nodes: &[PodNode]) -> Result<Broker, AssemblyError> {
 mod tests {
     use super::*;
     use ze_pod_core::BrokerError;
+
+    /// **B4 验收**：`exists` 在装配期折叠成常量（折叠先于区间代数）。
+    #[test]
+    fn exists_folds_to_a_constant_at_assembly() {
+        let names: Vec<Vec<&'static str>> = vec![vec!["Circle"], vec!["Circle", "Reveal"]];
+        let hit = ze_comb::Expr::call(
+            ze_comb::OpRef::new("zela.math", "mul"),
+            [ze_comb::Expr::exists(
+                vec!["Circle".to_string()],
+                vec!["Reveal".to_string()],
+            )],
+        );
+        let folded = fold_exists(&hit, &names).expect("折叠成功");
+        let (_, args) = folded.node.call().expect("外层仍是 Call");
+        assert_eq!(args[0].node.literal(), Some(&ze_comb::Literal::Bool(true)));
+
+        let miss = ze_comb::Expr::exists(vec!["Parent".to_string()], vec![]);
+        let folded = fold_exists(&miss, &names).expect("折叠成功");
+        assert_eq!(folded.node.literal(), Some(&ze_comb::Literal::Bool(false)));
+
+        // 组件名写错是装配期错误，不是"匹配空集"。
+        let bad = ze_comb::Expr::exists(vec!["NoSuchComponent".to_string()], vec![]);
+        assert!(fold_exists(&bad, &names).is_err());
+    }
+
+    /// **阶段 3 判据 1**：`scene.text`（前置块糖）与手写循环产出**逐位相同**的世界。
+    ///
+    /// 手写版就是四个既有作品里的写法（建组 → `content.text` → 逐字形 `PathShape` +
+    /// `Parent`）；糖版是一行 `scene.text(…)`。两者都必须落在同一个结构指纹上
+    /// —— 否则"改写法不改产物"只是口号。
+    #[test]
+    fn text_sugar_matches_the_handwritten_loop() {
+        use zela_scene_ecs::fingerprint_world;
+        use zela_scene_ecs::scene::Scene;
+
+        let assembly = assemble(Arc::new(crate::formula::build_engine())).expect("脚本 Pod 装配成功");
+        let handwritten = r#"
+scene.spawn({ Camera2D { scale = 40.0 } })
+local group = scene.spawn({
+    Name { value = "g" },
+    Transform { x = -1.0, y = 2.0 },
+})
+local glyphs = content.text(Text { source = "Hi", font_size = 0.5, x = 0.0, y = 0.0 })
+for i = 1, #glyphs do
+    scene.spawn({
+        PathShape { path = glyphs[i] },
+        Parent { parent = group },
+    })
+end
+"#;
+        let sugar = r#"
+scene.spawn({ Camera2D { scale = 40.0 } })
+scene.text("Hi", { size = 0.5, x = -1.0, y = 2.0, name = "g" })
+"#;
+        let digest = |source: &str| {
+            let script = assembly.run_script(source).expect("脚本执行成功");
+            let mut scene = Scene::new();
+            script.commit(&mut scene).expect("commit");
+            fingerprint_world(scene.world(), None)
+        };
+        let handwritten = digest(handwritten);
+        let sugar = digest(sugar);
+        assert_eq!(handwritten.objects, sugar.objects, "对象数必须相同");
+        assert_eq!(
+            handwritten.digest, sugar.digest,
+            "结构摘要必须逐位相同（手写 vs 糖）：{handwritten:?} / {sugar:?}"
+        );
+    }
 
     /// 描述层：拓扑 / 边 / optional 缺失全部可在**不建 Pod** 时断言。
     #[test]
@@ -341,5 +973,34 @@ mod tests {
             ),
         ]);
         assert!(matches!(plan.validate(), Err(BrokerError::Cycle { .. })));
+    }
+
+    /// 目标字段类型 → 表达式层粗类型（根 / 目标核对的桥）。
+    #[test]
+    fn target_types_map_to_expression_types() {
+        static VEC2: TypeSpec = TypeSpec::Struct {
+            name: "zela.Vec2",
+            layout: None,
+            fields: &[],
+        };
+        static VEC3: TypeSpec = TypeSpec::Struct {
+            name: "zela.Vec3",
+            layout: None,
+            fields: &[],
+        };
+        assert_eq!(
+            expected_value_type(&TypeSpec::Scalar(ScalarKind::F32)),
+            Some(ChannelType::Number)
+        );
+        assert_eq!(
+            expected_value_type(&TypeSpec::Scalar(ScalarKind::F64)),
+            Some(ChannelType::Number)
+        );
+        assert_eq!(
+            expected_value_type(&TypeSpec::Scalar(ScalarKind::Bool)),
+            Some(ChannelType::Bool)
+        );
+        assert_eq!(expected_value_type(&VEC2), Some(ChannelType::Vec2));
+        assert_eq!(expected_value_type(&VEC3), Some(ChannelType::Vec3));
     }
 }

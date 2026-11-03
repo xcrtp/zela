@@ -25,13 +25,13 @@ import math
 
 import zela
 import zela.content as content
+import zela.math as expr
 import zela.scene as scene
 from zela import (
     Arrow,
     Axes2D,
     Camera2D,
     Color,
-    Curve,
     Fill,
     Formula,
     LineStyle,
@@ -39,7 +39,6 @@ from zela import (
     Reveal,
     RevealPath,
     Stroke,
-    Target,
     Text,
     Transform,
     Vec2,
@@ -51,6 +50,33 @@ FORMULA_WRITE_SECONDS = 1.0
 
 def color(r, g, b, a):
     return Color(r=r, g=g, b=b, a=a)
+
+
+def ramp(from_, to, dur):
+    """`Ramp` 的算子化形态：`mix(from, to, clamp(t / dur, 0, 1))`（显式时钟）。"""
+    return expr.Mix(
+        a=expr.pure(from_),
+        b=expr.pure(to),
+        t=expr.Clamp(
+            x=expr.Scale(k=1.0 / dur, of=expr.clock.time()),
+            lo=expr.pure(0.0),
+            hi=expr.pure(1.0),
+        ),
+    )
+
+
+def ramp2(ax, ay, bx, by, dur):
+    return expr.Mix(
+        a=expr.Vec2Of(x=expr.pure(ax), y=expr.pure(ay)),
+        b=expr.Vec2Of(x=expr.pure(bx), y=expr.pure(by)),
+        t=expr.Clamp(
+            x=expr.Scale(k=1.0 / dur, of=expr.clock.time()),
+            lo=expr.pure(0.0),
+            hi=expr.pure(1.0),
+        ),
+    )
+
+
 
 
 # ── 分镜 1：常驻网格与坐标轴（Axes2D::unbounded() 的默认样式）──────────
@@ -109,30 +135,49 @@ scene.spawn(
     ]
 )
 
-# ── 时间编排 ──────────────────────────────────────────────────────────
+# ── 时间编排（显式时钟；旧 scene.animate / parallel / wait 的段序）──────
+
 # 0–2s：曲线书写（phase(0.5) × 2s = 1）
-scene.animate(curve, scene.clip(Target.RevealRange, Curve.Phase(omega=0.5)), 2.0)
-# 2–2.5s：停
-scene.wait(0.5)
-# 2.5–3.5s：镜头推进（scale 与 center 同区间并行）
-scene.animate(
-    camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp(40.0, 110.0, 1.0)),
-    1.0,
+expr.bind(
+    expr.Bind(
+        object=curve,
+        target=Reveal.channel.end,
+        root=expr.Scale(k=0.5, of=expr.clock.time()),
+        clock=expr.clock.scale(1.0),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 2.0)),
+    )
 )
-scene.parallel(
-    camera,
-    scene.clip(
-        Target.Camera2DFraming,
-        Curve.Ramp2(Vec2(x=0.0, y=0.0), Vec2(x=math.pi / 2, y=1.0), 1.0),
-    ),
+# 2–2.5s：停（没有绑定生效 ⇒ 上一步的值保持）
+# 2.5–3.5s：镜头推进（scale 与 center 同区间 —— 旧 parallel 的两条 action）
+expr.bind(
+    expr.Bind(
+        object=camera,
+        target=Camera2D.channel.scale,
+        root=ramp(40.0, 110.0, 1.0),
+        clock=expr.clock.shift(2.5),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 1.0)),
+    )
+)
+expr.bind(
+    expr.Bind(
+        object=camera,
+        target=Camera2D.channel.center,
+        root=ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
+        clock=expr.clock.shift(2.5),
+        predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, 1.0)),
+    )
 )
 # 3.5–4.5s：公式逐轮廓依次书写（1s 平摊；轮廓数可能为 0）
 if len(formula_handles) > 0:
     each = FORMULA_WRITE_SECONDS / len(formula_handles)
-    for handle in formula_handles:
-        scene.animate(
-            handle,
-            scene.clip(Target.RevealRange, Curve.Ramp(0.0, 1.0, each)),
-            each,
+    for index, handle in enumerate(formula_handles):
+        start = 3.5 + index * each
+        expr.bind(
+            expr.Bind(
+                object=handle,
+                target=Reveal.channel.end,
+                root=ramp(0.0, 1.0, each),
+                clock=expr.clock.shift(start),
+                predicate=expr.Predicate.Of(expr=expr.clock.range(0.0, each)),
+            )
         )

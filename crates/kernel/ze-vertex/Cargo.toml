@@ -7,7 +7,7 @@ license.workspace = true
 
 description = "Vertex format contract (pure data: layout / AA model / cache strategy / consistency check)"
 
-# 依赖铁律：ze-vertex 在 kernel 层
+# 依赖约定：ze-vertex 在 kernel 层
 #   ✅ serde — VertexLayout / VertexAttrib / AaModel / CacheStrategy 可序列化（V4）
 #   ✅ thiserror — VertexLayoutError
 #   ❌ hecs / egui / wgpu / 任何 zela-* — 绝对禁止（本 crate 必须能编译到 wasm32）

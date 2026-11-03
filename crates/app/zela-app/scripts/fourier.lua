@@ -31,9 +31,17 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+
+-- 串行段起点（旧 `scene.animate` / `wait` 的全局游标）。
+local MAIN_START = FADE
+local ZOOM_IN_START = FADE + T
+local ZOOM_OUT_START = ZOOM_IN_START + ZOOM + HOLD
 
 local function amplitude(k)
     return 4.0 / (PI * k)
@@ -54,85 +62,73 @@ local function curve_points()
     for i = 0, CURVE_SAMPLES do
         local t = TAU * i / CURVE_SAMPLES
         local x = CURVE_X0 + (CURVE_X1 - CURVE_X0) * i / CURVE_SAMPLES
-        points[#points + 1] = Vec2 { x = q(x), y = q(fourier(t)) }
+        points[#points + 1] = scene.vec2(q(x), q(fourier(t)))
     end
     return points
-end
-
-local function place_text_group(source, size, x, y)
-    local group = scene.spawn({
-        Name { value = "text-group" },
-        Transform { x = x, y = y, z = 0.0 },
-    })
-    local glyphs = content.text(Text {
-        source = source,
-        font_size = size,
-        x = 0.0,
-        y = 0.0,
-    })
-    for i = 1, #glyphs do
-        scene.spawn({
-            PathShape { path = glyphs[i] },
-            Parent { parent = group },
-        })
-    end
-    return group
 end
 
 -- ── 0. 网格 + 相机 ────────────────────────────────────────────────────
 scene.spawn({
     Axes2D {
         min_px = 12.0,
-        grid = LineStyle { width = 1.0, color = rgba(48, 48, 62, 255) },
-        axis = LineStyle { width = 2.0, color = rgba(145, 145, 165, 255) },
+        grid = LineStyle { width = 1.0, color = scene.rgba(48, 48, 62, 255) },
+        axis = LineStyle { width = 2.0, color = scene.rgba(145, 145, 165, 255) },
     },
 })
 
 local camera = scene.spawn({
     Camera2D {
-        center = Vec2 { x = 0.5, y = 0.0 },
+        center = scene.vec2(0.5, 0.0),
         scale = 55.0,
     },
 })
 
-place_text_group("Fourier epicycles: square wave", 0.40, -3.3, 2.75)
+-- 文字排版糖（`scene.text`，见 `ze-scene-api/src/lua_prelude.lua`）：
+-- 内部仍是「建组（`Name` + `Transform`）→ 逐字形 `PathShape` + `Parent`」，
+-- 与手写循环逐位一致（本作品的 payload 就是这条契约的对拍基准）。
+scene.text("Fourier epicycles: square wave", {
+    size = 0.40,
+    x = -3.3,
+    y = 2.75,
+    name = "text-group",
+})
 
 -- ── 1. 右侧曲线：静态 Polyline + 脉冲 Reveal ─────────────────────────
 local points = curve_points()
 local curve = scene.spawn({
     Polyline { points = points, closed = false },
-    Stroke { width = 2.0, color = rgba(120, 220, 120, 255) },
+    Stroke { width = 2.0, color = scene.rgba(120, 220, 120, 255) },
     Opacity { value = 0.0 },
 })
 local pulse = scene.spawn({
     Reveal { points = points, closed = false },
-    Stroke { width = 4.0, color = rgba(255, 255, 235, 255) },
+    Stroke { width = 4.0, color = scene.rgba(255, 255, 235, 255) },
     Opacity { value = 0.0 },
 })
 
 -- ── 2. 旋转向量链（Parent 累乘）──────────────────────────────────────
 local root = scene.spawn({
     Name { value = "fourier-root" },
-    Transform { x = BASE_X, y = 0.0, z = 0.0 },
+    Transform { x = BASE_X, y = 0.0 },
 })
 
 -- 黄色相位点：绕根公转（S4 Orbit + S3 Position）。
 local phase_dot = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.06 },
-    Fill { color = rgba(255, 230, 120, 255) },
-    Transform { x = 0.0, y = 0.0, z = 0.0 },
+    Fill { color = scene.rgba(255, 230, 120, 255) },
+    Transform { x = 0.0, y = 0.0 },
     Parent { parent = root },
 })
 
 local arrow_colors = {
-    rgba(0, 210, 210, 255),
-    rgba(255, 190, 70, 255),
-    rgba(230, 100, 200, 255),
-    rgba(130, 230, 130, 255),
-    rgba(255, 255, 255, 255),
+    scene.rgba(0, 210, 210, 255),
+    scene.rgba(255, 190, 70, 255),
+    scene.rgba(230, 100, 200, 255),
+    scene.rgba(130, 230, 130, 255),
+    scene.rgba(255, 255, 255, 255),
 }
 
-local guide = rgba(85, 85, 110, 255)
+local guide = scene.rgba(85, 85, 110, 255)
 local joints = {}
 local arrows = {}
 local radii = {}
@@ -151,26 +147,26 @@ for i = 1, #HARMONICS do
 
     joints[i] = scene.spawn({
         Name { value = "joint-" .. tostring(k) },
-        Transform { x = local_x, y = 0.0, z = 0.0 },
+        Transform { x = local_x, y = 0.0 },
         Parent { parent = parent },
     })
 
     scene.spawn({
         Circle { x = 0.0, y = 0.0, r = r },
         Stroke { width = 1.2, color = guide },
-        Transform { x = 0.0, y = 0.0, z = 0.0 },
+        Transform { x = 0.0, y = 0.0 },
         Parent { parent = joints[i] },
     })
 
     arrows[i] = scene.spawn({
         Arrow {
-            from = Vec2 { x = 0.0, y = 0.0 },
-            to = Vec2 { x = r, y = 0.0 },
+            from = scene.vec2(0.0, 0.0),
+            to = scene.vec2(r, 0.0),
             head_length = 0.08,
             head_width = 0.08,
         },
         Fill { color = arrow_colors[i] },
-        Transform { x = 0.0, y = 0.0, z = 0.0 },
+        Transform { x = 0.0, y = 0.0 },
         Parent { parent = joints[i] },
     })
 end
@@ -178,75 +174,89 @@ end
 -- 末端点：最后一个向量的尖端（局部位置 r_last）。
 scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.06 },
-    Fill { color = rgba(255, 255, 255, 255) },
-    Transform { x = radii[#radii], y = 0.0, z = 0.0 },
+    Fill { color = scene.rgba(255, 255, 255, 255) },
+    Transform { x = radii[#radii], y = 0.0 },
     Parent { parent = arrows[#arrows] },
 })
 
--- ── 3. 曲线淡入（S6 Opacity）─────────────────────────────────────────
-scene.animate(
-    curve,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = FADE }),
-    FADE
-)
-scene.parallel(
-    pulse,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = FADE })
-)
+-- ── 3. 曲线淡入（S6 Opacity，段 [0, FADE)）────────────────────────────
+expr.bind {
+    object = curve,
+    target = Opacity.channel.value,
+    root = sugar.ramp(0.0, 1.0, FADE),
+    clock = clock.shift(0.0),
+    duration = FADE,
+}
+expr.bind {
+    object = pulse,
+    target = Opacity.channel.value,
+    root = sugar.ramp(0.0, 1.0, FADE),
+    clock = clock.shift(0.0),
+    duration = FADE,
+}
 
 -- ── 4. 主段：所有向量自转（S3 Rotation），相位点公转（S4 Orbit），脉冲书写
-local function rotation_clip(delta)
-    return scene.clip_transform(TransformChannel.Rotation, Curve.Ramp {
-        from = 0.0,
-        to = TAU * delta,
-        dur = T,
-    })
+local function rotation_expr(delta)
+    return sugar.ramp(0.0, TAU * delta, T)
 end
 
-scene.animate(arrows[1], rotation_clip(1), T)
+expr.bind {
+    object = arrows[1],
+    target = Transform.channel.rotation,
+    root = rotation_expr(1),
+    clock = clock.shift(MAIN_START),
+    duration = T,
+}
 for i = 2, #HARMONICS do
-    scene.parallel(arrows[i], rotation_clip(HARMONICS[i] - HARMONICS[i - 1]))
+    expr.bind {
+        object = arrows[i],
+        target = Transform.channel.rotation,
+        root = rotation_expr(HARMONICS[i] - HARMONICS[i - 1]),
+        clock = clock.shift(MAIN_START),
+        duration = T,
+    }
 end
-scene.parallel(
-    phase_dot,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = 0.18,
-        speed = TAU / T,
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    pulse,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = T })
-)
+expr.bind {
+    object = phase_dot,
+    target = Transform.channel.position,
+    root = sugar.orbit2d(0.18, TAU / T, 0.0),
+    clock = clock.shift(MAIN_START),
+    duration = T,
+}
+expr.bind {
+    object = pulse,
+    target = Reveal.channel["end"],
+    root = sugar.ramp(0.0, 1.0, T),
+    clock = clock.shift(MAIN_START),
+    duration = T,
+}
 
 -- ── 5. 相机推近 → 停留 → 拉回（S1 多段语义）─────────────────────────
-scene.animate(
-    camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp { from = 55.0, to = 90.0, dur = ZOOM }),
-    ZOOM
-)
-scene.parallel(
-    camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp2 {
-        from = Vec2 { x = 0.5, y = 0.0 },
-        to = Vec2 { x = -1.5, y = 0.0 },
-        dur = ZOOM,
-    })
-)
-
-scene.wait(HOLD)
-
-scene.animate(
-    camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp { from = 90.0, to = 55.0, dur = ZOOM }),
-    ZOOM
-)
-scene.parallel(
-    camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp2 {
-        from = Vec2 { x = -1.5, y = 0.0 },
-        to = Vec2 { x = 0.5, y = 0.0 },
-        dur = ZOOM,
-    })
-)
+expr.bind {
+    object = camera,
+    target = Camera2D.channel.scale,
+    root = sugar.ramp(55.0, 90.0, ZOOM),
+    clock = clock.shift(ZOOM_IN_START),
+    duration = ZOOM,
+}
+expr.bind {
+    object = camera,
+    target = Camera2D.channel.center,
+    root = sugar.ramp2(0.5, 0.0, -1.5, 0.0, ZOOM),
+    clock = clock.shift(ZOOM_IN_START),
+    duration = ZOOM,
+}
+expr.bind {
+    object = camera,
+    target = Camera2D.channel.scale,
+    root = sugar.ramp(90.0, 55.0, ZOOM),
+    clock = clock.shift(ZOOM_OUT_START),
+    duration = ZOOM,
+}
+expr.bind {
+    object = camera,
+    target = Camera2D.channel.center,
+    root = sugar.ramp2(-1.5, 0.0, 0.5, 0.0, ZOOM),
+    clock = clock.shift(ZOOM_OUT_START),
+    duration = ZOOM,
+}

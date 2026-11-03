@@ -42,6 +42,15 @@ pub const ENTRY_SERVICE: &str = "scene";
 pub const RESET_PATH: &str = "zela.scene::__reset";
 pub const FINISH_PATH: &str = "zela.scene::__finish";
 
+/// **pyo3 编译期选中的解释器**（`build.rs` 从 pyo3 的 `links` 配置取出）。
+///
+/// 运行时用它推 `PYTHONHOME`：pyo3 只按本进程 exe 推算前缀，Windows 上必然找不到
+/// `Lib/encodings`（CPython Fatal，Rust 侧捕获不到）。未启用 `python` feature ⇒ `None`。
+pub const BUILD_PYTHON: Option<&str> = option_env!("ZELA_PYO3_EXECUTABLE");
+/// pyo3 编译期链接的 CPython 版本（`X.Y`）：用来滤掉本机另一个版本的解释器，
+/// 否则 `PYTHONHOME` 会指到别处的 stdlib。
+pub const BUILD_PYTHON_VERSION: Option<&str> = option_env!("ZELA_PYO3_VERSION");
+
 /// `Array<f32>` 的具名载体（orphan 规则：不能为 `Vec<f32>` 实现外部 trait）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct FloatList(pub Vec<f32>);

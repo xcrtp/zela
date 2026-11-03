@@ -30,7 +30,7 @@ use ze_notion::Transform2D as Affine2D;
 use ze_scene_core::Camera2D;
 // 对象层的绘制层级（M4）：可缺席 —— 缺席即用录制默认层。
 // T1：逐对象摆放（`Transform`，可缺席 ⇒ 恒等）。
-// `ZOrder` 由对象层 re-export（唯一声明在 IR，B2-1 单一真源）。
+// `ZOrder` 由对象层 re-export（唯一声明在 IR，B2-1 唯一来源）。
 use ze_scene_core::{Transform, ZOrder};
 // `Path::to_screen(camera)`（世界 → 屏幕）由 zela-scene 的场景层 trait 提供。
 use ze_scene_core::transform::Transform2D as _;
@@ -546,10 +546,42 @@ pub fn visible_for<S: SceneRead>(
 }
 
 /// 对象级不透明度（N4）：**缺席 = 1.0**。
-pub fn opacity_of<S: SceneRead>(scene: &S, id: ObjectId) -> Opacity {
+///
+/// 父链继承（BC 批）：`inherit` 里若有该对象的最终世界不透明度，就用它；
+/// 否则回退本地 `Opacity` 组件（缺席 ⇒ `FULL`）—— 逐位等于继承上线前的行为。
+pub fn opacity_of<S: SceneRead>(
+    scene: &S,
+    id: ObjectId,
+    inherit: Option<&ze_scene_core::WorldInherit>,
+) -> Opacity {
+    if let Some(value) = inherit.and_then(|inherit| inherit.opacity_of(id)) {
+        return Opacity::new(value);
+    }
     scene
         .with::<Opacity, _>(id, |o| *o)
         .unwrap_or(Opacity::FULL)
+}
+
+/// 把父链继承来的填充 / 描边色覆盖到样式上（BC 批）。
+///
+/// 只在 `WorldInherit` 登记了**与本地不同**的颜色时才覆盖；缺席 ⇒ 保持样式
+/// 原值（本地颜色或缺失）⇒ 默认场景逐位不变。
+///
+/// 调用顺序：**先**覆盖颜色，**再** [`apply_opacity`] —— 不透明度要乘在最终颜色上。
+pub(crate) fn apply_inherit(
+    style: &mut Style2D,
+    inherit: Option<&ze_scene_core::WorldInherit>,
+    id: ObjectId,
+) {
+    let Some(inherit) = inherit else {
+        return;
+    };
+    if let Some(color) = inherit.fill_of(id) {
+        style.fill = Some(color);
+    }
+    if let Some(color) = inherit.stroke_of(id) {
+        style.stroke = Some(color);
+    }
 }
 
 /// **把不透明度施加到已解析的样式上**（N4：全仓**唯一**的施加点）。
@@ -564,6 +596,17 @@ pub fn apply_opacity(style: &mut Style2D, opacity: Opacity) {
     }
     style.fill = style.fill.map(|c| opacity.apply(c));
     style.stroke = style.stroke.map(|c| opacity.apply(c));
+}
+
+/// 一次录制的 Surface 归属口径。
+///
+/// - [`SurfaceScope::Viewport`]：屏幕视口层。**跳过**归属任一 `Surface` 的对象
+///   （它们只进该 Surface 的纹理，否则同一内容会被画两次且两套相机不一致）。
+/// - [`SurfaceScope::Content`]：某 Surface 的内容层。**只录**归属该 Surface 的对象。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SurfaceScope {
+    Viewport,
+    Content(ObjectId),
 }
 
 /// 录制**一组** `(图元, 样式)` 组合：契约层访客形态 → [`DrawQueue`]。
@@ -587,9 +630,10 @@ fn record_group<S, A, B>(
     camera_tag: Option<ObjectId>,
     groups: &GroupVisibility,
     worlds: Option<&ze_scene_core::WorldTransforms>,
+    inherit: Option<&ze_scene_core::WorldInherit>,
     queue: &mut DrawQueue,
     z_default: f32,
-    surface_filter: Option<ObjectId>,
+    scope: SurfaceScope,
 ) where
     S: SceneRead,
     A: ToShape2D + Send + Sync + 'static,
@@ -600,7 +644,7 @@ fn record_group<S, A, B>(
             return;
         }
         // B3 Step 1：内容层录制按 Surface 归属过滤（Parent 链，唯一条件）。
-        if let Some(surface) = surface_filter {
+        if let SurfaceScope::Content(surface) = scope {
             match ze_scene_core::resolve_surface(scene, id) {
                 Ok(Some(owner)) if owner.surface == surface => {}
                 Ok(_) => return,
@@ -615,7 +659,16 @@ fn record_group<S, A, B>(
         }
         // B3 Step 2：Surface 显式路由。Renderer3D ⇒ 派生为网格（不再走 2D）；
         // Renderer2D / 无 Surface ⇒ 默认 2D 路径（像素逐位不变）。
-        if crate::surface_route::try_record_direct(scene, id, a, b, z.copied(), worlds, queue) {
+        if crate::surface_route::try_record_direct(
+            scene, id, a, b, z.copied(), worlds, inherit, queue,
+        ) {
+            return;
+        }
+        // B3 Step 5-7：归属某 `Surface` 的 2D 内容**只**进该 Surface 的纹理。
+        // 视口层再画一次就会与纹理/3D 载体重复（两套相机 ⇒ 位置与缩放都不一致）。
+        if scope == SurfaceScope::Viewport
+            && matches!(ze_scene_core::resolve_surface(scene, id), Ok(Some(_)))
+        {
             return;
         }
         // S5：优先用父子累乘的**世界矩阵**（S1：2D 读投影视图）；缺席 WorldTransforms / 该对象 ⇒ local。
@@ -629,11 +682,73 @@ fn record_group<S, A, B>(
             None => *t,
         };
         if let Some((shape, mut style)) = (a, b).to_primitive(&world_t, scale) {
-            apply_opacity(&mut style, opacity_of(scene, id));
+            // BC：父链继承的颜色先覆盖，再乘不透明度（施加点仍是 `apply_opacity`）。
+            apply_inherit(&mut style, inherit, id);
+            apply_opacity(&mut style, opacity_of(scene, id, inherit));
+            // PE：绘制参数来自**独立组件**（挂上即开启，缺席 = 当前行为）。
+            let paint = paint_of(scene, id, &world_t, scale);
+            if paint != ze_render_ir::PathOptions::default() {
+                style.paint = paint;
+            }
             let z = z.map_or(z_default as i32, |z| z.0);
             queue.push(DrawCommand::new(ZIndex::new(z), shape, style));
         }
     });
+}
+
+/// 把对象上的绘制参数组件汇成 [`ze_render_ir::PathOptions`]（缺席 = 不启用）。
+///
+/// 组件各自独立（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）⇒ 可以任意组合；
+/// 单位与坐标口径见 `ze_render_ir::paint`。
+///
+/// **渐变端点在组件里是世界坐标**（与图元同一空间），这里用与几何同一份
+/// `world_t` 换算到屏幕空间 —— `Style2D` 的口径是屏幕（见 `shape.rs`）。
+fn paint_of<S: SceneRead>(
+    scene: &S,
+    id: ObjectId,
+    world_t: &ze_notion::Transform2D,
+    scale: f32,
+) -> ze_render_ir::PathOptions {
+    use ze_render_ir::{
+        BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint,
+    };
+    let mut paint = PathOptions::default();
+    if let Some(gradient) = scene.with::<Gradient, _>(id, |g| {
+        let place = |p: [f32; 3]| {
+            let screen = world_t.matrix.transform_point2(ze_notion::Vec2::new(p[0], p[1]));
+            [screen.x, screen.y, 0.0]
+        };
+        Gradient {
+            stops: g.stops.clone(),
+            from: place(g.from),
+            to: place(g.to),
+        }
+    }) {
+        paint.gradient = Some(gradient);
+    }
+    if let Some(dash) = scene.with::<Dash, _>(id, |d| *d) {
+        paint.dash = Some(dash);
+    }
+    if let Some(second) = scene.with::<SecondPaint, _>(id, |s| *s) {
+        paint.second = Some(second);
+    }
+    if let Some(background) = scene.with::<BackgroundStroke, _>(id, |b| *b) {
+        paint.background = Some(background.color);
+        // 宽度是**场景单位**；`Style2D` 是屏幕空间 ⇒ 与描边宽度同一份 scale 换算
+        // （`record_scene` 是唯一换算点）。
+        paint.background_width = background.width * scale;
+    }
+    if let Some(window) = scene.with::<CurveWindow, _>(id, |w| *w) {
+        paint.curve_window = Some([window.lo, window.hi]);
+    }
+    // **阶段 2（着色 codegen）**：装饰性 —— 颜色由生成的 WGSL 在 GPU 上算。
+    if let Some(shader) = scene.with::<ze_render_ir::ShaderPaint, _>(id, |s| s.clone()) {
+        if std::env::var_os("ZELA_CODEGEN_TRACE").is_some() {
+            eprintln!("[codegen] 对象 {id:?} 挂着色程序（{} 字节 WGSL）", shader.source.len());
+        }
+        paint.shader = Some(shader);
+    }
+    paint
 }
 
 /// 把场景实体录制进 [`DrawQueue`]（z 恒为 0）。
@@ -685,7 +800,7 @@ pub fn record_scene_tagged<S: SceneRead>(
     groups: &GroupVisibility,
     queue: &mut DrawQueue,
 ) {
-    record_scene_tagged_with(scene, camera, camera_tag, groups, None, queue);
+    record_scene_tagged_with(scene, camera, camera_tag, groups, None, None, queue);
 }
 
 /// [`record_scene_tagged`] 的 **S5 版本**：额外消费父子累乘后的世界仿射。
@@ -698,6 +813,7 @@ pub fn record_scene_tagged_with<S: SceneRead>(
     camera_tag: Option<ObjectId>,
     groups: &GroupVisibility,
     worlds: Option<&ze_scene_core::WorldTransforms>,
+    inherit: Option<&ze_scene_core::WorldInherit>,
     queue: &mut DrawQueue,
 ) {
     // 内容对象的默认绘制层级：同层（保持查询顺序）。
@@ -708,25 +824,25 @@ pub fn record_scene_tagged_with<S: SceneRead>(
     let t = camera.to_transform2d();
     let scale = camera.scale;
 
-    record_group::<S, Circle, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
-    record_group::<S, Circle, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
-    record_group::<S, Path, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
-    record_group::<S, Path, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
-    record_group::<S, Line, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
-    record_group::<S, Rect, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
-    record_group::<S, Rect, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
+    record_group::<S, Circle, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Circle, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Path, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Path, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Line, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Rect, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Rect, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
     // T2：箭头是**一等图元**，两种样式各一组（`FillSolid` ⇒ 实心箭头，`StrokeSolid` ⇒ 空心）。
     // 加在既有 7 组之后 ⇒ 同 `z` 下的绘制顺序向后追加，**不影响**已有对象之间的相对顺序
     // （`DrawQueue` 稳定排序）。
-    record_group::<S, Arrow, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
-    record_group::<S, Arrow, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, queue, Z, None);
+    record_group::<S, Arrow, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Arrow, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
 }
 
 /// **内容层录制**（B3 Step 1）：只录归属某 `Surface` 的 2D 对象。
 ///
 /// 复用 [`record_scene_tagged_with`] 的同一套 `(图元, 样式)` 组合与唯一换算点；
 /// 唯一差别是按 `Parent` 链归属过滤（**不再要求 `ContentTextureItem` 标记**
-/// —— 归属本身就是唯一真源）。
+/// —— 归属本身就是唯一来源）。
 ///
 /// `camera` 是该 Surface 的内容相机（见 `SurfaceTexture::camera_for`）。
 pub fn record_scene_for_surface<S: SceneRead>(
@@ -734,6 +850,7 @@ pub fn record_scene_for_surface<S: SceneRead>(
     surface: ObjectId,
     camera: &Camera2D,
     worlds: Option<&ze_scene_core::WorldTransforms>,
+    inherit: Option<&ze_scene_core::WorldInherit>,
     queue: &mut DrawQueue,
 ) {
     const Z: f32 = 0.0;
@@ -741,15 +858,15 @@ pub fn record_scene_for_surface<S: SceneRead>(
     let scale = camera.scale;
     let groups = GroupVisibility::default();
 
-    record_group::<S, Circle, StrokeSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Circle, FillSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Path, StrokeSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Path, FillSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Line, StrokeSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Rect, FillSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Rect, StrokeSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Arrow, StrokeSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
-    record_group::<S, Arrow, FillSolid>(scene, &t, scale, None, &groups, worlds, queue, Z, Some(surface));
+    record_group::<S, Circle, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Circle, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Path, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Path, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Line, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Rect, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Rect, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Arrow, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Arrow, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
 }
 
 /// 录制**单个**路径描边实体到队列（z=0，与 [`record_scene`] 同口径）。

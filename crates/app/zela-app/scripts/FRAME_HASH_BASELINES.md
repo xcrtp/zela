@@ -12,21 +12,64 @@
 > 用途：渲染回归对拍。**不覆盖 mp4 / PNG 容器**，只覆盖帧缓冲像素 ⇒ 浏览器侧
 > 无需导出、无需 ffmpeg。
 
-## `@ <commit>` 口径（B3-1 收尾定案：B）
+## 结构指纹基线（[`structures.txt`](structures.txt)，**等式**判据）
 
-值行 `key = <hash> @ <commit>` 里的 commit 表示**产生该哈希值时的 HEAD**。
+> 执行计划《可观测性与性能基准_结构指纹与统一门禁》阶段 1。像素是**投影**
+> （被 GPU / 字体 / 编码器固定在本机），结构指纹是**状态本身**。
 
-- `--record` 现在直接把**当次重录的 HEAD** 写进 `# reason` / `# slotB` / 生效行；
-  下一次轮换时 `# slotA` 拿到的就是真实产生提交，而不是"下次重录的 HEAD"
-  （旧行为会把跨批次的改动误归因到当时未提交的 HEAD）。
+- **口径**：`zela-scene-ecs::fingerprint_world` —— 对象按 `ObjectId` 升序，逐字段读
+  `TARGETS`（精确 f32 位），再叠 `WorldTransforms`（父子累乘后的 16×f32）。
+- **排除**：派生几何（字形轮廓 / `Path` 展平）。它进 payload，是**本机**口径
+  （见本文件头与 `baselines.txt` 的字体说明），不得混入跨设备判据。
+- **每帧独立**（不链式）⇒ 分歧可直接定位到帧；`ZELA_OBSERVE=<path>` 的
+  `data.frames` 是逐帧摘要数组。
+- **一件作品一个值**：wgpu 与 vector、`--script` 与 `--bundle` 必须**相同**。
+  不同就是状态真的变了（或某条路径偷改了状态）—— 这比"两个后端像素相同"更强。
+- **与设备无关**（目标性质，不是承诺已完成跨设备验证）：重录不需要
+  `--record` / `--rebind`，用
+
+  ```bash
+  ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes
+  ```
+
+`cargo verify --step hashes` 同时跑两套判据：
+像素序列哈希（`baselines.txt`，同机口径）+ 结构指纹（`structures.txt`，等式）。
+
+> CI 边界与像素相同：`--skip-baseline`（托管 runner 的软件 Vulkan）时**只断言**
+> 跨 pass / 跨后端一致（`script == bundle`、`wgpu == vector`），不比对 `structures.txt`。
+> 结构指纹「跨设备」目前是**目标性质**：动画表达式走 std libm，1 ulp 的跨 OS 分歧
+> 尚未实测排除（见 AP-11 的同类教训）。
+
+## `@ <commit>` 口径（B4 P1-4 定案：D，补充 B）
+
+值行 `key = <hash> @ <commit>` 里的 commit 表示**产生该哈希值时的代码状态**。
+
+- `--record` 写入 `# reason` / `# slotB` / 生效行；下一次轮换时 `# slotA` 拿到的
+  就是这条产生记录，而不是"下次重录的 HEAD"。
+- **脏工作树 ⇒ `@ <sha>+dirty`**：重录必然发生在"改完代码、还没提交"时，所以
+  当时的 HEAD **并不包含**这份状态。直接标 `@ <HEAD>` 是错的（P1-4 的成因：
+  6 条值全标 `@ da9ea93`，实际由 `642b9d4` 携带）。
+  `+dirty` 的含义是"这份值不属于 `<sha>` 这个提交，它由紧随其后的提交携带"。
+- **提交后必须归因**：把 `baselines.txt` 与代码**一起提交**，然后立刻跑
+
+  ```bash
+  cargo verify --rebind   # 要求干净工作树；把 <sha>+dirty 整段换成当前 HEAD
+  ```
+
+  `--rebind` 要求干净工作树：否则"当前 HEAD"仍不是携带这份录制的提交。
+  它替换的是**整段 `<sha>+dirty`**（连同 sha），而不只是删后缀 —— 只删后缀会
+  把值留在录制前的 HEAD 上，正是要修的那个错误。
+- **`+dirty` 是门禁**：`smoke` / `hashes` 步骤见到未归因的 `+dirty` 直接失败。
+  放行等于允许"值不属于任何提交"进入历史，归因就永久失效。
+- **`# delta:` 逐条留痕**：一次重录里**每个值变了的 key** 都写一行
+  `# delta: <key> <旧前缀> -> <新前缀>（本次重录改变，原因见上一条 reason）`。
+  `slotA` / `slotB` 给机器看，`delta` 给人看；没变的 key 不写噪音。
 - **旧文件里的 `@ pending`** 没有记录产生时 HEAD，按**最后已知有效提交**理解
   （即同段 `# slotA` 的 commit）。`@ pending` 不再作为新录写的默认值。
-- 当前 `[native]` / `[smoke]` 的四条值统一标注 `@ f2c8778` ——
-  这是它们**最后一次被验证有效**的提交（与 `# slotA` 一致），不是"下一次重录"的 head。
-- ⚠️ **回填值警告**：上述四条 `@ f2c8778` 是 B3-1 收尾时**回填**的
-  （`b6eaa864` 等值的实际产生时间远早于 `f2c8778`）。跨批次归因时
+- ⚠️ **回填值警告**：早期几条 `@ f2c8778` / `@ da9ea93` 是**回填**的
+  （`b6eaa864` 等值的实际产生时间远早于该提交）。跨批次归因时
   **不得采信这几行的 `@`** —— 它只表示"最后已知有效"，不表示"该值产生于该提交"。
-  新录写的值自 B3-1 起会写真实 HEAD，不再回填。
+  自口径 D 起新录写的值会先标 `+dirty`、再由 `--rebind` 归因到真实提交。
 - `[browser]` 段仍只有裸值：它不参与自动比对，不适用本口径。
 
 
@@ -45,16 +88,21 @@
 ## 复现命令
 
 ```bash
-# 1) 编译 ZSB（可选：--script 与 --bundle 两条路径都要跑一遍）
-cargo run -q -p zela-compile --no-default-features --features typst -- \
-  crates/app/zela-app/scripts/fourier.lua --out /tmp/fourier.zsb
+# features 与 xtask 对拍一致（`typst,js`）：`js`（boa）是纯 Rust，不会让对拍依赖本机
+# Python 运行时；`surface_matrix.js` 这件 JS 作品（B7 Step 3）必须开它才编译得出来。
 
-# 2) 渲染并输出序列哈希（--frames 表示不依赖 ffmpeg；--hash-out 可选）
-cargo run -q -p zela-app --no-default-features --features typst --bin zela-render -- \
+# 1) 编译 ZSB（可选：--script 与 --bundle 两条路径都要跑一遍）
+cargo run -q -p zela-cli --no-default-features --features typst,js --bin zela -- \
+  compile crates/app/zela-app/scripts/fourier.lua --out /tmp/fourier.zsb
+
+# 2) 渲染并输出序列哈希（--frames 表示不依赖 ffmpeg）
+#    B8 Step 2：哈希是**可选 sink** —— `--hash` 打印、`--hash-out FILE` 打印并写文件；
+#    不传就完全不哈希（主流程默认不付这份代价）。xtask 对拍显式传 `--hash`。
+cargo run -q -p zela-app --no-default-features --features typst,js --bin zela-render -- \
   --script crates/app/zela-app/scripts/fourier.lua \
   --frames /tmp/f_s --fps 30 --size 640x480 --hash-out /tmp/f_s.hash
 
-cargo run -q -p zela-app --no-default-features --features typst --bin zela-render -- \
+cargo run -q -p zela-app --no-default-features --features typst,js --bin zela-render -- \
   --bundle /tmp/fourier.zsb \
   --frames /tmp/f_b --fps 30 --size 640x480 --hash-out /tmp/f_b.hash
 ```
@@ -92,7 +140,7 @@ CI 分层（`.github/workflows/architecture.yml` 的 `hashes` job）：
 
 ## 基线（2026-10-20，Windows / RTX 4060 Laptop）
 
-**哈希值的唯一真源是 [`baselines.txt`](baselines.txt)**；本文件只解释口径，
+**哈希值的唯一来源是 [`baselines.txt`](baselines.txt)**；本文件只解释口径，
 不重复写哈希。三个基线**都要保留**，来源不同、用途不同：
 
 | 段 | 端 | 作品 | 帧数 / 分辨率 | 来源 | 自动比对 |
@@ -103,17 +151,39 @@ CI 分层（`.github/workflows/architecture.yml` 的 `hashes` job）：
 | `[native]` | native（Vulkan headless） | surface_matrix | 1 / 640×480 | 同上（B3 Step 5-3 能力矩阵，`composite=true`，静态） | ✅ 不符即 fail |
 | `[native]` | native（Vulkan headless） | atlas | 120 / 640×480 | 同上（B3 Step 5-4：2D 公式内容 → 3D 平面） | ✅ 不符即 fail |
 | `[smoke]` | native（Vulkan headless） | smoke | 15 / 320×240 | 同上（PR / `--fast` 快速反馈） | ✅ 不符即 fail，但**不等价于完整基线** |
+| `[vector]` | native（矢量后端） | vector_paths | 1 / 640×480 | `zela-render --backend vector --script/--bundle` | ✅ 不符即 fail |
+| `[vector]` | native（矢量后端） | shaded_meshes | 1 / 640×480 | 同上（B10 Step 4：真 3D 网格 + 着色栈，静态） | ✅ 不符即 fail |
 | `[browser]` | 浏览器（Chrome WebGPU） | fourier | 216 / 640×480 | `zela-web` + `?compare=1` | ❌ **仅留档** |
+
+> `[vector]` 于 2026-10-23（B6 Step 3，V2-07）首次登记：同一脚本 / 同一 ZSB，只是把
+> `zela-render` 的出帧后端换成矢量路径（`--backend vector`）。它校验的是**矢量后端自己的
+> 确定性**，不是"与 wgpu 逐位相同"（两者 AA 方式不同，跨后端判据见
+> `zela-render-backends/tests/vector_vs_wgpu.rs` 的容差回归）。
+>
+> **B10 Step 4 起** `--backend vector` 支持**含 3D 相机的帧**（网格走 `MeshRecord`，
+> 着色栈按后端能力默认全开）；`shaded_meshes` 就是这条路径的基线。仍不支持：
+> 纯 2D 与 3D **混排**、内容纹理 / Surface 图层（显式报错，见 GAPS X1-06 / V2-12 / V2-13）。
 
 > `surface_matrix` / `atlas` 于 2026-10-22（B3 Step 5）首次登记。首次登记时两项**没有旧值行**，
 > 只写 `# slotB:` 与生效行、**没有 `# slotA:`**（`--record` 允许"新增 key 直接登记"）。
-> 随后给作品 A 补了 `Path × Fill` 组合，做了第二次重录 ⇒ 现在 `surface_matrix` 的
-> `# slotA:` 是首次登记的 `38eb3d2d…`，`# slotB:`/生效行是补组合后的 `baafe1aa…`。
-> `atlas` 两次值相同，`slotA == slotB`。
+> 作品 A 之后重录过三次：① 补 `Path × Fill` 组合；② 修「Surface 归属内容被屏幕视口重复绘制」；
+> ③ 对齐纹理/承载平面的宽高比（bounds = texel = 4:3，消除横向拉伸）。当前值见 `baselines.txt`。
+> 作品 B 另在 ③ 之后重录一次：`Planar` 兜底 UV 的 V 轴取反（贴图不再上下倒转），
+> 平面 8×6（与 bounds / texel 同比例）、相机拉远、公式改一阶表达式 + 深色描边。
+> 因此 `# slotA:` 只保留**上一次**值，更早的值看 git 历史。
 >
 > `surface_matrix` 只渲 1 帧（静态能力矩阵）：像素覆盖的是"全部组合同屏一次"，
 > 组合覆盖度的主判据是**非像素断言**（`ContentTextureQueue` 里每种组合都录到，
 > 见 `zela-app` 测试 `surface_matrix_records_all_script_expressible_combos`）。
+
+> **demo3d 基线变更（2026-10-22，B3 Step 5 修正）**：`dc8b1388…` → `ddd69b3e…`。
+> 不是"画面漂移"，是渲染管线三处显式修正的结果，每个变化都能解释：
+> 1. `Planar` 兜底 UV 的 V 轴取反（纹理行首在 `+y`，贴图不再上下倒转）；
+> 2. `solid_cube` 改为 24 顶点：每面显式 UV + **面法线**（旧实现 8 顶点共享、无 UV / 无
+>    法线 ⇒ Planar 兜底在侧面退化成 0 面积）；
+> 3. `cube.wgsl` 的 PBR TBN 在 `det ≈ 0` 时**跳过法线贴图**（旧实现 `normalize(0)` → NaN）。
+> ⇒ 立方体右脸的随机噪点消失，三个可见面的明暗变成正确的面法线着色。
+> `atlas` 同步重录（它用 Cube 当承载平面）。
 
 > `[browser]` 段**绝不参与自动比对**：本机跑不出浏览器产物，
 > 纳入比对只会让本机永远红，并诱导人去"修"一个不该修的东西。

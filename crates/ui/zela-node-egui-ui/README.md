@@ -1,5 +1,7 @@
 # zela-node-egui-ui
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-node-egui-ui.md`](../../../docs/modules/zela-node-egui-ui.md)。
+
 > 为 `ze-node-schema` 属性模型提供的 **egui 控件映射层**。
 >
 > 位于 `ze-node-schema`（属性模型）与 `zela-node-egui`（canvas +

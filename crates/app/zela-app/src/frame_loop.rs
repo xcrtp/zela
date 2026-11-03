@@ -1,0 +1,739 @@
+//! 帧循环（B9 Step 3）：`zela-render` 与 `zela-verify` 共用的**唯一**渲染循环。
+//!
+//! # 为什么需要把它抽出来
+//!
+//! B9 要把 19 次进程调用压成 1 次（GPU 初始化 + 每个作品的运行时构建仍是必需的）。
+//! 批量模式若另写一份循环，就会与单进程路径形成**第二条渲染路径** —— 那是两个来源，
+//! 也正是 B8 用 sink 抽象消灭的形态。⇒ 循环只此一份，两个二进制都调这里。
+//!
+//! # 谁负责什么
+//!
+//! - 本模块：逐帧推进、构图、渲染、回读、**逐帧分段计时**；
+//! - 调用方：输出 / 校验（`FrameSink` 或 VM 闭包）、汇总与门禁。
+//!
+//! 调用方通过 [`FrameLoop::on_frame`] 拿到 [`FrameView`]：目标格式字节 +（按需的）RGBA8。
+//! 回调返回**其中的哈希耗时**（不哈希就返回 `Duration::ZERO`），循环据此把
+//! `t_hash` 从 `t_sink` 里拆出来 —— 单进程与批量两条路径因此产出同一套计时字段。
+
+use std::time::{Duration, Instant};
+
+use ze_notion::{Rect2D, Vec2};
+use zela_playback::Runtime;
+use zela_render::ViewRect;
+use zela_render_backends::registry::{AdapterFacts, BackendKind};
+use zela_render_backends::{
+    HeadlessTarget, RenderContext, ScreenParams, StandardBackends,
+    render_frame_headless_cached_timed,
+};
+use zela_scene_ecs::DriverCommand;
+use zela_scene_ecs::contract::WorldView;
+
+use zela_render_backends::gpu_timing::{GpuSpan, GpuTimingSupport};
+use zela_render_backends::routing as backend_router;
+pub use zela_render_backends::routing::LoopBackend;
+use zela_render_backends::RoutingDecision;
+
+/// 一次渲染作业的画幅 / 帧率 / 后端。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FrameLoopOptions {
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub backend: LoopBackend,
+    /// **断点续渲**：从第几帧开始（`0` = 从头）。
+    ///
+    /// `> 0` 时循环先 `Seek(t = start_frame / fps)` 再逐帧推进；
+    /// 调用方负责保证 `start_frame < frames_for(..)`。
+    pub start_frame: u32,
+    /// **帧范围**：渲染到第几帧为止（`None` = 到末尾）。
+    pub end_frame: Option<u32>,
+    /// **B10 Step 4**：矢量后端的着色栈覆盖。
+    ///
+    /// `None` ⇒ 按后端能力取默认（矢量 = `PostCaps::all()` ⇒ tone/bloom/ao 全开）；
+    /// `Some(_)` ⇒ 用调用方给的值。存在的唯一理由是**让证据可测**：
+    /// "AgX ≠ clip / bloom 外溢 / AO 压角"必须能在同一份产物上逐项开关，
+    /// 而不是只靠"没报错"（计划 §6.2）。生产调用方（`zela-render` / `zela-verify`）恒传 `None`。
+    pub vector_params: Option<zela_scene_bundle::RenderParams>,
+}
+
+/// 一帧交给调用方的像素视图。
+pub struct FrameView<'a> {
+    /// 目标纹理格式的字节（BGRA 等）。
+    pub raw: &'a [u8],
+    /// 规范化 RGBA8；调用方声明不需要时为空。
+    pub rgba: &'a [u8],
+    pub size: (u32, u32),
+}
+
+/// 一帧的分段耗时（B8 Step 1 的字段，B9 起由本模块产出）。
+///
+/// 段边界见 `zela-render` 的同名文档：`prepare` 含三角化与 `write_buffer`，
+/// `read` 含 GPU 等待，`verify` 是 GPU 校验 pass 的占位。
+///
+/// ⚠️ **`verify` 未启用**（B12 Step 1.3）：该 pass 尚未实现 ⇒ 恒 0，
+/// **不代表"校验耗时 0"**，而是"没有校验"。`FrameStats` 的汇总里会单独标一行。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameTiming {
+    pub advance: Duration,
+    pub build: Duration,
+    pub prepare: Duration,
+    pub paint: Duration,
+    pub submit: Duration,
+    pub read: Duration,
+    pub sink: Duration,
+    pub hash: Duration,
+    pub verify: Duration,
+    pub end: Duration,
+}
+
+impl FrameTiming {
+    pub fn total(&self) -> Duration {
+        self.advance
+            + self.build
+            + self.prepare
+            + self.paint
+            + self.submit
+            + self.read
+            + self.sink
+            + self.hash
+            + self.verify
+            + self.end
+    }
+}
+
+/// 性能**量级门禁**阈值（B8 §3.3 / B12 Step 6）：只拦灾难性退化，不卡正常波动。
+pub const SLOW_FRAME_MS: f64 = 500.0;
+/// 汇总窗口：实测数据按"前 30 帧"回报（B8 §3.4），另给全程汇总。
+pub const TIMING_WINDOW: usize = 30;
+
+/// 逐帧计时累加器（**唯一实现**：`zela-render` 与 `zela-verify` 共用，B12 Step 1.2）。
+///
+/// 字段名必须与 `[timing]` / `[timing-summary]` 的 JSON 一致，否则前后无法对比。
+pub struct FrameStats {
+    totals: FrameTiming,
+    seen: usize,
+    window: FrameTiming,
+    window_frames: usize,
+    slow: Vec<(u32, f64)>,
+}
+
+impl FrameStats {
+    pub fn new() -> Self {
+        Self {
+            totals: FrameTiming::default(),
+            seen: 0,
+            window: FrameTiming::default(),
+            window_frames: 0,
+            slow: Vec::new(),
+        }
+    }
+
+    /// `index` = 帧号；首帧（0）不计入窗口与门禁（含管线创建）。
+    pub fn record(&mut self, index: u32, timing: &FrameTiming) {
+        add_timing(&mut self.totals, timing);
+        self.seen += 1;
+        if index > 0 {
+            if self.window_frames < TIMING_WINDOW {
+                add_timing(&mut self.window, timing);
+                self.window_frames += 1;
+            }
+            let total_ms = timing.total().as_secs_f64() * 1000.0;
+            if total_ms > SLOW_FRAME_MS {
+                self.slow.push((index, total_ms));
+            }
+        }
+    }
+
+    /// 打印汇总（与 `zela-render` 同一份 JSON）+ 量级门禁。
+    ///
+    /// 单帧作品没有"1..30"窗口，跳过该行（否则打印一列 0，易误读）。
+    pub fn report(&self) -> Result<(), String> {
+        if self.window_frames > 0 {
+            eprintln!(
+                "{}",
+                summary_json(
+                    &self.window,
+                    &format!("1..{}", self.window_frames),
+                    self.window_frames
+                )
+            );
+        }
+        eprintln!("{}", summary_json(&self.totals, "all", self.seen));
+        eprintln!(
+            "[timing-note] verify_ms 恒 0 是因为 GPU 校验 pass **未启用**（B12 Step 1.3），不代表校验耗时 0"
+        );
+        self.check()
+    }
+
+    /// **量级门禁**（B12 Step 6）：单帧 > [`SLOW_FRAME_MS`] 才失败。
+    ///
+    /// 与打印分离：门禁**恒开**（不依赖 `ZELA_FRAME_TIMING`），打印才是可选的。
+    /// 首帧（含管线创建）不计（与 [`Self::record`] 同口径）。
+    pub fn check(&self) -> Result<(), String> {
+        if let Some((frame, ms)) = self.slow.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
+            return Err(format!(
+                "性能量级门禁失败：第 {frame} 帧耗时 {ms:.1}ms > {SLOW_FRAME_MS}ms（B8 §3.3；\
+                 共 {} 帧超限）",
+                self.slow.len()
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// 一帧的 JSON 行（B8 Step 1；字段定义在 [`FrameTiming`]）。
+pub fn timing_json(t: &FrameTiming, frame: u32) -> String {
+    let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+    format!(
+        "[timing] {{\"frame\":{frame},\"advance_ms\":{:.3},\"build_ms\":{:.3},\
+         \"prepare_ms\":{:.3},\"paint_ms\":{:.3},\"submit_ms\":{:.3},\
+         \"read_ms\":{:.3},\"sink_ms\":{:.3},\"hash_ms\":{:.3},\"verify_ms\":{:.3},\
+         \"end_ms\":{:.3},\"total_ms\":{:.3}}}",
+        ms(t.advance),
+        ms(t.build),
+        ms(t.prepare),
+        ms(t.paint),
+        ms(t.submit),
+        ms(t.read),
+        ms(t.sink),
+        ms(t.hash),
+        ms(t.verify),
+        ms(t.end),
+        ms(t.total()),
+    )
+}
+
+/// 窗口汇总（JSON）：各段平均值与占比（占比按 `total` 算）。
+pub fn summary_json(t: &FrameTiming, window: &str, frames: usize) -> String {
+    format!("[timing-summary] {}", summary_body(t, window, frames))
+}
+
+/// 汇总对象本体（B12 Step 3：报告要把计时与决策 / 环境指纹拼进同一个对象）。
+pub fn summary_body(t: &FrameTiming, window: &str, frames: usize) -> String {
+    let n = frames.max(1) as f64;
+    let avg_ms = |d: Duration| d.as_secs_f64() * 1000.0 / n;
+    let total = avg_ms(t.total()).max(f64::MIN_POSITIVE);
+    let share = |d: Duration| avg_ms(d) / total * 100.0;
+    format!(
+        "{{\"window\":\"{window}\",\"frames\":{frames},\
+         \"avg_total_ms\":{:.3},\
+         \"avg\":{{\"advance\":{:.3},\"build\":{:.3},\"prepare\":{:.3},\"paint\":{:.3},\
+         \"submit\":{:.3},\"read\":{:.3},\"sink\":{:.3},\"hash\":{:.3},\"verify\":{:.3},\
+         \"end\":{:.3}}},\
+         \"share_pct\":{{\"advance\":{:.1},\"build\":{:.1},\"prepare\":{:.1},\"paint\":{:.1},\
+         \"submit\":{:.1},\"read\":{:.1},\"sink\":{:.1},\"hash\":{:.1},\"verify\":{:.1},\
+         \"end\":{:.1}}}}}",
+        avg_ms(t.total()),
+        avg_ms(t.advance),
+        avg_ms(t.build),
+        avg_ms(t.prepare),
+        avg_ms(t.paint),
+        avg_ms(t.submit),
+        avg_ms(t.read),
+        avg_ms(t.sink),
+        avg_ms(t.hash),
+        avg_ms(t.verify),
+        avg_ms(t.end),
+        share(t.advance),
+        share(t.build),
+        share(t.prepare),
+        share(t.paint),
+        share(t.submit),
+        share(t.read),
+        share(t.sink),
+        share(t.hash),
+        share(t.verify),
+        share(t.end),
+    )
+}
+
+/// 环境指纹（B12 Step 3）：**必填** —— 脱离环境的性能数字没有意义
+/// （B8 的 dev/release 教训与 X1-11 的字体教训是同一条）。
+///
+/// `adapter = None` 时显式写 `"gpu":null` + `"missing":"adapter"`，**不伪造型号**。
+pub fn environment_json(adapter: Option<&wgpu::Adapter>) -> String {
+    let (gpu, vendor, device, driver, api) = match adapter {
+        Some(adapter) => {
+            let info = adapter.get_info();
+            (
+                format!("\"{}\"", escape_json(&info.name)),
+                info.vendor.to_string(),
+                info.device.to_string(),
+                format!("\"{}\"", escape_json(&info.driver)),
+                format!("\"{:?}\"", info.backend),
+            )
+        }
+        None => (
+            "null".to_string(),
+            "null".to_string(),
+            "null".to_string(),
+            "null".to_string(),
+            "null".to_string(),
+        ),
+    };
+    format!(
+        "{{\"gpu\":{gpu},\"vendor\":{vendor},\"device\":{device},\"driver\":{driver},\
+         \"api\":{api},\"os\":\"{}\",\"arch\":\"{}\",\"debug_assertions\":{},\
+         \"missing\":\"{}\"}}",
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cfg!(debug_assertions),
+        if adapter.is_some() { "" } else { "adapter" },
+    )
+}
+
+fn escape_json(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// 累加一段帧（B12 Step 3：报告要"全部帧"与"窗口"两份汇总）。
+///
+/// `skip_first` 与 [`FrameStats::record`] 同口径（首帧含管线创建）；`limit` 限制参与
+/// 累加的帧数（窗口 = 30）。
+pub fn accumulate(
+    timings: &[FrameTiming],
+    skip_first: bool,
+    limit: Option<usize>,
+) -> (FrameTiming, usize) {
+    let mut acc = FrameTiming::default();
+    let mut count = 0;
+    for (index, timing) in timings.iter().enumerate() {
+        if skip_first && index == 0 {
+            continue;
+        }
+        if limit.is_some_and(|limit| count >= limit) {
+            break;
+        }
+        add_timing(&mut acc, timing);
+        count += 1;
+    }
+    (acc, count)
+}
+
+fn add_timing(acc: &mut FrameTiming, other: &FrameTiming) {
+    acc.advance += other.advance;
+    acc.build += other.build;
+    acc.prepare += other.prepare;
+    acc.paint += other.paint;
+    acc.submit += other.submit;
+    acc.read += other.read;
+    acc.sink += other.sink;
+    acc.hash += other.hash;
+    acc.verify += other.verify;
+    acc.end += other.end;
+}
+
+/// 帧数 = `ceil(duration × fps)`，至少 1 帧（单进程与批量共用同一口径）。
+pub fn frames_for(runtime: &Runtime, fps: f64) -> u32 {
+    if runtime.duration > 0.0 {
+        (runtime.duration * fps).ceil() as u32
+    } else {
+        1
+    }
+    .max(1)
+}
+
+
+/// 矢量后端自述的能力（B10 Step 4）：后处理四项全开，采样数取 4（与 2D 路径同口径）。
+/// 只用于 [`zela_scene_bundle::RenderParams::default_for`]：**默认值绑后端能力**的机制
+/// 需要一份 `Capabilities`，而矢量后端不走 `StandardBackends`（进程级开关）。
+///
+/// 实现已下沉到 [`zela_playback::vector_capabilities`]（GUI 用同一份）。
+fn vector_capabilities() -> ze_render_ir::Capabilities {
+    zela_playback::vector_capabilities()
+}
+
+/// 一次运行的全部可观测产出（B12 Step 2/3/4）。
+pub struct FrameRun {
+    /// 逐帧分段计时（CPU wall-clock）。
+    pub timings: Vec<FrameTiming>,
+    /// 去重后的路由决策（B12 Step 2）。
+    pub decisions: Vec<RoutingDecision>,
+    /// 逐帧 GPU span（ms），与 [`Self::timings`] 等长；`None` = 该帧未测出。
+    pub gpu_ms: Vec<Option<f64>>,
+    /// GPU 计时支持性（B12 Step 4）：**必填**，`Disabled` / `Unsupported` 都带理由。
+    pub gpu_status: GpuTimingSupport,
+    /// 本次运行的 2D 缓存命中统计（B12 Step 5；此前有填充、零消费者）。
+    pub cache: zela_render_backends::diagnostics::CacheTotals,
+    /// 本次运行**创建**的渲染目标纹理数（稳态应远小于帧数 × 图层数）。
+    pub textures_created: usize,
+    /// **B17 Step 0**：本次运行矢量后端创建的 GPU 资源（wgpu 后端不计数 ⇒ 全 0）。
+    pub vector_resources: zela_render_vector::ResourceTotals,
+    /// **B17 Step 0**：逐帧的资源增量（等长于 `timings`；wgpu 帧为 0）。稳态应每帧为 0。
+    pub resource_frames: Vec<zela_render_vector::ResourceTotals>,
+    /// **AW-07（E-G3）**：逐帧写进 GPU 的**几何数组字节**（等长于 `timings`）。
+    ///
+    /// 持久前缀生效后，静态 / 只改参数的帧应为 0（只有新形状或原地改的尾巴）。
+    pub store_uploads: Vec<usize>,
+    /// **B18 Step 2**：本次运行链表溢出（装不下且已到 device 上限）的最坏一次。
+    pub vector_overflow: zela_render_vector::OverflowTotals,
+    /// **PB Step 1**：本次运行投影光源超过上限（`shadow::MOST`）的最坏一次。
+    pub vector_shadows: zela_render_vector::ShadowTotals,
+    /// **执行计划阶段 1**：逐帧结构指纹（与 [`Self::timings`] 等长；每帧独立）。
+    ///
+    /// 纯数值状态（组件字段 + `WorldTransforms`），不含像素 / 派生几何 ⇒
+    /// 这是回归判据的**等式**一侧（像素仍是投影）。
+    pub structure: Vec<zela_scene_ecs::StructureFingerprint>,
+}
+
+impl FrameRun {
+    /// 已测出的帧的平均 GPU span（ms）。没有一帧测出 ⇒ `None`（不是 0）。
+    pub fn gpu_avg_ms(&self) -> Option<f64> {
+        let measured: Vec<f64> = self.gpu_ms.iter().flatten().copied().collect();
+        if measured.is_empty() {
+            return None;
+        }
+        Some(measured.iter().sum::<f64>() / measured.len() as f64)
+    }
+
+    /// GPU 计时一行 JSON（与 [`GpuTimingSupport::json`] 同形，多了实测平均值）。
+    pub fn gpu_json(&self) -> String {
+        format!(
+            "{{\"state\":\"{}\",\"reason\":\"{}\",\"frames_measured\":{},\"avg_ms\":{}}}",
+            self.gpu_status.state.name(),
+            self.gpu_status.reason.replace('"', "\\\""),
+            self.gpu_ms.iter().flatten().count(),
+            match self.gpu_avg_ms() {
+                Some(ms) => format!("{ms:.3}"),
+                None => "null".to_string(),
+            },
+        )
+    }
+}
+
+/// 逐帧渲染（**唯一**实现）。
+///
+/// - 开始前写入 `ViewRect`（headless 没有 egui 布局：视口 = 整幅画面）；
+/// - 按后端能力校验渲染参数（不支持 ⇒ 显式报错，不静默降级）；
+/// - 每帧顺序：advance → 构图 → 渲染 + 回读 → `on_frame` → `end_frame`。
+///
+/// `on_frame` 收到 `(帧号, 像素视图)`，返回该帧**哈希耗时**（未哈希 ⇒ `ZERO`）。
+///
+/// 返回 [`FrameRun`]：计时交给调用方汇总与门禁；决策与 GPU span 交给调用方落盘。
+pub fn run_frames(
+    ctx: &RenderContext,
+    runtime: &mut Runtime,
+    backends: &mut StandardBackends,
+    target: &mut HeadlessTarget,
+    options: FrameLoopOptions,
+    want_rgba: bool,
+    on_frame: &mut dyn FnMut(u32, FrameView<'_>) -> Result<Duration, String>,
+) -> Result<FrameRun, String> {
+    let (width, height) = (options.width, options.height);
+    runtime.driver.with_scheduler_mut(|scheduler| {
+        scheduler.resources_mut().insert(ViewRect {
+            rect: Rect2D::new(Vec2::ZERO, Vec2::new(width as f32, height as f32)),
+        });
+    });
+    // **断点续渲**：先快进到起点（`Seek` 是 Driver 的既有命令，不另造状态迁移）。
+    if options.start_frame > 0 {
+        runtime
+            .driver
+            .submit(DriverCommand::Seek {
+                t: f64::from(options.start_frame) / options.fps,
+            })
+            .wait();
+    }
+
+    // B4 Step 2 / B6 §0.3：默认值按后端能力取（wgpu `PostCaps::none()` ⇒ 与旧 `Default`
+    // 逐位相同）；显式请求不支持项仍报错。
+    let caps = match ctx.adapter() {
+        Some(adapter) => Some(
+            backends
+                .backend_3d_mut()
+                .capabilities(adapter)
+                .map_err(|e| format!("查询后端能力失败：{e}"))?,
+        ),
+        None => None,
+    };
+    // B11 Step 4：作品级路由 —— 第一帧决定后固定（`AutoFrame` 每帧重算，诊断用）。
+    let mut pinned: Option<RoutingDecision> = None;
+
+    let screen = ScreenParams::new([width, height], 1.0);
+    // 背景与 wgpu 分支**同源**：都用同一个 clear（不读 `SceneView::background`，
+    // 否则同一个脚本换 `--backend` 就换了底色）。
+    let clear = wgpu::Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    let dt = 1.0 / options.fps as f32;
+    let frames = frames_for(runtime, options.fps);
+    let start = options.start_frame.min(frames.saturating_sub(1).max(0));
+    let stop = options.end_frame.map_or(frames, |end| end.min(frames));
+    let remaining = stop.saturating_sub(start);
+    let mut timings = Vec::with_capacity(remaining as usize);
+    // 执行计划阶段 1：逐帧结构指纹（状态 = f(t) 的等式一侧）。
+    let mut structure: Vec<zela_scene_ecs::StructureFingerprint> =
+        Vec::with_capacity(remaining as usize);
+    // B12 Step 2：决策日志（相邻重复只留一条；`AutoFrame` 可能真的换后端）。
+    let mut decisions: Vec<RoutingDecision> = Vec::new();
+
+    // B12 Step 4：GPU 时间归因（默认关闭；需 device 显式请求 `TIMESTAMP_QUERY`）。
+    // 任何一步不可用都落到 `Unsupported` + 理由，**不静默给 0**。
+    let want_gpu = std::env::var("ZELA_GPU_TIMING").is_ok_and(|value| value != "0");
+    let (mut gpu_span, mut gpu_status) = if !want_gpu {
+        (None, GpuTimingSupport::disabled())
+    } else {
+        match ctx.adapter() {
+            Some(adapter) => match GpuSpan::new(&ctx.device, &ctx.queue, adapter) {
+                Ok(span) => (Some(span), GpuTimingSupport::measured()),
+                Err(reason) => (None, GpuTimingSupport::unsupported(reason)),
+            },
+            None => (None, GpuTimingSupport::unsupported("上下文没有 adapter")),
+        }
+    };
+    let mut gpu_ms: Vec<Option<f64>> = Vec::with_capacity(remaining as usize);
+
+    // B12 Step 5：缓存 / 资源计数取本轮增量（计数是进程级累计，取走即清零）。
+    let _ = zela_render_backends::diagnostics::take_cache_totals();
+    let textures_before = zela_render_backends::diagnostics::textures_created();
+    // B17 Step 0：矢量侧资源计数逐帧取增量（本次运行从 0 开始）。
+    let _ = zela_render_vector::take_resource_totals();
+    let mut vector_resources = zela_render_vector::ResourceTotals::default();
+    let mut resource_frames: Vec<zela_render_vector::ResourceTotals> =
+        Vec::with_capacity(remaining as usize);
+    // AW-07（E-G3）：几何数组上传字节逐帧取增量（本次运行从 0 开始）。
+    let _ = zela_render_vector::take_store_upload_bytes();
+    let mut store_uploads: Vec<usize> = Vec::with_capacity(remaining as usize);
+    // B18 Step 2：链表溢出逐帧取增量（0 = 没有片元被丢弃）。
+    let _ = zela_render_vector::take_overflow_totals();
+    let mut vector_overflow = zela_render_vector::OverflowTotals::default();
+    // PB Step 1：投影光源超限逐帧取增量（0 = 没有光源被静默丢弃）。
+    let _ = zela_render_vector::take_shadow_totals();
+    let mut vector_shadows = zela_render_vector::ShadowTotals::default();
+
+    for index in start..stop {
+        let mut timing = FrameTiming::default();
+
+        // **与 GUI 同一条命令**：固定 dt（导出比实时墙钟更确定）。
+        let mark = Instant::now();
+        runtime
+            .driver
+            .submit(DriverCommand::Advance { dt })
+            .wait();
+        timing.advance = mark.elapsed();
+
+        // 结构指纹：**推进之后、渲染之前** —— 与"这一帧画的就是这个状态"同口径。
+        // 纯数值层（组件字段 + 世界矩阵），每帧独立（可定位到具体帧）。
+        structure.push(runtime.driver.with_scheduler(|scheduler| {
+            zela_scene_ecs::fingerprint_world(
+                scheduler.world(),
+                scheduler.resources().get::<zela_scene_ecs::WorldTransforms>(),
+            )
+        }));
+
+        // B12 Step 4：起始标记（空 compute pass 只写 timestamp；队列按提交顺序执行）。
+        let begin_error = gpu_span.as_ref().and_then(|span| span.begin().err());
+        if let Some(reason) = begin_error {
+            gpu_status = GpuTimingSupport::unsupported(reason);
+            gpu_span = None;
+        }
+
+        // ── B11 Step 4 + B12 Step 2：先选后端（作品级：第一帧决定后固定） ──────
+        // 决策本身是可观测对象：逐条校验（拒绝理由不得为空），并收集起来交给调用方落盘。
+        let build_mark = Instant::now();
+        let mut snapshot: Option<zela_playback::vector_frame::VectorFrame> =
+            if options.backend == LoopBackend::Wgpu {
+                None
+            } else {
+                Some(zela_playback::vector_frame::VectorFrame::take(&runtime)?)
+            };
+        let snapshot_time = build_mark.elapsed();
+        let decision = if options.backend == LoopBackend::Wgpu {
+            // 显式 wgpu：与改动前逐位相同，不付快照代价。
+            RoutingDecision::explicit_wgpu()
+        } else {
+            let snap = snapshot.as_ref().expect("非 wgpu 路径已取快照");
+            let decision = match (&pinned, options.backend) {
+                (Some(pinned), LoopBackend::Auto) | (Some(pinned), LoopBackend::Vector) => {
+                    pinned.clone()
+                }
+                _ => backend_router::route(
+                    options.backend,
+                    snap.content(),
+                    ctx.adapter().map(AdapterFacts::of),
+                )?,
+            };
+            if pinned.as_ref() != Some(&decision) {
+                eprintln!("[backend] {}", decision.report());
+            }
+            if options.backend != LoopBackend::AutoFrame {
+                pinned = Some(decision.clone());
+            }
+            decision
+        };
+        // C4：空拒绝理由 = 静默决策 ⇒ 在这里就失败，不让它流进产物。
+        decision.validate()?;
+        if decisions.last() != Some(&decision) {
+            decisions.push(decision.clone());
+        }
+        let wanted = decision.backend;
+
+        // 渲染参数：默认值按**实际**后端能力取（wgpu 仍走 `default_for(caps)` ⇒ 逐位相同）。
+        let mut params = match options.vector_params {
+            Some(params) => params,
+            None => match wanted {
+                BackendKind::Wgpu => match &caps {
+                    Some(caps) => zela_scene_bundle::RenderParams::default_for(caps),
+                    None => zela_scene_bundle::RenderParams::default(),
+                },
+                // **B10 Step 4**：矢量后端自述 `PostCaps::all()` ⇒ `default_for` 打开
+                // tone / bloom / ao。这不是静默降级：调用方**没有请求**，按该后端能力的默认值取。
+                BackendKind::Vector => {
+                    zela_scene_bundle::RenderParams::default_for(&vector_capabilities())
+                }
+            },
+        };
+        params.size = (width, height);
+        params
+            .validate()
+            .map_err(|e| format!("渲染参数非法：{e}"))?;
+        if wanted == BackendKind::Wgpu {
+            if let Some(caps) = &caps {
+                zela_playback::check_render_params_supported(&params, caps)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+
+        let convert: Duration;
+        let (raw, rgba): (Vec<u8>, Vec<u8>) = if wanted == BackendKind::Vector {
+            // 不支持的内容（材质采样的纹理层 / 混排 / 线框）已在路由层被拒 ⇒ 这里不再重复判断。
+            // `composite = true` 的内容层是**支持的**：`VectorFrame::render` 会自己渲内容层
+            // 再按图层叠到视口上（PC 路线 A）。
+            let snap = snapshot.take().expect("矢量路径已有快照");
+            timing.build = snapshot_time;
+            let mark = Instant::now();
+            let rgba = snap.render(
+                &runtime,
+                width,
+                height,
+                &params,
+                [
+                    clear.r as f32,
+                    clear.g as f32,
+                    clear.b as f32,
+                    clear.a as f32,
+                ],
+            )?;
+            timing.prepare = mark.elapsed();
+
+            // 矢量帧已是 RGBA8；sink 的写入口径是目标格式（BGRA），这里做一次通道交换。
+            let mark = Instant::now();
+            let raw = super::export::rgba_to_target(ctx, &rgba);
+            convert = mark.elapsed();
+            (raw, rgba)
+        } else {
+            let mark = Instant::now();
+            let callback = runtime
+                .driver
+                .with_scheduler(|scheduler| {
+                    let view_options = zela_render::FrameOptions::default();
+                    let view = zela_render::frame::build_scene_view(
+                        &WorldView::new(scheduler.world()),
+                        scheduler.resources(),
+                        view_options,
+                    );
+                    zela_render::frame::build_frame_inputs(
+                        &view,
+                        scheduler.resources(),
+                        view_options,
+                    )
+                    .and_then(zela_render_backends::frame::build_scene_callback)
+                })
+                .ok_or_else(|| "本帧没有可渲染图层（场景为空）".to_string())?;
+            timing.build = mark.elapsed();
+
+            let (pixels, headless) = render_frame_headless_cached_timed(
+                ctx, backends, &callback, screen, clear, target,
+            );
+            timing.prepare = headless.render.prepare;
+            timing.paint = headless.render.paint;
+            timing.submit = headless.render.submit;
+            timing.read = headless.read;
+
+            let mark = Instant::now();
+            let rgba = if want_rgba {
+                super::export::to_rgba(ctx, &pixels)
+            } else {
+                Vec::new()
+            };
+            convert = mark.elapsed();
+            (pixels, rgba)
+        };
+
+        // 输出 / 校验：渲染核心不感知它们是什么。
+        let mark = Instant::now();
+        let hash_time = {
+            let frame = FrameView {
+                raw: &raw,
+                rgba: &rgba,
+                size: (width, height),
+            };
+            on_frame(index, frame)?
+        };
+        let sink_all = mark.elapsed() + convert;
+        timing.hash = hash_time;
+        timing.sink = sink_all.saturating_sub(hash_time);
+
+        let mark = Instant::now();
+        runtime.driver.with_scheduler_mut(|scheduler| {
+            zela_render::frame::end_frame(scheduler.resources_mut());
+        });
+        timing.end = mark.elapsed();
+
+        // B12 Step 4：结束标记 + 回读（测不出 ⇒ 降级为 `Unsupported`，不填 0）。
+        let finished = gpu_span.as_ref().map(|span| span.finish());
+        let measured = match finished {
+            Some(Ok(ms)) => Some(ms),
+            Some(Err(reason)) => {
+                gpu_status = GpuTimingSupport::unsupported(reason);
+                gpu_span = None;
+                None
+            }
+            None => None,
+        };
+        gpu_ms.push(measured);
+
+        // B17 Step 0：这一帧创建的矢量资源（取走即清零；wgpu 帧为 0）。
+        let resources = zela_render_vector::take_resource_totals();
+        vector_resources = vector_resources.plus(resources);
+        resource_frames.push(resources);
+        store_uploads.push(zela_render_vector::take_store_upload_bytes());
+        // B18 Step 2：这一帧的链表溢出（取走即清零；wgpu 帧为 0）。
+        vector_overflow = vector_overflow.plus(zela_render_vector::take_overflow_totals());
+        // PB Step 1：这一帧的投影光源超限（取走即清零；wgpu 帧为 0）。
+        vector_shadows = vector_shadows.plus(zela_render_vector::take_shadow_totals());
+
+        timings.push(timing);
+    }
+
+    Ok(FrameRun {
+        timings,
+        decisions,
+        gpu_ms,
+        gpu_status,
+        cache: zela_render_backends::diagnostics::take_cache_totals(),
+        textures_created: zela_render_backends::diagnostics::textures_created()
+            .saturating_sub(textures_before),
+        vector_resources,
+        resource_frames,
+        store_uploads,
+        vector_overflow,
+        vector_shadows,
+        structure,
+    })
+}

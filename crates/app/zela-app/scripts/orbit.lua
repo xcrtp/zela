@@ -22,13 +22,23 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+
+-- 串行段起点（旧 `scene.animate` 的全局游标）。
+local PRE_RUN = 1.2      -- 两条轨道环各写 1.2s
+local MAIN_START = 2.4   -- 预演段之后
+local COMET_START = MAIN_START + MAIN
 
 -- 2D 相机（渲染器要求 Framing2D；世界中心对准轨道原点）。
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
+    Camera2D { scale = 55.0 },
 })
 
 local function ring_points(radius)
@@ -47,25 +57,25 @@ end
 -- ── 天体 ────────────────────────────────────────────────────────────
 local sun = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.5 },
-    Fill { color = rgba(255, 225, 130, 255) },
+    Fill { color = scene.rgba(255, 225, 130, 255) },
 })
 
 local planet1 = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.16 },
-    Fill { color = rgba(255, 150, 90, 255) },
-    Transform { x = q(R1), y = 0.0, z = 0.0 },
+    Fill { color = scene.rgba(255, 150, 90, 255) },
+    Transform { x = q(R1), y = 0.0 },
     Opacity { value = 0.0 },
 })
 local planet2 = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.24 },
-    Fill { color = rgba(120, 190, 255, 255) },
-    Transform { x = q(R2), y = 0.0, z = 0.0 },
+    Fill { color = scene.rgba(120, 190, 255, 255) },
+    Transform { x = q(R2), y = 0.0 },
     Opacity { value = 0.0 },
 })
 local moon = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.07 },
-    Fill { color = rgba(235, 235, 245, 255) },
-    Transform { x = 0.32, y = 0.0, z = 0.0 },
+    Fill { color = scene.rgba(235, 235, 245, 255) },
+    Transform { x = 0.32, y = 0.0 },
     Opacity { value = 0.0 },
     Parent { parent = planet2 },
 })
@@ -73,100 +83,100 @@ local moon = scene.spawn({
 -- 轨道环：初态不可见，预演段先后书写，主段淡入。
 local ring1 = scene.spawn({
     Reveal { points = ring_points(R1), closed = true },
-    Stroke { width = 1.0, color = rgba(90, 90, 120, 255) },
+    Stroke { width = 1.0, color = scene.rgba(90, 90, 120, 255) },
     Opacity { value = 0.0 },
 })
 local ring2 = scene.spawn({
     Reveal { points = ring_points(R2), closed = true },
-    Stroke { width = 1.0, color = rgba(90, 90, 120, 255) },
+    Stroke { width = 1.0, color = scene.rgba(90, 90, 120, 255) },
     Opacity { value = 0.0 },
 })
 
 -- 流星：初态不可见，主段结束后划过并淡出。
 local comet = scene.spawn({
     Circle { x = 0.0, y = 0.0, r = 0.07 },
-    Fill { color = rgba(255, 255, 255, 255) },
+    Fill { color = scene.rgba(255, 255, 255, 255) },
     Opacity { value = 0.0 },
 })
 
 -- ── 预演段（0–2.4s）：两条轨道环先后书写 ────────────────────────────
-scene.animate(
-    ring1,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
-    1.2
-)
-scene.animate(
-    ring2,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.2 }),
-    1.2
-)
+expr.bind {
+    object = ring1,
+    target = Reveal.channel["end"],
+    root = sugar.ramp(0.0, 1.0, PRE_RUN),
+    clock = clock.shift(0.0),
+    duration = PRE_RUN,
+}
+expr.bind {
+    object = ring2,
+    target = Reveal.channel["end"],
+    root = sugar.ramp(0.0, 1.0, PRE_RUN),
+    clock = clock.shift(PRE_RUN),
+    duration = PRE_RUN,
+}
 
 -- ── 主段（2.4–10.4s）：太阳呼吸 + 行星 / 卫星公转 + 淡入（并行轨道）──
-scene.animate(
-    sun,
-    scene.clip_transform(TransformChannel.Scale, Curve.Sin {
-        base = 1.0,
-        amp = 0.12,
-        omega = 1.5,
-    }),
-    MAIN
-)
-scene.parallel(
-    planet1,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = q(R1),
-        speed = q(TAU / 3.0),
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    planet2,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = q(R2),
-        speed = q(TAU / 6.0),
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    moon,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = 0.32,
-        speed = q(TAU / 0.9),
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    ring1,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    ring2,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    planet1,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    planet2,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
-scene.parallel(
-    moon,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 0.0, to = 1.0, dur = 1.0 })
-)
+expr.bind {
+    object = sun,
+    target = Transform.channel.scale,
+    root = sugar.wave(1.0, 0.12, 1.5),
+    clock = clock.shift(MAIN_START),
+    duration = MAIN,
+}
+expr.bind {
+    object = planet1,
+    target = Transform.channel.position,
+    root = sugar.orbit2d(q(R1), q(TAU / 3.0), 0.0),
+    clock = clock.shift(MAIN_START),
+    duration = MAIN,
+}
+expr.bind {
+    object = planet2,
+    target = Transform.channel.position,
+    root = sugar.orbit2d(q(R2), q(TAU / 6.0), 0.0),
+    clock = clock.shift(MAIN_START),
+    duration = MAIN,
+}
+expr.bind {
+    object = moon,
+    target = Transform.channel.position,
+    root = sugar.orbit2d(0.32, q(TAU / 0.9), 0.0),
+    clock = clock.shift(MAIN_START),
+    duration = MAIN,
+}
+for _, object in ipairs({ ring1, ring2, planet1, planet2, moon }) do
+    expr.bind {
+        object = object,
+        target = Opacity.channel.value,
+        root = sugar.ramp(0.0, 1.0, 1.0),
+        clock = clock.shift(MAIN_START),
+        duration = MAIN,
+    }
+end
 
 -- ── 段 3（10.4–11.9s）：流星划过并淡出 ──────────────────────────────
-scene.animate(
-    comet,
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = 2.6, y = 1.9 },
-        to = Vec2 { x = -2.6, y = 1.9 },
-        dur = COMET_DUR,
-    }),
-    COMET_DUR
-)
-scene.parallel(
-    comet,
-    scene.clip(Target.OpacityValue, Curve.Ramp { from = 1.0, to = 0.0, dur = COMET_DUR })
-)
+expr.bind {
+    object = comet,
+    target = Transform.channel.position,
+    root = Vec3FromVec2 {
+        v = Mix {
+            a = Vec2Of { x = expr.pure(2.6), y = expr.pure(1.9) },
+            b = Vec2Of { x = expr.pure(-2.6), y = expr.pure(1.9) },
+            t = Clamp {
+                x = Scale { k = 1.0 / COMET_DUR, of = clock.time() },
+                lo = expr.pure(0.0),
+                hi = expr.pure(1.0),
+            },
+        },
+        z = expr.pure(0.0),
+    },
+    clock = clock.shift(COMET_START),
+    duration = COMET_DUR,
+}
+expr.bind {
+    object = comet,
+    target = Opacity.channel.value,
+    root = sugar.ramp(1.0, 0.0, COMET_DUR),
+    clock = clock.shift(COMET_START),
+    duration = COMET_DUR,
+}

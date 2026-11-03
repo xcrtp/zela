@@ -10,6 +10,16 @@
 // - 未注册的组件类型仍会出现在快照中（type_name = "<unregistered>"），
 //   保证实体结构完整可见。
 // - 快照数据结构全部为 owned（String），支持 Serialize + Deserialize 双向。
+//
+// # 确定性（W-B）：**输出边**定序，容器仍是 `HashMap`
+//
+// `TypeId` 不实现 `Ord`，注册表无法直接换成 `BTreeMap`。因此确定性钉在**输出**上：
+// 实体按 `id` 升序、组件按 `type_name` 升序、Resource 按 `type_name` 升序 ——
+// 同一个 World 无论插入序如何，`WorldSnapshot` 的 JSON 逐字节相同（有用例钉住）。
+//
+// ⚠️ 本快照仍是 **UI 专用**（F10 手动导出）：组件值是 `Debug` 文本且截断到 200 字符，
+// **不是**结构指纹的数据源。指纹走 `zela-scene-ecs::fingerprint` 的纯数值层
+// （`ObjectId` 升序 + 字段精确位），不得把本结构接进指纹线。
 
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -131,6 +141,18 @@ impl SnapshotRegistry {
                 ResourceSnapshot { type_name: name }
             })
             .collect();
+
+        // 输出边定序（W-B）：`hecs::World::iter` 与 `Resources::type_ids` 的顺序
+        // 都不属于契约，直接序列化会让"同一个 World"产出不同 JSON。
+        // 排序键**显式写死**：实体 id / 组件 type_name / Resource type_name。
+        let mut entities: Vec<EntitySnapshot> = entities;
+        for entity in &mut entities {
+            entity.components.sort_by(|a, b| a.type_name.cmp(&b.type_name));
+        }
+        entities.sort_by_key(|entity| entity.id);
+
+        let mut resources: Vec<ResourceSnapshot> = resources;
+        resources.sort_by(|a, b| a.type_name.cmp(&b.type_name));
 
         WorldSnapshot {
             tick,
@@ -263,5 +285,21 @@ mod tests {
         let t = truncate_summary(&long);
         assert!(t.len() < 220);
         assert!(t.ends_with("...(truncated)"));
+    }
+
+    /// W-B：输出边定序 ⇒ 组件在实体上的插入顺序不影响 JSON（逐字节相同）。
+    #[test]
+    fn snapshot_json_is_deterministic_across_component_order() {
+        let reg = test_registry();
+        let mut a = hecs::World::new();
+        a.spawn((Position(1.0, 2.0), Velocity(0.5, -0.5)));
+        a.spawn(("untagged",));
+        let mut b = hecs::World::new();
+        b.spawn((Velocity(0.5, -0.5), Position(1.0, 2.0)));
+        b.spawn(("untagged",));
+
+        let ja = serde_json::to_string(&reg.snapshot(&a, &Resources::new(), 1)).unwrap();
+        let jb = serde_json::to_string(&reg.snapshot(&b, &Resources::new(), 1)).unwrap();
+        assert_eq!(ja, jb, "同一个 World（不同组件插入序）必须产出逐字节相同的 JSON");
     }
 }

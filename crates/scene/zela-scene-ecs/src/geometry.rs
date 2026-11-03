@@ -203,9 +203,8 @@ mod tests {
 
     // ─── FunctionGraphRefreshSystem（M4-1）───────────────────────────────
 
-    /// M4-1：函数采样归对象层；System 只把实体上的相位（`PhaseAnim`，由
-    /// `BindingApplySystem` 写入）交给 `FunctionGraph::refresh` —— 走契约层
-    /// `Scene::set` 的写路径（M4-3b）。
+    /// M4-1 / **阶段 2**：System 只把实体相位交给 `FunctionGraph::refresh` ——
+    /// 边距内**只移动 `CurveWindow`**（几何采样一次），超边距才重写 `Path`。
     #[test]
     fn function_graph_refresh_samples_with_entity_phase() {
         let mut world = hecs::World::new();
@@ -219,6 +218,12 @@ mod tests {
                 ze_render_ir::StrokeSolid::new(1.0, (0, 200, 200, 255)),
             )
             .expect("FunctionGraph 已登记");
+        let sampled: Vec<ze_notion::PathCommand> = world
+            .get::<&ze_scene_core::Path>(crate::contract::entity_of(handle).unwrap())
+            .unwrap()
+            .0
+            .commands
+            .clone();
 
         // 相位组件（运行时由 BindingApplySystem 写入）。
         let mut anim = PhaseAnim::new(0.0, 1.5);
@@ -232,23 +237,22 @@ mod tests {
         sched.init_resources();
         sched.run_frame(0.016);
 
-        let path = sched
+        let entity = crate::contract::entity_of(handle).unwrap();
+        let window = *sched
             .world()
-            .get::<&ze_scene_core::Path>(crate::contract::entity_of(handle).unwrap())
-            .unwrap();
-        let mut pts = Vec::new();
-        for cmd in &path.0.commands {
-            if let ze_notion::PathCommand::MoveTo(p) | ze_notion::PathCommand::LineTo(p) = cmd {
-                pts.push(*p);
-            }
-        }
-        // 相位加在自变量上：x = {0,1} ⇒ y = {1,2}。
+            .get::<&ze_render_ir::CurveWindow>(entity)
+            .expect("窗口组件在");
         assert_eq!(
-            pts,
-            vec![
-                ze_notion::Vec2::new(0.0, 1.0),
-                ze_notion::Vec2::new(1.0, 2.0)
-            ]
+            [window.lo, window.hi],
+            graph.window_for(1.0).expect("相位在边距内")
         );
+        let after: Vec<ze_notion::PathCommand> = sched
+            .world()
+            .get::<&ze_scene_core::Path>(entity)
+            .unwrap()
+            .0
+            .commands
+            .clone();
+        assert_eq!(sampled, after, "边距内刷新不得重写几何");
     }
 }

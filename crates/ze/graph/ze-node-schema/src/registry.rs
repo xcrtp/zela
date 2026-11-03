@@ -23,7 +23,7 @@ use crate::spec::NodeSpec;
 #[derive(Clone)]
 struct Entry {
     type_name: String,
-    display_name: String,
+    presentation: ze_node_core::NodePresentation,
     category: String,
     type_id: TypeId,
     factory: fn() -> Box<dyn Node>,
@@ -40,9 +40,13 @@ impl Entry {
         // `fn()` (no capture), so calling it is cheap and side-effect-free for
         // well-behaved node constructors.
         let probe = factory();
+        let spec = probe
+            .as_any()
+            .downcast_ref::<S>()
+            .expect("factory 必须构造 S 本身");
         Self {
             type_name: probe.meta().type_name.clone(),
-            display_name: probe.meta().display_name.clone(),
+            presentation: spec.presentation(),
             category,
             type_id: TypeId::of::<S>(),
             factory,
@@ -95,6 +99,16 @@ impl NodeRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// UI presentation for a registered type (display name + interaction).
+    ///
+    /// 编辑器把它拷进自己的 side table；core 的 `Node` trait 上看不到这些字段。
+    pub fn presentation(&self, type_name: &str) -> Option<ze_node_core::NodePresentation> {
+        self.entries
+            .iter()
+            .find(|entry| entry.type_name == type_name)
+            .map(|entry| entry.presentation.clone())
     }
 
     /// Register a node type `S` under `category`, constructed by `factory`.
@@ -154,7 +168,7 @@ impl NodeRegistry {
         for e in &self.entries {
             let info = RegistryNodeInfo {
                 type_name: e.type_name.clone(),
-                display_name: e.display_name.clone(),
+                display_name: e.presentation.display_name.clone(),
             };
             if let Some(cat) = out.iter_mut().find(|c| c.name == e.category) {
                 cat.entries.push(info);
@@ -245,7 +259,7 @@ mod tests {
 
     fn factory() -> Box<dyn Node> {
         Box::new(ConstNode {
-            meta: NodeMeta::new("test.const", "Const", 1),
+            meta: NodeMeta::new("test.const", 1),
             outputs: vec![OutputSocket::new(Box::new(NamedTypeTag::new("f32"))).with_index(0)],
             value: 0.0,
         })

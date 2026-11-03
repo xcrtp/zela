@@ -1,0 +1,52 @@
+# 结构指纹基线（等式判据：逐位相等）
+#
+# 口径 = `zela.observation/1` 的 structure 摘要：
+#   对象按 `ObjectId` 升序 × `TARGETS` 字段（精确 f32 位）× `WorldTransforms`（父子累乘后）。
+# **不含**像素 / 字体 / GPU / 编码器 ⇒ 这是本项目第一个目标跨设备的回归判据。
+# 派生几何（字形轮廓 / Path 展平）显式排除（基线文件头的 payload 口径）。
+#
+# 一件作品只有一个值：wgpu 与 vector、script 与 bundle **必须**相同；
+# 不同就是状态真的变了（或某条路径偷改了状态）。
+#
+# 重录：ZELA_STRUCTURE_RECORD=1 cargo verify --step hashes（结构指纹与设备无关，无需 --record）。
+
+atlas = daf99d7cc2d1b109
+cap_background = 42b9a61345666af9
+cap_channels2d = 3d6ae09a95fed6a3
+cap_channels3d = e392fe6f1047e3ac
+cap_codegen = 71e06fb9ce2d3a25
+cap_dash = 39f367d61fcb56b9
+cap_gradient = d63f043fe8fbd329
+cap_mix = 02f22020f5e4b24e
+cap_parent_inherit = eab5178e7477a282
+cap_path_follow = db548bc780e582ef
+cap_plot = 3553f90dd1cbe49a
+cap_raytrace = e5c8da3e4b5cc9eb
+cap_sdf = 2a9bc30626fdcced
+cap_second = b22e4e48cdf5e705
+cap_sequence = e0784a76f105df78
+cap_shader_3d = bfa92ce607630c20
+cap_shader_alpha = e079ac0344cd421b
+cap_stroke_width = e482350dc3ed7d23
+cap_text_group = c71e638d899b1cd4
+cap_window = bb41730ca749961b
+capability_gaps = 7a625f5e9f26501e
+demo3d = 8d4e2feb1f0c1505
+expr_demo = c41a5c4a0ff4a23d
+expr_read = 4373a44e13f500bf
+fourier = 5ba121e215890f97
+fusion = e230e67c3aa38323
+orbit = 095859f305e02d53
+pbr_lights = c5083bbb0f9be1e3
+pbr_materials = 72bf9ecc72395787
+pbr_scene = 799ccf1bee89289b
+pendulum = 52faf18dc59dddb7
+shaded_meshes = 621dbe9086a20fed
+sine_trace = 9030a4a6950afaed
+spring = 6fc3ab36b031a858
+spring_array = 4b5b192be70ecbfc
+spring_state = f3bd477a57b95e2a
+storyboard = cee5ea10e798d307
+surface_matrix = 75fcfd7d42553f06
+surface_matrix.js = 75fcfd7d42553f06
+vector_paths = 8721ae3b216c98a1

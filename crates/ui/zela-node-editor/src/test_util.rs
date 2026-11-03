@@ -3,7 +3,7 @@
 use std::any::Any;
 
 use ze_node_core::{
-    DirtyPolicy, InputSocket, NamedTypeTag, Node, NodeInteraction, NodeMeta, OutputSocket, TypeTag,
+    DirtyPolicy, InputSocket, NamedTypeTag, Node, NodeMeta, OutputSocket, TypeTag,
 };
 
 /// Configurable test node: `n_in` inputs and `n_out` outputs, all carrying
@@ -20,7 +20,7 @@ impl TestNode {
         let in_tag: Box<dyn TypeTag> = Box::new(NamedTypeTag::new(tag));
         let out_tag: Box<dyn TypeTag> = Box::new(NamedTypeTag::new(tag));
         Self {
-            meta: NodeMeta::new("test.node", "TestNode", 1),
+            meta: NodeMeta::new("test.node", 1),
             inputs: (0..n_in)
                 .map(|i| InputSocket::new(in_tag.clone()).with_index(i as u32))
                 .collect(),
@@ -33,12 +33,6 @@ impl TestNode {
     /// One f32 input, one f32 output.
     pub fn f32_passthrough() -> Self {
         Self::new("f32", 1, 1)
-    }
-
-    /// Override the interaction policy of this test node.
-    pub(crate) fn with_interaction(mut self, interaction: NodeInteraction) -> Self {
-        self.meta = self.meta.with_interaction(interaction);
-        self
     }
 }
 

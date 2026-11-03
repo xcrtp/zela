@@ -33,9 +33,20 @@
 use serde::{Deserialize, Serialize};
 
 pub mod frame_hash;
+pub mod input_stream;
 pub mod sha256;
 
+pub use input_stream::{
+    FrameEvents, INPUT_FORMAT, InputError, InputStream, LibraryId, Pairing, Recorder,
+};
+
 use zela_scene_ecs::scene_script::SceneScript;
+
+/// B4 Step 2：渲染参数（Meta 的 `render_params` 字段）。
+///
+/// 转发 kernel 层的纯数据类型 —— 回放端可直接用
+/// `bundle.meta().render_params` 构造后端，不必再引一层依赖。
+pub use ze_render_ir::RenderParams;
 
 /// 文件魔数（4 字节）。
 pub const MAGIC: &[u8; 4] = b"ZSB1";
@@ -116,8 +127,12 @@ pub struct Meta {
     pub downgrades: Vec<Downgrade>,
     /// 源脚本 SHA-256（诊断用，不进内容 hash）。
     pub source_sha256: Option<String>,
-    /// 场景时长（秒；从 SceneScript 重算，作为交叉校验）。
-    pub duration: f64,
+    /// **渲染参数**（B4 Step 2）：回放端照着它构造后端（D1）。
+    ///
+    /// 纯记录 + 消费，**不进内容 hash**（不做 payload 校验）；`#[serde(default)]`
+    /// 让既有 ZSB 仍可读（缺字段 ⇒ `RenderParams::default()` = 当前行为）。
+    #[serde(default)]
+    pub render_params: crate::RenderParams,
     /// 对象数（交叉校验）。
     pub object_count: usize,
     /// payload 的 SHA-256（读取时校验；不参与自身的计算）。
@@ -137,6 +152,8 @@ pub struct MetaInput {
     pub required_pods: Vec<Pod>,
     pub downgrades: Vec<Downgrade>,
     pub source_sha256: Option<String>,
+    /// 渲染参数（B4 Step 2）：默认 = 当前行为（§0.2 默认等效）。
+    pub render_params: RenderParams,
 }
 
 /// 当前运行时**能解释什么**（可还原性检查的输入）。
@@ -258,13 +275,8 @@ impl Bundle {
             });
         }
 
-        let duration = script.duration();
-        if !duration.is_finite() {
-            return Err(BundleError::NonCanonical {
-                message: format!("时长不是有限数：{duration}"),
-            });
-        }
-
+        // **静止时刻不进产物**（U3）：它是派生量、可能不可求；需要时由
+        // `SceneScript::still_time()` 从 payload 现算（日志 / 默认帧数提示）。
         let payload = text.into_bytes();
         let payload_sha256 = sha256::hex(&sha256::sha256(&payload));
         let meta = Meta {
@@ -276,7 +288,7 @@ impl Bundle {
             required_pods: input.required_pods,
             downgrades: input.downgrades,
             source_sha256: input.source_sha256,
-            duration,
+            render_params: input.render_params,
             object_count: script.len(),
             payload_sha256,
         };
@@ -447,20 +459,66 @@ mod tests {
     use zela_scene_ecs::scene::Scene;
 
     fn tiny_script() -> SceneScript {
+        use ze_comb::{ChannelRef, Expr, OpRef};
         let mut enc = SceneEncoder::new();
         let circle = enc.spawn(vec![Box::new(Circle::new((0.0, 0.0), 1.0))]);
-        enc.animate_named(
-            circle,
-            "CircleRadius",
-            zela_scene_ecs::Curve::Keyframes {
-                keys: vec![
-                    (0.0, zela_scene_ecs::AnimValue::Scalar(1.0)),
-                    (2.0, zela_scene_ecs::AnimValue::Scalar(3.0)),
-                ],
-                interpolation: zela_scene_ecs::Interp::Linear,
-            },
-            2.0,
+        // `radius = 1 + 2 · clamp(t/2, 0, 1)`：旧的 `Keyframes (1 → 3) over 2s`。
+        let progress = Expr::call(
+            OpRef::new("zela.math", "clamp"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [
+                        Expr::pure(0.5),
+                        Expr::channel(ChannelRef::builtin("time")),
+                    ],
+                ),
+                Expr::pure(0.0),
+                Expr::pure(1.0),
+            ],
         );
+        let root = Expr::call(
+            OpRef::new("zela.math", "add"),
+            [
+                Expr::pure(1.0),
+                Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(2.0), progress]),
+            ],
+        );
+        // 窗口 `[0, 2)`：静止时刻 = 2.0（与旧 `play(dur = 2.0)` 的段语义一致）。
+        let window = Expr::call(
+            OpRef::new("zela.math", "and"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "ge"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(0.0),
+                    ],
+                ),
+                Expr::call(
+                    OpRef::new("zela.math", "lt"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(2.0),
+                    ],
+                ),
+            ],
+        );
+        enc.bind_expr_gated(
+            circle,
+            "Circle.radius",
+            root,
+            zela_scene_ecs::animation::LibraryRef {
+                namespace: "zela.math".to_string(),
+                version: "17".to_string(),
+                op_revisions: Default::default(),
+            },
+            zela_scene_ecs::ClockProgram::new(),
+            Some(window),
+            zela_scene_ecs::animation::ResetBehavior::Hold,
+            0.0,
+        )
+        .expect("表达式绑定合法");
         enc.finish()
     }
 
@@ -475,6 +533,7 @@ mod tests {
             required_pods: vec![Pod::new("scene", "0.1.0")],
             downgrades: Vec::new(),
             source_sha256: Some("deadbeef".to_string()),
+            render_params: RenderParams::default(),
         }
     }
 
@@ -539,6 +598,7 @@ mod tests {
                 required_pods: vec![Pod::new("scene", "0.1.0")],
                 downgrades: Vec::new(),
                 source_sha256: None,
+                render_params: RenderParams::default(),
             },
         )
         .expect("encode");
@@ -601,7 +661,7 @@ mod tests {
         let recipe = script.clone().commit(&mut scene).expect("commit");
         assert_eq!(recipe.handles.len(), 1);
         assert_eq!(recipe.bindings.bindings.len(), 1);
-        assert_eq!(script.duration(), 2.0);
+        assert_eq!(script.still_time(), Some(2.0));
     }
 
     // J：不可信输入（上传预览）

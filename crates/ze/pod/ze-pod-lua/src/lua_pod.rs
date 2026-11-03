@@ -49,6 +49,8 @@ struct ScriptState {
 struct BinderEntry {
     /// 协商 + 建语言侧表。
     bind: fn(&Lua, &str, Arc<dyn Pod>) -> Result<(), PodError>,
+    /// 语言侧的全局表名（同一个 Service 可以有多个能力 → 多个表）。
+    global: String,
     /// 自述需求（`required` 由注册时决定）。
     requirements: Vec<ServiceRequirement>,
 }
@@ -58,8 +60,14 @@ pub struct LuaPod {
     id: PodId,
     names: Vec<QualifiedName>,
     state: RefCell<ScriptState>,
-    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**）。
-    binders: RefCell<BTreeMap<String, BinderEntry>>,
+    /// Service 名 → 能力绑定器（**不写死任何 domain 类型**；同一 Service 可有多个能力）。
+    binders: RefCell<BTreeMap<String, Vec<BinderEntry>>>,
+    /// 宿主给的**前置块**（每次 `run` 在用户脚本之前执行；不认识里面的内容）。
+    ///
+    /// 定位：把"跨能力的组合调用"收成一行（如 `scene.text`），且**不动能力签名**
+    /// ⇒ 既有作品 payload 不变。领域知识留在提供方（`ze-scene-api::LUA_PRELUDE`），
+    /// 本 Pod 只把它当一段脚本执行。
+    prelude: Option<&'static str>,
     requirements_fn: RequirementsFn,
     inject_fn: InjectFn,
     run_fn: RunFn,
@@ -91,10 +99,20 @@ impl LuaPod {
                 scene: None,
             }),
             binders: RefCell::new(BTreeMap::new()),
+            prelude: None,
             requirements_fn: requirements_impl,
             inject_fn: inject_impl,
             run_fn: run_impl,
         }
+    }
+
+    /// 挂上**前置块**（每次 `run` 在用户脚本之前执行）。
+    ///
+    /// 前置块只做"组合调用糖"（例如 `scene.text`），不参与能力协商：它引用的
+    /// 宏构造器 / 全局表都由已注入的服务提供，执行失败会显式报错（不静默跳过）。
+    pub fn with_prelude(mut self, source: &'static str) -> Self {
+        self.prelude = Some(source);
+        self
     }
 
     /// 注册一个能力的绑定器（必须在 Broker 装配前调用）。
@@ -102,17 +120,32 @@ impl LuaPod {
     /// `required = false` ⇒ 该 Service 是 **optional**：没有提供者也能装配，
     /// 只是 Lua 全局表中不会出现对应的表（B4 的 `python` 走这条路径）。
     pub fn register_capability<C: Capability<'static>>(&self, service: &str, required: bool) {
+        self.register_capability_as::<C>(service, service, required);
+    }
+
+    /// 注册一个能力，并指定它在脚本里的全局表名（可以与 Service 名不同）。
+    ///
+    /// 第 BB 批：糖层 `zela.sugar` 与 `zela.math` 由**同一个** `expr` Pod 提供，
+    /// 但作者侧要看到两个表（`expr.*` 是算子，`sugar.*` 是糖）⇒ 分开登记。
+    pub fn register_capability_as<C: Capability<'static>>(
+        &self,
+        service: &str,
+        global: &str,
+        required: bool,
+    ) {
         let requirements = C::signatures()
             .iter()
             .map(|sig| ServiceRequirement::new(service, &sig.qualified().to_string(), required))
             .collect();
-        self.binders.borrow_mut().insert(
-            service.to_string(),
-            BinderEntry {
+        self.binders
+            .borrow_mut()
+            .entry(service.to_string())
+            .or_default()
+            .push(BinderEntry {
                 bind: bind_capability::<C>,
+                global: global.to_string(),
                 requirements,
-            },
-        );
+            });
     }
 
     /// 当前 Lua 全局表 `scene` 注册的函数名（排序后）。
@@ -254,20 +287,31 @@ fn requirements_impl(pod: &dyn Pod) -> Vec<ServiceRequirement> {
     this.binders
         .borrow()
         .values()
-        .flat_map(|entry| entry.requirements.iter().cloned())
+        .flat_map(|entries| entries.iter().flat_map(|entry| entry.requirements.iter().cloned()))
         .collect()
 }
 
 fn inject_impl(pod: &dyn Pod, service: String, service_pod: Arc<dyn Pod>) -> Result<(), PodError> {
     let this = lua_pod(pod);
-    let binder = this.binders.borrow().get(&service).map(|entry| entry.bind);
-    let Some(binder) = binder else {
-        return Err(PodError::CallFailed(format!(
-            "未知 Service `{service}`（能力未注册；先调用 `LuaPod::register_capability`）"
-        )));
+    let entries: Vec<(fn(&Lua, &str, Arc<dyn Pod>) -> Result<(), PodError>, String)> = match this
+        .binders
+        .borrow()
+        .get(&service)
+    {
+        Some(entries) => entries
+            .iter()
+            .map(|entry| (entry.bind, entry.global.clone()))
+            .collect(),
+        None => {
+            return Err(PodError::CallFailed(format!(
+                "未知 Service `{service}`（能力未注册；先调用 `LuaPod::register_capability`）"
+            )));
+        }
     };
     let mut state = this.state.borrow_mut();
-    binder(&state.lua, &service, Arc::clone(&service_pod))?;
+    for (binder, global) in entries {
+        binder(&state.lua, &global, Arc::clone(&service_pod))?;
+    }
     if service == ENTRY_SERVICE {
         state.scene = Some(service_pod);
     }
@@ -284,6 +328,15 @@ fn run_impl(pod: &dyn Pod, source: String) -> Result<Box<dyn Any>, PodError> {
     })?;
 
     scene.call(function_id(scene, RESET_PATH, "()")?, &[])?;
+
+    // 前置块：在用户脚本之前执行（重置之后 ⇒ 每次 run 都能拿到干净的录制状态）。
+    if let Some(prelude) = this.prelude {
+        state
+            .lua
+            .load(prelude)
+            .exec()
+            .map_err(|e| PodError::CallFailed(format!("前置块执行失败：{e}")))?;
+    }
 
     state
         .lua

@@ -228,11 +228,16 @@ impl DriverPod {
         {
             let mut scheduler = self.scheduler.borrow_mut();
             let resources = scheduler.resources_mut();
-            if let Some(state) = resources.get_mut::<DirectorState>() {
+            let frame = if let Some(state) = resources.get_mut::<DirectorState>() {
                 state.director.seek(t);
-            }
+                state.director.frame
+            } else {
+                0
+            };
             if let Some(state) = resources.get_mut::<TimeState>() {
                 state.elapsed = t as f32;
+                // 帧号是 Director 的事实：seek 只平移时间，不重置帧号。
+                state.frame = frame;
             }
         }
         self.dispatch_event(DriverEvent::Advanced { dt: 0.0 });
@@ -243,11 +248,12 @@ impl DriverPod {
             let mut scheduler = self.scheduler.borrow_mut();
             let resources = scheduler.resources_mut();
             if let Some(state) = resources.get_mut::<DirectorState>() {
-                state.director.seek(0.0);
+                state.director.rewind();
                 state.director.resume();
             }
             if let Some(state) = resources.get_mut::<TimeState>() {
                 state.elapsed = 0.0;
+                state.frame = 0;
             }
         }
         self.frame.set(0);

@@ -7,7 +7,7 @@
 //! - [`IntoPodTypeName`] = 编译期映射（关联常量 `NAME`）。
 //!
 //! **为什么不能直接复用 `ze-node-core::TypeTag`**：`ze-pod-core` 是零依赖 kernel crate，
-//! 不得依赖任何 `zela-*` / `ze-*`（见 Cargo.toml 依赖铁律）。故只照其**形态**内建。
+//! 不得依赖任何 `zela-*` / `ze-*`（见 Cargo.toml 依赖约定）。故只照其**形态**内建。
 
 use crate::handle::Handle;
 

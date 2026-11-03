@@ -71,7 +71,8 @@ impl<'a> GraphPainter<'a> {
                 continue;
             };
             let header_color = self.view.header_color(node);
-            let title = self.view.title(node);
+            let presentation = editor.presentation_of(node);
+            let title = self.view.title(node, &presentation);
             let selected = editor.selection().contains(&id);
 
             // Card geometry is authored in graph space and mapped through the
@@ -136,7 +137,7 @@ impl<'a> GraphPainter<'a> {
 
             // Resize grip: three diagonal strokes tucked into the bottom-right
             // corner (only for interaction-resizable node types).
-            if node.meta().interaction.resizable {
+            if presentation.interaction.resizable {
                 let corner = to_screen(graph_rect.max);
                 let grip_color = ui.visuals().weak_text_color();
                 let stroke = Stroke::new(1.5, grip_color);

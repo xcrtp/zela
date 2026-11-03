@@ -12,23 +12,28 @@ use zela_scene_ecs::TimeState;
 use zela_schedule::context::ExecutorContext;
 use zela_schedule::system::System;
 
+use crate::animation::binding::BindingDriver;
 use crate::animation::binding::BindingTable;
+use crate::animation::binding::ResetBehavior;
+use crate::animation::event_log::StateEventLog;
 use crate::contract::WorldScene;
+use crate::domain::InputEvents;
+use crate::expr_mono::{SceneMono, anim_value};
 
 /// 遍历 BindingTable，按 `Binding.target` 把 `Curve::sample(forest.eval_local(clock, t))` 写入组件字段。
 pub struct BindingApplySystem;
 
 impl System for BindingApplySystem {
-    type Reads = (TimeState, ClockForest, BindingTable);
-    type Writes = ();
+    type Reads = (TimeState, ClockForest, BindingTable, InputEvents);
+    /// **BZ-c**：事件 predicate 的稀疏推进日志（帧间累积）。
+    type Writes = (StateEventLog,);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         // 先从 ctx.get 取出所有数据（&mut ctx 的借用到此释放），
         // 再独立用 ctx.world 做 &mut query。
-        let t_global = ctx
-            .get::<TimeState>()
-            .map(|s| s.elapsed as f64)
-            .unwrap_or(0.0);
+        let time_state = ctx.get::<TimeState>().copied().unwrap_or_default();
+        let t_global = time_state.elapsed as f64;
+        let frame = time_state.frame;
         let forest = match ctx.get::<ClockForest>().cloned() {
             Some(f) => f,
             None => return,
@@ -37,6 +42,19 @@ impl System for BindingApplySystem {
             Some(t) => t,
             None => return,
         };
+        // **BZ-c**：`event` 通道 = 本帧 InputEvents 非空（布尔存在性）。
+        let has_events = ctx
+            .get::<InputEvents>()
+            .is_some_and(|events| !events.is_empty());
+        let mut event_log = ctx.get::<StateEventLog>().cloned().unwrap_or_default();
+        // 事件日志槽位 = 全局 `Step::State` 序号（绑定顺序 × 绑定内计划顺序）。
+        let mut log_offsets = Vec::with_capacity(table.bindings.len());
+        let mut log_total = 0usize;
+        for binding in &table.bindings {
+            log_offsets.push(log_total);
+            log_total += binding.state_plans.len();
+        }
+        event_log.slots(log_total);
 
         // 目标层**不认识 hecs**：把世界包成契约层适配器再派发，
         // `apply` 内部只走契约方法（`Scene::get_mut`）。
@@ -57,13 +75,121 @@ impl System for BindingApplySystem {
         let mut scene = WorldScene::new(&mut *ctx.world);
         for index in order {
             let b = &table.bindings[index];
+            // **BZ-c**：先推进事件 predicate 的日志（索引 0 是 init，不参与转移）。
+            // `time` 在 State predicate 里解释为**状态索引** ⇒ Mono.time = frame。
+            for (plan_index, plan) in b.state_plans.iter().enumerate() {
+                let Some(predicate) = plan.event_predicate() else {
+                    continue;
+                };
+                if frame == 0 {
+                    continue;
+                }
+                let mono = SceneMono::new(frame as f64, frame, &scene).with_event(has_events);
+                let advance = predicate
+                    .eval(&mono)
+                    .ok()
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                if advance {
+                    event_log.push(log_offsets[index] + plan_index, frame as i64);
+                }
+            }
             if forest.is_before_start(b.clock, t_global) {
                 continue;
             }
             let lt = forest.eval_local(b.clock, t_global);
-            let value: AnimValue = b.curve.sample(lt);
-            // 目标自己负责"类型匹配 + 写组件"（不符则跳过本帧，不 panic）。
-            b.target.apply(&mut scene, &value);
+            // **C 批**：predicate 与 root **分开求值**（Bool 不经过 `anim_value`）。
+            // 可分析（区间集）时生效判定是纯函数，不再逐帧求值 predicate。
+            let active = match (&b.active, &b.predicate) {
+                (Some(set), _) => set.time_contains(lt),
+                (None, None) => true,
+                (None, Some(predicate)) => {
+                    let mono = SceneMono::with_global(lt, t_global, frame, &scene);
+                    match predicate.eval(&mono) {
+                        Ok(value) => match value.as_bool() {
+                            Some(value) => value,
+                            None => {
+                                eprintln!(
+                                    "[expr] 绑定目标 {} 的 predicate 必须返回 Bool，实际 {value:?}（本帧按不生效处理）",
+                                    b.target.name()
+                                );
+                                false
+                            }
+                        },
+                        Err(error) => {
+                            eprintln!(
+                                "[expr] 绑定目标 {} 的 predicate 求值失败：{error}",
+                                b.target.name()
+                            );
+                            false
+                        }
+                    }
+                }
+            };
+            // 本帧要**在哪个局部时间求值**：
+            // - 生效 ⇒ 当前局部时间；
+            // - `reset = Reset` ⇒ 写回初值（不评价 root）；
+            // - `reset = Hold` 且 predicate 可分析 ⇒ `last_active(t)`（AH-07：纯函数，
+            //   seek 到任意一帧都能直接算，与绑定顺序无关）；
+            // - 其余（Skip / 不可分析的 Hold）⇒ 不写。
+            let eval_at = if active {
+                Some(lt)
+            } else {
+                match b.reset {
+                    ResetBehavior::Reset => {
+                        if let Some(initial) = &b.initial {
+                            if let Err(error) = b.target.apply(&mut scene, initial) {
+                                eprintln!("[anim] {error}");
+                            }
+                        }
+                        None
+                    }
+                    ResetBehavior::Skip => None,
+                    ResetBehavior::Hold => b.active.as_ref().and_then(|set| set.time_last_active(lt)),
+                }
+            };
+            let Some(eval_at) = eval_at else {
+                continue;
+            };
+            let value: AnimValue = match &b.driver {
+                BindingDriver::Curve(curve) => curve.sample(eval_at),
+                // **B 批**：表达式里的 `time` 读**该绑定的时钟局部时间**（与 Curve 同源），
+                // 不再用全局 elapsed —— G1（两条路径 t 不同源）由此消失。
+                BindingDriver::Expr(program) => match program.eval(
+                    &SceneMono::with_global(eval_at, t_global, frame, &scene)
+                        .with_state_plans(&b.state_plans)
+                        .with_event(has_events)
+                        .with_event_logs(
+                            event_log.slice(log_offsets[index], b.state_plans.len()),
+                        ),
+                ) {
+                    Ok(value) => match anim_value(&value) {
+                        Some(value) => value,
+                        None => {
+                            // 类型在装配期已校验；这里只兜底，显式记录而不是写 0。
+                            eprintln!(
+                                "[expr] 绑定目标 {} 不支持值类型 {:?}（本帧跳过）",
+                                b.target.name(),
+                                value
+                            );
+                            continue;
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!("[expr] 绑定目标 {} 求值失败：{error}", b.target.name());
+                        continue;
+                    }
+                },
+            };
+            // 目标自己负责"类型匹配 + 写组件"；**类型不符显式报错**（不再静默跳过）。
+            if let Err(error) = b.target.apply(&mut scene, &value) {
+                eprintln!("[anim] {error}");
+            }
+        }
+        // 事件日志跨帧累积：写回 Resource（缺失 ⇒ 本帧只做局部推进，不静默插入）。
+        drop(scene);
+        if let Some(log) = ctx.get_mut::<StateEventLog>() {
+            *log = event_log;
         }
     }
 }
@@ -72,7 +198,7 @@ impl System for BindingApplySystem {
 mod tests {
     use super::BindingApplySystem;
     use crate::TimeState;
-    use crate::animation::binding::{Binding, BindingTable, SeekKind};
+    use crate::animation::binding::{Binding, BindingDriver, BindingTable, SeekKind};
     use crate::animation::target::CircleRadius;
     use hecs::World;
     use ze_notion::Vec3;
@@ -182,19 +308,24 @@ mod tests {
         let mut table = BindingTable::new();
         table.add(Binding {
             clock: root,
-            curve: Curve::Sin {
+            driver: BindingDriver::Curve(Curve::Sin {
                 base: 1.0,
                 amp: 0.5,
                 omega: 1.0,
-            },
+            }),
             target: std::sync::Arc::new(CircleRadius {
                 id: crate::contract::object_id_of(entity),
             }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         });
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(forest);
         resources.insert(table);
 
@@ -207,6 +338,96 @@ mod tests {
         assert!((radius - 1.0).abs() < 1e-5);
     }
 
+    /// **BZ-c 验收**：事件 predicate 的 State 只随事件帧推进（L2 稀疏重放）。
+    ///
+    /// 同一份表达式在"无事件帧"上必须保持上一值（identity），事件帧才走一步；
+    /// 这同时证明 `event` 通道、`StateEventLog` 与 `SceneMono::affine_state` 接通。
+    #[test]
+    fn event_gated_state_advances_only_on_event_frames() {
+        use crate::animation::event_log::StateEventLog;
+        use crate::domain::{InputEvents, SceneEvent, ids};
+        use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
+        use ze_scene_core::animation::affine::plan_from_expr;
+
+        let mut world = World::new();
+        let entity = world.spawn((Circle::new(vec2(0.0, 0.0), 0.0),));
+        let mut forest = XcClockForest::new();
+        let root = forest.insert(ClockNode::new(None)).unwrap();
+
+        let init = Expr::pure(0.0);
+        let step = Expr::call(
+            OpRef::new("zela.math", "add"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [Expr::pure(0.5), Expr::rec_prev()],
+                ),
+                Expr::pure(0.5),
+            ],
+        );
+        let predicate = Expr::channel(ChannelRef::builtin("event"));
+        let plan = plan_from_expr(&init, &step, Some(&predicate)).unwrap();
+        assert!(plan.event_gated());
+        let expected_plan = plan.clone();
+        let program = CompiledExpr::compile(&Expr::state_gated(
+            init,
+            step,
+            predicate,
+        ))
+        .unwrap();
+
+        let mut table = BindingTable::new();
+        table.add(Binding {
+            clock: root,
+            driver: BindingDriver::Expr(program.into()),
+            target: std::sync::Arc::new(CircleRadius {
+                id: crate::contract::object_id_of(entity),
+            }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: vec![plan],
+            seek_kind: SeekKind::EventReplay,
+        });
+
+        let mut resources = Resources::new();
+        resources.insert(TimeState::at_frame(0.0, 0));
+        resources.insert(forest);
+        resources.insert(table);
+        resources.insert(InputEvents::default());
+        resources.insert(StateEventLog::default());
+
+        let mut scheduler = Scheduler::new(world, resources);
+        scheduler.add_system(Phase::SceneSync, BindingApplySystem);
+
+        let matched: Vec<i64> = vec![1, 3, 5];
+        for frame in 0u64..=6 {
+            scheduler
+                .resources_mut()
+                .insert(TimeState::at_frame(frame as f32, frame));
+            let events = if matches!(frame, 1 | 3 | 5) {
+                InputEvents::from_events(vec![SceneEvent::Button {
+                    id: ids::PLAY_PAUSE,
+                }])
+            } else {
+                InputEvents::default()
+            };
+            scheduler.resources_mut().insert(events);
+            scheduler.run_frame(0.1);
+
+            let radius = scheduler.world().get::<&Circle>(entity).unwrap().radius;
+            let expected = expected_plan
+                .map()
+                .apply(&[0.0], matched.iter().filter(|&&f| f <= frame as i64).count() as u64)[0]
+                as f32;
+            assert!(
+                (radius - expected).abs() < 1e-6,
+                "frame {frame}: radius {radius} != {expected}"
+            );
+        }
+    }
+
     /// **S1 / G1**：后段的 `from` 初值不得从第 0 帧覆盖前段。
     ///
     /// 两段 `Const`（55 → 170），中间 `wait`：
@@ -216,33 +437,55 @@ mod tests {
     #[test]
     fn later_segment_is_not_written_before_start() {
         use crate::animation::target::Camera2DFraming;
-        use crate::animation::timeline::Timeline;
+        use std::sync::Arc;
+        use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
         use ze_scene_core::Framing2D;
-        use ze_time::AnimValue;
 
         let mut world = World::new();
         let entity = world.spawn((Framing2D::default(),));
         let id = crate::contract::object_id_of(entity);
 
-        let mut tl = Timeline::new();
-        tl.play(
-            Curve::Const(AnimValue::Scalar(55.0)),
-            Camera2DFraming { id },
-            1.0,
-        );
-        tl.wait(1.0);
-        tl.play(
-            Curve::Const(AnimValue::Scalar(170.0)),
-            Camera2DFraming { id },
-            1.0,
-        );
-
         let mut forest = XcClockForest::new();
         let mut table = BindingTable::new();
-        tl.compile(&mut forest, &mut table);
+        // 窗口 `[0, 1)`：`time` 是**该绑定的局部时间**（起点 2 的绑定在 t<2 时为负），
+        // 必须显式写 `t >= 0`，否则"段前"会被判成生效。
+        let window = CompiledExpr::compile(&Expr::call(
+            OpRef::new("zela.math", "and"),
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "ge"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(0.0),
+                    ],
+                ),
+                Expr::call(
+                    OpRef::new("zela.math", "lt"),
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(1.0),
+                    ],
+                ),
+            ],
+        ))
+        .expect("可编译");
+        // 两条窗口绑定：起点 0 / 2，值 55 / 170（旧 `play 1.0 / wait 1.0 / play 1.0`）。
+        for (shift, value) in [(0.0f64, 55.0f64), (2.0, 170.0)] {
+            let mut node = ClockNode::new(None);
+            node.local_offset = shift;
+            let clock = forest.insert(node).expect("插入节点");
+            table.bind_expr_gated(
+                clock,
+                CompiledExpr::compile(&Expr::pure(value)).expect("可编译"),
+                Arc::new(Camera2DFraming { id }),
+                Some(window.clone()),
+                None,
+                crate::animation::ResetBehavior::Hold,
+            );
+        }
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(forest);
         resources.insert(table);
 
@@ -268,35 +511,35 @@ mod tests {
         assert_eq!(scale_at(&mut sched, 2.5), 170.0, "第二段段内");
     }
 
-    /// **S1 边界（§2.3）**：同段 `parallel` 写同一字段时，后声明者胜（稳定排序）。
+    /// **S1 边界（§2.3）**：同起点写同一字段时，后声明者胜（稳定排序）。
     #[test]
     fn same_start_same_field_last_declaration_wins() {
         use crate::animation::target::Camera2DFraming;
-        use crate::animation::timeline::Timeline;
+        use std::sync::Arc;
+        use ze_comb::{CompiledExpr, Expr};
         use ze_scene_core::Framing2D;
-        use ze_time::AnimValue;
 
         let mut world = World::new();
         let entity = world.spawn((Framing2D::default(),));
         let id = crate::contract::object_id_of(entity);
 
-        let mut tl = Timeline::new();
-        tl.play(
-            Curve::Const(AnimValue::Scalar(10.0)),
-            Camera2DFraming { id },
-            1.0,
-        );
-        tl.parallel(
-            Curve::Const(AnimValue::Scalar(20.0)),
-            Camera2DFraming { id },
-        );
-
         let mut forest = XcClockForest::new();
         let mut table = BindingTable::new();
-        tl.compile(&mut forest, &mut table);
+        // 同一 clock、同一字段：两条恒定值绑定，后者必须覆盖前者。
+        let clock = forest.insert(ClockNode::new(None)).expect("插入节点");
+        for value in [10.0f64, 20.0f64] {
+            table.bind_expr_gated(
+                clock,
+                CompiledExpr::compile(&Expr::pure(value)).expect("可编译"),
+                Arc::new(Camera2DFraming { id }),
+                None,
+                None,
+                crate::animation::ResetBehavior::Hold,
+            );
+        }
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.5 });
+        resources.insert(TimeState::at(0.5));
         resources.insert(forest);
         resources.insert(table);
 
@@ -308,34 +551,59 @@ mod tests {
         assert_eq!(sched.world().get::<&Framing2D>(entity).unwrap().scale, 20.0);
     }
 
-    /// **T1 验收 5**：`Timeline` 驱动 `TransformValue` —— 段内插值、段外冻结（`Hold`）。
+    /// **T1 验收 5**：表达式驱动 `Transform.position` —— 窗口内插值、窗口外冻结。
     #[test]
-    fn timeline_drives_transform_value_with_hold() {
-        use crate::animation::target::TransformValue;
-        use crate::animation::timeline::Timeline;
+    fn expression_drives_transform_position_with_clamp() {
+        use crate::animation::target::{TransformChannel, TransformChannelValue};
+        use std::sync::Arc;
+        use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
         use ze_scene_core::Transform;
-        use ze_time::{AnimValue, Curve, Interp};
 
         let mut world = World::new();
         let entity = world.spawn((Transform::default(),));
         let id = crate::contract::object_id_of(entity);
 
-        let curve = Curve::Keyframes {
-            keys: vec![
-                (0.0, AnimValue::Vec2(vec2(0.0, 0.0))),
-                (2.0, AnimValue::Vec2(vec2(2.0, 0.0))),
+        // x = 2 · clamp(t / 2, 0, 1)（旧 `Keyframes (0,0) → (2,0)` 的线性段 + 两端冻结）。
+        let math = |op: &str, args: [Expr; 3]| Expr::call(OpRef::new("zela.math", op), args);
+        let progress = math(
+            "clamp",
+            [
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [
+                        Expr::pure(0.5),
+                        Expr::channel(ChannelRef::builtin("time")),
+                    ],
+                ),
+                Expr::pure(0.0),
+                Expr::pure(1.0),
             ],
-            interpolation: Interp::Linear,
-        };
-        let mut tl = Timeline::new();
-        tl.play(curve, TransformValue::auto(id), 2.0);
+        );
+        let root = Expr::call(
+            OpRef::new("zela.math", "vec2"),
+            [
+                Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(2.0), progress]),
+                Expr::pure(0.0),
+            ],
+        );
 
         let mut forest = XcClockForest::new();
         let mut table = BindingTable::new();
-        tl.compile(&mut forest, &mut table);
+        let clock = forest.insert(ClockNode::new(None)).expect("插入节点");
+        table.bind_expr_gated(
+            clock,
+            CompiledExpr::compile(&root).expect("可编译"),
+            Arc::new(TransformChannelValue {
+                channel: TransformChannel::Position,
+                id,
+            }),
+            None,
+            None,
+            crate::animation::ResetBehavior::Hold,
+        );
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(forest);
         resources.insert(table);
 
@@ -369,7 +637,7 @@ mod tests {
     fn all_eight_targets_write_expected_values_in_one_frame() {
         use crate::animation::target::{
             Camera2DFraming, CameraEye, MorphT, OpacityValue, Phase as PhaseTarget, RevealRange,
-            TransformValue,
+            TransformChannel, TransformChannelValue,
         };
         use crate::scene::components::{MorphShape, PhaseAnim, Reveal};
         use std::sync::Arc;
@@ -408,9 +676,14 @@ mod tests {
         let mut bind = |curve: Curve, target: Arc<dyn crate::animation::Target>| {
             table.add(Binding {
                 clock: root,
-                curve,
+                driver: BindingDriver::Curve(curve),
                 target,
-                seek_kind: SeekKind::O1,
+                predicate: None,
+                active: None,
+                reset: crate::animation::ResetBehavior::Hold,
+                initial: None,
+                state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
             });
         };
         bind(
@@ -483,13 +756,14 @@ mod tests {
                 AnimValue::Vec2(vec2(0.0, 0.0)),
                 AnimValue::Vec2(vec2(2.0, 4.0)),
             ),
-            Arc::new(TransformValue::auto(
-                crate::contract::object_id_of(transform),
-            )),
+            Arc::new(TransformChannelValue {
+                channel: TransformChannel::Position,
+                id: crate::contract::object_id_of(transform),
+            }),
         );
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.5 });
+        resources.insert(TimeState::at(0.5));
         resources.insert(forest);
         resources.insert(table);
 
@@ -521,5 +795,93 @@ mod tests {
             assert_eq!(t.position, Vec3::new(1.0, 2.0, 0.0));
             assert_eq!(t.scale, Vec3::ONE);
         }
+    }
+
+    /// **G 批集成**：写者（时钟起点靠前）写 `Circle.radius`，读者表达式绑定
+    /// （时钟起点靠后）`sin(read(Circle.radius))` 写 `PhaseAnim.phase`
+    /// ⇒ 一帧后 phase == 半径**本帧值**的 sin（读端看到写者的新值，不是旧值）。
+    ///
+    /// 注：集成测试绕过 `commit`（直接构造绑定表），`read` 的 object 用打包值；
+    /// 正常路径由 `SceneScript::commit` 的 `rewrite_read_objects` 重写。
+    #[test]
+    fn expression_reads_component_written_earlier_in_frame() {
+        use crate::animation::target::{FieldTarget, target_entry};
+        use std::sync::Arc;
+        use ze_comb::{CompiledExpr, Expr};
+        use ze_scene_core::components::PhaseAnim;
+        use ze_time::AnimValue;
+
+        let mut world = World::new();
+        let circle = world.spawn((Circle::new(vec2(0.0, 0.0), 1.0),));
+        let phase_obj = world.spawn((PhaseAnim::new(0.0, 1.0),));
+        let circle_id = crate::contract::object_id_of(circle);
+        let phase_id = crate::contract::object_id_of(phase_obj);
+
+        let mut forest = XcClockForest::new();
+        // 写者起点 0；读者起点 = 写者起点 + 1.0（帧内定序：写者先于读者）。
+        let writer = forest.insert(ClockNode::new(None)).unwrap();
+        let mut reader_node = ClockNode::new(Some(writer));
+        reader_node.local_offset = 1.0;
+        let reader = forest.insert(reader_node).unwrap();
+
+        let mut table = BindingTable::new();
+        table.add(Binding {
+            clock: writer,
+            driver: BindingDriver::Curve(Curve::Const(AnimValue::Scalar(0.5))),
+            target: Arc::new(FieldTarget {
+                id: circle_id,
+                spec: target_entry("Circle.radius").unwrap().spec,
+            }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
+        });
+        let read_expr = Expr::read(
+            ze_comb::ChannelRef::new("zela.scene", "Circle.radius")
+                .with_type(ze_comb::ChannelType::Number),
+            circle_id.to_packed(),
+        );
+        let program = CompiledExpr::compile(&Expr::call(
+            ze_comb::OpRef::new("zela.math", "sin"),
+            [read_expr],
+        ))
+        .expect("Read 是叶子，必然可编译");
+        table.add(Binding {
+            clock: reader,
+            driver: BindingDriver::Expr(program.into()),
+            target: Arc::new(FieldTarget {
+                id: phase_id,
+                spec: target_entry("PhaseAnim.phase").unwrap().spec,
+            }),
+            predicate: None,
+            active: None,
+            reset: crate::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: Vec::new(),
+            seek_kind: SeekKind::O1,
+        });
+
+        let mut resources = Resources::new();
+        resources.insert(TimeState::at(1.5));
+        resources.insert(forest);
+        resources.insert(table);
+
+        let mut sched = Scheduler::new(world, resources);
+        sched.add_system(Phase::SceneSync, BindingApplySystem);
+        sched.init_resources();
+        sched.run_frame(0.0);
+
+        let w = sched.world();
+        // 写者（start=0）先应用：t=1.5 ⇒ lt=1.5 ⇒ radius=0.5。
+        assert!((w.get::<&Circle>(circle).unwrap().radius - 0.5).abs() < 1e-6);
+        // 读者（start=1）后应用：lt=0.5 ⇒ sin(0.5)，读的是本帧已写入的 0.5。
+        let expected = (0.5f64).sin() as f32;
+        assert!(
+            (w.get::<&PhaseAnim>(phase_obj).unwrap().phase - expected).abs() < 1e-5,
+            "phase 应等于 sin(0.5)"
+        );
     }
 }

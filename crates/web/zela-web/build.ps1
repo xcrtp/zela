@@ -10,9 +10,20 @@
 #   python -m http.server 8080 -d crates/web/zela-web/www
 #   http://localhost:8080/index.html                # 播放（作品列表来自 demos.json）
 #   http://localhost:8080/index.html?compare=1      # 对拍（输出帧序列哈希）
+#   http://localhost:8080/index.html?vconsole=1     # 打开页面内控制台（移动端默认自动打开）
 #
-# 铁律：**不得另写 bash 版**。ubuntu runner 预装 pwsh，CI 直接
+# 自动化 / 移动端实测：用**独立 profile** 启动 Edge，并加 `--disable-sync` 与
+# `--disable-features=msEdgeFirstRunExperience,msEdgeSyncPromo,EdgeSigninPromo`，
+# 否则会弹“同步浏览数据”首启提示。**不要**加 `--disable-gpu-sandbox` /
+# `--enable-unsafe-webgpu`：会触发“不受支持的命令行标记”警告条（当前 Edge 默认已开 WebGPU）。
+#
+# 约定：**不得另写 bash 版**。ubuntu runner 预装 pwsh，CI 直接
 # `pwsh crates/web/zela-web/build.ps1` —— 与本地跑同一份定义。
+
+# -FontsOnly：只做「下载 + 校验确定字体」这一步就退出。
+# architecture.yml 的 check / test / hash / wasm job 都需要字体（xtask 对所有
+# 子进程硬注入 ZELA_TYPST_FONT_DIR，缺失即报错），但它们不构建 wasm 产物。
+param([switch]$FontsOnly)
 
 $ErrorActionPreference = "Stop"
 
@@ -24,13 +35,30 @@ $manifest = Join-Path $scripts "demo/manifest.txt"
 # 确定字体：与 Cargo.toml 的 `typst = "0.14"` 对应（typst-assets 的 tag）。
 # 这三个字体正是 Typst 默认的 text / math / mono 字体族，加载后 payload 的字形轮廓
 # 不再依赖系统字体 ⇒ Windows / Linux 的 payload hash 一致。
-$fontAssetsVersion = "0.14.2"
+#
+# B13 Step 0：清单从 `tools/typst-fonts.txt` 读（唯一真源，xtask 对拍也从这里读）。
+# 本脚本只负责下载 + 校验；**不得**在此另写一份版本 / 文件名 / 哈希。
+$fontManifest = Join-Path $repo "tools/typst-fonts.txt"
+if (-not (Test-Path -LiteralPath $fontManifest)) {
+    throw "缺少字体清单：$fontManifest"
+}
+$fontAssetsVersion = $null
+$fontAssets = @()
+foreach ($raw in Get-Content -LiteralPath $fontManifest -Encoding UTF8) {
+    $line = $raw.Trim()
+    if ($line.Length -eq 0 -or $line.StartsWith("#")) { continue }
+    $parts = $line.Split(' ', 2, [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($parts[0] -eq "version") {
+        if ($parts.Count -ne 2) { throw "字体清单 version 行非法：$line" }
+        $fontAssetsVersion = $parts[1].Trim()
+        continue
+    }
+    if ($parts.Count -ne 2) { throw "字体清单条目非法（期望 `<文件名> <sha256>`）：$line" }
+    $fontAssets += @{ Name = $parts[0]; Sha256 = $parts[1].Trim().ToLowerInvariant() }
+}
+if (-not $fontAssetsVersion) { throw "字体清单缺少 version 行：$fontManifest" }
+if ($fontAssets.Count -eq 0) { throw "字体清单没有条目：$fontManifest" }
 $fontDir = Join-Path $repo "target/fonts/typst-assets-v$fontAssetsVersion"
-$fontAssets = @(
-    @{ Name = "LibertinusSerif-Regular.otf"; Sha256 = "fcf06307a77367394fcb0ccb241e59eea70dba3d732be309647611224679c733" },
-    @{ Name = "NewCMMath-Regular.otf"; Sha256 = "ad746f5307fed53d8e5d7d201f5054abe73f1f47c51040767d898e3481c6e648" },
-    @{ Name = "DejaVuSansMono.ttf"; Sha256 = "b4a6c3e4faab8773f4ff761d56451646409f29abedd68f05d38c2df667d3c582" }
-)
 
 function ConvertTo-JsonString([string] $value) {
     $escaped = $value.Replace('\', '\\').Replace('"', '\"')
@@ -102,6 +130,10 @@ try {
     # 只对随后的 zela-compile 生效：ze-prerender 见到它就不再读系统字体。
     $env:ZELA_TYPST_FONT_DIR = $fontDir
     Write-Host "[font] ZELA_TYPST_FONT_DIR = $fontDir"
+    if ($FontsOnly) {
+        Write-Host "[font] -FontsOnly：字体就绪，跳过 demo 编译与 wasm 构建"
+        return
+    }
 
     # ── Demo 集：清单（单一真源）→ www/<id>.zsb，并断言 payload hash ──────
     # 先编译（快）再 wasm-pack（慢）：断言失败要尽早失败。
@@ -145,20 +177,22 @@ try {
         $outZsb = Join-Path $www "$id.zsb"
 
         Write-Host "[demo] $id ← $script"
-        # zela-compile 把 payload hash 打印到 stderr，需合并捕获；
+        # `zela compile` 把 payload hash 打印到 stderr，需合并捕获；
         # 调用期间临时放宽 ErrorActionPreference（Windows PowerShell 把原生 stderr 当错误）。
         $previous = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
-        $compileLog = & cargo run -q -p zela-compile --no-default-features --features typst -- $scriptPath --out $outZsb 2>&1 | ForEach-Object { "$_" }
+        # `js` 只为编译 `surface_matrix.js`（B7 Step 3）：boa 是纯 Rust，**不进 wasm** ——
+        # 网页侧只回放 ZSB，没有任何脚本引擎。
+        $compileLog = & cargo run -q -p zela-cli --no-default-features --features typst,js --bin zela -- compile $scriptPath --out $outZsb 2>&1 | ForEach-Object { "$_" }
         $compileCode = $LASTEXITCODE
         $ErrorActionPreference = $previous
         if ($compileCode -ne 0) {
-            throw "zela-compile 失败（$id，退出码 $compileCode）：`n$($compileLog -join [Environment]::NewLine)"
+            throw "zela compile 失败（$id，退出码 $compileCode）：`n$($compileLog -join [Environment]::NewLine)"
         }
 
         $match = [regex]::Match(($compileLog -join "`n"), 'payload hash = ([0-9a-f]{64})')
         if (-not $match.Success) {
-            throw "未从 zela-compile 输出解析到 payload hash（$id）"
+            throw "未从 zela compile 输出解析到 payload hash（$id）"
         }
         $actual = $match.Groups[1].Value
         $resolved = Resolve-ExpectedPayloadHash $expected $platform "manifest.txt:$lineNumber"

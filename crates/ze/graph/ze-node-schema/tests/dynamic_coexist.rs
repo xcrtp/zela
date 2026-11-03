@@ -48,7 +48,7 @@ struct StaticConst {
 impl StaticConst {
     fn new(v: f32) -> Self {
         Self {
-            meta: NodeMeta::new("static.const", "StaticConst", 1),
+            meta: NodeMeta::new("static.const", 1),
             outputs: vec![OutputSocket::new(f32_tag()).with_index(0)],
             value: v,
         }

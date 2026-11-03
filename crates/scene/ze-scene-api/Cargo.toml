@@ -23,3 +23,4 @@ ze-content = { path = "../../kernel/ze-content" }
 ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 ze-pod-macro = { path = "../../ze/pod/ze-pod-macro" }
+ze-scene-macros = { path = "../ze-scene-macros" }

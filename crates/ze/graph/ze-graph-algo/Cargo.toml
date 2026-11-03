@@ -8,5 +8,7 @@ description = "Graph algorithms (topo sort, dirty propagation, SCC) for ze-node-
 
 [dependencies]
 ze-node-core = { path = "../ze-node-core", version = "0.1.1" }
+# 纯拓扑算法（确定性输出）；本 crate 只做 Graph → Topology 的适配。
+ze-graph-core = { path = "../../../kernel/ze-graph-core", version = "0.1.1" }
 
 [dev-dependencies]

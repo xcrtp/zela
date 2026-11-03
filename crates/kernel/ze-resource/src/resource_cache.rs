@@ -26,6 +26,15 @@ pub enum ResourceKey {
         id: u64,
         version: u64,
     },
+    /// 名字寻址（BP-1）：同一类资源里按**稳定名字 + 版本**取。
+    ///
+    /// 用于"本来就有名字"的资源（绑定组、pass 的组），
+    /// 生命周期与另外两个变体完全一致 —— 只换 key 维度，不动 generation / 延迟销毁 / dirty / 驱逐。
+    Named {
+        type_id: TypeId,
+        name: &'static str,
+        version: u64,
+    },
 }
 
 impl ResourceKey {
@@ -44,9 +53,31 @@ impl ResourceKey {
         }
     }
 
+    /// 名字 + 版本寻址（BP-1）。
+    ///
+    /// `name` 必须是稳定字面量（与 `IMAGE_SLOTS` 同源），`version` 是它对外的代数：
+    /// 版本一变就是另一条 key ⇒ 缓存重建，旧句柄走 3 帧延迟销毁。
+    pub fn named<C: 'static>(name: &'static str, version: u64) -> Self {
+        Self::Named {
+            type_id: TypeId::of::<C>(),
+            name,
+            version,
+        }
+    }
+
+    /// 名字（只有 [`Self::Named`] 有）。
+    pub fn name(&self) -> Option<&'static str> {
+        match self {
+            Self::Named { name, .. } => Some(*name),
+            _ => None,
+        }
+    }
+
     pub fn type_id(&self) -> TypeId {
         match self {
-            Self::Content { type_id, .. } | Self::Versioned { type_id, .. } => *type_id,
+            Self::Content { type_id, .. }
+            | Self::Versioned { type_id, .. }
+            | Self::Named { type_id, .. } => *type_id,
         }
     }
 }
@@ -254,6 +285,27 @@ where
         self.entries.get(&id).map(|e| &e.handle)
     }
 
+    /// 可变的句柄访问（fd 表的"写"一侧：原地更新资源，不换条目）。
+    ///
+    /// 不更新 `last_used_frame` —— 要让条目算"本帧用过"，显式调用 [`Self::mark_used`]。
+    pub fn get_mut<K: Into<ResourceKey>>(&mut self, key: K) -> Option<&mut GpuHandle> {
+        let id = *self.key_to_id.get(&key.into())?;
+        self.entries.get_mut(&id).map(|e| &mut e.handle)
+    }
+
+    /// **close**：按 key 释放一个条目（句柄走延迟销毁），返回是否命中。
+    ///
+    /// 与容量 / 空闲驱逐共用同一条释放路径 —— 同样是"把句柄交给 graveyard"，不是立即 drop。
+    pub fn remove<K: Into<ResourceKey>>(&mut self, key: K) -> bool {
+        let rk = key.into();
+        let Some(id) = self.key_to_id.remove(&rk) else {
+            return false;
+        };
+        self.dirty.remove(&rk);
+        self.release_slot(id);
+        true
+    }
+
     pub fn key_id_of(&self, key: &ResourceKey) -> Option<&GpuResourceId> {
         self.key_to_id.get(key)
     }
@@ -435,6 +487,74 @@ where
         }
         count
     }
+
+    // ── 容量驱逐（BU-2）────────────────────────────────────────────────
+
+    /// 当前全部条目的字节数（由调用方给出每个条目占多少 —— kernel 不知道资源形状）。
+    pub fn total_bytes(&self, bytes_of: impl Fn(&T) -> usize) -> usize {
+        self.entries.values().map(|entry| bytes_of(&entry.meta)).sum()
+    }
+
+    /// 条目的元数据（只读）：键在则给引用。
+    pub fn meta<K: Into<ResourceKey>>(&self, key: K) -> Option<&T> {
+        let id = *self.key_to_id.get(&key.into())?;
+        self.entries.get(&id).map(|entry| &entry.meta)
+    }
+
+    /// 条目的元数据（可写）：容量 / 尺寸这类"随资源一起变"的量存在这里，
+    /// 与句柄同生同灭（重建后由调用方更新）。
+    pub fn meta_mut<K: Into<ResourceKey>>(&mut self, key: K) -> Option<&mut T> {
+        let id = *self.key_to_id.get(&key.into())?;
+        self.entries.get_mut(&id).map(|entry| &mut entry.meta)
+    }
+
+    /// **容量驱逐**：按 LRU（最久未用先走，同帧按 id 序）逐出，直到总字节 ≤ `budget`。
+    ///
+    /// - **本帧用过的（`idle_frames == 0`）永不驱逐** —— 那是帧内 pass 声明持有的强引用；
+    /// - `keep` 返回 true 的键也不驱逐（调用方的额外强引用，例如"这一类资源不参与容量"）；
+    /// - 与 [`Self::evict_unused`] 共用同一条释放路径（`release_slot` ⇒ 延迟销毁）；
+    /// - 返回驱逐的条目数。容量已够 / 只剩强引用时返回 0。
+    ///
+    /// 驱逐顺序只由 (last_used_frame, id) 决定 —— 不掺随机、不掺时间，同一访问历史必得同一结果。
+    pub fn evict_to_fit(
+        &mut self,
+        budget: usize,
+        keep: impl Fn(&ResourceKey) -> bool,
+        bytes_of: impl Fn(&T) -> usize,
+    ) -> usize {
+        let mut total = self.total_bytes(&bytes_of);
+        if total <= budget {
+            return 0;
+        }
+        let now = self.frame_clock;
+        let mut candidates: Vec<(u64, u32, ResourceKey, GpuResourceId)> = Vec::new();
+        for (rk, id) in &self.key_to_id {
+            if keep(rk) {
+                continue;
+            }
+            if let Some(entry) = self.entries.get(id) {
+                // idle == 0 ⇒ 本帧用过（强引用）：容量再紧也不动
+                if entry.idle_frames(now) > 0 {
+                    candidates.push((entry.last_used_frame, id.index(), *rk, *id));
+                }
+            }
+        }
+        candidates.sort_unstable_by_key(|(last_used, index, _, _)| (*last_used, *index));
+        let mut evicted = 0;
+        for (_, _, rk, id) in candidates {
+            if total <= budget {
+                break;
+            }
+            if let Some(entry) = self.entries.get(&id) {
+                total = total.saturating_sub(bytes_of(&entry.meta));
+            }
+            self.key_to_id.remove(&rk);
+            self.dirty.remove(&rk);
+            self.release_slot(id);
+            evicted += 1;
+        }
+        evicted
+    }
 }
 
 /// 无元数据的 GPU 资源缓存（最常用形态）。
@@ -464,7 +584,6 @@ mod tests {
     }
 
     // ── G7 诊断：动画内容逐帧变化时 pending / 条目数有界 ──────────────
-
     /// 🔴 R5-2（G7 最关键一条）：复刻 `wgpu_2d::finish_frame` 的每帧调用序列 ——
     /// `begin_frame` → 插入本帧全部条目 → `evict_unused(0)` → `notify_submit` ——
     /// 并让"动画内容"每帧哈希都变（几何全 miss、全重建、全驱逐），
@@ -505,5 +624,191 @@ mod tests {
         // 3) 实测峰值上界 = (graveyard_period + 1) × 每帧条目数。
         let bound = ((DeferredDestroyer::DEFAULT_GRAVEYARD_PERIOD + 1) * PER_FRAME) as usize;
         assert!(peak <= bound, "pending 峰值 {peak} 越界（上界 {bound}）");
+    }
+
+    // ── BP-1：名字寻址（Named）与既有两变体语义一致 ─────────────────────
+
+    struct Groups;
+
+    /// 同名同版本 ⇒ 命中同一条目（句柄 id 不变）。
+    #[test]
+    fn named_key_hits_the_same_entry() {
+        let mut cache = ResourceCache::<()>::new();
+        let key = ResourceKey::named::<Groups>("scene", 1);
+        let first = cache
+            .insert_handle(key, (), GpuHandle::new(7_u32))
+            .id();
+        assert_eq!(key.name(), Some("scene"));
+        let again = cache.get(key).expect("命中").id();
+        assert_eq!(first, again, "同名同版本必须是同一条目");
+        assert_eq!(
+            cache.get(key).and_then(|h| h.downcast_ref::<u32>()),
+            Some(&7),
+            "再插入不得替换已命中的句柄"
+        );
+        assert_eq!(cache.len(), 1, "不得因再取而新增条目");
+    }
+
+    /// 版本变化 ⇒ 未命中 ⇒ 插入后是新条目（旧条目仍在，由驱逐回收）。
+    #[test]
+    fn named_key_version_change_misses() {
+        let mut cache = ResourceCache::<()>::new();
+        let old = ResourceKey::named::<Groups>("lighting", 1);
+        let new = ResourceKey::named::<Groups>("lighting", 2);
+        let old_id = cache.insert_handle(old, (), GpuHandle::new(1_u32)).id();
+        assert!(cache.get(new).is_none(), "版本变了就是另一条 key");
+        let new_id = cache.insert_handle(new, (), GpuHandle::new(2_u32)).id();
+        assert_ne!(old_id, new_id);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(old).expect("旧条目还在").id(), old_id);
+    }
+
+    /// `evict_unused` 之后重取：先 miss，重新插入得到新 id，旧句柄进延迟销毁。
+    #[test]
+    fn named_key_after_evict_is_rebuilt() {
+        let mut cache = ResourceCache::<()>::new();
+        let key = ResourceKey::named::<Groups>("image_groups", 3);
+        cache.begin_frame();
+        let first = cache.insert_handle(key, (), GpuHandle::new(1_u32)).id();
+
+        // 空闲 1 帧 ⇒ 超过 max_idle_frames = 0，被驱逐。
+        cache.begin_frame();
+        assert_eq!(cache.evict_unused(0), 1);
+        assert!(cache.get(key).is_none(), "驱逐后旧 key 不得命中");
+        assert_eq!(cache.pending_destroy_count(), 1, "旧句柄走延迟销毁");
+
+        let second = cache.insert_handle(key, (), GpuHandle::new(1_u32)).id();
+        assert_ne!(first, second, "重建必须换 slot（旧 id 已失效）");
+        assert!(cache.get_by_id(first).is_err(), "旧 id 必须是 Stale / Dropped");
+        cache.get_by_id(second).expect("新 id 可访问");
+    }
+
+    /// 同名不同类型的资源互不命中（type_id 参与 key）。
+    #[test]
+    fn named_key_carries_the_type() {
+        struct OtherGroups;
+        let a = ResourceKey::named::<Groups>("scene", 1);
+        let b = ResourceKey::named::<OtherGroups>("scene", 1);
+        assert_ne!(a, b);
+        let mut cache = ResourceCache::<()>::new();
+        cache.insert_handle(a, (), GpuHandle::new(1_u32));
+        assert!(cache.get(b).is_none());
+    }
+
+    /// 三个变体只在 key 维度不同：同一个名字不会与内容 / 版本寻址的 key 撞上。
+    #[test]
+    fn named_key_is_distinct_from_the_other_two() {
+        assert_ne!(
+            ResourceKey::named::<Groups>("x", 0),
+            ResourceKey::content::<Groups>(0)
+        );
+        assert_ne!(
+            ResourceKey::named::<Groups>("x", 0),
+            ResourceKey::versioned::<Groups>(0, 0)
+        );
+        assert_eq!(ResourceKey::content::<Groups>(0).name(), None);
+        assert_eq!(ResourceKey::versioned::<Groups>(0, 0).name(), None);
+    }
+
+    // ── BU-2：容量驱逐（LRU + 强引用）────────────────────────────────────
+
+    /// 超预算时按 LRU（最久未用先走）逐出，直到装得下；旧句柄走延迟销毁。
+    #[test]
+    fn capacity_eviction_drops_the_least_recently_used_first() {
+        let mut cache = ResourceCache::<usize>::new();
+        let (a, b, c) = (
+            ResourceKey::named::<Groups>("a", 1),
+            ResourceKey::named::<Groups>("b", 1),
+            ResourceKey::named::<Groups>("c", 1),
+        );
+        cache.begin_frame(); // 第 1 帧
+        cache.insert_handle(a, 100, GpuHandle::new(1_u32));
+        cache.begin_frame(); // 第 2 帧
+        cache.insert_handle(b, 100, GpuHandle::new(2_u32));
+        cache.begin_frame(); // 第 3 帧
+        cache.insert_handle(c, 100, GpuHandle::new(3_u32));
+        assert_eq!(cache.total_bytes(|bytes| *bytes), 300);
+
+        // 预算 200 ⇒ 逐出最久未用的 a（第 1 帧），b、c 留着。
+        assert_eq!(cache.evict_to_fit(200, |_| false, |bytes| *bytes), 1);
+        assert!(cache.get(a).is_none(), "最久未用的先走");
+        assert!(cache.get(b).is_some());
+        assert!(cache.get(c).is_some());
+        assert_eq!(cache.total_bytes(|bytes| *bytes), 200);
+        assert_eq!(cache.pending_destroy_count(), 1, "驱逐走延迟销毁，不立即 drop");
+    }
+
+    /// `keep` 里的键是本帧的强引用：预算再紧也不驱逐它。
+    #[test]
+    fn capacity_eviction_never_evicts_what_the_frame_keeps() {
+        let mut cache = ResourceCache::<usize>::new();
+        let a = ResourceKey::named::<Groups>("a", 1);
+        let b = ResourceKey::named::<Groups>("b", 1);
+        cache.begin_frame();
+        cache.insert_handle(a, 100, GpuHandle::new(1_u32));
+        cache.begin_frame();
+        cache.insert_handle(b, 100, GpuHandle::new(2_u32));
+
+        // 预算 0，但本帧在用 b ⇒ 只逐出 a；再紧也留 b。
+        assert_eq!(cache.evict_to_fit(0, |rk| *rk == b, |bytes| *bytes), 1);
+        assert!(cache.get(a).is_none());
+        assert!(cache.get(b).is_some());
+        assert_eq!(cache.evict_to_fit(0, |rk| *rk == b, |bytes| *bytes), 0);
+        assert!(cache.get(b).is_some(), "强引用不得被容量驱逐");
+    }
+
+    /// 本帧用过的条目是强引用：预算再紧也不驱逐（与 `keep` 是两条独立规则）。
+    #[test]
+    fn capacity_eviction_keeps_what_this_frame_uses() {
+        let mut cache = ResourceCache::<usize>::new();
+        let (a, c) = (
+            ResourceKey::named::<Groups>("a", 1),
+            ResourceKey::named::<Groups>("c", 1),
+        );
+        cache.begin_frame(); // 第 1 帧
+        cache.insert_handle(a, 100, GpuHandle::new(1_u32));
+        cache.begin_frame(); // 第 2 帧
+        cache.insert_handle(c, 100, GpuHandle::new(3_u32));
+        // 预算 0：a 上一帧用过（可驱逐），c 本帧用过（idle = 0，强引用）。
+        assert_eq!(cache.evict_to_fit(0, |_| false, |bytes| *bytes), 1);
+        assert!(cache.get(a).is_none());
+        assert!(cache.get(c).is_some(), "本帧用过的条目不得被容量驱逐");
+        assert_eq!(cache.evict_to_fit(0, |_| false, |bytes| *bytes), 0);
+    }
+
+    /// `remove`（close）与驱逐走同一条延迟销毁路径。
+    #[test]
+    fn close_releases_through_the_graveyard() {
+        let mut cache = ResourceCache::<usize>::new();
+        let key = ResourceKey::named::<Groups>("gone", 1);
+        cache.insert_handle(key, 1, GpuHandle::new(1_u32));
+        assert!(cache.remove(key), "命中则 true");
+        assert!(cache.get(key).is_none());
+        assert_eq!(cache.pending_destroy_count(), 1, "句柄进延迟销毁");
+        assert!(!cache.remove(key), "再删就 miss");
+    }
+
+    /// 句柄可原地更新（换资源不换条目）。
+    #[test]
+    fn handle_can_be_updated_in_place() {
+        let mut cache = ResourceCache::<usize>::new();
+        let key = ResourceKey::named::<Groups>("live", 1);
+        cache.insert_handle(key, 1, GpuHandle::new(1_u32));
+        let id = cache.get(key).expect("条目在").id();
+        *cache.get_mut(key).expect("条目在").downcast_mut::<u32>().expect("u32") = 9;
+        assert_eq!(cache.get(key).and_then(|handle| handle.downcast_ref::<u32>()), Some(&9));
+        assert_eq!(cache.get(key).expect("条目在").id(), id, "原地更新不换 id");
+    }
+
+    /// 元数据可随资源一起长（尺寸 / 容量变化）；容量统计跟着更新。
+    #[test]
+    fn meta_grows_with_the_resource() {
+        let mut cache = ResourceCache::<usize>::new();
+        let key = ResourceKey::named::<Groups>("store", 0);
+        cache.insert_handle(key, 1024, GpuHandle::new(1_u32));
+        assert_eq!(cache.total_bytes(|bytes| *bytes), 1024);
+        *cache.meta_mut(key).expect("条目在") = 8192;
+        assert_eq!(cache.meta(key), Some(&8192));
+        assert_eq!(cache.total_bytes(|bytes| *bytes), 8192);
     }
 }

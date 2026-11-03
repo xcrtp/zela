@@ -13,17 +13,22 @@
 
 use std::sync::Arc;
 
-use ze_scene_contract::{Component, Group, LifetimeTracked, Name, Parent, Visibility};
-use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, ShaderPaint,
+    StrokeSolid,
+};
+use ze_scene_contract::{Component, Group, LifetimeTracked, Name, Parent, ParentInherit, Visibility};
 
-use crate::components::{ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PhaseAnim, Reveal};
+use crate::components::{
+    ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow, PhaseAnim, Reveal,
+};
 use crate::composer::Composer;
 use crate::domain::CameraMode;
-use crate::surface::{Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef};
 use crate::object::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
-    Path, Projection, Rect, Transform, ZOrder,
+    Path, Projection, RayTrace, Rect, Transform, ZOrder,
 };
+use crate::surface::{Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef};
 
 /// **组件登记表（唯一来源）**。
 ///
@@ -36,9 +41,15 @@ macro_rules! known_component_table {
             clone: Circle, Line, Path, Rect, Arrow, Transform, ZOrder,
                    Name, Group, Visibility, Opacity,
                    Camera2D, Camera3D, Projection, Framing2D, CameraMode, FpsView,
+                   // BV-5：3D 视图的光追开关（脚本组件，挂在相机对象上）。
+                   RayTrace,
                    StrokeSolid, FillSolid,
+                   // PE：绘制参数（渐变 / 虚线 / 双 paint / 背景描边 / 曲线窗口）。
+                   Gradient, Dash, SecondPaint, BackgroundStroke, CurveWindow,
+                   // 阶段 2：着色 codegen（装饰性；由 `expr.shader` 挂上）。
+                   ShaderPaint,
                    Axes2D, AxesLine, FunctionGraph,
-                   PhaseAnim, MorphShape, ContentTextureItem, Reveal, Parent,
+                   PhaseAnim, MorphShape, ContentTextureItem, Reveal, PathFollow, Parent, ParentInherit,
                    // B3 Step 3：2D/3D 融合边界（Surface 是数据组件，不含 position）。
                    Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef,
                    // B1-D：3D 装配组件（脚本层入口）。`Arc<MeshGeometry>` 是
@@ -67,6 +78,49 @@ pub fn known_type_name<T: 'static>() -> Option<&'static str> {
         }};
     }
     known_component_table!(name_arms);
+    None
+}
+
+/// 反向能力 ①b：**类型擦除**组件的稳定名字（`Query` 的组件过滤用）。
+///
+/// 与 [`known_type_name`] 同一张登记表；区别是入参是 `&dyn Any`（录制期拿到的
+/// 组件就是擦除形态）。
+pub fn known_type_name_of(c: &dyn std::any::Any) -> Option<&'static str> {
+    macro_rules! name_of_arms {
+        (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+            $(
+                if c.type_id() == std::any::TypeId::of::<$c>() {
+                    return Some(stringify!($c));
+                }
+            )+
+            $(
+                if c.type_id() == std::any::TypeId::of::<$m>() {
+                    return Some(stringify!($m));
+                }
+            )*
+        }};
+    }
+    known_component_table!(name_of_arms);
+    None
+}
+
+/// 反向能力 ①c：稳定名字 → `TypeId`（`Query.with("Circle")` 的解析用）。
+pub fn known_component_type_id(name: &str) -> Option<std::any::TypeId> {
+    macro_rules! id_arms {
+        (clone: $($c:ty),+ $(,)?; manual: $($m:ty => $ctor:expr),* $(,)?) => {{
+            $(
+                if name == stringify!($c) {
+                    return Some(std::any::TypeId::of::<$c>());
+                }
+            )+
+            $(
+                if name == stringify!($m) {
+                    return Some(std::any::TypeId::of::<$m>());
+                }
+            )*
+        }};
+    }
+    known_component_table!(id_arms);
     None
 }
 

@@ -14,7 +14,7 @@ local T = 0.5
 local N = 32
 
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 },
+    Camera2D { scale = 40.0 },
 })
 
 local dot = scene.spawn({
@@ -25,19 +25,27 @@ local dot = scene.spawn({
 local points = {}
 for i = 0, N do
     local x = -2.0 + 4.0 * i / N
-    points[#points + 1] = Vec2 { x = x, y = 0.7 * math.sin(x * 1.5) }
+    points[#points + 1] = scene.vec2(x, 0.7 * math.sin(x * 1.5))
 end
 local curve = scene.spawn({
     Reveal { points = points, closed = false },
     Stroke { width = 2.0, color = Color { r = 255, g = 220, b = 120, a = 255 } },
 })
 
-scene.animate(
-    dot,
-    scene.clip(Target.CircleRadius, Curve.Ramp { from = 0.8, to = 1.6, dur = T }),
-    T
-)
-scene.parallel(
-    curve,
-    scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = T })
-)
+-- 动画：`Ramp` 的算子化形态 —— `mix(from, to, clamp(t / dur, 0, 1))`。
+-- `t` 是**显式时钟**的局部时间（第 5a 批：不再有 `scene.animate` 的隐式游标）。
+
+expr.bind {
+    object = dot,
+    target = Circle.channel.radius,
+    root = sugar.ramp(0.8, 1.6, T),
+    clock = clock.scale(1.0),
+    duration = T,
+}
+expr.bind {
+    object = curve,
+    target = Reveal.channel["end"],
+    root = sugar.ramp(0.0, 1.0, T),
+    clock = clock.scale(1.0),
+    duration = T,
+}

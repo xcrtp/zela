@@ -200,6 +200,22 @@ pub fn to_rgba(ctx: &RenderContext, pixels: &[u8]) -> Vec<u8> {
     zela_playback::to_rgba(ctx, pixels)
 }
 
+/// RGBA8 → 目标纹理格式字节序（默认 BGRA）；与 [`to_rgba`] 互逆。
+///
+/// 矢量后端在 CPU 侧产出 RGBA8，而 sink 的写入口径是目标格式 ⇒ 需要这一趟交换。
+pub fn rgba_to_target(ctx: &RenderContext, rgba: &[u8]) -> Vec<u8> {
+    let mut out = rgba.to_vec();
+    if matches!(
+        ctx.target_format(),
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    ) {
+        for px in out.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+    }
+    out
+}
+
 /// 写一张 RGBA8 PNG。
 pub fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), ExportError> {
     let file = std::fs::File::create(path).map_err(|e| ExportError::Io {
@@ -210,6 +226,14 @@ pub fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<()
     let mut encoder = png::Encoder::new(writer, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // B8 Step 3′00：改用 level 1 + **单一**滤波器（crate 默认是 level 6 + 逐行试全部滤波器，
+    // 640×480 实测 ≈57 ms/帧 → 42 ms/帧）。**只影响 .png 文件字节**：序列哈希吃的是像素缓冲，
+    // 不读 PNG，所以基线值与本改动无关（见 frame_hash 的模块说明）。
+    //
+    // 选 `Sub` 而不是 `NoFilter`：实测 `NoFilter` 反而更慢（46 ms）且文件大 4.3 倍
+    // （419 KB vs 97 KB）—— 少一道滤波换来的是压缩器要在更差的分布上工作。
+    encoder.set_compression(png::Compression::Fast);
+    encoder.set_filter(png::FilterType::Sub);
     let mut writer = encoder.write_header().map_err(|e| ExportError::Png {
         path: path.to_path_buf(),
         message: e.to_string(),

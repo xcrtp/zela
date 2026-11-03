@@ -3,20 +3,20 @@ name = "zela-gui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "GUI 可执行壳：组装 zela-app 的 Runtime 与 zela-egui 的每帧帧体"
-
-[[bin]]
-name = "zela-app"
-path = "src/main.rs"
+description = "GUI 宿主库：组装 zela-app 的 Runtime 与 zela-egui 的每帧帧体（入口在 zela-cli 的 `gui` 子命令）"
 
 [dependencies]
 # 组装层：Pod 装配 / Resources / Runtime（不依赖 UI）。
 zela-app = { path = "../zela-app" }
+# 回放运行时：矢量帧的帧快照与渲染参数（GUI 与 headless 共用同一份）。
+zela-playback = { path = "../zela-playback" }
 # UI 层：EguiSceneHost / SceneFrame / FrameProgress / 主题与字体。
 zela-egui = { path = "../../ui/zela-egui" }
 # 场景类型（Result / DriverPod）与后端安装。
 zela-scene-ecs = { path = "../../scene/zela-scene-ecs" }
 zela-render-backends = { path = "../../render/zela-render-backends", features = ["egui-wgpu", "eframe"] }
+# 矢量后端的 GPU 注入（init_gpu）：注入后帧直接渲进纹理，不由后端自建 device。
+zela-render-vector = { path = "../../render/zela-render-vector" }
 zela-schedule = { path = "../../schedule/zela-schedule" }
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 

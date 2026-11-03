@@ -1,5 +1,7 @@
 # ze-vertex
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-vertex.md`](../../../docs/modules/ze-vertex.md)。
+
 > **顶点格式契约** — 只声明「顶点长什么样」，不生产数据。
 > 零 wgpu 依赖，可编译到 `wasm32`。
 
@@ -8,7 +10,7 @@
 ## 设计定位
 
 三角化器、AA 策略、Pipeline 三块逻辑共享同一个交汇点：**顶点格式**。
-本 crate 把这份共享契约钉死成四份声明，任何一方改动都逃不过类型系统与测试。
+本 crate 把这份共享契约固定成四份声明，任何一方改动都逃不过类型系统与测试。
 
 ```
 ze-vertex (布局描述符 / AA 模型 / 缓存策略 / 一致性校验)   ← 本 crate
@@ -18,7 +20,7 @@ zela-render-backends::vertex_layout (翻译到 wgpu::VertexBufferLayout)
 wgpu Pipeline
 ```
 
-**硬约束（依赖铁律）**：本 crate **不得引用任何 wgpu 类型** ——
+**强制约束（依赖约定）**：本 crate **不得引用任何 wgpu 类型** ——
 翻译到 `wgpu::VertexBufferLayout` 的代码在 `zela-render-backends::vertex_layout`。
 
 - ❌ `hecs` / `egui` / `wgpu` / 任何 `zela-*` —— 绝对禁止；

@@ -1,14 +1,14 @@
 //! `zela-render`：headless 薄壳 —— 脚本直接渲到视频。
 //!
 //! ```text
-//! zela-render <脚本路径> [--frames DIR] [--fps N] [--out FILE] [--size WxH]
-//! zela-render --bundle <file.zsb> [--frames DIR] [--fps N] [--out FILE] [--size WxH]
+//! zela-render <脚本路径> [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash] [--record-input FILE]
+//! zela-render --bundle <file.zsb> [--input-stream FILE] [--frames DIR] [--fps N] [--out FILE] [--size WxH] [--hash] [--record-input FILE]
 //! ```
 //!
 //! - 默认 **ffmpeg 管道**（rawvideo → libx264）；ffmpeg 不在 PATH ⇒ **明确报错**并提示 `--frames`；
 //! - `--frames DIR` 走序列帧（PNG，交给外部工具合成）；
-//! - `--hash-out FILE` 额外写出**帧像素序列哈希**（只覆盖画面像素，不含编码器元数据；
-//!   两种 sink 都会计算并打印 `[frame-hash] sequence = …`）；
+//! - **B8 Step 2**：逐帧哈希是一个**可选 sink**（`--hash` 打印、`--hash-out FILE` 打印并写文件）。
+//!   主流程**默认不挂**它 ⇒ 不付哈希代价；挂与不挂的像素产出逐位相同（同一渲染核心）。
 //! - 帧数 = `ceil(duration × fps)`，时长由脚本 / 产物决定；
 //! - 脚本语言按扩展名推断（`.lua` / `.py`）；`.py` 但未开 `python` feature ⇒ 明确报错；
 //! - `--bundle` 读 ZSB 产物：先做可还原性检查，再走**与脚本完全相同**的 Runtime 路径。
@@ -22,32 +22,48 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
-use ze_notion::{Rect2D, Vec2};
-use zela_app::export::{ExportError, target_pix_fmt, to_rgba, write_png};
+use zela_app::export::{ExportError, target_pix_fmt, write_png};
+use zela_app::frame_loop::{
+    FrameLoopOptions, FrameView, LoopBackend, frames_for, run_frames, timing_json,
+};
 use zela_app::{
     ScriptLanguage, build_bundle_runtime, build_script_runtime, language_from_path,
 };
-use zela_render::ViewRect;
-use zela_render_backends::{RenderContext, ScreenParams, StandardBackends, render_frame_headless};
-use zela_scene_ecs::DriverCommand;
-use zela_scene_ecs::contract::WorldView;
+use zela_render_backends::{HeadlessTarget, RenderContext, StandardBackends};
 use zela_scene_bundle::Bundle;
 use zela_scene_bundle::frame_hash::FrameSequenceHash;
+use zela_scene_ecs::domain::InputEvents;
 
+#[derive(Debug)]
 struct Args {
     script: Option<PathBuf>,
     bundle: Option<PathBuf>,
+    /// 输入流（独立产物；只与 `--bundle` 搭配，配对校验需要 ZSB payload hash）。
+    input_stream: Option<PathBuf>,
+    /// **BZ-b**：把逐帧实际应用的 `InputEvents` 录成输入流（headless 侧的生产接线）。
+    record_input: Option<PathBuf>,
     frames_dir: Option<PathBuf>,
     hash_out: Option<PathBuf>,
+    /// B8 Step 2：是否挂 `HashSink`（主流程默认**不挂**）。
+    ///
+    /// `--hash-out` 隐含开启（它要拿这个值写文件）；显式 `--hash` 只打印不写文件。
+    hash: bool,
     fps: f64,
     out: PathBuf,
     size: (u32, u32),
+    /// B11 Step 4：`--backend auto|auto-frame|wgpu|vector`。
+    ///
+    /// **默认仍是 `wgpu`**（不是 `auto`）：默认路径必须与 16 条基线逐位相同（C3/A1），
+    /// 而 `auto` 会把矢量注册进 features 并集、并多取一份帧快照。
+    /// 需要"按能力路由"时显式 `--backend auto`（页面默认就是 auto，见 §7.2）。
+    backend: LoopBackend,
 }
 
 impl Args {
-    fn parse() -> Result<Self, String> {
-        let raw: Vec<String> = std::env::args().skip(1).collect();
+    /// 纯解析入口（不读 `std::env::args`）——默认值快照用例的唯一被测点。
+    fn parse_from(raw: &[String]) -> Result<Self, String> {
         if raw.is_empty() || raw.iter().any(|a| a == "--help" || a == "-h") {
             return Err(
                 "用法：zela-render <脚本路径> [--frames DIR] [--fps N] [--out FILE] [--size WxH]"
@@ -57,11 +73,16 @@ impl Args {
 
         let mut script: Option<PathBuf> = None;
         let mut bundle: Option<PathBuf> = None;
+        let mut input_stream: Option<PathBuf> = None;
+        let mut record_input: Option<PathBuf> = None;
         let mut frames_dir = None;
         let mut hash_out = None;
+        let mut hash = false;
         let mut fps = 30.0f64;
         let mut out = PathBuf::from("out.mp4");
         let mut size = (640u32, 480u32);
+        // B19 Step 3：默认从 `Wgpu` 换成 `Auto` —— 默认路径走矢量，被拒才回退 wgpu。
+        let mut backend = LoopBackend::Auto;
 
         let mut i = 0;
         while i < raw.len() {
@@ -79,6 +100,8 @@ impl Args {
                         raw.get(i).ok_or("--hash-out 需要一个文件参数")?,
                     ));
                 }
+                // B8 Step 2：显式挂 HashSink（默认不挂 ⇒ 主流程不付哈希代价）。
+                "--hash" => hash = true,
                 // 与位置参数等价（计划 A0 的验收命令使用 `--script PATH`）。
                 "--script" => {
                     i += 1;
@@ -106,6 +129,20 @@ impl Args {
                         .parse()
                         .map_err(|_| "--fps 必须是数字".to_string())?;
                 }
+                // D 批：输入流（帧索引 + 事件；独立于 ZSB）。
+                "--input-stream" => {
+                    i += 1;
+                    input_stream = Some(PathBuf::from(
+                        raw.get(i).ok_or("--input-stream 需要一个文件参数")?,
+                    ));
+                }
+                // BZ-b：headless 侧录制（把每帧实际应用的 InputEvents 写成输入流）。
+                "--record-input" => {
+                    i += 1;
+                    record_input = Some(PathBuf::from(
+                        raw.get(i).ok_or("--record-input 需要一个文件参数")?,
+                    ));
+                }
                 "--out" => {
                     i += 1;
                     out = PathBuf::from(raw.get(i).ok_or("--out 需要一个文件参数")?);
@@ -120,6 +157,19 @@ impl Args {
                         w.parse().map_err(|_| "--size 宽度不是数字".to_string())?,
                         h.parse().map_err(|_| "--size 高度不是数字".to_string())?,
                     );
+                }
+                // B11 Step 4：后端选择 / 路由偏好（默认 auto）。
+                "--backend" => {
+                    i += 1;
+                    backend = raw
+                        .get(i)
+                        .and_then(|value| LoopBackend::parse(value))
+                        .ok_or_else(|| {
+                            format!(
+                                "--backend 只接受 auto | auto-frame | wgpu | vector（收到 {:?}）",
+                                raw.get(i)
+                            )
+                        })?;
                 }
                 other if other.starts_with("--") => {
                     return Err(format!("未知参数：{other}"));
@@ -140,20 +190,31 @@ impl Args {
         if script.is_none() && bundle.is_none() {
             return Err("缺少脚本路径（或 --bundle <file.zsb>）".to_string());
         }
+        if input_stream.is_some() && bundle.is_none() {
+            return Err(
+                "输入流只能与 --bundle 搭配（配对校验需要 ZSB 的 payload hash）".to_string(),
+            );
+        }
 
         Ok(Self {
             script,
             bundle,
+            input_stream,
+            record_input,
             frames_dir,
             hash_out,
+            hash,
             fps,
             out,
             size,
+            backend,
         })
     }
 }
 
 fn main() {
+    // B12 Step 1.1：headless 入口接上订阅器（默认 warn；ZELA_LOG / ZELA_LOG_FILE 可调）。
+    zela_schedule::telemetry::init_tracing_headless();
     if let Err(message) = run() {
         eprintln!("zela-render: {message}");
         std::process::exit(1);
@@ -161,12 +222,51 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let args = Args::parse()?;
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let args = Args::parse_from(&raw)?;
 
-    let ctx =
-        RenderContext::headless().map_err(|e| format!("无法创建 headless GPU 上下文：{e}"))?;
+    // ── B11：注册表 → device features 并集 →（矢量可用时）注入同一块 device ──
+    //
+    // 显式 `--backend wgpu` 与改动前**逐位相同**：注册表只有 wgpu ⇒ features 为空集。
+    // B19 Step 3 起默认是 `--backend auto` ⇒ 矢量也被注册 ⇒ **device features 取并集**
+    // （矢量要 `FLOAT32_BLENDABLE`）。这是并集机制本来的设计，属预期；它对 wgpu 侧
+    // 画质的影响由 25 条基线逐位守住。`--backend wgpu` 仍可复现旧的纯 wgpu 路径。
+    let mut registry = zela_render_backends::BackendRegistry::with_standard();
+    if args.backend != LoopBackend::Wgpu {
+        registry
+            .register(zela_render_backends::BackendKind::Vector)
+            .map_err(|e| e.to_string())?;
+    }
+    let ctx = if args.backend == LoopBackend::Wgpu {
+        RenderContext::headless().map_err(|e| format!("无法创建 headless GPU 上下文：{e}"))?
+    } else {
+        RenderContext::headless_with_registry(
+            zela_render_backends::DEFAULT_TARGET_FORMAT,
+            &registry,
+        )
+        .map_err(|e| format!("无法创建 headless GPU 上下文：{e}"))?
+    };
+    if args.backend != LoopBackend::Wgpu {
+        let adapter = ctx
+            .adapter()
+            .ok_or_else(|| "上下文没有 adapter：无法判定后端可用性".to_string())?;
+        for entry in registry.availability(adapter) {
+            match entry.reason {
+                Some(reason) => eprintln!("[backend] {:?} 不可用：{reason}", entry.kind),
+                None => eprintln!("[backend] {:?} 可用", entry.kind),
+            }
+        }
+        // 矢量可用 ⇒ 注入同一块 device（此后它**不再**自行 request_device）。
+        if registry
+            .select_on(zela_render_backends::BackendKind::Vector, adapter)
+            .is_ok()
+        {
+            zela_render_vector::init_gpu(ctx.device.clone(), ctx.queue.clone(), adapter)?;
+        }
+    }
 
-    let runtime = if let Some(script_path) = &args.script {
+    let mut input_stream: Option<zela_scene_bundle::InputStream> = None;
+    let mut runtime = if let Some(script_path) = &args.script {
         let source = std::fs::read_to_string(script_path)
             .map_err(|e| format!("读取脚本 {} 失败：{e}", script_path.display()))?;
         let language = language_from_path(script_path).map_err(|e| e.to_string())?;
@@ -183,47 +283,55 @@ fn run() -> Result<(), String> {
         let bundle = Bundle::from_bytes(&bytes)
             .map_err(|e| format!("ZSB 解析失败（{}）：{e}", bundle_path.display()))?;
         eprintln!(
-            "[zsb] payload hash = {}（{} 个对象，{}s）",
+            "[zsb] payload hash = {}（{} 个对象，静止时刻 {}）",
             bundle.payload_hash_hex(),
             bundle.meta().object_count,
-            bundle.meta().duration
+            bundle.script().ok().and_then(|script| script.still_time()).map_or_else(
+                || "不可推导".to_string(),
+                |value| format!("≈ {value:.3}s")
+            )
         );
+        // D 批：输入流是**独立产物**，加载时先做配对校验（不匹配 ⇒ 显式失败）。
+        if let Some(path) = &args.input_stream {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("读取输入流 {} 失败：{e}", path.display()))?;
+            let stream = zela_scene_bundle::InputStream::from_json(&text)
+                .map_err(|e| format!("输入流解析失败（{}）：{e}", path.display()))?;
+            stream
+                .pairing
+                .validate(&bundle)
+                .map_err(|e| format!("输入流与 ZSB 不匹配（{}）：{e}", path.display()))?;
+            eprintln!(
+                "[input] {} 个帧有事件（配对 hash 一致，零输入是默认）",
+                stream.frames.len()
+            );
+            input_stream = Some(stream);
+        }
         build_bundle_runtime(ctx.clone(), &bundle).map_err(|e| e.to_string())?
     } else {
         unreachable!("Args::parse 已保证二者恰有一个")
     };
 
-    let (width, height) = args.size;
-    // headless 没有 egui 布局：视口 = 整幅画面（GUI 里由 `update_view_rect` 写入）。
-    runtime.driver.with_scheduler_mut(|scheduler| {
-        scheduler.resources_mut().insert(ViewRect {
-            rect: Rect2D::new(Vec2::ZERO, Vec2::new(width as f32, height as f32)),
-        });
-    });
+    // **BZ-b**：headless 侧录制。`Recorder::disabled()` 是零 no-op；开启时把每帧
+    // **实际应用**的 `InputEvents` 写进流（不是"从输入流抄一遍"：事件源可以是任何
+    // 上游，录下来的是驱动本帧的那一份）。
+    let mut recorder: Option<(zela_scene_bundle::Recorder, PathBuf)> = match &args.record_input {
+        Some(path) => {
+            let pairing = runtime.pairing.clone().ok_or_else(|| {
+                "--record-input 需要可配对的 ZSB（当前装配路径没有 payload 身份）".to_string()
+            })?;
+            Some((zela_scene_bundle::Recorder::recording(pairing), path.clone()))
+        }
+        None => None,
+    };
 
-    let dt = 1.0 / args.fps as f32;
-    let frames = if runtime.duration > 0.0 {
-        (runtime.duration * args.fps).ceil() as u32
-    } else {
-        1
-    }
-    .max(1);
+    let (width, height) = args.size;
+    let frames = frames_for(&runtime, args.fps);
     eprintln!(
         "渲染 {frames} 帧（{}×{} @ {} fps，时长 {:.3}s）…",
         width, height, args.fps, runtime.duration
     );
 
-    let screen = ScreenParams::new([width, height], 1.0);
-    let clear = wgpu::Color {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
-        a: 1.0,
-    };
-    let mut backends = StandardBackends::new(&ctx);
-    // 跨运行时对拍口径：逐帧累积**规范化 RGBA8 像素**的序列哈希。
-    // 与 sink 无关（PNG / ffmpeg 都算同一个值），也不含任何编码器元数据。
-    let mut frame_hash = FrameSequenceHash::new(width, height);
     // B2-6（D7）：**分层标签旁路** —— `ZELA_FRAME_DIGEST_SAMPLE=N` 时每 N 帧打印
     // 该帧的独立 digest。旁路不进入 `frame_hash`（判定与诊断分离）。
     let digest_sample: u32 = std::env::var("ZELA_FRAME_DIGEST_SAMPLE")
@@ -232,67 +340,137 @@ fn run() -> Result<(), String> {
         .filter(|n| *n > 0)
         .unwrap_or(0);
 
-    let mut sink = match &args.frames_dir {
-        Some(dir) => Sink::Png {
-            dir: dir.clone(),
+    // B8 Step 2：sink 装配。输出 sink 恒有一个（PNG 或 mp4）；HashSink 只有显式要求才挂。
+    let mut sinks: Vec<Box<dyn FrameSink>> = Vec::new();
+    match &args.frames_dir {
+        Some(dir) => sinks.push(Box::new(PngSink { dir: dir.clone() })),
+        None => sinks.push(Box::new(FfmpegSink(Ffmpeg::spawn(
+            &ctx,
+            &args.out,
+            args.fps,
+            (width, height),
+        )?))),
+    }
+    if args.hash || args.hash_out.is_some() {
+        sinks.push(Box::new(HashSink {
+            hash: FrameSequenceHash::new(width, height),
+            size: (width, height),
+            digest_sample,
+            hash_out: args.hash_out.clone(),
+            last: Duration::ZERO,
+        }));
+    }
+    // 只有某个 sink 需要 RGBA8 时才做通道规范化（省一次全帧拷贝）。
+    let need_rgba = sinks.iter().any(|sink| sink.wants_rgba());
+
+    let mut backends = StandardBackends::new(&ctx);
+    // B8 Step 0：目标纹理跨帧复用（原先每帧 create_texture）。
+    let mut target = HeadlessTarget::new();
+
+    // B8 Step 1：逐帧分段计时（默认只在窗口汇总 / 门禁上用；逐帧 JSON 由环境变量开启）。
+    let timing_lines = std::env::var("ZELA_FRAME_TIMING").is_ok_and(|value| value != "0");
+    let mut stats = zela_app::frame_loop::FrameStats::new();
+
+    // B12 Step 2：决策日志需要一个作品标签（单进程路径取脚本 / 产物文件名）。
+    let work_label = args
+        .script
+        .as_ref()
+        .or(args.bundle.as_ref())
+        .and_then(|path| path.file_stem())
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "inline".to_string());
+
+    // D 批：输入流按帧索引重放。`run_frames` 在回调**之前**推进一帧，
+    // 因此第 0 帧先在循环外装填，回调里装填下一帧（空帧会清空上一帧）。
+    let input_driver = std::sync::Arc::clone(&runtime.driver);
+    if let Some(stream) = &input_stream {
+        zela_playback::apply_input_frame(&input_driver, stream.events_at(0));
+    }
+
+    // B9 Step 3：帧循环唯一实现在 `zela_app::frame_loop`（与 `zela-verify` 共用）。
+    let run = run_frames(
+        &ctx,
+        &mut runtime,
+        &mut backends,
+        &mut target,
+        FrameLoopOptions {
             width,
             height,
+            fps: args.fps,
+            backend: args.backend,
+            start_frame: 0,
+            end_frame: None,
+            vector_params: None,
         },
-        None => Sink::Ffmpeg(Ffmpeg::spawn(&ctx, &args.out, args.fps, (width, height))?),
-    };
+        need_rgba,
+        &mut |index, frame| {
+            // **BZ-b**：先录本帧已应用的事件，再装填下一帧（否则会录到下一帧）。
+            if let Some((recorder, _)) = &mut recorder {
+                let events = input_driver.with_scheduler(|scheduler| {
+                    scheduler
+                        .resources()
+                        .get::<InputEvents>()
+                        .cloned()
+                        .unwrap_or_default()
+                });
+                recorder.capture(index, &events);
+            }
+            // D 批：本帧已渲染 ⇒ 装填下一帧的事件（帧索引，不按时间）。
+            if let Some(stream) = &input_stream {
+                zela_playback::apply_input_frame(&input_driver, stream.events_at(index + 1));
+            }
+            // B2-6：旁路采样（只打印，不改序列哈希）。
+            if digest_sample > 0 && index % digest_sample == 0 {
+                let digest =
+                    zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(frame.rgba));
+                eprintln!("[frame-digest] frame = {index} digest = {digest}");
+            }
+            for sink in &mut sinks {
+                sink.on_frame(index, &frame)?;
+            }
+            Ok(sinks.iter().map(|sink| sink.last_hash_time()).sum())
+        },
+    )?;
 
-    for index in 0..frames {
-        // **与 GUI 同一条命令**：固定 dt（导出比实时墙钟更确定）。
-        runtime.driver.submit(DriverCommand::Advance { dt }).wait();
-
-        let callback = runtime
-            .driver
-            .with_scheduler(|scheduler| {
-                let options = zela_render::FrameOptions::default();
-                let view = zela_render::frame::build_scene_view(
-                    &WorldView::new(scheduler.world()),
-                    scheduler.resources(),
-                    options,
-                );
-                zela_render::frame::build_frame_inputs(&view, scheduler.resources(), options)
-                    .and_then(zela_render_backends::frame::build_scene_callback)
-            })
-            .ok_or_else(|| "本帧没有可渲染图层（场景为空）".to_string())?;
-
-        let pixels = render_frame_headless(&ctx, &mut backends, &callback, screen, clear);
-        // 先规范化成 RGBA8（与 PNG 写盘同一份字节），再进序列哈希。
-        let rgba = to_rgba(&ctx, &pixels);
-        // B2-6：旁路采样（只打印，不改序列哈希）。
-        if digest_sample > 0 && index % digest_sample == 0 {
-            let digest =
-                zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(&rgba));
-            eprintln!("[frame-digest] frame = {index} digest = {digest}");
+    // **BZ-b**：录制收尾 —— `finish()` 返回 `Option<InputStream>`（没开录制是 `None`）。
+    if let Some((recorder, path)) = recorder {
+        if let Some(stream) = recorder.finish() {
+            let text = stream
+                .to_json()
+                .map_err(|error| format!("输入流序列化失败：{error}"))?;
+            std::fs::write(&path, text)
+                .map_err(|error| format!("写入输入流 {} 失败：{error}", path.display()))?;
+            eprintln!(
+                "[record] 输入流已写入 {}（{} 个帧有事件）",
+                path.display(),
+                stream.frames.len()
+            );
         }
-        frame_hash.push_frame(&rgba);
-        sink.write(&ctx, index, &pixels)?;
-
-        runtime.driver.with_scheduler_mut(|scheduler| {
-            zela_render::frame::end_frame(scheduler.resources_mut());
-        });
     }
 
-    sink.finish()?;
-
-    let sequence = frame_hash.hex();
-    eprintln!(
-        "[frame-hash] sequence = {sequence}（{} 帧，{}×{}，RGBA8）",
-        frame_hash.frames(),
-        width,
-        height
-    );
-    if let Some(path) = &args.hash_out {
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("创建目录 {} 失败：{e}", parent.display()))?;
-        }
-        std::fs::write(path, format!("{sequence}\n"))
-            .map_err(|e| format!("写 {} 失败：{e}", path.display()))?;
+    // B12 Step 2：决策落盘（与 B13 对拍同一份字段；拒绝理由非空由 `run_frames` 校验）。
+    for decision in &run.decisions {
+        eprintln!("{}", decision.json(&work_label, "render"));
     }
+    // B12 Step 4：GPU 计时状态（`disabled` 是默认，不刷屏；其余都显式打印）。
+    if run.gpu_status.state != zela_render_backends::gpu_timing::GpuTimingState::Disabled {
+        eprintln!("[gpu-timing] {}", run.gpu_json());
+    }
+
+    for (index, timing) in run.timings.iter().enumerate() {
+        if timing_lines {
+            eprintln!("{}", timing_json(timing, index as u32));
+        }
+        stats.record(index as u32, timing);
+    }
+
+    // B8 Step 2：收尾交给 sink（`HashSink` 在这里打印 `[frame-hash]` 并写 `--hash-out`）。
+    for sink in sinks {
+        sink.finish()?;
+    }
+
+    // B8 Step 1：分段耗时汇总（JSON 行）+ 量级门禁（> 500ms 才失败）。
+    stats.report()?;
 
     // 软失败汇总：三角化失败只跳过该绘制，不中断导出、不改退出码。
     let skipped = zela_render_backends::diagnostics::total_skipped();
@@ -304,37 +482,112 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-enum Sink {
-    Png {
-        dir: PathBuf,
-        width: u32,
-        height: u32,
-    },
-    Ffmpeg(Ffmpeg),
-}
-
-impl Sink {
-    fn write(&mut self, ctx: &RenderContext, index: u32, pixels: &[u8]) -> Result<(), String> {
-        match self {
-            Self::Png { dir, width, height } => {
-                std::fs::create_dir_all(&dir)
-                    .map_err(|e| format!("创建目录 {} 失败：{e}", dir.display()))?;
-                let path = dir.join(format!("frame_{index:05}.png"));
-                let rgba = to_rgba(ctx, pixels);
-                write_png(&path, *width, *height, &rgba).map_err(|e| e.to_string())
-            }
-            Self::Ffmpeg(encoder) => encoder.write(pixels),
-        }
+/// 逐帧输出 / 校验的挂载点（B8 Step 2 / 补充更正 §3.4）。
+///
+/// 硬约束（V3-12）：渲染核心**不感知** sink —— 命令序列与像素产出与"挂了哪些 sink"
+/// 完全无关。挂不挂 `HashSink` 只决定要不要多做一次哈希，不改走哪条渲染路径。
+trait FrameSink {
+    /// 是否需要 RGBA8（决定主循环要不要做通道规范化）。
+    fn wants_rgba(&self) -> bool {
+        false
     }
 
-    fn finish(self) -> Result<(), String> {
-        match self {
-            Self::Png { dir, .. } => {
-                eprintln!("完成：序列帧在 {}", dir.display());
-                Ok(())
-            }
-            Self::Ffmpeg(encoder) => encoder.finish(),
+    fn on_frame(&mut self, index: u32, frame: &FrameView<'_>) -> Result<(), String>;
+
+    /// 上一帧的校验耗时（只有 [`HashSink`] 报），用于把 `t_hash` 从 `t_sink` 里拆出来。
+    fn last_hash_time(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    fn finish(self: Box<Self>) -> Result<(), String>;
+}
+
+/// PNG 序列（`--frames DIR`）。
+struct PngSink {
+    dir: PathBuf,
+}
+
+impl FrameSink for PngSink {
+    fn wants_rgba(&self) -> bool {
+        true
+    }
+
+    fn on_frame(&mut self, index: u32, frame: &FrameView<'_>) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir)
+            .map_err(|e| format!("创建目录 {} 失败：{e}", self.dir.display()))?;
+        let path = self.dir.join(format!("frame_{index:05}.png"));
+        write_png(&path, frame.size.0, frame.size.1, frame.rgba).map_err(|e| e.to_string())
+    }
+
+    fn finish(self: Box<Self>) -> Result<(), String> {
+        eprintln!("完成：序列帧在 {}", self.dir.display());
+        Ok(())
+    }
+}
+
+/// mp4（`--out FILE`，经 ffmpeg 管道）。
+struct FfmpegSink(Ffmpeg);
+
+impl FrameSink for FfmpegSink {
+    fn on_frame(&mut self, _index: u32, frame: &FrameView<'_>) -> Result<(), String> {
+        self.0.write(frame.raw)
+    }
+
+    fn finish(self: Box<Self>) -> Result<(), String> {
+        self.0.finish()
+    }
+}
+
+/// 帧序列哈希（**可选**；`--hash` 或 `--hash-out` 才挂）。
+///
+/// 这是唯一会做像素级计算（SHA-256）的 sink；它的存在与否不改变像素产出。
+struct HashSink {
+    hash: FrameSequenceHash,
+    size: (u32, u32),
+    digest_sample: u32,
+    hash_out: Option<PathBuf>,
+    last: Duration,
+}
+
+impl FrameSink for HashSink {
+    fn wants_rgba(&self) -> bool {
+        true
+    }
+
+    fn on_frame(&mut self, index: u32, frame: &FrameView<'_>) -> Result<(), String> {
+        // B2-6：旁路采样（只打印，不改序列哈希）。
+        if self.digest_sample > 0 && index % self.digest_sample == 0 {
+            let digest =
+                zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(frame.rgba));
+            eprintln!("[frame-digest] frame = {index} digest = {digest}");
         }
+        let mark = Instant::now();
+        self.hash.push_frame(frame.rgba);
+        self.last = mark.elapsed();
+        Ok(())
+    }
+
+    fn last_hash_time(&self) -> Duration {
+        self.last
+    }
+
+    fn finish(self: Box<Self>) -> Result<(), String> {
+        let sequence = self.hash.hex();
+        eprintln!(
+            "[frame-hash] sequence = {sequence}（{} 帧，{}×{}，RGBA8）",
+            self.hash.frames(),
+            self.size.0,
+            self.size.1
+        );
+        if let Some(path) = &self.hash_out {
+            if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("创建目录 {} 失败：{e}", parent.display()))?;
+            }
+            std::fs::write(path, format!("{sequence}\n"))
+                .map_err(|e| format!("写 {} 失败：{e}", path.display()))?;
+        }
+        Ok(())
     }
 }
 
@@ -426,3 +679,61 @@ impl Ffmpeg {
         Ok(())
     }
 }
+
+/// **阶段 0：默认值快照**（仓库门面批次 §阶段 0）。
+///
+/// 这些默认值**直接进渲染参数**（帧率 / 画幅 / 输出路径 / 后端）⇒ 任何"顺手改掉"
+/// 都会改像素。后续把解析迁到 `zela-commands` 的 `CommandSpec` 时，本模块就是回归网：
+/// 新实现必须复现这里的每一条。
+#[cfg(test)]
+mod defaults_snapshot {
+    use super::*;
+
+    fn args(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn script_only_uses_the_documented_defaults() {
+        let parsed = Args::parse_from(&args(&["demo.lua"])).expect("最小参数可解析");
+        assert_eq!(parsed.script, Some(PathBuf::from("demo.lua")));
+        assert_eq!(parsed.bundle, None);
+        assert_eq!(parsed.frames_dir, None);
+        assert_eq!(parsed.hash_out, None);
+        assert!(!parsed.hash, "--hash 默认不挂");
+        assert_eq!(parsed.fps, 30.0, "默认 30 fps");
+        assert_eq!(parsed.out, PathBuf::from("out.mp4"), "默认输出 out.mp4");
+        assert_eq!(parsed.size, (640, 480), "默认画幅 640x480");
+        assert_eq!(
+            parsed.backend,
+            LoopBackend::Auto,
+            "B19 Step 3 起默认 auto（矢量优先，被拒回退 wgpu）"
+        );
+    }
+
+    #[test]
+    fn size_split_and_backend_parse() {
+        let parsed = Args::parse_from(&args(&[
+            "--script", "a.lua", "--size", "1280x720", "--backend", "vector",
+        ]))
+        .expect("显式参数可解析");
+        assert_eq!(parsed.size, (1280, 720), "--size 按 WxH 切分");
+        assert_eq!(parsed.backend, LoopBackend::Vector);
+    }
+
+    #[test]
+    fn defaults_are_enforced_not_silently_fallback() {
+        // 缺尺寸分隔符 / 非数字 / 缺值都必须**显式失败**，不得静默采用默认值。
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--size", "640"])).is_err());
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--size", "axb"])).is_err());
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--fps", "x"])).is_err());
+        assert!(Args::parse_from(&args(&["--script", "a.lua", "--backend", "cpu"])).is_err());
+    }
+
+    #[test]
+    fn help_is_an_error_with_usage() {
+        let error = Args::parse_from(&args(&["--help"])).expect_err("--help 走用法分支");
+        assert!(error.contains("用法：zela-render"));
+    }
+}
+

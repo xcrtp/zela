@@ -15,6 +15,10 @@ pub mod deferred;
 pub mod director_state;
 pub mod driver;
 pub mod errors;
+pub mod expr_mono;
+pub mod fingerprint;
+#[cfg(test)]
+mod expr_binding_tests;
 pub mod geometry;
 pub mod input;
 pub mod lifetime;
@@ -35,7 +39,8 @@ pub use ze_scene_core::{Color32, Rect2D, Vec2, Vec3, Vec4};
 pub use ze_scene_core::{TimeState, Transform2D, Transform2DInto};
 
 pub use animation::{
-    Binding, BindingTable, SeekKind, Target, TargetKind, Timeline, TransformValue,
+    Binding, BindingTable, FieldSpec, FieldTarget, SeekKind, Target, TargetEntry, TargetError,
+    Timeline, TransformChannel, target_ctor_by_name, target_entry,
 };
 pub use camera_input::{
     CameraInputSystem, apply_command_2d, apply_command_3d, apply_fps, apply_orbit, apply_pan_zoom,
@@ -47,6 +52,11 @@ pub use deferred::{
 pub use director_state::{DirectorAdvanceSystem, DirectorState};
 pub use driver::{DriverCommand, DriverEvent, DriverPod};
 pub use errors::Error;
+pub use expr_mono::SceneMono;
+// 执行计划阶段 1：结构指纹（纯数值状态层）。
+pub use fingerprint::{
+    StructureFingerprint, WorldRead, fingerprint_world, sequence_digest,
+};
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 pub use input::{ParamPanelSystem, TimeControlSystem};
 pub use lifetime::{
@@ -64,7 +74,8 @@ pub use scene::{
 // B3-1b：脚本数据（SceneScript / SceneEncoder）已下沉核心层；路径保持不变。
 pub use ze_scene_core::scene_script;
 pub use ze_scene_core::scene_script::{
-    Handle, HandleRange, SceneEncoder, SceneRecipe, SceneScript, ScriptError, handle_ref,
+    ExprBindError, Handle, HandleRange, SceneEncoder, SceneRecipe, SceneScript, ScriptError,
+    handle_ref,
 };
 
 #[cfg(test)]
@@ -74,7 +85,10 @@ pub use transform_hierarchy::{
 };
 // `Transform2D` 的模块路径（`ze_scene_core::transform`；本层转发以便下游少一个依赖）。
 pub use ze_scene_core::transform;
-pub use ze_time::{AnimValue, ClockForest, ClockId, ClockNode, Curve, Director, Interp, PlayMode};
+pub use ze_time::{
+    AnimValue, ClockForest, ClockId, ClockLink, ClockNode, ClockProgram, Curve, Director, Interp,
+    PlayMode,
+};
 // 相机与摆放组件归核心层对象模块：本层**不转发**具体类型，
 // 消费方直接 `use ze_scene_core::{Camera2D, Camera3D, Projection, Transform}`。
 // `#[macro_export]` 已经把 auto_into 宏导出到 crate 根（与模块无关），

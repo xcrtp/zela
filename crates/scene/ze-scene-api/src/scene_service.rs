@@ -1,6 +1,6 @@
 // service.rs — 宿主侧 **Scene Service Pod**（原生 Rust，注册 typed 函数）。
 //
-// 函数签名由**结构化类型**构成（`Circle` / `Stroke` / `Curve` / `TargetKind` …）：
+// 函数签名由**结构化类型**构成（`Circle` / `Stroke` / `Curve` / 目标地址 `String` …）：
 // 绑定层按 `TypeSpec` 转换参数，这里只做"结构化值 → 场景原语"的落点转换。
 //
 // # 组件组（W2）
@@ -9,31 +9,39 @@
 // `spawn` 时展开 —— 内容路径的样式（颜色 / 线宽）不必在脚本里重述。
 
 use std::any::Any;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use ze_time::Curve as NativeCurve;
-use ze_scene_core::animation::TargetKind;
 use ze_scene_core::components::Reveal as NativeReveal;
+use ze_scene_core::components::PathFollow as NativePathFollow;
 use ze_scene_core::scene_script::{
     Handle as ScriptHandle, SceneEncoder, SceneScript, handle_ref,
 };
 use ze_notion::{Color32, Quat, Rect2D, Vec2 as NotionVec2, Vec3 as NotionVec3};
 use ze_scene_core::object::{
     Arrow as NativeArrow, Axes2D as NativeAxes2D, Camera3D as NativeCamera3D, Circle as NativeCircle,
-    Framing2D, Path as NativePath, Projection, TickSpec, Transform as NativeTransform,
+    Framing2D, Path as NativePath, Projection, RayTrace as NativeRayTrace, TickSpec,
+    Transform as NativeTransform,
 };
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 use ze_render_ir::{FillSolid, MeasureSpace, Opacity as NativeOpacity, StrokeSolid};
-use ze_scene_contract::{Components, Name as NativeName, Parent as NativeParent};
+use ze_scene_contract::{
+    Components, Group as NativeGroup, GroupId as NativeGroupId, Name as NativeName,
+    Parent as NativeParent, ParentInherit as NativeParentInherit,
+};
 
 use crate::content_service::PathStore;
+use crate::RegisterSceneComponent;
 use crate::types::{
-    Arrow, Axes2D, Camera2D, Camera3D, Circle, Cube, Curve, Fill, Light, LightKind, LineStyle,
-    Material3D, Name, Opacity, Parent, Path, PathShape, Polyline, Reveal, RevealPath, ShaderVariant,
-    Stroke, Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter, Transform, Transform3D,
-    TransformChannel,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
+    Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
+    Path, PathFollow, PathShape, PhaseAnim, Polyline, RayTrace, Reveal, RevealPath, SecondPaint,
+    ShaderVariant, Stroke, Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter,
+    Transform, Transform3D, Vec2, Vec3,
 };
-use ze_scene_core::components::{Light as NativeLight, Material3D as NativeMaterial3D};
+use ze_scene_core::components::{
+    Light as NativeLight, Material3D as NativeMaterial3D, MorphShape as NativeMorphShape,
+    PhaseAnim as NativePhaseAnim,
+};
 use ze_scene_core::surface::{
     Surface as NativeSurface, SurfaceMapping as NativeSurfaceMapping,
     SurfaceRenderer as NativeSurfaceRenderer, SurfaceTexture as NativeSurfaceTexture,
@@ -51,40 +59,6 @@ pub const FINISH_PATH: &str = "zela.scene::__finish";
 /// 内部交接函数：丢弃上一轮录制状态（每次 `run` 前调用）。
 pub const RESET_PATH: &str = "zela.scene::__reset";
 
-/// 一个"动画动作"：**目标**（枚举或 Transform 通道）+ 已转换的曲线。
-#[derive(Clone)]
-struct Clip {
-    target: ClipTarget,
-    curve: NativeCurve,
-}
-
-/// 脚本侧动作目标的两种来源。
-#[derive(Clone, Copy)]
-enum ClipTarget {
-    /// 既有集中枚举（CircleRadius / Phase / … / TransformValue(Auto)）。
-    Kind(TargetKind),
-    /// S3：显式 Transform 通道。
-    Transform(TransformChannel),
-}
-
-impl ClipTarget {
-    fn make(self) -> fn(ze_scene_contract::ObjectId) -> std::sync::Arc<dyn ze_scene_core::animation::Target> {
-        use ze_scene_core::animation::target::{
-            make_transform_auto, make_transform_position, make_transform_rotation,
-            make_transform_scale,
-        };
-        match self {
-            ClipTarget::Kind(kind) => kind.ctor(),
-            ClipTarget::Transform(channel) => match channel {
-                TransformChannel::Auto => make_transform_auto,
-                TransformChannel::Position => make_transform_position,
-                TransformChannel::Rotation => make_transform_rotation,
-                TransformChannel::Scale => make_transform_scale,
-            },
-        }
-    }
-}
-
 /// Service 的全部可变状态（`Pod` 只有 `&self` ⇒ 内部可变性）。
 struct Recording {
     /// 一个句柄 → 一组组件（组件组；`spawn` 时展开）。
@@ -93,8 +67,13 @@ struct Recording {
     /// 把对象句柄当组件传给 `spawn` 会得到 `CrossPodHandle`（明确错误），
     /// 而不是撞上同槽位的组件。
     components: HandleTable<Components>,
-    clips: HandleTable<Clip>,
     objects: HandleTable<ScriptHandle>,
+    /// 与 `objects` 同步的记录（`HandleTable` 不提供遍历）：`finish` 时快照，
+    /// 供表达式绑定把 pod 句柄转成脚本句柄（提案 #6 B）。
+    object_log: Vec<(Handle, ScriptHandle)>,
+    /// 每个对象（按 create 顺序）的组件**稳定名字** —— `Query` 的过滤依据
+    /// （装配期展开，产物里不存）。
+    component_names: Vec<Vec<&'static str>>,
     encoder: SceneEncoder,
     /// 装配期错误（非法句柄等）：在 `finish` 时作为 `run` 的明确失败返回。
     error: Option<String>,
@@ -104,8 +83,9 @@ impl Recording {
     fn new() -> Self {
         Self {
             components: HandleTable::new(PodId::next()),
-            clips: HandleTable::new(PodId::next()),
             objects: HandleTable::new(PodId::next()),
+            object_log: Vec::new(),
+            component_names: Vec::new(),
             encoder: SceneEncoder::new(),
             error: None,
         }
@@ -140,6 +120,13 @@ pub struct SceneServicePod {
     registry: RegistryPod,
     rec: RecordingCell,
     paths: PathStore,
+    /// 最近一次 `finish` 的对象句柄快照（pod Handle → 脚本句柄）。
+    ///
+    /// 表达式绑定在 `run` 之后合并，那时录制状态已清空 ⇒ 快照必须活过 `finish`。
+    /// 只含**装配期**数据，不进产物。
+    last_objects: Mutex<Vec<(Handle, ScriptHandle)>>,
+    /// 与 `last_objects` 同寿命的组件名快照（按脚本句柄下标索引）。
+    last_component_names: Mutex<Vec<Vec<&'static str>>>,
 }
 
 impl Default for SceneServicePod {
@@ -160,134 +147,72 @@ impl SceneServicePod {
         let mut registry = RegistryPod::new();
 
         // ── 组件构造（单结构体参数 ⇒ 自动生成 `Circle { ... }` 等构造器）────
-        registry.register_fn1_named::<Circle, Handle>(
-            "zela.scene::circle",
-            "zela.Circle",
-            "ze_pod_core.Handle",
-            scene_circle,
-        );
-        registry.register_fn1_named::<Stroke, Handle>(
-            "zela.scene::stroke",
-            "zela.Stroke",
-            "ze_pod_core.Handle",
-            scene_stroke,
-        );
-        registry.register_fn1_named::<Camera2D, Handle>(
-            "zela.scene::camera2d",
-            "zela.Camera2D",
-            "ze_pod_core.Handle",
-            scene_camera2d,
-        );
+        // 路径 / Pod 类型名由 `SceneComponent` 同源提供（E 批）。
+        registry.register_component::<Circle>(scene_circle);
+        registry.register_component::<Stroke>(scene_stroke);
+        registry.register_component::<Camera2D>(scene_camera2d);
         // ── 3D（B1-D）──────────────────────────────────────────────────
-        registry.register_fn1_named::<Camera3D, Handle>(
-            "zela.scene::camera3d",
-            "zela.Camera3D",
-            "ze_pod_core.Handle",
-            scene_camera3d,
-        );
-        registry.register_fn1_named::<Cube, Handle>(
-            "zela.scene::cube",
-            "zela.Cube",
-            "ze_pod_core.Handle",
-            scene_cube,
-        );
-        registry.register_fn1_named::<Material3D, Handle>(
-            "zela.scene::material3d",
-            "zela.Material3D",
-            "ze_pod_core.Handle",
-            scene_material3d,
-        );
-        registry.register_fn1_named::<Light, Handle>(
-            "zela.scene::light",
-            "zela.Light",
-            "ze_pod_core.Handle",
-            scene_light,
-        );
+        registry.register_component::<Camera3D>(scene_camera3d);
+        // BV-5：光追开关（挂在相机对象上；缺席 = 只光栅）。
+        registry.register_component::<RayTrace>(scene_ray_trace);
+        registry.register_component::<Cube>(scene_cube);
+        registry.register_component::<Material3D>(scene_material3d);
+        registry.register_component::<Light>(scene_light);
         // B3 Step 0：Surface 组件组（Surface + Renderer + Texture）。
-        registry.register_fn1_named::<Surface, Handle>(
-            "zela.scene::surface",
-            "zela.Surface",
-            "ze_pod_core.Handle",
-            scene_surface,
-        );
-        registry.register_fn1_named::<Transform3D, Handle>(
-            "zela.scene::transform3d",
-            "zela.Transform3D",
-            "ze_pod_core.Handle",
-            scene_transform3d,
-        );
-        registry.register_fn1_named::<Reveal, Handle>(
-            "zela.scene::reveal",
-            "zela.Reveal",
-            "ze_pod_core.Handle",
-            scene_reveal,
-        );
-        registry.register_fn1_named::<Polyline, Handle>(
-            "zela.scene::polyline",
-            "zela.Polyline",
-            "ze_pod_core.Handle",
-            scene_polyline,
-        );
+        registry.register_component::<Surface>(scene_surface);
+        // B7 Step 4：三个此前脚本层不可达的能力入口。
+        registry.register_component::<Group>(scene_group);
+        registry.register_component::<PhaseAnim>(scene_phase_anim);
+        registry.register_component::<Morph>(scene_morph);
+        registry.register_component::<Transform3D>(scene_transform3d);
+        registry.register_component::<Reveal>(scene_reveal);
+        registry.register_component::<Polyline>(scene_polyline);
         registry.register_fn1::<Parent, Handle>("zela.scene::parent", scene_parent);
         registry.register_fn1::<Name, Handle>("zela.scene::name", scene_name);
         registry.register_fn1::<Opacity, Handle>("zela.scene::opacity", scene_opacity);
-        registry.register_fn1_named::<Axes2D, Handle>(
-            "zela.scene::axes2d",
-            "zela.Axes2D",
-            "ze_pod_core.Handle",
-            scene_axes2d,
-        );
-        registry.register_fn1_named::<Arrow, Handle>(
-            "zela.scene::arrow",
-            "zela.Arrow",
-            "ze_pod_core.Handle",
-            scene_arrow,
-        );
-        registry.register_fn1_named::<Fill, Handle>(
-            "zela.scene::fill",
-            "zela.Fill",
-            "ze_pod_core.Handle",
-            scene_fill,
-        );
-        registry.register_fn1_named::<Transform, Handle>(
-            "zela.scene::transform",
-            "zela.Transform",
-            "ze_pod_core.Handle",
-            scene_transform,
-        );
-        registry.register_fn1_named::<RevealPath, Handle>(
-            "zela.scene::reveal_path",
-            "zela.RevealPath",
-            "ze_pod_core.Handle",
-            scene_reveal_path,
-        );
-        registry.register_fn1_named::<PathShape, Handle>(
-            "zela.scene::path_shape",
-            "zela.PathShape",
-            "ze_pod_core.Handle",
-            scene_path_shape,
-        );
+        registry.register_component::<Axes2D>(scene_axes2d);
+        registry.register_component::<Arrow>(scene_arrow);
+        registry.register_component::<Fill>(scene_fill);
+        // PE：绘制参数（后端已实现能力的场景层入口）。挂上即开启，缺席 = 当前行为。
+        registry.register_component::<Gradient>(scene_gradient);
+        registry.register_component::<Dash>(scene_dash);
+        registry.register_component::<SecondPaint>(scene_second_paint);
+        registry.register_component::<BackgroundStroke>(scene_background_stroke);
+        registry.register_component::<CurveWindow>(scene_curve_window);
+        registry.register_component::<Transform>(scene_transform);
+        registry.register_component::<RevealPath>(scene_reveal_path);
+        registry.register_component::<PathShape>(scene_path_shape);
+        registry.register_component::<PathFollow>(scene_path_follow);
 
         // ── 对象 ────────────────────────────────────────────────────────
         registry.register_fn1::<Vec<Handle>, Handle>("zela.scene::spawn", scene_spawn);
         registry.register_fn1::<Handle, ()>("zela.scene::despawn", scene_despawn);
 
-        // ── 动画：目标枚举 + 曲线枚举 ───────────────────────────────────
-        registry.register_fn2::<TargetKind, Curve, Handle>("zela.scene::clip", scene_clip);
-        registry.register_fn2::<TransformChannel, Curve, Handle>(
-            "zela.scene::clip_transform",
-            scene_clip_transform,
-        );
-        registry.register_fn3_named::<Handle, Handle, f64, ()>(
-            "zela.scene::animate",
-            "ze_pod_core.Handle",
-            "ze_pod_core.Handle",
+        // ── 第 BB 批（阶段 4）：构造糖（值形态；展开成与 `Color{...}` 相同的值）──
+        registry.register_fn4_named::<f64, f64, f64, f64, Color>(
+            "zela.scene::rgba",
             "f64",
-            "()",
-            scene_animate,
+            "f64",
+            "f64",
+            "f64",
+            "zela.Color",
+            scene_rgba,
         );
-        registry.register_fn2::<Handle, Handle, ()>("zela.scene::parallel", scene_parallel);
-        registry.register_fn1::<f64, ()>("zela.scene::wait", scene_wait);
+        registry.register_fn2_named::<f64, f64, Vec2>(
+            "zela.scene::vec2",
+            "f64",
+            "f64",
+            "zela.Vec2",
+            scene_vec2,
+        );
+        registry.register_fn3_named::<f64, f64, f64, Vec3>(
+            "zela.scene::vec3",
+            "f64",
+            "f64",
+            "f64",
+            "zela.Vec3",
+            scene_vec3,
+        );
 
         // ── 内部交接（不是脚本可见 API；走 erased / `Pod::call`）────────────
         registry.register_erased(
@@ -312,7 +237,30 @@ impl SceneServicePod {
             registry,
             rec: RecordingCell::new(Recording::new()),
             paths,
+            last_objects: Mutex::new(Vec::new()),
+            last_component_names: Mutex::new(Vec::new()),
         }
+    }
+
+    /// 表达式绑定用：把脚本拿到的**对象句柄**解析成本脚本内的句柄。
+    ///
+    /// 只在 `run` 之后、下一次 `reset` 之前有效；产物里存的是后者（`Handle(usize)`），
+    /// **不存 pod 句柄**（提案 #6 硬约束 4）。
+    pub fn object_handle(&self, handle: &Handle) -> Option<ScriptHandle> {
+        self.last_objects
+            .lock()
+            .expect("对象句柄快照锁中毒")
+            .iter()
+            .find(|(pod, _)| pod == handle)
+            .map(|(_, script)| *script)
+    }
+
+    /// 最近一次 `finish` 的**组件名快照**（按脚本句柄下标）。
+    pub fn component_names(&self) -> Vec<Vec<&'static str>> {
+        self.last_component_names
+            .lock()
+            .expect("组件名快照锁中毒")
+            .clone()
     }
 
     /// 取走本轮的 `SceneScript`，并重置状态。
@@ -324,6 +272,13 @@ impl SceneServicePod {
         let error = rec.error.take();
         let encoder = std::mem::replace(&mut rec.encoder, SceneEncoder::new());
         let script = encoder.finish();
+        // 表达式绑定在 `run` 之后才合并 ⇒ 句柄映射要先快照再清空录制状态。
+        *self.last_objects.lock().expect("对象句柄快照锁中毒") =
+            std::mem::take(&mut rec.object_log);
+        *self
+            .last_component_names
+            .lock()
+            .expect("组件名快照锁中毒") = std::mem::take(&mut rec.component_names);
         self.paths.reset();
         *rec = Recording::new();
         match error {
@@ -357,6 +312,16 @@ impl Pod for SceneServicePod {
         self.registry.resolve(name)
     }
 
+    /// 场景地址表 → 可挂到组件构造器上的**通道常量**（提案 #6 B）。
+    fn channels(&self) -> &'static [ze_pod_core::ChannelDecl] {
+        channels()
+    }
+
+    /// 方法目录 → 可挂到组件构造器上的**方法**（`Reveal.current_pos(obj)`）。
+    fn methods(&self) -> &'static [ze_pod_core::MethodDecl] {
+        methods()
+    }
+
     fn call(&self, id: FunctionId, _args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
         let name = self
             .functions()
@@ -381,6 +346,114 @@ fn service(pod: &dyn Pod) -> &SceneServicePod {
     pod.as_any()
         .downcast_ref::<SceneServicePod>()
         .expect("SceneApi 的调用者必须是 SceneServicePod")
+}
+
+/// 场景地址表 → **通道常量**（`Circle.channel.radius` …），与 [`Pod::channels`] 同一份。
+///
+/// 只导出**单字段**规格（`is_composite == false`）：组合选择键
+/// （`Camera2DFraming` / `RevealRange`）没有单一的 `(组件, 字段)`，不能当常量挂。
+///
+/// 声明文件生成器也调它（不需要构造 Pod 实例）。
+pub fn channels() -> &'static [ze_pod_core::ChannelDecl] {
+    static CHANNELS: OnceLock<Vec<ze_pod_core::ChannelDecl>> = OnceLock::new();
+    CHANNELS.get_or_init(|| {
+        use ze_scene_core::animation::TARGETS;
+        // 只导出可写字段（单字段）：派生量是**方法**（`Reveal.current_pos`），
+        // 不再挂成通道常量（B2）。
+        TARGETS
+            .iter()
+            .map(|entry| entry.spec)
+            .filter(|spec| !spec.is_composite)
+            .map(|spec| ze_pod_core::ChannelDecl {
+                namespace: "zela.scene",
+                // 存储组件可能不是脚本世界里的名字（`Framing2D` / `MorphShape`）
+                // ⇒ 常量挂到脚本能 spawn 的组件上（`Camera2D` / `Morph`）。
+                component: ze_scene_core::animation::target::channel_home(spec.component),
+                name: spec.field,
+                address: spec.address,
+                ty: spec.ty,
+                // 常量的值是 `{ namespace, name }`：与 `zela.math.Bind.target`
+                // 同一个 PodType（声明文件据此标注 `Circle.channel.radius: Channel`）。
+                value_type: "zela.math.Channel",
+            })
+            .collect()
+    })
+}
+
+/// 方法目录 → 脚本侧**方法声明**（`Reveal.current_pos(object)`）。
+///
+/// 与 [`channels`] 同构：名字拆成「组件 + 成员」，语言绑定据此把方法挂到
+/// 组件构造器上 —— 作者不必手写 `expr.method { name = …, object = …, args = {} }`。
+///
+/// 只导出**返回值有表达式层表示**的方法：`Object.bounds` / `Circle.bounds`
+/// 返回 `Rect2D`（`Bytes`），要等值系统收敛（W-A / GAPS AP-08）才够得着。
+pub fn methods() -> &'static [ze_pod_core::MethodDecl] {
+    static METHODS: OnceLock<Vec<ze_pod_core::MethodDecl>> = OnceLock::new();
+    METHODS.get_or_init(|| {
+        use ze_scene_core::animation::target::METHODS as SPECS;
+        SPECS
+            .iter()
+            .filter(|spec| expressible(spec.ret))
+            .filter_map(|spec| {
+                Some(ze_pod_core::MethodDecl {
+                    namespace: "zela.scene",
+                    component: spec.component,
+                    name: spec.name.rsplit('.').next()?,
+                    qualified: spec.name,
+                    arity: spec.params.len(),
+                    ret: spec.ret,
+                })
+            })
+            .collect()
+    })
+}
+
+/// 返回值有没有表达式层表示（数值 / 布尔 / `Vec2` / `Vec3`）。
+fn expressible(ret: &'static ze_pod_core::TypeSpec) -> bool {
+    use ze_pod_core::TypeSpec as Ty;
+    match ret {
+        Ty::Scalar(_) => true,
+        Ty::Struct { name, .. } => matches!(*name, "zela.Vec2" | "zela.Vec3"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ze_pod_core::{Capability, TypeSpec};
+
+    /// 通道常量必须挂在**脚本能 spawn 的组件**上。
+    ///
+    /// 反例（本用例挡住）：`Framing2D.channel.center` —— `Framing2D` 是 `Camera2D`
+    /// 的存储组件，脚本世界没有这个名字；三种绑定都会静默丢掉这个常量
+    ///（以前就是 `attach_channels` 的 `continue`），脚本只能手写 `Channel { … }`。
+    #[test]
+    fn every_channel_constant_hangs_on_a_script_component() {
+        let ctors: Vec<&'static str> =
+            <crate::api::SceneApi<'static> as Capability<'static>>::calls()
+                .iter()
+                .filter(|item| item.io.params.len() == 1 && item.io.ret.is_opaque())
+                .filter_map(|item| match item.io.params[0].ty {
+                    TypeSpec::Struct { name, .. } => Some(*name),
+                    _ => None,
+                })
+                .collect();
+        let mut missing: Vec<&'static str> = Vec::new();
+        for channel in channels() {
+            let reachable = ctors
+                .iter()
+                .any(|full| full.rsplit('.').next() == Some(channel.component));
+            if !reachable && !missing.contains(&channel.component) {
+                missing.push(channel.component);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "通道常量挂到了脚本拿不到的组件上：{missing:?}\n  \
+             ⇒ 在 `channel_home` 里映射到脚本组件（存储组件 ≠ 脚本组件）"
+        );
+    }
 }
 
 fn color32(color: crate::types::Color) -> Color32 {
@@ -446,6 +519,20 @@ fn scene_camera3d(pod: &dyn Pod, camera: Camera3D) -> Handle {
         .borrow_mut()
         .components
         .insert(vec![Box::new(native)])
+}
+
+/// **BV-5**：光追开关 → 核心组件（与 `Camera3D` 挂在同一对象上）。
+///
+/// 刻意**不改** `Camera3D` 的字段：那会改既有 12 个作品的 payload（字段进产物）。
+/// 新组件只在脚本显式引用时出现 ⇒ 既有作品产物逐位不变。
+fn scene_ray_trace(pod: &dyn Pod, ray_trace: RayTrace) -> Handle {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(NativeRayTrace {
+            enabled: ray_trace.enabled,
+        })])
 }
 
 fn scene_cube(pod: &dyn Pod, cube: Cube) -> Handle {
@@ -548,7 +635,7 @@ fn scene_light(pod: &dyn Pod, light: Light) -> Handle {
         .insert(vec![Box::new(native)])
 }
 
-/// `Transform3D` → 原生 `Transform`（同一摆放组件，单一真源）。
+/// `Transform3D` → 原生 `Transform`（同一摆放组件，唯一来源）。
 fn scene_transform3d(pod: &dyn Pod, transform: Transform3D) -> Handle {
     let native = NativeTransform {
         position: NotionVec3::new(
@@ -604,6 +691,50 @@ fn scene_polyline(pod: &dyn Pod, polyline: Polyline) -> Handle {
         .insert(vec![Box::new(reveal)])
 }
 
+/// `zela.Group` → `Group` 标签组件（纯组合，不含变换）。
+fn scene_group(pod: &dyn Pod, group: Group) -> Handle {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(NativeGroup::new(NativeGroupId::new(
+            group.id,
+        )))])
+}
+
+/// `zela.PhaseAnim` → `PhaseAnim { phase, omega }`（`Target.Phase` 的写入对象）。
+fn scene_phase_anim(pod: &dyn Pod, phase: PhaseAnim) -> Handle {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(NativePhaseAnim::new(phase.phase, phase.omega))])
+}
+
+/// `zela.Morph` → `MorphShape`（`Target.MorphT` 的写入对象）。
+///
+/// 折线点表 → `Path2D::from_polyline`，与 `reveal` / `polyline` 同一口径。
+fn scene_morph(pod: &dyn Pod, morph: Morph) -> Handle {
+    let to_points = |points: &[crate::types::Vec2]| -> Vec<NotionVec2> {
+        points
+            .iter()
+            .map(|p| NotionVec2::new(p.x, p.y))
+            .collect()
+    };
+    let from = ze_notion::Path2D::from_polyline(&to_points(&morph.from), morph.closed);
+    let to = ze_notion::Path2D::from_polyline(&to_points(&morph.to), morph.closed);
+    let mut native = NativeMorphShape::new(from, to);
+    native.t = morph.t;
+    if morph.samples > 0 {
+        native.samples = morph.samples;
+    }
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(native)])
+}
+
 fn scene_parent(pod: &dyn Pod, parent: Parent) -> Handle {
     let mut rec = service(pod).rec.borrow_mut();
     // 脚本句柄 → Encoder 局部句柄（`handle_ref` 的编码空间）；非法句柄明确失败。
@@ -615,9 +746,17 @@ fn scene_parent(pod: &dyn Pod, parent: Parent) -> Handle {
         }
     };
     match resolved {
-        Some(handle) => rec
-            .components
-            .insert(vec![Box::new(NativeParent(handle_ref(handle)))]),
+        Some(handle) => rec.components.insert(vec![
+            Box::new(NativeParent(handle_ref(handle))),
+            Box::new(NativeParentInherit {
+                position: parent.position,
+                rotation: parent.rotation,
+                scale: parent.scale,
+                opacity: parent.opacity,
+                fill: parent.fill,
+                stroke: parent.stroke,
+            }),
+        ]),
         None => rec.components.insert(Vec::new()),
     }
 }
@@ -675,6 +814,86 @@ fn scene_fill(pod: &dyn Pod, fill: Fill) -> Handle {
         .insert(vec![Box::new(FillSolid::new(color32(fill.color)))])
 }
 
+/// `Color`（直色 u8）→ 后端的 straight RGBA（0..1）。
+fn straight(color: crate::types::Color) -> [f32; 4] {
+    [
+        color.r as f32 / 255.0,
+        color.g as f32 / 255.0,
+        color.b as f32 / 255.0,
+        color.a as f32 / 255.0,
+    ]
+}
+
+/// PE：渐变组件 → `ze_render_ir::Gradient`（**屏幕空间**端点，映射时再换算）。
+///
+/// 色标少于 2 ⇒ `assert!` 显式失败：静默画成纯色正是 PE 要杀的"填了没效果也不说"。
+fn scene_gradient(pod: &dyn Pod, gradient: Gradient) -> Handle {
+    assert!(
+        gradient.stops.len() >= 2,
+        "Gradient.stops 至少两个色标（收到 {}）",
+        gradient.stops.len()
+    );
+    let native = ze_render_ir::Gradient {
+        stops: gradient.stops.iter().map(|c| straight(*c)).collect(),
+        from: [gradient.from.x, gradient.from.y, gradient.from.z],
+        to: [gradient.to.x, gradient.to.y, gradient.to.z],
+    };
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(native)])
+}
+
+fn scene_dash(pod: &dyn Pod, dash: Dash) -> Handle {
+    assert!(
+        dash.period > 0.0,
+        "Dash.period 必须 > 0（不画虚线就不要挂 Dash）"
+    );
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::Dash {
+            period: dash.period,
+            duty: dash.duty,
+            phase: dash.phase,
+        }),
+    ])
+}
+
+fn scene_second_paint(pod: &dyn Pod, second: SecondPaint) -> Handle {
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::SecondPaint {
+            fill: straight(second.fill),
+            stroke: straight(second.stroke),
+            background: straight(second.background),
+            mix: second.mix,
+        }),
+    ])
+}
+
+fn scene_background_stroke(pod: &dyn Pod, background: BackgroundStroke) -> Handle {
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::BackgroundStroke {
+            color: straight(background.color),
+            width: background.width,
+        }),
+    ])
+}
+
+fn scene_curve_window(pod: &dyn Pod, window: CurveWindow) -> Handle {
+    assert!(
+        window.hi > window.lo,
+        "CurveWindow 必须 hi > lo（收到 [{}, {}]）",
+        window.lo,
+        window.hi
+    );
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(ze_render_ir::CurveWindow {
+            lo: window.lo,
+            hi: window.hi,
+        }),
+    ])
+}
+
 fn scene_transform(pod: &dyn Pod, transform: Transform) -> Handle {
     let transform = NativeTransform {
         position: NotionVec3::new(transform.x, transform.y, transform.z),
@@ -717,6 +936,27 @@ fn scene_path_shape(pod: &dyn Pod, shape: PathShape) -> Handle {
     }
 }
 
+/// `zela.PathFollow` → `PathFollow`（动画层阶段 2；`Target.PathFollow.t` 的写入对象）。
+///
+/// 折线点表 → `Path2D::from_polyline`，与 `reveal` / `polyline` / `morph` 同一口径。
+/// 本组件**不绘制**：位置由 `PathFollowApplySystem` 写进同对象的 `Transform`。
+fn scene_path_follow(pod: &dyn Pod, follow: PathFollow) -> Handle {
+    let points: Vec<NotionVec2> = follow
+        .points
+        .iter()
+        .map(|p| NotionVec2::new(p.x, p.y))
+        .collect();
+    let path = ze_notion::Path2D::from_polyline(&points, follow.closed);
+    let mut native = NativePathFollow::new(path);
+    native.t = follow.t;
+    native.orient = follow.orient;
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(native)])
+}
+
 fn scene_spawn(pod: &dyn Pod, handles: Vec<Handle>) -> Handle {
     let mut rec = service(pod).rec.borrow_mut();
     let mut components: Components = Vec::new();
@@ -726,8 +966,18 @@ fn scene_spawn(pod: &dyn Pod, handles: Vec<Handle>) -> Handle {
             Err(_) => rec.fail(format!("组件句柄无效：{handle}")),
         }
     }
+    // `Query` 的过滤依据：在**装配期**就记下每个对象挂了哪些组件（稳定名字）。
+    // 未登记组件（函数类等）没有稳定名字 ⇒ 不参与过滤（显式跳过，不猜名字）。
+    let names: Vec<&'static str> = components
+        .iter()
+        .filter_map(|component| ze_scene_core::registry::known_type_name_of((**component).as_any()))
+        .collect();
+    rec.component_names.push(names);
+
     let object = rec.encoder.spawn(components);
-    rec.objects.insert(object)
+    let handle = rec.objects.insert(object);
+    rec.object_log.push((handle, object));
+    handle
 }
 
 fn scene_despawn(pod: &dyn Pod, object: Handle) {
@@ -737,49 +987,37 @@ fn scene_despawn(pod: &dyn Pod, object: Handle) {
     }
 }
 
-fn scene_clip(pod: &dyn Pod, target: TargetKind, curve: Curve) -> Handle {
-    service(pod).rec.borrow_mut().clips.insert(Clip {
-        target: ClipTarget::Kind(target),
-        curve: curve.to_native(),
-    })
+// ─── 第 BB 批（阶段 4）：构造糖 ─────────────────────────────────────────
+//
+// 三者都只**返回值**（不碰录制状态）：`rgba(235, 120, 120, 255)` 与
+// `Color { r = 235, g = 120, b = 120, a = 255 }` 产生同一个 `PodValue`，
+// 因此产物逐字节相同（全批验收 #5）。
+
+/// 颜色分量：四舍五入后收敛到 0–255（与 8-bit 颜色表示一致）。
+fn byte_channel(value: f64) -> u8 {
+    value.round().clamp(0.0, 255.0) as u8
 }
 
-fn scene_clip_transform(pod: &dyn Pod, channel: TransformChannel, curve: Curve) -> Handle {
-    service(pod).rec.borrow_mut().clips.insert(Clip {
-        target: ClipTarget::Transform(channel),
-        curve: curve.to_native(),
-    })
+fn scene_rgba(_pod: &dyn Pod, r: f64, g: f64, b: f64, a: f64) -> Color {
+    Color {
+        r: byte_channel(r),
+        g: byte_channel(g),
+        b: byte_channel(b),
+        a: byte_channel(a),
+    }
 }
 
-fn scene_animate(pod: &dyn Pod, object: Handle, clip: Handle, duration: f64) {
-    let mut rec = service(pod).rec.borrow_mut();
-    let object = rec.objects.get(&object).copied().ok();
-    let clip = rec
-        .clips
-        .get(&clip)
-        .ok()
-        .map(|c| (c.target, c.curve.clone()));
-    let (Some(object), Some((target, curve))) = (object, clip) else {
-        return;
-    };
-    rec.encoder
-        .animate_with(object, target.make(), curve, duration);
+fn scene_vec2(_pod: &dyn Pod, x: f64, y: f64) -> Vec2 {
+    Vec2 {
+        x: x as f32,
+        y: y as f32,
+    }
 }
 
-fn scene_parallel(pod: &dyn Pod, object: Handle, clip: Handle) {
-    let mut rec = service(pod).rec.borrow_mut();
-    let object = rec.objects.get(&object).copied().ok();
-    let clip = rec
-        .clips
-        .get(&clip)
-        .ok()
-        .map(|c| (c.target, c.curve.clone()));
-    let (Some(object), Some((target, curve))) = (object, clip) else {
-        return;
-    };
-    rec.encoder.parallel_with(object, target.make(), curve);
-}
-
-fn scene_wait(pod: &dyn Pod, seconds: f64) {
-    service(pod).rec.borrow_mut().encoder.wait(seconds);
+fn scene_vec3(_pod: &dyn Pod, x: f64, y: f64, z: f64) -> Vec3 {
+    Vec3 {
+        x: x as f32,
+        y: y as f32,
+        z: z as f32,
+    }
 }

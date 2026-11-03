@@ -1,5 +1,7 @@
 # zela-render-backends
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-render-backends.md`](../../../docs/modules/zela-render-backends.md)。
+
 > **具体渲染后端实现**：wgpu 3D、wgpu 2D（S3-1，**唯一 2D 路径**）、eframe 集成、顶点契约翻译层。
 > **所有模块按 feature-gate 提供**，最终用户按需组合。
 >
@@ -193,13 +195,16 @@ zela 的 GPU 2D 后端（S4.1 起是**唯一** 2D 路径）：**离屏纹理 + M
 可任意叠放（此前 3D 硬编码在 2D 之上），并为 S3-3（互为纹理）铺路。
 
 ```rust
-let frame = compositor.prepare(&device, &[CompositeOp { texture, src_format,
-                                    blend, opacity, rect_px }, /* ... */]);
+let frame = compositor.prepare(&device, viewport, &[CompositeOp { texture, src_format,
+                                    blend, opacity, rect_px, fit }, /* ... */]);
 compositor.composite_layers(&mut render_pass, &frame);   // 层序 = 输入序，不重排
 ```
 
-- `CompositeOp { texture, src_format, blend, opacity, rect_px }`；
+- `CompositeOp { texture, src_format, blend, opacity, rect_px, fit }`；
   `CompositeFrame` 提供 `len` / `is_empty` / `blend_at(i)` / `conversion_at(i)`。
+- `fit: Some((w, h))` ⇒ 按源纹理宽高比 **contain + 居中**（宽高比不一致时 letterbox，
+  不拉伸）；`fit: None` ⇒ 铺满（视口层，离屏尺寸 == 视口尺寸 ⇒ 恒等）。
+  `viewport` 与 `rect_px` 必须同单位（宿主侧是逻辑点）。S4-11 的修法。
 - `opacity` 走 uniform（x 分量乘进源色），不走 blend constant（部分后端受限）；
   `LayerDescriptor::clamped_opacity()` 是唯一取值口径。
 - **无动态 blend / 无动态入口点** ⇒ 管线**键空间**是 9 个组合
@@ -278,7 +283,7 @@ StandardBackends::new(&RenderContext)          ← 纯构造，零 egui 依赖
   ⇒ 画面**逐位不变**（`scene_callback.rs` 的 `post_blit: Option<PostBlit>`）。
 - **滤镜不是管线维度**：管线仍是 `3 blend × 3 域转换`；滤镜只在 uniform 里
   （`FilterKind::code()` 与 WGSL 常量表一一对应）⇒ **新增滤镜不改管线代码**。
-- **预乘 alpha 硬约束**：中间纹理里是预乘颜色 —— 增益对 `rgb`/`a` 同乘、模糊在
+- **预乘 alpha 强制约束**：中间纹理里是预乘颜色 —— 增益对 `rgb`/`a` 同乘、模糊在
   **预乘空间**做（否则半透明边缘出黑边/halo）。
 - **管线惰性建**（C3）：`ensure_for(&mut self, ..)` 按本帧组合现场建并缓存；
   `new` 不再预建 9 条。它只在 `prepare`（有 `&mut`）里调用 ⇒ `composite_layers`

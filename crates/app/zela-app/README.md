@@ -1,5 +1,7 @@
 # zela-app
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-app.md`](../../../docs/modules/zela-app.md)。
+
 > **组装层**（无 UI）。把 `zela-scene / zela-render / zela-render-backends`
 > 提供的 System、Resource、Backend 按阶段装配成 GUI / headless 共用的 `Runtime`。
 > GUI 可执行壳在 `zela-gui`（依赖本 crate + `zela-egui`）；headless 入口是本 crate 的
@@ -27,8 +29,8 @@ cargo run -p zela-gui -- --demo    # N 线能力测试 demo（capability_demo）
       `RevealRange` 目标把区间 `[0, end]` 从 0 推到 1 —— 几何静态、逐帧只变 uniform）；
    4. **2–2.5s**：`wait`；
    5. **2.5–3.5s**：**镜头推进**到曲线峰值 `(π/2, 1)`（`scale` 40 → 110）；
-   6. **3.5–4.5s**：公式 `y = sin x` **被"写"出来**（每个描边子轮廓一个 `Reveal`，
-      **逐轮廓依次**占 `1/N` 段 —— 连续 `play` 顺序排期，见 `Timeline` 的顺序游标）；
+   6. **3.5–4.5s**：公式 `y = sin x` **被"写"出来**（每个字形一个 `Reveal`，
+      **逐字形依次**占 `1/N` 段 —— 连续 `play` 顺序排期，见 `Timeline` 的顺序游标）；
    另有 3D demo：线框立方体持续绕 Y 轴做轨道相机运动 + 蓝色参数曲面（采样内容纹理，
    纹理源是一条静态 Typst 公式 `x² + 1`）。
 2. **egui 面板**：左侧时间/相机/网格 + **`2D 相机` / `3D 相机` 复选框**
@@ -281,16 +283,18 @@ Typst 源码 → ze-prerender::engine（typst [feature] / placeholder）
            → ze-content::ContentIR（StyledPath，pt，Y-up）
            → zela-render::ir_to_draw_cmds（scale = font_size / nominal_font_size）
            → formula::compile_to_stroke_paths（flatten_subpaths + apply_point）
-           → 每个子轮廓一条 (Path, StrokeSolid) 实体
+           → 每个字形一条 (Path, StrokeSolid) 实体（内含该字形全部子轮廓）
            → 现有 SceneRecordSystem::record_scene → DrawQueue → WgpuBackend2D（GPU 离屏）
 ```
 
 关键点：
 
 - **复用 `ir_to_draw_cmds`**：缩放与平移全部由它完成，桥接层不另写变换。
-- **每个子轮廓单独一条路径**：用 `Path2D::flatten_subpaths` 按 `MoveTo` 分组
+- **每个字形单独一条路径**：用 `Path2D::flatten_subpaths` 按 `MoveTo` 分组
   （`flatten` 会把所有子路径拼成一条，多轮廓字形 `o`/`B`/`8` 会出现横穿字形内部
-  的桥接线）；组内首尾点重合即视为闭合，`Path2D::from_polyline(..., closed=true)` 追加 `Close`。
+  的桥接线），再把该字形的**全部子轮廓**写进同一个 `Path2D`（`MoveTo` 分段 + `Close`，
+  闭合时去掉重复尾点）。这样既不产生桥接线，又让填充按 nonzero 规则把 `o`/`e` 的
+  counter 挖成孔洞 —— 拆成多条独立路径会被逐条填满（详见 `ze-content::stroke_outlines`）。
 - **字号解耦**：`FormulaSpec.nominal_font_size`（默认 12.0）是 Typst 编译标称字号，
   决定曲线提取精度与 IR 本地点尺度；`FormulaSpec.font_size` 是目标显示大小。
   展平容差是相对标称尺度的绝对值，显示尺寸缩小不会放大折线误差。
@@ -336,7 +340,7 @@ Typst 源码 → ze-prerender::engine（typst [feature] / placeholder）
 - **S1a/S1b 旧 demo**（圆↔方、`x²`↔`x³` 语义形变）**已从 App 移除**（被分镜取代）；
   `formula::compile_morph_pairs` 与其文档保留（`#[allow(dead_code)]`，见该函数 doc）。
 
-> 铁律（路线甲）：`ze-time` 可依赖 `ze-notion`，但**不得**依赖 `ze-content`——
+> 约定（路线甲）：`ze-time` 可依赖 `ze-notion`，但**不得**依赖 `ze-content`——
 > 语义配对留在 `ze-content`，`ze-time` 只提供插值原语。
 >
 > 度量空间：分镜的曲线 / 公式形变 / 网格 / 坐标轴均为 `MeasureSpace::Screen`
@@ -420,7 +424,7 @@ python  = ["dep:ze-pod-py", "ze-pod-py/python"]
 
 > **S0**：本 crate 不依赖 `zela-egui`；GUI 壳在 `zela-gui`。
 
-> **铁律**：`zela-render` 只能依赖轻的 `ze-content`，**不得**依赖 `ze-prerender`
+> **约定**：`zela-render` 只能依赖轻的 `ze-content`，**不得**依赖 `ze-prerender`
 > （否则关掉 feature 也会把 typst 拖进渲染层）。验收：
 > `cargo tree -p zela-render | grep -c typst` 结果为 0。
 

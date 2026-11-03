@@ -153,7 +153,7 @@ impl InputHandler {
                     let resizable = editor
                         .graph()
                         .get_node(id)
-                        .is_some_and(|n| n.meta().interaction.resizable);
+                        .is_some_and(|n| editor.presentation_of(n).interaction.resizable);
                     if resizable && let Some(rect) = editor.node_rect(id) {
                         let additive = ui.input(|i| i.modifiers.shift);
                         apply(editor, Command::Select { node: id, additive });
@@ -167,7 +167,7 @@ impl InputHandler {
                     let interaction = editor
                         .graph()
                         .get_node(id)
-                        .map(|n| n.meta().interaction.clone());
+                        .map(|n| editor.presentation_of(n).interaction);
                     let selectable = interaction.as_ref().is_none_or(|i| i.selectable);
                     let draggable = interaction.as_ref().is_none_or(|i| i.draggable);
                     if selectable {

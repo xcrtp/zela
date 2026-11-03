@@ -375,7 +375,7 @@ mod tests {
     impl ConstNode {
         fn new(value: f32, policy: DirtyPolicy) -> Self {
             Self {
-                meta: NodeMeta::new("test.const", "Const", 1),
+                meta: NodeMeta::new("test.const", 1),
                 value,
                 outputs: vec![OutputSocket::new(f32_tag()).with_index(0)],
                 policy,
@@ -412,7 +412,7 @@ mod tests {
     impl AddNode {
         fn new(add: f32, policy: DirtyPolicy) -> Self {
             Self {
-                meta: NodeMeta::new("test.add", "Add", 1),
+                meta: NodeMeta::new("test.add", 1),
                 inputs: vec![InputSocket::new(f32_tag()).with_index(0)],
                 outputs: vec![OutputSocket::new(f32_tag()).with_index(0)],
                 policy,
@@ -447,7 +447,7 @@ mod tests {
     impl FailNode {
         fn new() -> Self {
             Self {
-                meta: NodeMeta::new("test.fail", "Fail", 1),
+                meta: NodeMeta::new("test.fail", 1),
                 outputs: vec![OutputSocket::new(f32_tag()).with_index(0)],
             }
         }
@@ -632,7 +632,7 @@ mod tests {
 
         let mut g = SimpleGraph::default();
         let f = g.add_node(Box::new(Flaky {
-            meta: NodeMeta::new("test.flaky", "Flaky", 1),
+            meta: NodeMeta::new("test.flaky", 1),
             outputs: vec![OutputSocket::new(f32_tag()).with_index(0)],
         }));
         let attempts = Arc::new(Mutex::new(0u32));

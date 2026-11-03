@@ -1,20 +1,28 @@
 [workspace]
 members = [
+    "crates/kernel/ze-type",
+    "crates/kernel/ze-property",
+    "crates/kernel/ze-reflect",
+    "crates/kernel/ze-graph-core",
     "crates/kernel/ze-notion",
     "crates/kernel/ze-render-ir",
     "crates/kernel/ze-scene-contract",
     "crates/kernel/ze-content",
     "crates/kernel/ze-prerender",
     "crates/kernel/ze-time",
+    "crates/kernel/ze-comb",
+    "crates/kernel/ze-func",
     "crates/kernel/ze-vertex",
     "crates/kernel/ze-resource",
     "crates/kernel/ze-macro",
     "crates/ze/pod/ze-pod-core",
     "crates/ze/pod/ze-pod-binding",
     "crates/ze/pod/ze-pod-macro",
+    "crates/ze/pod/ze-pod-func",
     "crates/ze/pod/ze-pod",
     "crates/scene/ze-scene-core",
     "crates/scene/ze-scene-api",
+    "crates/scene/ze-scene-macros",
     "crates/scene/ze-scene-hecs",
     "crates/ze/graph/ze-node-core",
     "crates/ze/graph/ze-graph-algo",
@@ -32,6 +40,8 @@ members = [
     "crates/schedule/zela-schedule",
     "crates/render/zela-render",
     "crates/render/zela-render-backends",
+    # B4 Step 3：矢量后端（移植自 manimgx，许可证基线 + 移植落点）。
+    "crates/render/zela-render-vector",
     "crates/ui/zela-egui",
     "crates/ui/zela-node-editor",
     "crates/ui/zela-node-egui",
@@ -39,8 +49,9 @@ members = [
     "crates/app/zela-app",
     "crates/app/zela-authored",
     "crates/app/zela-playback",
+    "crates/app/zela-commands",
+    "crates/app/zela-cli",
     "crates/app/zela-gui",
-    "crates/app/zela-compile",
     "crates/web/zela-web",
     "crates/zela/zela",
 ]
@@ -63,6 +74,56 @@ version = "0.1.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/xcrtp/zela"
 
+# B9 Step 1：**验证专用**的构建 profile。
+#
+# 为什么不是 `--release`：verify 路径要的是"跑得快但不放宽检查"。
+# - `inherits = "dev"` ⇒ 保留 `debug-assertions` 与 `overflow-checks`
+#   （关掉会让"dev 下溢出 panic"变成"静默 wrap"，等于用性能换掉正确性检查）；
+# - `debug = false` ⇒ 链接更快、二进制更小、进程启动更快（B9 §2.2②）；
+# - `incremental = false` ⇒ 验证构建不需要增量缓存目录，避免它和 dev 的缓存互相污染。
+#
+# 只有"要运行"的命令加 `--profile verify`（zela-compile / zela-render）；
+# `cargo check` / `cargo test` 仍走 dev（opt-level 对 check 无收益）。
+[profile.verify]
+inherits = "dev"
+opt-level = 3
+debug = false
+incremental = false
+
+# **测试构建只留行号表**（`debug = "line-tables-only"`）：去掉变量 / 泛型调试信息，
+# panic 行号仍在。收益不在编译，而在**链接与 PDB 体积**：`target/debug/deps` 曾累积
+# 69GB PDB 把 D 盘写满，直接导致 `LNK1140 / LNK1318` —— 那是**门禁假失败**，
+# 不是"机器慢"。
+[profile.test]
+inherits = "dev"
+debug = "line-tables-only"
+
+# **GUI 开发构建也要能跑矢量预览**：矢量后端的 CPU 侧工作（曲线细分 / 三角化 /
+# 内容层合成）是热路径；`opt-level = 0` 下 1200×839 一帧实测 ~314 ms（3 fps，像卡死）。
+# 只给这条链上的包开优化，其余 crate 仍是 debug（断点 / 增量构建不受影响）。
+[profile.dev.package.zela-render-vector]
+opt-level = 2
+
+[profile.dev.package.zela-playback]
+opt-level = 2
+
+[profile.dev.package.zela-render-backends]
+opt-level = 2
+
+# egui 在 opt-level 0 下把**每帧的像素转换 / 布局**也做了：1200×839 的矢量帧
+# 仅"RGBA→ColorImage→纹理上传"就占 ~60 ms（实测 70 ms 里的大头）。
+[profile.dev.package.egui]
+opt-level = 2
+
+[profile.dev.package.epaint]
+opt-level = 2
+
+[profile.dev.package.egui-wgpu]
+opt-level = 2
+
+[profile.dev.package.eframe]
+opt-level = 2
+
 [workspace.dependencies]
 eframe = { version = "0.36", default-features = false, features = [
     "wgpu",
@@ -81,6 +142,9 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0" }
 # 序列帧导出：最小 PNG 编码器（全仓此前零图像库）。
 png = "0.17"
+# B8 Step 3′0：帧序列哈希的快路径。手写 SHA-256（`zela-scene-bundle` 自带）只服务
+# payload hash；每帧 1.2MB 的负载用 `sha2`（含 SHA-NI 运行时检测）。仅在非 wasm 目标启用。
+sha2 = "0.10"
 # GPU 测试汇报：直接写 fd 2，绕过 libtest 的输出捕获（见 gpu_test.rs）。
 libc = "0.2"
 

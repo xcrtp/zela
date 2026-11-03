@@ -7,7 +7,7 @@ license.workspace = true
 
 description = "Pure-logic clock tree + animation curves + director (zero render/UI deps)"
 
-# 依赖铁律：ze-time 在 kernel 层
+# 依赖约定：ze-time 在 kernel 层
 #   ✅ ze-notion — 唯一数学入口（Vec2/Vec3 等由它 re-export）+ 几何插值原语
 #      （serde feature 让 Vec2/Vec3/Path2D 可随 AnimValue 序列化）
 #   ✅ serde — 序列化（ClockForest / Curve 可导出）

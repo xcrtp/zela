@@ -1,0 +1,18 @@
+[package]
+name = "ze-scene-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+description = "场景层的 proc-macro：#[derive(SceneComponent)]（POD_TYPE_NAME + CTOR_NAME 同源）与 #[derive(Channels)]（字段通道显式注册）"
+
+# 命名与门禁（xtask 判据 2b）：ze-scene-core / ze-scene-api 的生产依赖不得出现 zela-*，
+# 而宏必须被这两处用到 ⇒ 与 `ze-macro` / `ze-pod-macro` 同惯例，不带 `zela-` 前缀。
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

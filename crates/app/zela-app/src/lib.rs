@@ -43,8 +43,19 @@ use zela_schedule::scheduler::Scheduler;
 // `ze_scene_core::{CONTENT_TEXTURE_ID, CONTENT_TEXTURE_WIDTH, CONTENT_TEXTURE_HEIGHT}`。
 
 mod assembly;
+// 内置作品清单（GUI 的"作品"下拉；脚本 `include_str!` 编进二进制）。
+pub mod demos;
 pub mod export;
 mod formula;
+// 内嵌 Python 的前置探测：pyo3 初始化失败是 CPython 的 Fatal（abort），
+// Rust 侧捕获不到 ⇒ 必须在第一次碰 pyo3 之前先探测（见模块文档）。
+#[cfg(feature = "python")]
+mod python_env;
+// B9 Step 3：`zela-render` 与 `zela-verify` 共用的**唯一**帧循环。
+pub mod frame_loop;
+// B10 Step 2/4：3D 场景 → 矢量后端（`View3` + `MeshRecord`）的桥。
+// B11 Step 5：桥移到 `zela-playback`（浏览器与 native 共用一份），这里只重导出。
+pub use zela_playback::vector3d;
 
 /// **2D 场景选择**（启动参数切换，见 `main.rs`）。
 ///
@@ -143,16 +154,46 @@ pub struct CompiledScript {
 ///
 /// 与 `--script` / GUI 走**同一条装配路径**（`assembly::assemble` → `run_script`），
 /// 差别只在"拿到 SceneScript 后写盘"而不是立刻 commit。
+///
+/// # 为什么整个装配 + 执行跑在一根**大栈线程**上
+///
+/// JS 适配器（boa）的解析 / 编译在 **unoptimized** 构建里递归很深：dev profile 下
+/// `surface_matrix.js` 会打穿默认栈，`zela-compile` 直接以 `0xC00000FD`
+/// （`STATUS_STACK_OVERFLOW`）退出 —— build.ps1 就是走 dev profile，所以必须在这里兜住。
+/// `boa::Context` 是 `!Send`，只能**整根线程内部**创建与销毁；交回来的 `CompiledScript`
+/// 是纯数据，所以用 `join` 取值是安全的。栈大小 64 MiB：比实测需求高一个量级，
+/// 换来"任何脚本都不因构建 profile 而崩"。
 pub fn compile_script(source: &str, language: ScriptLanguage) -> Result<CompiledScript> {
+    let source = source.to_string();
+    std::thread::Builder::new()
+        .name("zela-compile".to_string())
+        .stack_size(COMPILE_STACK_BYTES)
+        .spawn(move || compile_script_on_this_thread(&source, language))
+        .map_err(|e| Error::InitializationError(format!("无法创建编译线程：{e}")))?
+        .join()
+        .map_err(|_| {
+            Error::InitializationError(
+                "编译线程 panic（脚本装配 / 执行崩溃，原因见上方日志）".to_string(),
+            )
+        })?
+}
+
+/// 编译线程的栈大小（见 [`compile_script`] 的说明）。
+const COMPILE_STACK_BYTES: usize = 64 * 1024 * 1024;
+
+fn compile_script_on_this_thread(
+    source: &str,
+    language: ScriptLanguage,
+) -> Result<CompiledScript> {
     let engine = Arc::new(formula::build_engine());
     let assembly = assembly::assemble(engine)
         .map_err(|e| Error::InitializationError(format!("脚本 Pod 装配失败：{e}")))?;
     let script = run_script_source(&assembly, source, language)?;
 
     // **最小集**（不是"编译器注册的全部"）：只记录脚本实际用到的 capability。
-    // - scene：出现了对象或时间线（`wait` 也算使用）；
+    // - scene：出现了对象（`creates` 非空 —— 绑定必须挂在对象上，所以它覆盖动画）；
     // - content：`content.formula` / `content.text` 被实际调用过。
-    let scene_used = script.len() > 0 || script.duration() > 0.0;
+    let scene_used = script.len() > 0;
     let content_used = assembly.content_used();
 
     Ok(CompiledScript {
@@ -167,7 +208,7 @@ pub fn compile_script(source: &str, language: ScriptLanguage) -> Result<Compiled
     })
 }
 
-/// 单个 capability 的版本声明（名字取自签名，唯一真源）。
+/// 单个 capability 的版本声明（名字取自签名，唯一来源）。
 fn capability_of<C: ze_pod_core::Capability<'static>>() -> zela_scene_bundle::Capability {
     let meta = C::meta();
     let name = C::signatures()
@@ -284,7 +325,8 @@ pub fn build_scene_runtime(render_ctx: RenderContext, choice: SceneChoice) -> Re
 /// 2D 相机的**语义判据**：场景里唯一带 `Framing2D` 的对象。
 ///
 /// 唯一实现在 `zela-playback`（脚本路径与回放路径共用同一判据）。
-fn find_camera2d(scene: &Scene) -> Result<Camera2DHandle> {
+/// **PF Step 2**：纯 3D 场景允许没有（`None`）；有 2D 图元却没相机才报错。
+fn find_camera2d(scene: &Scene) -> Result<Option<Camera2DHandle>> {
     zela_playback::find_camera2d(scene).map_err(|e| Error::InitializationError(e.to_string()))
 }
 
@@ -341,7 +383,7 @@ fn build_runtime(
     // ── 2D 场景：脚本 / 能力 demo（启动参数切换，见 `SceneChoice`）──────────
     // 两条来源产出**同形的三样东西**：时钟树 + 绑定表 + 主 2D 相机句柄；
     // demo 额外产出一个"待插入的组级开关"（N2 的组控制）。
-    let (forest2d, bindings2d, camera2d_handle, group_visibility, script_duration) =
+    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint, pairing) =
         build_scene_source(&mut scene, &engine, &source)?;
 
     // S3-3 内容纹理：由场景中的 `Surface(Renderer2D)` 生成（唯一装配入口）。
@@ -357,9 +399,10 @@ fn build_runtime(
         bindings: bindings2d,
         camera2d: camera2d_handle,
         group_visibility,
-        duration: script_duration,
+        record_hint,
         camera3d: demo3d.as_ref().map(|demo| demo.camera3d),
         content_textures,
+        pairing,
     };
     let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
     install_native_clock(&runtime);
@@ -377,21 +420,39 @@ fn build_scene_source(
 ) -> Result<(
     ClockForest,
     BindingTable,
-    Camera2DHandle,
+    Option<Camera2DHandle>,
     GroupVisibility,
-    f64,
+    Option<f64>,
+    // **BZ-b**：录制输入流所需的 ZSB 配对信息（脚本路径可推导；纯内置 demo 为 `None`）。
+    Option<zela_scene_bundle::Pairing>,
 )> {
     // ── 任意脚本（headless）──
     if let SceneSource::Script { source, language } = source {
         let assembly = assembly::assemble(Arc::clone(engine))
             .map_err(|e| Error::InitializationError(format!("脚本 Pod 装配失败：{e}")))?;
         let script = run_script_source(&assembly, source, *language)?;
-        eprintln!(
-            "[zela-app] 场景 = 脚本分镜（{} 个对象，{}s）",
-            script.len(),
-            script.duration()
-        );
-        let duration = script.duration();
+        // **静止时刻**是派生量：能分析时打印，不能分析时显式说明（不给错的数）。
+        match script.still_time() {
+            Some(still) => eprintln!(
+                "[zela-app] 场景 = 脚本分镜（{} 个对象，静止时刻 ≈ {still:.3}s）",
+                script.len()
+            ),
+            None => eprintln!(
+                "[zela-app] 场景 = 脚本分镜（{} 个对象，静止时刻不可推导：含非时间依赖或恒生效的 predicate）",
+                script.len()
+            ),
+        }
+        // 只作为默认录制长度的提示（`None` = 不可推导 ⇒ 交给时钟树兜底）；
+        // `ExportSpec.frames` 才是录制长度的唯一依据（AH-05：不再用 0 冒充）。
+        let record_hint = script.still_time();
+        // **BZ-b**：输入流录制要绑定到这份脚本对应的 ZSB（payload hash 只覆盖
+        // payload，因此这里编码出的 hash 与 `zela-compile` 产物一致）。
+        let pairing = zela_scene_bundle::Bundle::encode(
+            &script,
+            zela_scene_bundle::MetaInput::default(),
+        )
+        .ok()
+        .and_then(|bundle| zela_scene_bundle::Pairing::for_bundle(&bundle).ok());
         let recipe = script
             .commit(scene)
             .map_err(|e| Error::InitializationError(format!("脚本 commit 失败：{e}")))?;
@@ -402,7 +463,8 @@ fn build_scene_source(
             recipe.bindings,
             camera,
             GroupVisibility::default(),
-            duration,
+            record_hint,
+            pairing,
         ));
     }
 
@@ -431,7 +493,14 @@ fn build_scene_source(
             // 默认**不隐藏任何组**（全可见）⇒ 看得见 `cos` 淡出（N4）。
             eprintln!("[zela-app] 场景 = 能力 demo（N 线：Name / Group / Visibility / Opacity）");
             let d = zela_authored::capability_demo::build(scene);
-            Ok((d.forest, d.bindings, d.camera, d.group_visibility, 0.0))
+            Ok((
+                d.forest,
+                d.bindings,
+                Some(d.camera),
+                d.group_visibility,
+                None,
+                None,
+            ))
         }
         SceneChoice::PythonStoryboard => {
             #[cfg(not(feature = "python"))]
@@ -505,11 +574,58 @@ mod tests {
     use super::*;
     use ze_scene_core::{Camera2DHandle, Camera3D, Camera3DHandle, Framing2D, Projection};
     use zela_scene_ecs::ClockForest;
-    use zela_scene_ecs::animation::{BindingTable, Camera2DFraming, CameraEye, SeekKind};
+    use zela_scene_ecs::animation::{
+        BindingDriver, BindingTable, Camera2DFraming, CameraEye, SeekKind,
+    };
     use zela_scene_ecs::contract::object_id_of;
     use zela_scene_ecs::domain::CameraMode;
     use zela_scene_ecs::{AnimValue, Interp};
     use zela_schedule::scheduler::Phase;
+
+    /// Python 节点是否装上：解释器缺失 / 嵌入失败时 `assemble` 会**跳过**它（不崩），
+    /// 依赖 Python 的等价性用例随之跳过。
+    #[cfg(feature = "python")]
+    fn python_ready(assembly: &assembly::PodAssembly) -> bool {
+        if assembly.has_python() {
+            return true;
+        }
+        eprintln!("[skip] 本机 Python 解释器不可用 ⇒ 跳过该用例");
+        false
+    }
+
+    /// **CA-b/d**：弹簧作品的 `State` 系数真的被枚举成可调参数（stiff / damp）。
+    ///
+    /// 这是「参数化组件」的端到端判据：脚本 → 绑定表 → 注册表，不经过 GUI。
+    #[test]
+    fn spring_state_exposes_stiff_and_damp_parameters() {
+        use ze_property::PropertyValue;
+
+        let assembly = crate::assembly::assemble(Arc::new(crate::formula::build_engine()))
+            .expect("脚本 Pod 装配成功");
+        let script = assembly
+            .run_script(include_str!("../scripts/spring_state.lua"))
+            .expect("spring_state.lua 执行成功");
+        let mut scene = Scene::new();
+        let recipe = script.commit(&mut scene).expect("commit");
+
+        let registry = zela_scene_ecs::animation::params::build_registry(&recipe.bindings);
+        let scalar = |suffix: &str| -> Vec<f32> {
+            registry
+                .iter()
+                .filter(|entry| entry.address.ends_with(suffix))
+                .filter_map(|entry| match entry.property.value() {
+                    PropertyValue::Scalar(value) => Some(value),
+                    _ => None,
+                })
+                .collect()
+        };
+        let stiff = scalar(":stiff");
+        let damp = scalar(":damp");
+        assert_eq!(stiff.len(), 3, "三条轨道各一个 stiff：{stiff:?}");
+        assert_eq!(damp.len(), 3, "三条轨道各一个 damp：{damp:?}");
+        assert!(stiff.iter().all(|value| (value - 0.02).abs() < 1e-6));
+        assert!(damp.iter().all(|value| (value - 0.97).abs() < 1e-6));
+    }
 
     /// **B3 Step 5 / 作品 A（非像素断言）**：`surface_matrix.lua` 的每种
     /// 脚本可表达组合都真的录进了内容层（Circle/Arrow 各 Fill+Stroke、Path Stroke）。
@@ -580,7 +696,7 @@ mod tests {
 
         let engine = Arc::new(placeholder_engine());
         let mut scene_default = Scene::new();
-        let (_forest_a, bindings_a, camera_a, _, duration_a) = build_scene_source(
+        let (_forest_a, bindings_a, camera_a, _, duration_a, _) = build_scene_source(
             &mut scene_default,
             &engine,
             &SceneSource::Choice(SceneChoice::Storyboard),
@@ -588,7 +704,7 @@ mod tests {
         .expect("默认场景装配成功");
 
         let mut scene_script = Scene::new();
-        let (_forest_b, bindings_b, camera_b, _, duration_b) = build_scene_source(
+        let (_forest_b, bindings_b, camera_b, _, duration_b, _) = build_scene_source(
             &mut scene_script,
             &engine,
             &SceneSource::Choice(SceneChoice::ScriptStoryboard),
@@ -601,8 +717,8 @@ mod tests {
             bindings_b.bindings.len(),
             "绑定数一致"
         );
-        assert_eq!(duration_a, duration_b, "时长一致");
-        assert_eq!(duration_a, 4.5, "默认分镜时长 = 脚本 duration()");
+        assert_eq!(duration_a, duration_b, "静止时刻一致");
+        assert_eq!(duration_a, Some(4.5), "默认分镜的静止时刻 = 最后一段的结束");
         let _ = (camera_a, camera_b);
     }
 
@@ -637,31 +753,41 @@ mod tests {
         let clock = forest.insert(ClockNode::new(None)).unwrap();
         let orbit = Binding {
             clock,
-            curve: Curve::Orbit {
+            driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 5.0,
                 axis: ze_notion::Vec3::Y,
                 speed: 0.5,
                 initial_angle: 0.0,
-            },
+            }),
             target: Arc::new(CameraEye {
                 id: object_id_of(camera3d),
             }),
+            predicate: None,
+            active: None,
+            reset: zela_scene_ecs::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         };
         // 分镜的 2D 相机绑定（`free_2d_camera` 会托管让位/复位）。
         let cam2d_clock = forest.insert(ClockNode::new(None)).unwrap();
         let cam2d_framing = Binding {
             clock: cam2d_clock,
-            curve: Curve::Keyframes {
+            driver: BindingDriver::Curve(Curve::Keyframes {
                 keys: vec![
                     (0.0, AnimValue::Scalar(40.0)),
                     (1.0, AnimValue::Scalar(110.0)),
                 ],
                 interpolation: Interp::Linear,
-            },
+            }),
             target: Arc::new(Camera2DFraming {
                 id: object_id_of(camera2d),
             }),
+            predicate: None,
+            active: None,
+            reset: zela_scene_ecs::animation::ResetBehavior::Hold,
+            initial: None,
+            state_plans: Vec::new(),
             seek_kind: SeekKind::O1,
         };
         let mut bindings = BindingTable::new();
@@ -875,7 +1001,7 @@ mod tests {
     struct BindRow {
         object: usize,
         offset: f64,
-        span: (f64, f64),
+        span: Option<(f64, f64)>,
         mode: String,
         target: String,
         curve: String,
@@ -968,6 +1094,73 @@ mod tests {
         }) {
             parts.push(text);
         }
+        // PE Step 4：**新样式组件必须进来**，否则"脚本改了渐变 ⇒ 指纹不变 ⇒
+        // 对拍抓不到差异"（X1-11 的同型在能力层复现）。
+        if let Some(text) = scene.with::<ze_render_ir::Gradient, _>(id, |g| {
+            let stops: Vec<String> = g
+                .stops
+                .iter()
+                .map(|s| {
+                    let byte = |v: f32| (v * 255.0).round() as i64;
+                    format!(
+                        "{},{},{},{}",
+                        byte(s[0]),
+                        byte(s[1]),
+                        byte(s[2]),
+                        byte(s[3])
+                    )
+                })
+                .collect();
+            format!(
+                "gradient(stops=[{}];{},{},{}→{},{},{})",
+                stops.join("|"),
+                qf(g.from[0]),
+                qf(g.from[1]),
+                qf(g.from[2]),
+                qf(g.to[0]),
+                qf(g.to[1]),
+                qf(g.to[2])
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::Dash, _>(id, |d| {
+            format!(
+                "dash({}:{}:{})",
+                qf(d.period),
+                qf(d.duty),
+                qf(d.phase)
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::SecondPaint, _>(id, |s| {
+            format!(
+                "second({}:{}:{}:{})",
+                qf(s.fill[0]),
+                qf(s.fill[1]),
+                qf(s.fill[2]),
+                qf(s.mix)
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::BackgroundStroke, _>(id, |b| {
+            format!(
+                "background({}:{}:{}:{})",
+                qf(b.color[0]),
+                qf(b.color[1]),
+                qf(b.color[2]),
+                qf(b.width)
+            )
+        }) {
+            parts.push(text);
+        }
+        if let Some(text) = scene.with::<ze_render_ir::CurveWindow, _>(id, |w| {
+            format!("window({}:{})", qf(w.lo), qf(w.hi))
+        }) {
+            parts.push(text);
+        }
         if let Some(text) = scene.with::<Transform, _>(id, |t| {
             format!(
                 "transform({},{},{})",
@@ -979,6 +1172,81 @@ mod tests {
             parts.push(text);
         }
         parts.join("|")
+    }
+
+    /// **PE Step 4（可证伪）**：新样式组件必须进指纹。
+    ///
+    /// 证伪：从 `object_fingerprint` 里删掉对应的 `scene.with::<…>` 分支 ⇒ 本用例失败
+    /// —— 那正是"脚本改了渐变 / 虚线 ⇒ 指纹不变 ⇒ 对拍抓不到差异"（X1-11 同型）。
+    #[test]
+    fn object_fingerprint_sees_every_paint_component() {
+        use ze_render_ir::{BackgroundStroke, CurveWindow, Dash, Gradient, SecondPaint};
+        use zela_scene_ecs::contract::SceneRead;
+
+        /// 挂一个组件（外加一个圆，保证是可绘制对象）后取逐组件指纹。
+        fn fingerprint_of<C: hecs::Component>(component: C) -> String {
+            let mut scene = Scene::new();
+            scene.spawn((ze_scene_core::Circle::new((0.0, 0.0), 1.0), component));
+            let mut id = None;
+            scene.for_each::<ze_scene_core::Circle>(|object, _| id = Some(object));
+            object_fingerprint(&scene, id.expect("刚 spawn 的对象应可索引"))
+        }
+
+        let gradient = |stops: Vec<[f32; 4]>| Gradient {
+            stops,
+            from: [0.0, 0.0, 0.0],
+            to: [10.0, 0.0, 0.0],
+        };
+        let two = fingerprint_of(gradient(vec![
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]));
+        let three = fingerprint_of(gradient(vec![
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+        ]));
+        assert_ne!(two, three, "色标数不同 ⇒ 指纹必须不同：{two} vs {three}");
+
+        let dash = fingerprint_of(Dash {
+            period: 0.1,
+            duty: 0.5,
+            phase: 0.0,
+        });
+        let dash_changed = fingerprint_of(Dash {
+            period: 0.1,
+            duty: 0.2,
+            phase: 0.0,
+        });
+        assert_ne!(dash, dash_changed, "duty 不同 ⇒ 指纹必须不同");
+
+        let second = fingerprint_of(SecondPaint {
+            fill: [1.0, 0.0, 0.0, 1.0],
+            stroke: [0.0; 4],
+            background: [0.0; 4],
+            mix: 0.0,
+        });
+        let second_changed = fingerprint_of(SecondPaint {
+            fill: [1.0, 0.0, 0.0, 1.0],
+            stroke: [0.0; 4],
+            background: [0.0; 4],
+            mix: 1.0,
+        });
+        assert_ne!(second, second_changed, "mix 不同 ⇒ 指纹必须不同");
+
+        let background = fingerprint_of(BackgroundStroke {
+            color: [1.0, 1.0, 0.0, 1.0],
+            width: 2.0,
+        });
+        let background_changed = fingerprint_of(BackgroundStroke {
+            color: [1.0, 1.0, 0.0, 1.0],
+            width: 4.0,
+        });
+        assert_ne!(background, background_changed, "宽度不同 ⇒ 指纹必须不同");
+
+        let window = fingerprint_of(CurveWindow { lo: 0.0, hi: 1.0 });
+        let window_changed = fingerprint_of(CurveWindow { lo: 0.0, hi: 0.5 });
+        assert_ne!(window, window_changed, "窗口不同 ⇒ 指纹必须不同");
     }
 
     /// 故事板对象（创建顺序 = `ObjectId.index` 升序；无 despawn）。
@@ -1214,7 +1482,8 @@ mod tests {
             .iter()
             .map(|binding| {
                 let node = forest.get(binding.clock).expect("时钟节点在");
-                let span = node.span.expect("Timeline 编译的节点必有 span");
+                // 表达式绑定没有段 span（区间由 predicate 决定）⇒ `None` 是合法状态。
+                let span = node.span;
                 let object = ids
                     .iter()
                     .position(|id| *id == binding.target.target_id())
@@ -1225,10 +1494,62 @@ mod tests {
                     span,
                     mode: format!("{:?}", node.mode),
                     target: binding.target.name().to_string(),
-                    curve: format!("{:?}", binding.curve),
+                    curve: format!("{:?}", binding.driver),
                 }
             })
             .collect()
+    }
+
+    /// 绑定的**布局行**（对象 / 起点 / target）：跨「旧 Play 段」与「表达式绑定」可比。
+    ///
+    /// 硬编码分镜仍是 `Timeline::play` 的段语义（`span` + `Curve`），而脚本版已迁移到
+    /// `expr.bind`（无 span、driver 是表达式树）—— 两者只能在前三项上全等。
+    fn binding_layout_rows(
+        forest: &ClockForest,
+        bindings: &BindingTable,
+        ids: &[zela_scene_ecs::contract::ObjectId],
+    ) -> Vec<(usize, f64, String)> {
+        bindings
+            .bindings
+            .iter()
+            .map(|binding| {
+                let node = forest.get(binding.clock).expect("时钟节点在");
+                let object = ids
+                    .iter()
+                    .position(|id| *id == binding.target.target_id())
+                    .expect("target 必须指向本场景对象");
+                // 旧组合目标 → 新单字段通道的**同一化**（只影响测试比较）：
+                // `RevealRange` = `Reveal.end`；`Camera2DFraming` 拆成
+                // `Framing2D.scale` / `Framing2D.center`（归一成同一标签）。
+                let target = match binding.target.name() {
+                    "RevealRange" => "Reveal.end",
+                    "Camera2DFraming" | "Framing2D.scale" | "Framing2D.center" => "Framing2D.*",
+                    other => other,
+                }
+                .to_string();
+                (object, node.local_offset, target)
+            })
+            .collect()
+    }
+
+    /// 布局行比较：对象 / target 必须全等，**起点允许 1e-9 的浮点累加差**
+    /// （硬编码参考按"逐段累加游标"算起点，脚本按 `3.5 + i × each` 算）。
+    fn assert_layout_matches(
+        a: &[(usize, f64, String)],
+        b: &[(usize, f64, String)],
+    ) {
+        assert_eq!(a.len(), b.len(), "绑定数必须一致");
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.0, y.0, "对象下标必须一致");
+            assert!(
+                (x.1 - y.1).abs() < 1e-9,
+                "起点不一致：{} vs {}（target {}）",
+                x.1,
+                y.1,
+                x.2
+            );
+            assert_eq!(x.2, y.2, "target 必须一致");
+        }
     }
 
     /// **W3 验收**：脚本版（全部 6 镜头）与硬编码版逐对象、逐绑定相等。
@@ -1267,9 +1588,14 @@ mod tests {
             .collect();
         assert_eq!(fingerprints_a, fingerprints_b, "组件类型与值必须逐对象相等");
 
-        let rows_a = binding_rows(&sb.forest, &sb.bindings, &ids_a);
-        let rows_b = binding_rows(&recipe.forest, &recipe.bindings, &ids_b);
-        assert_eq!(rows_a, rows_b, "时序 / 曲线 / target 必须全等");
+        // 硬编码参考仍是 `Timeline::play`（段语义），脚本已迁移到 `expr.bind`
+        // ⇒ 只比较「对象 / 起点 / target」；曲线等价由 36 条像素基线守住。
+        // 顺序不保证（组合目标拆成两条单字段绑定）⇒ 排序后比较。
+        let mut rows_a = binding_layout_rows(&sb.forest, &sb.bindings, &ids_a);
+        let mut rows_b = binding_layout_rows(&recipe.forest, &recipe.bindings, &ids_b);
+        rows_a.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        rows_b.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        assert_layout_matches(&rows_a, &rows_b);
 
         eprintln!(
             "[W3] 对象 {} / 绑定 {}；前 3 个对象指纹:\n{:#?}",
@@ -1277,6 +1603,71 @@ mod tests {
             rows_a.len(),
             &fingerprints_a[..fingerprints_a.len().min(3)]
         );
+    }
+
+    /// **B4 验收**：`bind_each` 在装配期展开为 N 条具体绑定；结果按 ObjectId 升序、
+    /// 两次装配逐位一致；`N = 0` 可见但不报错。
+    #[test]
+    fn bind_each_expands_at_assembly_and_reports_n() {
+        use ze_prerender::placeholder_engine;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功");
+        let run = || {
+            let script = assembly
+                .run_script(
+                    r#"
+                    local a = scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
+                    local b = scene.spawn({ Circle { x = 2.0, y = 0.0, r = 1.0 } })
+                    local c = scene.spawn({
+                        Circle { x = 4.0, y = 0.0, r = 1.0 },
+                        Reveal { points = { Vec2 { x = 0.0, y = 0.0 }, Vec2 { x = 1.0, y = 1.0 } }, closed = false },
+                    })
+                    -- AOP：所有**没有 Reveal** 的圆，半径统一放大 2 倍
+                    expr.bind_each {
+                        requires = { "Circle" },
+                        excludes = { "Reveal" },
+                        target = Circle.channel.radius,
+                        root = Mul { a = expr.query_self(Circle.channel.radius), b = expr.pure(2.0) },
+                    }
+                    -- N = 0 的查询：显式可见，不报错
+                    expr.bind_each {
+                        requires = { "Parent" },
+                        excludes = {},
+                        target = Circle.channel.radius,
+                        root = expr.pure(1.0),
+                    }
+                    -- `exists`：装配期常量折叠（这条 predicate 折成 `true`）
+                    expr.bind {
+                        object = a,
+                        target = Circle.channel.radius,
+                        root = expr.pure(3.0),
+                        predicate = Predicate.Of {
+                            expr = expr.exists { requires = { "Circle" }, excludes = { "Reveal" } },
+                        },
+                    }
+                    "#,
+                )
+                .expect("批量绑定脚本执行成功");
+            let mut scene = Scene::new();
+            let recipe = script.commit(&mut scene).expect("commit 成功");
+            recipe
+                .bindings
+                .bindings
+                .iter()
+                .map(|binding| binding.target.target_id())
+                .collect::<Vec<_>>()
+        };
+
+        let first = run();
+        let second = run();
+        assert_eq!(
+            first.len(),
+            3,
+            "a / b 命中（c 带 Reveal 被排除）+ 1 条带 `exists` predicate 的绑定"
+        );
+        assert_eq!(first, second, "两次装配的展开顺序必须逐位一致");
+        assert_ne!(first[1], first[2], "展开到两个不同对象");
     }
 
     /// **D 线验收**：Python 版分镜与硬编码版逐对象、逐绑定相等。
@@ -1293,6 +1684,9 @@ mod tests {
         // Python 版：同一个 placeholder 引擎。
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
             .expect("Pod 装配成功（含 Python）");
+        if !python_ready(&assembly) {
+            return;
+        }
         let script = assembly
             .run_python_script(crate::assembly::STORYBOARD_PY)
             .expect("Python 分镜执行成功");
@@ -1314,9 +1708,12 @@ mod tests {
             .collect();
         assert_eq!(fingerprints_a, fingerprints_b, "组件类型与值必须逐对象相等");
 
-        let rows_a = binding_rows(&sb.forest, &sb.bindings, &ids_a);
-        let rows_b = binding_rows(&recipe.forest, &recipe.bindings, &ids_b);
-        assert_eq!(rows_a, rows_b, "时序 / 曲线 / target 必须全等");
+        // 同 `script_storyboard_matches_hardcoded`：硬编码参考仍是段语义。
+        let mut rows_a = binding_layout_rows(&sb.forest, &sb.bindings, &ids_a);
+        let mut rows_b = binding_layout_rows(&recipe.forest, &recipe.bindings, &ids_b);
+        rows_a.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        rows_b.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        assert_layout_matches(&rows_a, &rows_b);
 
         eprintln!(
             "[D-PY] 对象 {} / 绑定 {}",
@@ -1336,14 +1733,21 @@ mod tests {
 
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
             .expect("脚本 Pod 装配成功（含 Python）");
+        if !python_ready(&assembly) {
+            return;
+        }
         let lua = assembly
             .run_script(include_str!("../scripts/fourier.lua"))
             .expect("Lua 傅里叶脚本执行成功");
         let py = assembly
             .run_python_script(include_str!("../scripts/fourier.py"))
             .expect("Python 傅里叶脚本执行成功");
-        assert_eq!(lua.duration(), py.duration(), "两侧时长必须一致");
-        let duration = lua.duration();
+        assert_eq!(
+            lua.still_time(),
+            py.still_time(),
+            "两侧静止时刻必须一致"
+        );
+        let duration = lua.still_time().expect("fourier 的段区间可分析");
 
         let mut scene_lua = Scene::new();
         let mut scene_py = Scene::new();
@@ -1462,7 +1866,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
     /// **ZSB 三路径同构**：`script` → `.zsb` → 还原，产物与直接脚本逐对象 / 逐绑定相等。
     ///
     /// 三条路径（默认 / `--script` / `--bundle`）共用 `build_runtime`；本用例锁死
-    /// "装配产物"这一层等价，防止 `.zsb` 引入新的双轨真源。
+    /// "装配产物"这一层等价，防止 `.zsb` 引入新的双轨来源。
     #[test]
     fn bundle_roundtrip_matches_script_path() {
         use ze_prerender::placeholder_engine;
@@ -1484,6 +1888,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
                 required_pods: required_playback_pods(),
                 downgrades: Vec::new(),
                 source_sha256: None,
+                render_params: Default::default(),
             },
         )
         .expect("编码 ZSB");
@@ -1519,9 +1924,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             "逐对象组件指纹必须一致"
         );
         assert_eq!(
-            binding_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
-            binding_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
-            "时序 / 曲线 / target 必须一致"
+            binding_layout_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
+            binding_layout_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
+            "起点 / target 必须一致（表达式逐字节相等由上一行的 JSON 断言守住）"
         );
     }
 
@@ -1552,6 +1957,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
                 required_pods: required_playback_pods(),
                 downgrades: Vec::new(),
                 source_sha256: None,
+                render_params: Default::default(),
             },
         )
         .expect("编码 ZSB（3D 组件必须可序列化）");
@@ -1586,11 +1992,12 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
                 .collect::<Vec<_>>(),
             "逐对象 3D 组件指纹必须一致"
         );
-        // 3D 动画（Rotation / Position 并行 + Scale）：时序、曲线、target 必须一致。
+        // 3D 动画（Rotation / Position 并行 + Scale）：起点 / target 必须一致
+        // （表达式逐字节相等由上面的规范 JSON 断言守住）。
         assert_eq!(
-            binding_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
-            binding_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
-            "3D 动画时序 / 曲线 / target 必须一致"
+            binding_layout_rows(&recipe_a.forest, &recipe_a.bindings, &ids_a),
+            binding_layout_rows(&recipe_b.forest, &recipe_b.bindings, &ids_b),
+            "3D 动画起点 / target 必须一致"
         );
     }
 
@@ -1614,7 +2021,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         let world = scene.into_world();
 
         let mut resources = Resources::new();
-        resources.insert(TimeState { elapsed: 0.0 });
+        resources.insert(TimeState::at(0.0));
         resources.insert(recipe.forest);
         resources.insert(recipe.bindings);
 
@@ -1654,62 +2061,6 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         );
     }
 
-    /// **S4 验收**：`Curve.Keyframes` / `ScalarKey` / `KeyframeInterp` 在两侧语言都可构造。
-    #[cfg(feature = "python")]
-    #[test]
-    fn python_keyframes_curve_matches_lua() {
-        use ze_prerender::placeholder_engine;
-
-        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
-            .expect("脚本 Pod 装配成功");
-        let lua_source = r#"
-local o = scene.spawn({ Transform { x = 0.0, y = 0.0, z = 0.0 } })
-scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes {
-    keys = {
-        ScalarKey { t = 0.0, value = 0.0 },
-        ScalarKey { t = 1.0, value = 1.5 },
-    },
-    interpolation = KeyframeInterp.Linear,
-}), 1.0)
-"#;
-        let py_source = r#"
-o = scene.spawn([Transform(x=0.0, y=0.0, z=0.0)])
-scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes(
-    keys=[
-        ScalarKey(t=0.0, value=0.0),
-        ScalarKey(t=1.0, value=1.5),
-    ],
-    interpolation=KeyframeInterp.Linear,
-)), 1.0)
-"#;
-        let lua = assembly.run_script(lua_source).expect("Lua Keyframes 脚本");
-        let py = assembly
-            .run_python_script(py_source)
-            .expect("Python Keyframes 脚本");
-        assert_eq!(lua.duration(), py.duration());
-
-        let mut scene_lua = Scene::new();
-        let mut scene_py = Scene::new();
-        let recipe_lua = lua.commit(&mut scene_lua).expect("Lua commit");
-        let recipe_py = py.commit(&mut scene_py).expect("Python commit");
-        let ids_lua = fourier_ids(&scene_lua);
-        let ids_py = fourier_ids(&scene_py);
-        assert_eq!(
-            ids_lua
-                .iter()
-                .map(|id| fourier_fingerprint(&scene_lua, *id))
-                .collect::<Vec<_>>(),
-            ids_py
-                .iter()
-                .map(|id| fourier_fingerprint(&scene_py, *id))
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            binding_rows(&recipe_lua.forest, &recipe_lua.bindings, &ids_lua),
-            binding_rows(&recipe_py.forest, &recipe_py.bindings, &ids_py)
-        );
-    }
-
     /// **D+ 验收**：capability 是普通 Python 模块 —— `import zela.scene` 可用。
     #[cfg(feature = "python")]
     #[test]
@@ -1718,6 +2069,9 @@ scene.animate(o, scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes
 
         let assembly =
             crate::assembly::assemble(std::sync::Arc::new(placeholder_engine())).expect("装配成功");
+        if !python_ready(&assembly) {
+            return;
+        }
         let script = assembly
             .run_python_script(
                 r#"
@@ -1756,7 +2110,9 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
         let mut scene = Scene::new();
         let recipe = script.commit(&mut scene).expect("commit");
 
-        let camera = crate::find_camera2d(&scene).expect("能按 Framing2D 找到相机");
+        let camera = crate::find_camera2d(&scene)
+            .expect("能按 Framing2D 找到相机")
+            .expect("分镜应有 2D 相机");
         assert_ne!(
             camera.0, recipe.handles[0],
             "第 0 个对象是坐标轴容器，不是相机"
@@ -1781,6 +2137,9 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
 
         let assembly = crate::assembly::assemble(Arc::new(placeholder_engine()))
             .expect("Python + Lua 装配成功");
+        if !python_ready(&assembly) {
+            return;
+        }
         let report = assembly.broker.plan().validate().expect("装配图合法");
         assert!(
             report.order.iter().any(|name| name == "python"),
@@ -1825,42 +2184,30 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
         assert!((circles[0].0.radius - 0.5).abs() < 1e-4);
     }
 
-    /// **B3-Pd 验收（真实 domain）**：同一小段场景由 Lua 与 JS 编排，
-    /// 装配产物（`SceneScript` 规范 JSON）**逐字节相同**。
+
+    /// **提案 #6 C 验收**：位置参数 + `Color.a` 默认值 + 通道常量（`Circle.channel.radius`）
+    /// 在 Lua / JS 两侧产出的装配产物**逐字节相同**。
     ///
-    /// 覆盖：相机 / 圆 + 填充 / 折线书写 / 半径动画（含枚举变体与数组）。
+    /// Lua 用位置参数 + 常量；JS 用具名对象 + 常量（`Color` 故意省 `a`）。
     #[cfg(feature = "js")]
     #[test]
-    fn js_and_lua_produce_the_same_scene_script() {
+    fn positional_constructors_and_channel_constants_agree_across_languages() {
         use ze_prerender::placeholder_engine;
 
         let lua_source = r#"
-scene.spawn({ Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 } })
-local dot = scene.spawn({
-    Circle { x = -0.8, y = 0.0, r = 0.8 },
-    Fill { color = Color { r = 80, g = 200, b = 255, a = 255 } },
-})
-local points = {}
-for i = 0, 8 do
-    local x = -2.0 + 4.0 * i / 8
-    points[#points + 1] = Vec2 { x = x, y = 0.7 }
-end
-scene.spawn({ Reveal { points = points, closed = false } })
-scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp { from = 0.8, to = 1.6, dur = 0.5 }), 0.5)
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
+local y = Add { a = expr.pure(0.5), b = Sin { of = clock.time() } }
+expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
 "#;
         let js_source = r#"
-scene.spawn([Camera2D({ center: Vec2({ x: 0.0, y: 0.0 }), scale: 40.0 })]);
+scene.spawn([Camera2D({ center: Vec2(0.0, 0.0), scale: 40.0 })]);
 const dot = scene.spawn([
-  Circle({ x: -0.8, y: 0.0, r: 0.8 }),
-  Fill({ color: Color({ r: 80, g: 200, b: 255, a: 255 }) }),
+  Circle({ x: 0.0, y: 0.0, r: 0.5 }),
+  Fill({ color: Color({ r: 96, g: 196, b: 255 }) }),
 ]);
-const points = [];
-for (let i = 0; i <= 8; i += 1) {
-  const x = -2.0 + 4.0 * i / 8;
-  points.push(Vec2({ x: x, y: 0.7 }));
-}
-scene.spawn([Reveal({ points: points, closed: false })]);
-scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1.6, dur: 0.5 })), 0.5);
+const y = Add({ a: expr.pure(0.5), b: Sin({ of: clock.time() }) });
+expr.bind({ object: dot, target: Circle.channel.radius, root: y, duration: 2.0 });
 "#;
 
         let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
@@ -1868,11 +2215,133 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
         let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
         let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
 
-        assert_eq!(lua.duration(), js.duration(), "两侧时长必须一致");
+        assert_eq!(
+            lua.still_time(),
+            js.still_time(),
+            "两侧静止时刻必须一致"
+        );
         assert_eq!(
             lua.to_json().expect("serialize lua"),
             js.to_json().expect("serialize js"),
-            "Lua 与 JS 的装配产物必须逐字节相同"
+            "位置参数 / 缺省 Color.a / 通道常量必须与具名写法产出同一份 payload"
+        );
+    }
+
+    /// **B 批验收**：`clock.nest(clock.scale, clock.shift)` 在 Lua / JS 两侧产出**逐字节
+    /// 相同**的装配产物；`clock.time()` 与 `clock.time()` 是同一个通道叶子。
+    #[cfg(feature = "js")]
+    #[test]
+    fn clock_constructors_agree_across_languages() {
+        use ze_prerender::placeholder_engine;
+
+        let lua_source = r#"
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5) })
+local y = Sin { of = clock.time() }
+expr.bind {
+    object = dot,
+    target = Circle.channel.radius,
+    root = y,
+    clock = clock.nest(clock.scale(0.5), clock.shift(1.0)),
+    duration = 2.0,
+}
+"#;
+        let js_source = r#"
+scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)]);
+const dot = scene.spawn([Circle(0.0, 0.0, 0.5)]);
+const y = Sin({ of: clock.time() });
+expr.bind({
+  object: dot,
+  target: Circle.channel.radius,
+  root: y,
+  clock: clock.nest(clock.scale(0.5), clock.shift(1.0)),
+  duration: 2.0,
+});
+"#;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功（含 js）");
+        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
+        let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
+
+        let lua_json = lua.to_json().expect("serialize lua");
+        let js_json = js.to_json().expect("serialize js");
+        assert_eq!(lua_json, js_json, "时钟链必须产出同一份 payload");
+        assert!(lua_json.contains("\"clock\""), "非全局时钟必须进 payload");
+        assert!(
+            lua_json.contains("\"rate\":0.5") && lua_json.contains("\"shift\":1.0"),
+            "两层链接都必须在产物里：{lua_json}"
+        );
+    }
+
+    /// B 批（Python 侧）：与 Lua 的时钟写法逐字节一致；解释器不可用时跳过。
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_clock_matches_lua() {
+        use ze_prerender::placeholder_engine;
+
+        let lua_source = r#"
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5) })
+local y = Sin { of = clock.time() }
+expr.bind { object = dot, target = Circle.channel.radius, root = y,
+            clock = clock.nest(clock.scale(0.5), clock.shift(1.0)), duration = 2.0 }
+"#;
+        let python_source = r#"
+scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)])
+dot = scene.spawn([Circle(0.0, 0.0, 0.5)])
+y = Sin(of=clock.time())
+expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y,
+               clock=clock.nest(clock.scale(0.5), clock.shift(1.0)), duration=2.0))
+"#;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功（含 python）");
+        if !python_ready(&assembly) {
+            return;
+        }
+        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
+        let py = assembly
+            .run_python_script(python_source)
+            .expect("Python 脚本执行成功");
+        assert_eq!(
+            lua.to_json().expect("serialize lua"),
+            py.to_json().expect("serialize python"),
+            "Python 的时钟链必须与 Lua 等价"
+        );
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_positional_constructors_match_lua() {
+        use ze_prerender::placeholder_engine;
+
+        let lua_source = r#"
+scene.spawn({ Camera2D(Vec2(0.0, 0.0), 40.0) })
+local dot = scene.spawn({ Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255)) })
+local y = Add { a = expr.pure(0.5), b = Sin { of = clock.time() } }
+expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
+"#;
+        let python_source = r#"
+scene.spawn([Camera2D(Vec2(0.0, 0.0), 40.0)])
+dot = scene.spawn([Circle(0.0, 0.0, 0.5), Fill(Color(96, 196, 255))])
+y = Add(a=expr.pure(0.5), b=Sin(of=clock.time()))
+expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
+"#;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功（含 python）");
+        if !python_ready(&assembly) {
+            return;
+        }
+        let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
+        let py = assembly
+            .run_python_script(python_source)
+            .expect("Python 脚本执行成功");
+        assert_eq!(
+            lua.to_json().expect("serialize lua"),
+            py.to_json().expect("serialize python"),
+            "Python 的位置参数 / 默认值 / 通道常量必须与 Lua 等价"
         );
     }
 
@@ -1897,7 +2366,113 @@ scene.animate(dot, scene.clip(Target.CircleRadius, Curve.Ramp({ from: 0.8, to: 1
 
         // 默认装配（python 是默认 feature）包含 python 节点，Lua 侧能看到 python 表。
         let assembly = crate::assembly::assemble(Arc::new(placeholder_engine())).expect("装配成功");
+        if !python_ready(&assembly) {
+            return;
+        }
         assert!(!assembly.lua.registered_global_names("python").is_empty());
+    }
+
+    /// S3 / 提案 #6 B：Lua 用 `expr.bind{ object = <句柄>, target = Circle.channel.radius, ... }`
+    /// 提交表达式动画，宿主把它并入 `SceneScript` —— 产物里是一条 `BindingDriver::Expr`。
+    #[test]
+    fn expression_binding_reaches_the_recipe_through_lua() {
+        use ze_prerender::placeholder_engine;
+        use zela_scene_ecs::animation::BindingDriver;
+
+        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
+            .expect("装配成功");
+        let script = assembly
+            .run_script(
+                r#"
+                scene.spawn({ Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 } })
+                local dot = scene.spawn({
+                    Circle { x = 0.0, y = 0.0, r = 0.25 },
+                })
+                local y = Sin { of = clock.time() }
+                expr.bind { object = dot, target = Circle.channel.radius, root = y, duration = 2.0 }
+                "#,
+            )
+            .expect("脚本执行成功");
+
+        let mut scene = zela_scene_ecs::scene::Scene::new();
+        let recipe = script.commit(&mut scene).expect("commit 成功");
+        assert_eq!(recipe.bindings.bindings.len(), 1, "应有一条表达式绑定");
+        let binding = &recipe.bindings.bindings[0];
+        assert!(matches!(binding.driver, BindingDriver::Expr(_)));
+        assert_eq!(binding.target.name(), "CircleRadius");
+        // **C 批**：`duration` 是糖 ⇒ 产物里是 predicate `t < 2` + reset hold，
+        // 时钟节点本身**不再**带 span（区间由 predicate 决定）。
+        assert!(binding.predicate.is_some(), "duration 应展开成 predicate");
+        assert_eq!(
+            binding.reset,
+            zela_scene_ecs::animation::ResetBehavior::Hold
+        );
+        let node = recipe.forest.get(binding.clock).expect("时钟节点");
+        assert_eq!(node.span, None, "新语义下时钟不钳区间");
+        // **AH-07 / BY-a4**：可分析的时间门 ⇒ Hold 是纯函数 `f(last_active(t))`；
+        // 档位由识别器推导为 `OPerInterval`（按区间分段，不再需要重放）。
+        assert!(
+            binding.active.is_some(),
+            "predicate 应已分析成局部时间区间集"
+        );
+        assert_eq!(
+            binding.seek_kind,
+            zela_scene_ecs::animation::SeekKind::OPerInterval,
+            "predicate + Hold 不再需要重放"
+        );
+    }
+
+    /// **动画层阶段 1（plot）**：`expr.plot` 采样出的折线与手写 `Polyline` **逐位相同**。
+    ///
+    /// 两侧的顶点算式与结合顺序一致（`K * (x * x) + B`），采样点 `x` 的公式同源
+    /// （`lo + (hi - lo) * i / (samples - 1)`）⇒ 差别只能是实现，不是容差。
+    #[test]
+    fn plot_sampling_matches_a_handwritten_polyline() {
+        use ze_prerender::placeholder_engine;
+
+        let assembly =
+            crate::assembly::assemble(std::sync::Arc::new(placeholder_engine())).expect("装配成功");
+        let script = assembly
+            .run_script(
+                r#"
+                scene.spawn({ Camera2D { scale = 40.0 } })
+                local N = 9
+                local pts = {}
+                for i = 0, N - 1 do
+                    local x = -2.0 + 4.0 * (i / (N - 1))
+                    pts[#pts + 1] = scene.vec2(x, 0.5 * (x * x) - 1.0)
+                end
+                scene.spawn({ Polyline { points = pts, closed = false } })
+                local curve = scene.spawn({
+                    Stroke { width = 2.0, color = scene.rgba(255, 255, 255, 255) },
+                })
+                expr.plot {
+                    object = curve,
+                    lo = -2.0,
+                    hi = 2.0,
+                    samples = N,
+                    y = expr.add {
+                        a = expr.scale { k = 0.5, of = expr.mul { a = expr.plot_x(), b = expr.plot_x() } },
+                        b = expr.pure(-1.0),
+                    },
+                }
+                "#,
+            )
+            .expect("脚本执行成功");
+
+        let mut scene = zela_scene_ecs::scene::Scene::new();
+        script.commit(&mut scene).expect("commit 成功");
+        let world = scene.into_world();
+        let paths: Vec<ze_notion::Path2D> = world
+            .query::<&ze_scene_core::components::Reveal>()
+            .iter()
+            .map(|reveal| reveal.path.clone())
+            .collect();
+        assert_eq!(paths.len(), 2, "手写折线 + plot 折线");
+        assert_eq!(
+            paths[0].commands, paths[1].commands,
+            "plot 的顶点必须与手写 Polyline 逐位相同"
+        );
     }
 }
 

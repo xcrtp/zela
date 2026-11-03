@@ -8,13 +8,14 @@ use std::hash::{Hash, Hasher};
 
 use egui::Color32;
 use glam::Vec2;
-use ze_node_core::Node;
+use ze_node_core::{Node, NodePresentation};
 
 /// How a node type is presented as a card.
 pub trait NodeView: Send + Sync + 'static {
-    /// Card title text. Defaults to the node's display name.
-    fn title(&self, node: &dyn Node) -> String {
-        node.meta().display_name.clone()
+    /// Card title text. Defaults to the presentation table's display name.
+    fn title(&self, node: &dyn Node, presentation: &NodePresentation) -> String {
+        let _ = node;
+        presentation.display_name.clone()
     }
 
     /// Header band color (also used as the card's identity color).

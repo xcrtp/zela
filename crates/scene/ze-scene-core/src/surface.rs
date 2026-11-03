@@ -1,15 +1,13 @@
 // surface.rs — 2D/3D 融合的**归属边界**与渲染策略（B3 Step 3）。
 //
 // # 设计要点
-// - `Surface` 只描述**边界与映射**，**不带 position**（位置仍由 `Transform` 单一真源）；
+// - `Surface` 只描述**边界与映射**，**不带 position**（位置仍由 `Transform` 唯一来源）；
 // - `SurfaceRenderer` 是正交维度：`Renderer2D`（离屏 → 纹理 → 代理平面）/
 //   `Renderer3D`（内容直接派生为 3D 网格）；
 // - **不存 `surface_id`**：归属沿 `Parent` 链向上找最近的 `Surface` 祖先，
-//   避免"关系"出现第二份真源；
+//   避免"关系"出现第二个来源；
 // - 找不到 `SurfaceRenderer` ⇒ **显式错误**（不静默取默认策略）；
-// - 沿 `Parent` 链用 visited 集合做**树的环检测**（不需要图算法依赖）。
-
-use std::collections::HashSet;
+// - 沿 `Parent` 链做**树的环检测**并保留完整链（诊断不降级）。
 
 use serde::{Deserialize, Serialize};
 use ze_notion::{Rect2D, Vec2};
@@ -57,11 +55,10 @@ pub enum SurfaceRenderer {
 }
 
 /// 纹理采样过滤（**显式**；不靠后端默认值）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TextureFilter {
-    Nearest,
-    Linear,
-}
+///
+/// B4 Step 1：类型移入 `ze-render-ir::params`（渲染参数与 Surface 共用同一型），
+/// 此处转发以保持 `ze_scene_core::TextureFilter` 的既有调用点不变。
+pub use ze_render_ir::TextureFilter;
 
 /// `Renderer2D` 的纹理契约（Fixed 尺寸；用户拍板不随视口/DPI 变化）。
 ///
@@ -175,8 +172,8 @@ pub enum SurfaceError {
     MissingRenderer(ObjectId),
     #[error("Surface 对象 {0:?} 的 Renderer2D 未声明 SurfaceTexture（尺寸/过滤/mipmap 必须显式）")]
     MissingTexture(ObjectId),
-    #[error("Parent 链存在环（归属判定在 {0:?} 处中止）")]
-    ParentCycle(ObjectId),
+    #[error("Parent 链存在环：{chain:?}（归属判定中止）")]
+    ParentCycle { chain: Vec<ObjectId> },
     #[error("SurfaceTexture 尺寸非法：{width}x{height}（必须非零）")]
     InvalidTexelSize { width: u32, height: u32 },
     #[error("Surface.bounds 退化（宽高必须 > 0）")]
@@ -198,6 +195,12 @@ pub enum SurfaceError {
         scale_x: f32,
         scale_y: f32,
     },
+    #[error(
+        "Surface 对象 {surface:?} 的内容**不可见**：Renderer2D + composite=false，\
+         且没有任何 Material3D.texture 引用它的内容纹理 ⇒ 既不在视口画、也不参与合成、\
+         也没有代理平面消费。请设 composite=true 或让某个 3D 材质引用该纹理（S4-14）"
+    )]
+    UnconsumedSurface { surface: ObjectId },
 }
 
 /// 读取 Surface 的纹理契约（`Renderer2D` 必需）。
@@ -223,11 +226,15 @@ pub fn resolve_surface(
     id: ObjectId,
 ) -> Result<Option<SurfaceOwner>, SurfaceError> {
     let mut current = Some(id);
-    let mut visited: HashSet<ObjectId> = HashSet::new();
+    // 保留**完整链**（不只是"是否访问过"）：诊断要能给出环上全部节点。
+    let mut chain: Vec<ObjectId> = Vec::new();
     while let Some(node) = current {
-        if !visited.insert(node) {
-            return Err(SurfaceError::ParentCycle(node));
+        if let Some(start) = chain.iter().position(|visited| *visited == node) {
+            return Err(SurfaceError::ParentCycle {
+                chain: chain[start..].to_vec(),
+            });
         }
+        chain.push(node);
         if !scene.contains(node) {
             return Ok(None);
         }
@@ -266,6 +273,8 @@ mod tests {
     #[derive(Default)]
     struct MockScene {
         nodes: HashMap<ObjectId, Node>,
+        /// S4-14：`Material3D` 消费者的模拟（`for_each` 只认这一种组件）。
+        materials: Vec<(ObjectId, crate::components::Material3D)>,
     }
 
     impl MockScene {
@@ -283,7 +292,28 @@ mod tests {
             self.nodes.len()
         }
 
-        fn for_each<T: 'static + Send + Sync>(&self, _f: impl FnMut(ObjectId, &T)) {}
+        fn for_each<T: 'static + Send + Sync>(&self, mut f: impl FnMut(ObjectId, &T)) {
+            for (id, node) in &self.nodes {
+                for candidate in [
+                    node.surface.as_ref().map(|v| v as &dyn Any),
+                    node.renderer.as_ref().map(|v| v as &dyn Any),
+                    node.texture.as_ref().map(|v| v as &dyn Any),
+                    node.parent.as_ref().map(|v| v as &dyn Any),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    if let Some(value) = candidate.downcast_ref::<T>() {
+                        f(*id, value);
+                    }
+                }
+            }
+            for (id, material) in &self.materials {
+                if let Some(value) = (material as &dyn Any).downcast_ref::<T>() {
+                    f(*id, value);
+                }
+            }
+        }
 
         fn for_each_pair<A: 'static + Send + Sync, B: 'static + Send + Sync>(
             &self,
@@ -413,10 +443,11 @@ mod tests {
         let b = id(2);
         scene.spawn(a).parent = Some(Parent(b));
         scene.spawn(b).parent = Some(Parent(a));
-        assert!(matches!(
-            resolve_surface(&scene, a),
-            Err(SurfaceError::ParentCycle(_))
-        ));
+        let error = resolve_surface(&scene, a).expect_err("成环必须显式失败");
+        let SurfaceError::ParentCycle { chain } = error else {
+            panic!("期望 ParentCycle，实得 {error:?}");
+        };
+        assert_eq!(chain, vec![a, b], "诊断必须携带完整环路径");
     }
 
     /// `Parent(DANGLING)` 视为链结束。
@@ -492,6 +523,39 @@ mod tests {
             stretched.camera_for(Rect2D::new(Vec2::ZERO, Vec2::new(100.0, 50.0))),
             Err(SurfaceError::AspectMismatch { .. })
         ));
+    }
+
+    /// S4-14（B5 A-2）：`Renderer2D + composite=false` 且无人消费纹理 ⇒ 显式错误。
+    #[test]
+    fn unconsumed_content_surface_errors_explicitly() {
+        use crate::components::Material3D;
+        use crate::domain::{content_texture_handle, content_texture_specs};
+
+        let mut scene = MockScene::default();
+        let s = id(1);
+        {
+            let node = scene.spawn(s);
+            node.surface = Some(Surface::new(bounds(), SurfaceMapping::World, Vec2::ZERO));
+            node.renderer = Some(SurfaceRenderer::Renderer2D);
+            node.texture = Some(SurfaceTexture::new([100, 100], TextureFilter::Linear, false));
+        }
+        // 没有任何 Material3D 引用 ⇒ 内容彻底不可见，必须报错。
+        assert_eq!(
+            content_texture_specs(&scene).unwrap_err(),
+            SurfaceError::UnconsumedSurface { surface: s }
+        );
+
+        // 有消费者（3D 材质引用该内容纹理）⇒ 合法。
+        let mut material = Material3D::default();
+        material.texture = Some(content_texture_handle(s));
+        scene.materials.push((id(2), material));
+        assert_eq!(content_texture_specs(&scene).unwrap().0.len(), 1);
+
+        // `composite=true` ⇒ 参与屏幕合成，即使无人引用也可见。
+        scene.materials.clear();
+        scene.nodes.get_mut(&s).unwrap().texture =
+            Some(SurfaceTexture::new([100, 100], TextureFilter::Linear, false).with_composite(true));
+        assert_eq!(content_texture_specs(&scene).unwrap().0.len(), 1);
     }
 
     /// `Renderer2D` 未声明 SurfaceTexture ⇒ 显式错误。

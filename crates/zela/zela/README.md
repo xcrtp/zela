@@ -1,5 +1,7 @@
 # zela
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela.md`](../../../docs/modules/zela.md)。
+
 zela 的统一入口：把 Pod 层与节点图基础层聚合到一个 crate。
 
 - `ze-pod`：Pod 抽象、绑定驱动、`#[capability]` 宏（不含 lua / py，保持 wasm32）；

@@ -30,6 +30,7 @@ pub mod event;
 pub mod geometry;
 pub mod hit_test;
 pub mod layout;
+pub mod presentation;
 pub mod socket_layout;
 pub mod undo;
 pub mod validation;
@@ -50,6 +51,7 @@ pub use hit_test::{
     HitTestPolicy,
 };
 pub use layout::{FreeLayout, LayoutStrategy, NodeSizeMap};
+pub use presentation::PresentationTable;
 pub use socket_layout::{
     CARD_HEADER_HEIGHT, DefaultSocketLayout, SOCKET_BOTTOM_GAP, SOCKET_ROW_HEIGHT,
     SOCKET_TOP_MARGIN, SocketLayout,

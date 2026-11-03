@@ -173,7 +173,7 @@ pub fn snapshot_queue(queue: &DrawQueue) -> Vec<Recorded2D> {
         .map(|c| Recorded2D {
             shape: c.shape.clone(),
             transform: Transform2D::identity(),
-            style: c.style,
+            style: c.style.clone(),
             z: c.z.0,
         })
         .collect();
@@ -563,7 +563,7 @@ impl WgpuBackend2D {
         self.recorder.push(Recorded2D {
             shape: shape.clone(),
             transform: *transform,
-            style: *style,
+            style: style.clone(),
             z,
         });
     }
@@ -653,6 +653,8 @@ impl WgpuBackend2D {
             view_formats: &[],
         });
         let msaa_view = msaa.create_view(&wgpu::TextureViewDescriptor::default());
+        // B12 Step 5：资源计数（**创建**次数；稳态逐帧增量应为 0）。
+        crate::diagnostics::record_textures_created(2);
         // 旧目标随替换释放（其上帧的 TextureView 由 Frame2DData 持有，下帧被替换时释放）。
         self.targets.insert(
             layer_id,
@@ -837,7 +839,7 @@ impl WgpuBackend2D {
             );
             let style = Style2D {
                 space: MeasureSpace::Screen,
-                ..draw.style
+                ..draw.style.clone()
             };
             // B3-0c：三角化 + 打包在渲染无关层（`vertex_record`）；后端只接字节。
             // B3-0d（不静默）：失败 ⇒ **显式 panic**，不再 `eprintln + continue`。
@@ -1494,6 +1496,7 @@ mod tests {
             ZIndex::new(0),
             Shape2D::Rect(Rect2D::new(Vec2::new(150.0, 75.0), Vec2::new(250.0, 125.0))),
             Style2D {
+                stroke_shape: Default::default(),
                 fill: Some(Color32::new(255, 0, 0, 255)),
                 space: MeasureSpace::Screen,
                 ..Default::default()
@@ -1535,6 +1538,7 @@ mod tests {
             blend: LayerBlend::Alpha,
             opacity: 1.0,
             rect_px: (left as f32, top as f32, vw as f32, vh as f32),
+            fit: None,
         };
         let ops = [op];
         // C3：管线惰性建 ⇒ 合成前先确保本帧用到的组合已就绪（1 = 首帧现场建一条）。
@@ -1548,7 +1552,7 @@ mod tests {
             0,
             "同组合第二帧应命中缓存（不重复建）"
         );
-        let composite = compositor.prepare(&ctx.device, &ops);
+        let composite = compositor.prepare(&ctx.device, (vw as f32, vh as f32), &ops);
         {
             let mut pass = enc
                 .begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1634,6 +1638,7 @@ mod tests {
             ZIndex::new(0),
             Shape2D::Rect(Rect2D::new(Vec2::new(150.0, 75.0), Vec2::new(250.0, 125.0))),
             Style2D {
+                stroke_shape: Default::default(),
                 fill: Some(Color32::new(255, 0, 0, 255)),
                 space: MeasureSpace::Screen,
                 ..Default::default()
@@ -1646,6 +1651,7 @@ mod tests {
                 radius: 10.0,
             },
             Style2D {
+                stroke_shape: Default::default(),
                 // `Style2D::default()` 的 fill 是白色，这里显式关掉以只留描边
                 // （让 draw_count 的断言能精确区分"填充/描边各一条几何"）。
                 fill: None,
@@ -1772,7 +1778,7 @@ mod tests {
     }
 
     /// 🔴 B3-0d：三角化失败**不再 `eprintln + continue`**，而是显式 panic
-    /// （错误路径可达、有测试；铁律 2「不静默」）。
+    /// （错误路径可达、有测试；不静默）。
     #[test]
     #[should_panic(expected = "不静默：2D 顶点生产失败")]
     fn gpu_unregistered_custom_shape_panics_explicitly() {
@@ -1852,6 +1858,7 @@ mod tests {
 
     fn stroke_style(width: f32) -> Style2D {
         Style2D {
+            stroke_shape: Default::default(),
             fill: None,
             stroke: Some(Color32::new(0, 255, 0, 255)),
             stroke_width: width,
@@ -2122,7 +2129,7 @@ mod tests {
                 to: to.clone(),
                 t,
                 samples: 4,
-                style,
+                style: style.clone(),
             });
             assert_eq!(backend.recorded_morph_len(), 1);
 
@@ -2220,7 +2227,7 @@ mod tests {
                 to: to.clone(),
                 t,
                 samples: 32,
-                style,
+                style: style.clone(),
             });
             assert_eq!(backend.recorded_morph_len(), 1);
 
@@ -2274,6 +2281,7 @@ mod tests {
     /// 书写动画的描边样式（青色、宽 6 —— 足够宽，像素判据稳定）。
     fn reveal_style() -> Style2D {
         Style2D {
+            stroke_shape: Default::default(),
             fill: None,
             stroke: Some(Color32::new(0, 200, 200, 255)),
             stroke_width: 6.0,

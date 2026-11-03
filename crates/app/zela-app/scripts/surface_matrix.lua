@@ -4,16 +4,20 @@
 -- `Renderer2D` 内容纹理路径；`composite = true` 让纹理直接合成到屏幕，
 -- 从而可被像素对拍（非像素断言另见 zela-app 测试）。
 --
--- 覆盖：Circle × Fill / Stroke、Arrow × Fill / Stroke、Path × Stroke（文本路径）。
+-- 覆盖：Circle × Fill / Stroke、Arrow × Fill / Stroke、Path × Fill / Stroke（文本）。
 -- 所有内容挂 `Parent { parent = surf }` —— 归属由 Parent 链解析（不再需要标记组件）。
+--
+-- 比例约定：bounds 16×12（4:3）= texel 1024×768（4:3）。
+-- `composite = true` 是**整张纹理铺满视口**（不做 letterbox）⇒ 纹理宽高比必须
+-- 与输出视口一致，否则画面会被横向拉伸（圆变椭圆）。
 
 local surf = scene.spawn({
     Surface {
-        min_x = -10.0, min_y = -6.0, max_x = 10.0, max_y = 6.0,
+        min_x = -8.0, min_y = -6.0, max_x = 8.0, max_y = 6.0,
         mapping = SurfaceMapping.World,
         anchor_x = 0.5, anchor_y = 0.5,
         renderer = SurfaceRenderer.Renderer2D,
-        texel_width = 512, texel_height = 512,
+        texel_width = 1024, texel_height = 768,
         filter = TextureFilter.Linear,
         mipmap = false,
         fit_margin = 0.9,
@@ -29,12 +33,12 @@ local stroke_green = Stroke { width = 4.0, color = Color { r = 120, g = 255, b =
 
 -- Circle × Fill / Stroke（空间错开，避免互相污染）。
 scene.spawn({
-    Circle { x = -6.0, y = 3.0, r = 1.5 },
+    Circle { x = -5.5, y = 3.0, r = 1.6 },
     fill_warm,
     belong,
 })
 scene.spawn({
-    Circle { x = -6.0, y = -3.0, r = 1.5 },
+    Circle { x = -5.5, y = -3.0, r = 1.6 },
     stroke_cool,
     belong,
 })
@@ -42,8 +46,8 @@ scene.spawn({
 -- Arrow × Fill / Stroke。
 scene.spawn({
     Arrow {
-        from = Vec2 { x = -2.0, y = 3.0 },
-        to = Vec2 { x = 2.0, y = 3.0 },
+        from = scene.vec2(-2.0, 3.0),
+        to = scene.vec2(1.5, 3.0),
         head_length = 0.9,
         head_width = 0.6,
     },
@@ -52,8 +56,8 @@ scene.spawn({
 })
 scene.spawn({
     Arrow {
-        from = Vec2 { x = -2.0, y = -3.0 },
-        to = Vec2 { x = 2.0, y = -3.0 },
+        from = scene.vec2(-2.0, -3.0),
+        to = scene.vec2(1.5, -3.0),
         head_length = 0.9,
         head_width = 0.6,
     },
@@ -61,26 +65,23 @@ scene.spawn({
     belong,
 })
 
--- Path × Stroke：文本编译出的描边路径（每条形一条对象）。
-local paths = content.text(Text { source = "AB", font_size = 3.0, x = 5.0, y = 0.0 })
-for i = 1, #paths do
-    scene.spawn({
-        PathShape { path = paths[i] },
-        belong,
-    })
-end
+-- Path × Stroke：文本编译出的描边路径（每字形一条对象）。
+-- 排版糖：`parent = surf` ⇒ 字形直接挂到内容层对象下（与 `belong` 同一个 `Parent`）。
+scene.text("AB", { size = 3.0, x = 3.0, y = -0.5, parent = surf })
 
 -- Path × Fill：同一份字形轮廓走填充（另一种样式组合，空间上不重叠）。
-local fills = content.text(Text { source = "CD", font_size = 2.5, x = 5.0, y = 4.0 })
-for i = 1, #fills do
-    scene.spawn({
-        PathShape { path = fills[i] },
-        fill_warm,
-        belong,
-    })
-end
+scene.text("CD", {
+    size = 2.5,
+    x = 3.0,
+    y = 4.0,
+    parent = surf,
+    style = { fill_warm },
+})
 
--- 运行时要求存在 2D 相机（内容层是纹理源；此相机仅占位）。
+-- **PG Step 0 判定：这不是占位**。删掉它之后两条基线都变了 ——
+-- `[native] a6e4394c… → 9a34bf69…`、`[vector] 3e9d4b0e… → e313809d…` ⇒ 内容层的 2D
+-- 记录确实经 Camera2D 落到图层像素上（PC 路线 A 的叠加只跳过"叠到屏幕"这一步，
+-- 不跳过图层自身的 2D 变换）。
 scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 30.0 },
+    Camera2D { scale = 30.0 },
 })

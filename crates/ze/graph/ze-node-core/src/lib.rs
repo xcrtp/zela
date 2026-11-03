@@ -18,6 +18,7 @@ pub mod executor_factory;
 pub mod graph;
 pub mod id;
 pub mod node;
+pub mod presentation;
 pub mod simple_graph;
 pub mod socket;
 pub mod type_tag;
@@ -31,7 +32,8 @@ pub use executor::{EvalStrategy, NodeExecutor, TypedExecutorAdapter, TypedNodeEx
 pub use executor_factory::{DynNodeExecutor, ExecutorFactory};
 pub use graph::{ConnectError, Graph};
 pub use id::{InputSocketId, NodeId, OutputSocketId, SocketId};
-pub use node::{DirtyFn, DirtyPolicy, DowncastWrapper, Node, NodeInteraction, NodeMeta};
+pub use node::{DirtyFn, DirtyPolicy, DowncastWrapper, Node, NodeMeta};
+pub use presentation::{NodeInteraction, NodePresentation};
 pub use simple_graph::SimpleGraph;
 pub use socket::{InputSocket, OutputSocket};
 pub use type_tag::{DefaultTypeCast, NamedTypeTag, TypeCast, TypeTag};

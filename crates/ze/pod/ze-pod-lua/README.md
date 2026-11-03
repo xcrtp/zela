@@ -1,5 +1,7 @@
 # ze-pod-lua
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-lua.md`](../../../../docs/modules/ze-pod-lua.md)。
+
 > **纯 Lua 适配器**（mlua / Lua 5.4，解释器 vendored 进二进制）。
 >
 > 生产依赖只有 `ze-pod-core` / `ze-pod-binding` / `mlua`：
@@ -87,7 +89,7 @@ let capabilities = [
 let [json, lua] = ze_pod_lua::export_docs(dir, &capabilities)?;
 ```
 
-- JSON 是唯一真源（`ze-pod-binding` 手写，无外部依赖）；
+- JSON 是唯一来源（`ze-pod-binding` 手写，无外部依赖）；
 - `scene_api.lua` 是 LuaLS 注解，从同一份 `CapabilityDocs` 生成；
 - 本 crate 不引用任何具体 domain 类型。
 

@@ -19,6 +19,10 @@
 local N = 128
 local FORMULA_WRITE_SECONDS = 1.0
 
+-- `Ramp` / `Ramp2` 的算子化形态（显式时钟；`t` 是时钟局部时间）。
+
+-- 旧的 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
+
 -- ── 分镜 1：常驻网格与坐标轴（Axes2D::unbounded() 的默认样式）──────────
 scene.spawn({
     Axes2D {
@@ -30,14 +34,14 @@ scene.spawn({
 
 -- ── 分镜 2：2D 相机 ────────────────────────────────────────────────────
 local camera = scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 40.0 },
+    Camera2D { scale = 40.0 },
 })
 
 -- ── 分镜 3：曲线 y = sin x 的书写动画 ─────────────────────────────────
 local points = {}
 for i = 0, N do
     local x = -math.pi + i * (2 * math.pi / N)
-    points[#points + 1] = Vec2 { x = x, y = math.sin(x) }
+    points[#points + 1] = scene.vec2(x, math.sin(x))
 end
 local curve = scene.spawn({
     Reveal { points = points, closed = false },
@@ -57,61 +61,62 @@ for i = 1, #formula do
 end
 
 -- ── T3：标注文字（静态，经 Transform 摆放）────────────────────────────
-local text = content.text(Text {
-    source = "math animation",
-    font_size = 0.55,
-    x = 0.0,
-    y = 0.0,
+-- 排版糖：`glyph_transform = true` ⇒ 每个字形各带 `Transform { x, y }`
+-- （与手写循环逐位一致；内容在原点烘焙）。
+scene.text("math animation", {
+    size = 0.55,
+    x = -1.5,
+    y = 3.0,
+    glyph_transform = true,
 })
-for i = 1, #text do
-    scene.spawn({
-        PathShape { path = text[i] },
-        Transform { x = -1.5, y = 3.0, z = 0.0 },
-    })
-end
 
 -- ── T2：箭头（实心，指向曲线峰值）────────────────────────────────────
 scene.spawn({
     Arrow {
-        from = Vec2 { x = 0.2, y = 2.1 },
-        to = Vec2 { x = math.pi / 2 - 0.15, y = 1.0 + 0.15 },
+        from = scene.vec2(0.2, 2.1),
+        to = scene.vec2(math.pi / 2 - 0.15, 1.0 + 0.15),
         head_length = 0.25,
         head_width = 0.25,
     },
     Fill { color = Color { r = 255, g = 220, b = 120, a = 255 } },
 })
 
--- ── 时间编排 ──────────────────────────────────────────────────────────
+-- ── 时间编排（显式时钟；旧 `scene.animate` / `parallel` / `wait` 的段序）────
 -- 0–2s：曲线书写（phase(0.5) × 2s = 1）
-scene.animate(
-    curve,
-    scene.clip(Target.RevealRange, Curve.Phase { omega = 0.5 }),
-    2.0
-)
--- 2–2.5s：停
-scene.wait(0.5)
--- 2.5–3.5s：镜头推进（scale 与 center 同区间并行）
-scene.animate(
-    camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp { from = 40.0, to = 110.0, dur = 1.0 }),
-    1.0
-)
-scene.parallel(
-    camera,
-    scene.clip(Target.Camera2DFraming, Curve.Ramp2 {
-        from = Vec2 { x = 0.0, y = 0.0 },
-        to = Vec2 { x = math.pi / 2, y = 1.0 },
-        dur = 1.0,
-    })
-)
+expr.bind {
+    object = curve,
+    target = Reveal.channel["end"],
+    root = Scale { k = 0.5, of = clock.time() },
+    clock = clock.scale(1.0),
+    duration = 2.0,
+}
+-- 2–2.5s：停（没有绑定生效 ⇒ 上一步的值保持）
+-- 2.5–3.5s：镜头推进（scale 与 center 同区间 —— 旧 `parallel` 的两条 action）
+expr.bind {
+    object = camera,
+    target = Camera2D.channel.scale,
+    root = sugar.ramp(40.0, 110.0, 1.0),
+    clock = clock.shift(2.5),
+    duration = 1.0,
+}
+expr.bind {
+    object = camera,
+    target = Camera2D.channel.center,
+    root = sugar.ramp2(0.0, 0.0, math.pi / 2, 1.0, 1.0),
+    clock = clock.shift(2.5),
+    duration = 1.0,
+}
 -- 3.5–4.5s：公式逐轮廓依次书写（1s 平摊；轮廓数可能为 0）
 if #formula_handles > 0 then
     local each = FORMULA_WRITE_SECONDS / #formula_handles
     for i = 1, #formula_handles do
-        scene.animate(
-            formula_handles[i],
-            scene.clip(Target.RevealRange, Curve.Ramp { from = 0.0, to = 1.0, dur = each }),
-            each
-        )
+        local start = 3.5 + (i - 1) * each
+        expr.bind {
+            object = formula_handles[i],
+            target = Reveal.channel["end"],
+            root = sugar.ramp(0.0, 1.0, each),
+            clock = clock.shift(start),
+            duration = each,
+        }
     end
 end

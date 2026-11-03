@@ -1,5 +1,7 @@
 # ze-pod-py
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-py.md`](../../../../docs/modules/ze-pod-py.md)。
+
 > **纯 Python 适配器**（pyo3，`python` feature 门控）。
 >
 > 生产依赖只有 `ze-pod-core` / `ze-pod-binding` / `ze-pod-macro`（+ 可选 `pyo3`）：
@@ -26,7 +28,7 @@ app:        zela-app（静态插件清单 → Broker 装配 → run → commit�
 ```
 
 - `ze-pod-py` → `ze-pod-binding`：只实现 `PyCodec`，
-  调用编排 / 类型收集 / JSON 真源都由绑定驱动提供；
+  调用编排 / 类型收集 / JSON 定义都由绑定驱动提供；
 - `ze-pod-py` → `ze-pod-core`：能力 / 句柄 / Injector 机制；
 - **不依赖 `zela-scene`**：domain 能力由 App 通过
   `PyPod::register_capability::<SceneApi>("scene", true)` 注入；
@@ -167,7 +169,7 @@ zela/python.pyi
 ```
 
 这样 `import zela.scene` / `from zela import scene` 与普通 Python 模块一致；
-JSON 真源在 `ze-pod-binding`，本 crate 只做翻译，不维护第二份类型表。
+JSON 定义在 `ze-pod-binding`，本 crate 只做翻译，不维护第二份类型表。
 `.pyi` 生成**不依赖 pyo3**，因此无 `python` feature 也能运行。
 
 ---

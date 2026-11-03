@@ -10,6 +10,7 @@
 //
 // 未命中（对象不存在 / 未挂该组件）⇒ **静默跳过**（与迁移前的 `get_mut` 语义一致：
 // 动画驱动的是"可能存在"的组件，缺席不是错误）。
+// 注意：**类型不符**不是"未命中"——它由 target 层显式报错（见 `animation::target`）。
 
 use std::any::{Any, TypeId};
 
@@ -29,8 +30,19 @@ pub trait SceneWrite {
     ) -> bool;
 }
 
-/// 取组件 `T` 并就地修改；对象 / 组件不存在时**静默跳过**（不 panic）。
-pub fn with_component<T, F>(scene: &mut dyn SceneWrite, id: ObjectId, f: F)
+/// 组件读取的类型擦除接口（object-safe）—— [`SceneWrite`] 的对称形态。
+pub trait SceneRead {
+    /// 对 `id` 上类型为 `type_id` 的组件调用 `f`；对象或组件不存在 ⇒ `false`。
+    fn with_component_ref(
+        &self,
+        id: ObjectId,
+        type_id: TypeId,
+        f: &mut dyn FnMut(&dyn Any),
+    ) -> bool;
+}
+
+/// 取组件 `T` 并就地修改；返回是否命中（对象 / 组件不存在时 `false`，不 panic）。
+pub fn with_component<T, F>(scene: &mut dyn SceneWrite, id: ObjectId, f: F) -> bool
 where
     T: 'static + Send + Sync,
     F: FnOnce(&mut T),
@@ -43,5 +55,23 @@ where
             }
         }
     };
-    let _ = scene.with_component_mut(id, TypeId::of::<T>(), &mut cb);
+    scene.with_component_mut(id, TypeId::of::<T>(), &mut cb)
+}
+
+/// 只读访问组件 `T` 的对称形态；未命中 ⇒ `None`。
+pub fn read_component<T, R>(scene: &dyn SceneRead, id: ObjectId, f: impl FnOnce(&T) -> R) -> Option<R>
+where
+    T: 'static + Send + Sync,
+{
+    let mut out = None;
+    let mut f = Some(f);
+    let mut cb = |any: &dyn Any| {
+        if let Some(v) = any.downcast_ref::<T>() {
+            if let Some(f) = f.take() {
+                out = Some(f(v));
+            }
+        }
+    };
+    scene.with_component_ref(id, TypeId::of::<T>(), &mut cb);
+    out
 }

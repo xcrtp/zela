@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use mlua::{AnyUserData, Lua, MultiValue, Table, UserData, Value};
 use ze_pod_core::{Capability, ErasedFn, Field, Pod, PodValue, ScalarKind, ScalarValue, TypeSpec};
-use ze_pod_binding::{BindingPlan, ValueCodec, short_name};
+use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, short_name};
 
 /// Lua 侧的不透明句柄令牌。
 #[derive(Clone, Copy, Debug)]
@@ -39,8 +39,34 @@ pub(crate) fn bind<C: Capability<'static>>(
     for item in plan.calls {
         register_function(lua, &table, *item, Arc::clone(&service))?;
     }
-    lua.globals().set(global_name, table)?;
+    lua.globals().set(global_name, table.clone())?;
+    install_clock_alias(lua, &table, plan.calls)?;
     register_types(lua, &plan, service)?;
+    Ok(())
+}
+
+/// `clock_*` 前缀的函数同时挂到 **`clock` 表**（`clock.shift` / `clock.scale` /
+/// `clock.nest` / `clock.time`）。
+///
+/// 剧本里 `clock.time()` 读**绑定时钟**；`clock.time_of(c)` 的叶子带 `c` 的身份，
+/// 不属于表达式（见 `BindSpec.clock`）。前缀约定让同一份 capability 暴露两个表，
+/// 不必新增 Service。
+fn install_clock_alias(
+    lua: &Lua,
+    table: &Table,
+    calls: &'static [ErasedFn],
+) -> mlua::Result<()> {
+    let clock = lua.create_table()?;
+    let mut any = false;
+    for item in calls {
+        if let Some(short) = item.signature.name.strip_prefix("clock_") {
+            clock.set(short, table.get::<Value>(item.signature.name)?)?;
+            any = true;
+        }
+    }
+    if any {
+        lua.globals().set("clock", clock)?;
+    }
     Ok(())
 }
 
@@ -83,33 +109,41 @@ fn register_function(
 }
 
 /// 自动注册所有可达类型的构造器（组件 / 值 / 枚举）。
+///
+/// # 提案 #6 C：构造器是**可调用表**
+///
+/// - `Circle { ... }`（具名）与 `Circle(0.0, 0.0, 0.55)`（位置）都走同一个 `__call`；
+/// - 组件 / 值类型的表上挂**通道常量**（`Circle.channel.radius`，来自 `Pod::channels()`）；
+/// - 缺字段时读默认值白名单（`Color.a = 255`），默认值不进产物。
 fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua::Result<()> {
     for (&full_name, &spec) in &plan.types {
         let lua_name = short_name(full_name);
         match spec {
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let fields = *fields;
                 let type_name = *name;
-                match plan.component_ctor(type_name) {
-                    // 组件：`Circle { ... }` ⇒ 调用宿主构造函数 ⇒ 句柄。
-                    Some(ctor) => {
-                        let call = ctor.call;
-                        let svc = Arc::clone(&service);
-                        let func = lua.create_function(move |lua, spec: Table| {
-                            let value = table_to_pod(&spec, fields, type_name, None)?;
-                            let out = call(&*svc, &[value]).map_err(mlua::Error::external)?;
-                            pod_to_lua(lua, &out)
-                        })?;
-                        lua.globals().set(lua_name, func)?;
-                    }
-                    // 纯值结构体：`Color { ... }` ⇒ 值令牌。
-                    None => {
-                        let func = lua.create_function(move |_, spec: Table| {
-                            table_to_pod(&spec, fields, type_name, None).map(LuaPodValue)
-                        })?;
-                        lua.globals().set(lua_name, func)?;
-                    }
-                }
+                let call = plan.component_ctor(type_name).map(|ctor| ctor.call);
+                let svc = Arc::clone(&service);
+                let mt = lua.create_table()?;
+                mt.set(
+                    "__call",
+                    lua.create_function(move |lua, (_this, args): (Table, MultiValue)| {
+                        let value = args_to_pod(args, fields, type_name, None)?;
+                        match call {
+                            Some(call) => {
+                                let out =
+                                    call(&*svc, &[value]).map_err(mlua::Error::external)?;
+                                pod_to_lua(lua, &out)
+                            }
+                            None => Ok(Value::UserData(
+                                lua.create_userdata(LuaPodValue(value))?,
+                            )),
+                        }
+                    })?,
+                )?;
+                let ctor = lua.create_table()?;
+                ctor.set_metatable(Some(mt))?;
+                lua.globals().set(lua_name, ctor)?;
             }
             TypeSpec::Enum { name, variants } => {
                 let table = lua.create_table()?;
@@ -135,7 +169,160 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
             _ => {}
         }
     }
+    attach_channels(lua, service.channels())?;
+    attach_methods(lua, service.methods())?;
     Ok(())
+}
+
+/// 把 `Pod::channels()` 的常量挂到组件的 **`channel` 字段**上
+/// （`Circle.channel.radius`）。
+///
+/// 常量就是普通表 `{ namespace = ..., name = ... }` —— 与 `expr.bind` 的
+/// `ChannelDecl` 同形，三种语言不需要专用令牌。
+///
+/// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
+/// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
+fn attach_channels(
+    lua: &Lua,
+    channels: &'static [ze_pod_core::ChannelDecl],
+) -> mlua::Result<()> {
+    for channel in channels {
+        let Value::Table(ctor) = lua.globals().get::<Value>(channel.component)? else {
+            continue;
+        };
+        // 组件首次出现时建 `channel` 表；后续常量往里塞。
+        let channel_table = match ctor.get::<Value>("channel")? {
+            Value::Table(table) => table,
+            _ => {
+                let table = lua.create_table()?;
+                ctor.set("channel", table.clone())?;
+                table
+            }
+        };
+        let value = lua.create_table()?;
+        value.set("namespace", channel.namespace)?;
+        value.set("name", channel.address)?;
+        // 第 2 批：类型随常量过边界（结构化枚举，不再是脚本手写的字符串）。
+        value.set(
+            "ty",
+            LuaPodValue(PodValue::Enum(
+                "zela.math.ChannelType",
+                channel_type_variant(channel.ty),
+                Vec::new(),
+            )),
+        )?;
+        // 第 2 批语法糖：常量**可调用** —— `Reveal.channel.current_pos(curve)`
+        // 等价于 `expr.read { channel = Reveal.channel.current_pos, object = curve }`。
+        // `expr` 在另一个 capability 里注册，故在**调用时**才解析（不依赖装配顺序）。
+        let mt = lua.create_table()?;
+        mt.set(
+            "__call",
+            lua.create_function(|lua, (channel, object): (Table, Value)| {
+                let expr: Table = lua.globals().get("expr")?;
+                let Value::Function(read) = expr.get::<Value>("read")? else {
+                    return Err(mlua::Error::RuntimeError(
+                        "`expr.read` 尚未注册（宿主未装配表达式能力）".into(),
+                    ));
+                };
+                // Pod 侧 `read` 收一个 `ReadSpec` 表（具名），故这里组表再调用。
+                let spec = lua.create_table()?;
+                spec.set("channel", channel)?;
+                spec.set("object", object)?;
+                read.call::<Value>(spec)
+            })?,
+        )?;
+        value.set_metatable(Some(mt))?;
+        channel_table.set(channel.name, value)?;
+    }
+    Ok(())
+}
+
+/// 把 `Pod::methods()` 的**方法**挂到组件构造器上：`Reveal.current_pos(curve)`。
+///
+/// 与通道常量同一套路（`Reveal.channel.*`），区别是值是**函数**：调用时组
+/// `MethodCallSpec { name, object, args }` 再走 `expr.method` —— 作者不必手写表，
+/// 也不会漏 `args` / 写错方法名（未注册的方法由 `expr.method` 装配期拒绝）。
+///
+/// `expr` 在另一个 capability 里注册，故在**调用时**才解析（与通道常量一致）。
+fn attach_methods(
+    lua: &Lua,
+    methods: &'static [ze_pod_core::MethodDecl],
+) -> mlua::Result<()> {
+    for method in methods {
+        let Value::Table(ctor) = lua.globals().get::<Value>(method.component)? else {
+            continue;
+        };
+        let qualified = method.qualified;
+        let arity = method.arity;
+        let function = lua.create_function(move |lua, args: MultiValue| {
+            let values: Vec<Value> = args.into_iter().collect();
+            if values.len() != arity + 1 {
+                return Err(mlua::Error::RuntimeError(format!(
+                    "`{qualified}(object, …)` 需要 1 个接收者 + {arity} 个参数，实际 {}",
+                    values.len()
+                )));
+            }
+            let expr: Table = lua.globals().get("expr")?;
+            let Value::Function(method_fn) = expr.get::<Value>("method")? else {
+                return Err(mlua::Error::RuntimeError(
+                    "`expr.method` 尚未注册（宿主未装配表达式能力）".into(),
+                ));
+            };
+            let spec = lua.create_table()?;
+            spec.set("name", qualified)?;
+            spec.set("object", values[0].clone())?;
+            let args = lua.create_table()?;
+            for (index, value) in values[1..].iter().enumerate() {
+                args.set(index + 1, value.clone())?;
+            }
+            spec.set("args", args)?;
+            method_fn.call::<Value>(spec)
+        })?;
+        ctor.set(method.name, function)?;
+    }
+    Ok(())
+}
+
+/// 构造器实参 → `PodValue`（具名 / 位置双形态 + 默认值）。
+///
+/// **形态判别**：唯一实参是 table ⇒ 具名；否则按字段顺序取位置参数。
+/// Lua 的空表因此不会被误判成"零个位置参数"（`Vec2{}` 是具名空结构）。
+fn args_to_pod(
+    args: MultiValue,
+    fields: &'static [Field],
+    type_name: &'static str,
+    variant: Option<&'static str>,
+) -> mlua::Result<PodValue> {
+    let values: Vec<Value> = args.into_iter().collect();
+    if values.len() == 1 {
+        if let Value::Table(table) = &values[0] {
+            return table_to_pod(table, fields, type_name, variant);
+        }
+    }
+    if values.len() > fields.len() {
+        return Err(mlua::Error::RuntimeError(format!(
+            "`{type_name}` 最多接受 {} 个位置参数，实际 {}",
+            fields.len(),
+            values.len()
+        )));
+    }
+    let mut out = Vec::with_capacity(fields.len());
+    for (index, field) in fields.iter().enumerate() {
+        let value = match values.get(index) {
+            Some(value) if !value.is_nil() => lua_to_pod(value, field.ty)?,
+            _ => ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "`{type_name}` 缺少字段 `{}`（位置参数也不足）",
+                    field.name
+                ))
+            })?,
+        };
+        out.push((field.name, value));
+    }
+    Ok(match variant {
+        Some(variant) => PodValue::Enum(type_name, variant, out),
+        None => PodValue::Struct(type_name, out),
+    })
 }
 
 fn table_to_pod(
@@ -148,12 +335,20 @@ fn table_to_pod(
     for field in fields {
         let value: Value = table.get(field.name)?;
         if value.is_nil() {
-            return Err(mlua::Error::RuntimeError(format!(
-                "`{type_name}` 缺少字段 `{}`",
-                field.name
-            )));
+            // 默认值白名单（`Color.a = 255`）；不在白名单里 ⇒ 显式报错。
+            let default = ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                mlua::Error::RuntimeError(format!(
+                    "`{type_name}` 缺少字段 `{}`",
+                    field.name
+                ))
+            })?;
+            values.push((field.name, default));
+            continue;
         }
-        values.push((field.name, lua_to_pod(&value, field.ty)?));
+        values.push((field.name, lua_to_pod(&value, field.ty).map_err(|error| {
+            // 带上字段名：错在哪个字段必须一眼可见（表可以很深）。
+            mlua::Error::RuntimeError(format!("`{type_name}.{}`：{error}", field.name))
+        })?));
     }
     Ok(match variant {
         Some(variant) => PodValue::Enum(type_name, variant, values),
@@ -168,7 +363,7 @@ fn lua_to_pod(value: &Value, spec: &'static TypeSpec) -> mlua::Result<PodValue> 
             Value::UserData(ud) => Ok(PodValue::Opaque(handle_of(ud)?)),
             other => Err(type_error("句柄（userdata）", other)),
         },
-        TypeSpec::Array { elem } => match value {
+        TypeSpec::Array { elem, .. } => match value {
             Value::Table(table) => {
                 let mut values = Vec::new();
                 for item in table.sequence_values::<Value>() {
@@ -178,7 +373,7 @@ fn lua_to_pod(value: &Value, spec: &'static TypeSpec) -> mlua::Result<PodValue> 
             }
             other => Err(type_error("table（数组）", other)),
         },
-        TypeSpec::Struct { name, fields } => {
+        TypeSpec::Struct { name, fields, .. } => {
             if let Some(value) = wrapped_value(value) {
                 return match &value {
                     PodValue::Struct(actual, _) if actual == name => Ok(value),
@@ -207,6 +402,13 @@ fn lua_to_pod(value: &Value, spec: &'static TypeSpec) -> mlua::Result<PodValue> 
                 "枚举 `{name}` 请用构造器创建（如 `Curve.Phase {{ ... }}`）"
             )))
         }
+        // 泛型 / 类型变量没有 PodValue 形态：它们是**装配期类型**。
+        TypeSpec::Var(name) => Err(mlua::Error::RuntimeError(format!(
+            "类型变量 `{name}` 没有运行时表示"
+        ))),
+        TypeSpec::App { ty, .. } => Err(mlua::Error::RuntimeError(format!(
+            "泛型类型 `{ty}` 没有通用运行时转换"
+        ))),
     }
 }
 
@@ -232,6 +434,7 @@ fn scalar_from_lua(value: &Value, kind: ScalarKind) -> mlua::Result<PodValue> {
         ScalarKind::F32 => ScalarValue::F32(number(value)? as f32),
         ScalarKind::F64 => ScalarValue::F64(number(value)?),
         ScalarKind::I32 => ScalarValue::I32(integer(value)? as i32),
+        ScalarKind::I64 => ScalarValue::I64(integer(value)?),
         ScalarKind::U32 => ScalarValue::U32(integer(value)? as u32),
         ScalarKind::U64 => {
             let n = integer(value)?;
@@ -285,6 +488,7 @@ fn pod_to_lua(lua: &Lua, value: &PodValue) -> mlua::Result<Value> {
             ScalarValue::F32(v) => Value::Number(*v as f64),
             ScalarValue::F64(v) => Value::Number(*v),
             ScalarValue::I32(v) => Value::Integer(*v as i64),
+            ScalarValue::I64(v) => Value::Integer(*v),
             ScalarValue::U32(v) => Value::Integer(*v as i64),
             ScalarValue::U64(v) => Value::Integer(i64::try_from(*v).map_err(|_| {
                 mlua::Error::RuntimeError(format!("u64 超出 Lua 整数范围：{v}"))

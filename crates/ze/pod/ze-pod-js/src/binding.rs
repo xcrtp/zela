@@ -27,7 +27,7 @@ use boa_engine::{
     object::{FunctionObjectBuilder, ObjectInitializer, builtins::JsArray},
     property::Attribute,
 };
-use ze_pod_binding::{BindingPlan, ValueCodec, short_name};
+use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, short_name};
 use ze_pod_core::{Capability, ErasedFn, Field, Pod, PodError, PodValue, ScalarKind, ScalarValue, TypeSpec};
 
 /// JS 侧令牌的隐藏属性名（不参与用户可见 API）。
@@ -105,10 +105,41 @@ pub(crate) fn bind<C: Capability<'static>>(
             .map_err(js_err_to_pod)?;
     }
     ctx.global_object()
-        .set(JsString::from(global_name), namespace, false, ctx)
+        .set(JsString::from(global_name), namespace.clone(), false, ctx)
         .map_err(js_err_to_pod)?;
+    install_clock_alias(ctx, &namespace, plan.calls)?;
 
     register_types(ctx, &plan, index)?;
+    Ok(())
+}
+
+/// `clock_*` 前缀的函数同时挂到 **`clock` 对象**（`clock.shift` / `clock.scale` /
+/// `clock.nest` / `clock.time`）。
+///
+/// 与 Lua 侧同一约定：同一份 capability 暴露两个表，不需要新增 Service。
+fn install_clock_alias(
+    ctx: &mut Context,
+    namespace: &JsObject,
+    calls: &'static [ErasedFn],
+) -> Result<(), PodError> {
+    if !calls.iter().any(|item| item.signature.name.starts_with("clock_")) {
+        return Ok(());
+    }
+    let clock = ObjectInitializer::new(ctx).build();
+    for item in calls {
+        let Some(short) = item.signature.name.strip_prefix("clock_") else {
+            continue;
+        };
+        let function = namespace
+            .get(JsString::from(item.signature.name), ctx)
+            .map_err(js_err_to_pod)?;
+        clock
+            .set(JsString::from(short), function, false, ctx)
+            .map_err(js_err_to_pod)?;
+    }
+    ctx.global_object()
+        .set(JsString::from("clock"), clock, false, ctx)
+        .map_err(js_err_to_pod)?;
     Ok(())
 }
 
@@ -165,16 +196,14 @@ fn register_types(
     for (&full_name, &spec) in &plan.types {
         let global = short_name(full_name);
         match spec {
-            TypeSpec::Struct { name, fields } => {
+            TypeSpec::Struct { name, fields, .. } => {
                 let fields = *fields;
                 let type_name = *name;
                 match plan.component_ctor(type_name) {
-                    // 组件：`Circle({...})` ⇒ 调用宿主构造函数 ⇒ 句柄令牌。
+                    // 组件：`Circle({...})` / `Circle(0, 0, 0.5)` ⇒ 调用宿主构造函数 ⇒ 句柄令牌。
                     Some(ctor) => {
                         let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                            let input = object_arg(args, type_name)?;
-                            let value = object_to_pod(ctx, &input, fields, type_name, None)
-                                .map_err(|e| js_native(e.to_string()))?;
+                            let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
                             let service = host_state(ctx).service(service_index).ok_or_else(|| {
                                 JsError::from_native(
                                     JsNativeError::typ().with_message("能力未注册"),
@@ -189,18 +218,16 @@ fn register_types(
                             NativeFunction::from_copy_closure(closure),
                         )
                         .name(global)
-                        .length(1)
+                        .length(fields.len())
                         .build();
                         ctx.global_object()
                             .set(JsString::from(global), function, false, ctx)
                             .map_err(js_err_to_pod)?;
                     }
-                    // 纯值结构体：`Color({...})` ⇒ 值令牌。
+                    // 纯值结构体：`Color({...})` / `Color(96, 196, 255)` ⇒ 值令牌。
                     None => {
                         let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                            let input = object_arg(args, type_name)?;
-                            let value = object_to_pod(ctx, &input, fields, type_name, None)
-                                .map_err(|e| js_native(e.to_string()))?;
+                            let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
                             pod_to_js_result(ctx, &value)
                         };
                         let function = FunctionObjectBuilder::new(
@@ -208,7 +235,7 @@ fn register_types(
                             NativeFunction::from_copy_closure(closure),
                         )
                         .name(global)
-                        .length(1)
+                        .length(fields.len())
                         .build();
                         ctx.global_object()
                             .set(JsString::from(global), function, false, ctx)
@@ -264,7 +291,182 @@ fn register_types(
             _ => {}
         }
     }
+    attach_channels(ctx, service_index)?;
+    attach_methods(ctx, service_index)?;
     Ok(())
+}
+
+/// 把 `Pod::methods()` 的**方法**挂到构造器函数对象上：`Reveal.current_pos(curve)`。
+///
+/// 与通道常量同一套路（`Reveal.channel.*`），区别是值是函数：调用时组
+/// `MethodCallSpec { name, object, args }` 再走 `expr.method`。
+fn attach_methods(ctx: &mut Context, service_index: usize) -> Result<(), PodError> {
+    let Some(service) = host_state(ctx).service(service_index) else {
+        return Ok(());
+    };
+    for method in service.methods() {
+        let ctor = ctx
+            .global_object()
+            .get(JsString::from(method.component), ctx)
+            .map_err(js_err_to_pod)?;
+        let Some(ctor) = ctor.as_object() else {
+            continue;
+        };
+        let qualified = method.qualified;
+        let arity = method.arity;
+        let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+            if args.len() != arity + 1 {
+                return Err(js_native(format!(
+                    "`{qualified}(object, …)` 需要 1 个接收者 + {arity} 个参数，实际 {}",
+                    args.len()
+                )));
+            }
+            let expr = ctx
+                .global_object()
+                .get(JsString::from("expr"), ctx)?;
+            let call_args = array_of(ctx, &args[1..])?;
+            let spec = ObjectInitializer::new(ctx)
+                .property(JsString::from("name"), JsString::from(qualified), Attribute::all())
+                .property(JsString::from("object"), args[0].clone(), Attribute::all())
+                .property(JsString::from("args"), call_args, Attribute::all())
+                .build();
+            let Some(expr) = expr.as_object() else {
+                return Err(js_native("`expr` 尚未注册".to_string()));
+            };
+            let method_fn = expr.get(JsString::from("method"), ctx)?;
+            method_fn
+                .as_object()
+                .ok_or_else(|| js_native("`expr.method` 尚未注册".to_string()))?
+                .call(&JsValue::undefined(), &[spec.into()], ctx)
+        };
+        let function = FunctionObjectBuilder::new(
+            ctx.realm(),
+            NativeFunction::from_copy_closure(closure),
+        )
+        .name(method.name)
+        .length(arity + 1)
+        .build();
+        ctor.set(JsString::from(method.name), function, false, ctx)
+            .map_err(js_err_to_pod)?;
+    }
+    Ok(())
+}
+
+/// 实参切片 → JS 数组（`MethodCallSpec.args`）。
+fn array_of(ctx: &mut Context, values: &[JsValue]) -> JsResult<JsArray> {
+    let array = JsArray::new(ctx)?;
+    for (index, value) in values.iter().enumerate() {
+        array.set(index, value.clone(), false, ctx)?;
+    }
+    Ok(array)
+}
+
+/// 把 `Pod::channels()` 的常量挂到构造器函数对象的 `channel` 字段上
+/// （`Circle.channel.radius`）。
+///
+/// 常量是普通对象 `{ namespace, name }` —— 与 `expr.bind` 的 `ChannelSpec` 同形。
+///
+/// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
+/// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
+fn attach_channels(ctx: &mut Context, service_index: usize) -> Result<(), PodError> {
+    let Some(service) = host_state(ctx).service(service_index) else {
+        return Ok(());
+    };
+    for channel in service.channels() {
+        let ctor = ctx
+            .global_object()
+            .get(JsString::from(channel.component), ctx)
+            .map_err(js_err_to_pod)?;
+        let Some(ctor) = ctor.as_object() else {
+            continue;
+        };
+        // 常量收在 `Circle.channel.*` 下（与组件字段不撞名）。
+        let existing = ctor
+            .get(JsString::from("channel"), ctx)
+            .map_err(js_err_to_pod)?;
+        let channel_ns = match existing.as_object() {
+            Some(object) => object,
+            None => {
+                let object = ObjectInitializer::new(ctx).build();
+                ctor.set(JsString::from("channel"), object.clone(), false, ctx)
+                    .map_err(js_err_to_pod)?;
+                object
+            }
+        };
+        // 第 2 批：类型随常量过边界（结构化枚举值，不再是脚本手写字符串）。
+        let ty = pod_to_js_result(
+            ctx,
+            &PodValue::Enum(
+                "zela.math.ChannelType",
+                channel_type_variant(channel.ty),
+                Vec::new(),
+            ),
+        )
+        .map_err(js_err_to_pod)?;
+        let value: JsValue = ObjectInitializer::new(ctx)
+            .property(
+                JsString::from("namespace"),
+                JsString::from(channel.namespace),
+                Attribute::all(),
+            )
+            .property(
+                JsString::from("name"),
+                JsString::from(channel.address),
+                Attribute::all(),
+            )
+            .property(JsString::from("ty"), ty, Attribute::all())
+            .build()
+            .into();
+        channel_ns
+            .set(JsString::from(channel.name), value, false, ctx)
+            .map_err(js_err_to_pod)?;
+    }
+    Ok(())
+}
+
+/// 构造器实参 → `PodValue`（具名 / 位置双形态 + 默认值）。
+///
+/// **形态判别**：唯一实参是对象 ⇒ 具名；否则按字段顺序取位置参数
+/// （JS 的数字 / 字符串不会与对象字面量混淆，故没有 Lua 的空表歧义）。
+fn js_args_to_pod(
+    ctx: &mut Context,
+    args: &[JsValue],
+    fields: &'static [Field],
+    type_name: &'static str,
+    variant: Option<&'static str>,
+) -> JsResult<PodValue> {
+    if args.len() == 1 {
+        if let Some(object) = args[0].as_object() {
+            return object_to_pod(ctx, &object, fields, type_name, variant)
+                .map_err(|e| js_native(e.to_string()));
+        }
+    }
+    if args.len() > fields.len() {
+        return Err(js_native(format!(
+            "`{type_name}` 最多接受 {} 个位置参数，实际 {}",
+            fields.len(),
+            args.len()
+        )));
+    }
+    let mut values = Vec::with_capacity(fields.len());
+    for (index, field) in fields.iter().enumerate() {
+        let raw = args.get(index).cloned().unwrap_or_else(JsValue::undefined);
+        let value = if raw.is_undefined() {
+            ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                js_native(format!(
+                    "`{type_name}` 缺少字段 `{}`（位置参数也不足）",
+                    field.name
+                ))
+            })?
+        } else {
+            js_to_pod(ctx, &raw, field.ty).map_err(|e| js_native(e.to_string()))?
+        };
+        values.push((field.name, value));
+    }
+    Ok(match variant {
+        Some(variant) => PodValue::Enum(type_name, variant, values),
+        None => PodValue::Struct(type_name, values),
+    })
 }
 
 fn js_native(message: impl Into<String>) -> JsError {
@@ -305,10 +507,15 @@ fn object_to_pod(
             .get(JsString::from(field.name), ctx)
             .map_err(js_err_to_pod)?;
         if value.is_undefined() {
-            return Err(PodError::CallFailed(format!(
-                "`{type_name}` 缺少字段 `{}`",
-                field.name
-            )));
+            // 默认值白名单（`Color.a = 255`）；不在白名单里 ⇒ 显式报错。
+            let default = ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                PodError::CallFailed(format!(
+                    "`{type_name}` 缺少字段 `{}`",
+                    field.name
+                ))
+            })?;
+            values.push((field.name, default));
+            continue;
         }
         values.push((field.name, js_to_pod(ctx, &value, field.ty)?));
     }
@@ -333,7 +540,7 @@ fn js_to_pod(
             ))),
             None => Err(type_error("zela 句柄", value)),
         },
-        TypeSpec::Array { elem } => {
+        TypeSpec::Array { elem, .. } => {
             let object = value
                 .as_object()
                 .filter(|object| object.is_array())
@@ -348,7 +555,7 @@ fn js_to_pod(
             }
             Ok(PodValue::Array(values))
         }
-        TypeSpec::Struct { name, fields } => {
+        TypeSpec::Struct { name, fields, .. } => {
             if let Some(value) = token_of(ctx, value) {
                 return match &value {
                     PodValue::Struct(actual, _) if actual == name => Ok(value),
@@ -373,6 +580,13 @@ fn js_to_pod(
                 "枚举 `{name}` 请用构造器创建（如 `{name}.Variant({{ ... }})`）"
             ))),
         },
+        // 泛型 / 类型变量没有 PodValue 形态：它们是**装配期类型**。
+        TypeSpec::Var(name) => Err(PodError::CallFailed(format!(
+            "类型变量 `{name}` 没有运行时表示"
+        ))),
+        TypeSpec::App { ty, .. } => Err(PodError::CallFailed(format!(
+            "泛型类型 `{ty}` 没有通用运行时转换"
+        ))),
     }
 }
 
@@ -418,6 +632,13 @@ fn scalar_from_js(value: &JsValue, kind: ScalarKind) -> Result<PodValue, PodErro
         ScalarKind::I32 => {
             ScalarValue::I32(exact_integer(value, "i32", i32::MIN as f64, i32::MAX as f64)? as i32)
         }
+        // JS 只有 f64：i64 与 u64 同口径 —— 只接受**可精确表示**的整数。
+        ScalarKind::I64 => ScalarValue::I64(exact_integer(
+            value,
+            "i64",
+            -MAX_EXACT_INTEGER,
+            MAX_EXACT_INTEGER,
+        )? as i64),
         ScalarKind::U32 => {
             ScalarValue::U32(exact_integer(value, "u32", 0.0, u32::MAX as f64)? as u32)
         }
@@ -474,6 +695,7 @@ fn pod_to_js(ctx: &mut Context, value: &PodValue) -> Result<JsValue, PodError> {
             ScalarValue::F32(v) => JsValue::from(*v as f64),
             ScalarValue::F64(v) => JsValue::from(*v),
             ScalarValue::I32(v) => JsValue::from(*v as f64),
+            ScalarValue::I64(v) => JsValue::from(*v as f64),
             ScalarValue::U32(v) => JsValue::from(*v as f64),
             ScalarValue::U64(v) => {
                 if *v as f64 > MAX_EXACT_INTEGER {

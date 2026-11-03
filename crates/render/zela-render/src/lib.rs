@@ -61,7 +61,7 @@ pub use draw::{
     push_reveal_item, record_drawables, record_path_stroke, record_scene,
     record_scene_for_surface, record_scene_tagged, visible_for,
 };
-// B2-0b：`DrawCommand` / `ZIndex` 已迁入渲染 IR（单一真源），此处转发保持
+// B2-0b：`DrawCommand` / `ZIndex` 已迁入渲染 IR（唯一来源），此处转发保持
 // `zela_render::{DrawCommand, ZIndex}` 路径不变（下游与后端无需改动）。
 pub use ze_render_ir::{
     CustomShapeData, CustomSpec, CustomSpecs, DrawCommand, FillSolid, FillStyle, Opacity,

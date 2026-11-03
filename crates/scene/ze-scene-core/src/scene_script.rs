@@ -40,17 +40,261 @@
 // 装配时写 [`handle_ref(h)`](handle_ref)，`commit` / `append` 在[**唯一改写点**](resolve_component_refs)
 // 里统一解析 / 偏移。新增"携带句柄引用的组件"只需在那个函数里加一条 —— 不散落。
 
-use std::sync::Arc;
-
+use ze_comb::{ChannelRef, CompiledExpr, Expr, OpRef};
 use ze_scene_contract::{
     Components, ObjectId, Parent, Scene as SceneContract, Visibility, VisibilityTag,
 };
-use ze_time::{ClockForest, Curve};
+use ze_time::{ClockForest, ClockProgram};
 
-use crate::animation::binding::BindingTable;
-use crate::animation::target::{TargetCtor, target_ctor_by_name};
+use crate::animation::affine::StateUnsupported;
+use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
+use crate::animation::target::target_ctor_by_name;
 use crate::animation::timeline::Timeline;
 use crate::surface::SurfaceTextureRef;
+
+/// 表达式绑定的装配期错误（**显式**，不静默丢弃）。
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExprBindError {
+    /// 目标对象句柄越界（句柄只由 `spawn` 产出 ⇒ 正常不会发生，属内部不变量）。
+    #[error("表达式绑定的目标对象句柄不存在：{0}")]
+    UnknownObject(usize),
+    /// 目标字段名不在构造器表里。
+    #[error("未知的动画目标：`{0}`")]
+    UnknownTarget(String),
+    /// 表达式结构非法（悬空 Ref / 环 / 重名 id）。
+    #[error("表达式非法：{0}")]
+    BadExpression(String),
+    /// 方法未注册 / 参数个数不符（**装配期**显式失败，不留给运行期）。
+    #[error("未知或参数不匹配的方法：`{0}`")]
+    UnknownMethod(String),
+    /// 该通道尚未由宿主注入（Event / 组件字段 / Env 属后续批次）。
+    #[error("通道 `{0}` 尚未由宿主注入")]
+    UnsupportedChannel(ChannelRef),
+    /// `predicate` 与 `duration` 同时给出（后者是 `clock.range(0, d)` 的糖）。
+    #[error(
+        "predicate 与 duration 不能同时指定（duration ≡ predicate `clock.range(0, d)` + reset hold）"
+    )]
+    ConflictingGate,
+    /// `reset = Hold` 的 predicate 无法分析成局部时间区间集。
+    ///
+    /// Hold 的硬约束是**纯函数** `f(last_active(t))`（AH-07）；不可分析就只能退回
+    /// "上一帧写过什么"的历史依赖 —— 这正是本批要消灭的东西，故在装配期拒绝。
+    #[error(
+        "reset = Hold 需要可分析的 predicate（`time` 与字面量比较 + And/Or/Not）；\
+         当前形状含非时间依赖或非字面量边界 —— 请改成 reset = skip，或把窗口写成可分析形状"
+    )]
+    UnanalyzableHold,
+    /// **G 批帧内定序**：装配期能静态看到的"读先于写"冲突 —— 表达式 `reader` 读
+    /// `address`（某对象），而 `writer` 写同一对象的同一字段，且写者的时钟起点
+    /// **晚于**读者 ⇒ 同一帧内读者会读到旧值 / 未定义值。显式报错，不静默。
+    #[error(
+        "帧内定序冲突：`{reader}` 读取 `{address}`，但 `{writer}` 在同一帧更晚处写入它 —— \
+         读先于写 ⇒ 该帧读到的是旧值。请把写者放到读者之前（更早的时钟起点）"
+    )]
+    ReadOrderConflict {
+        reader: String,
+        writer: String,
+        address: String,
+    },
+}
+
+/// 宿主当前真正注入的通道（提案 #6 B：通道是数据，白名单也只有两条）。
+///
+/// **G 批**：组件字段通道（`zela.scene`）改查注册表 —— 地址在 [`TARGETS`] 里
+/// 已登记（如 `Circle.radius`）⇒ 读端可访问，放行；未登记的 `zela.scene` 地址
+/// 与其它 namespace 一律拒绝（与旧行为一致：显式 `UnsupportedChannel`）。
+fn is_injected(channel: &ChannelRef) -> bool {
+    if channel.is_builtin() {
+        // **BZ-c / AF-07**：`event` 由 `SceneMono` 注入（本帧有无输入事件）。
+        return matches!(channel.name.as_str(), "time" | "frame" | "event");
+    }
+    // 派生量是**方法**（B2），不再作为可读通道；这里只认可写字段地址。
+    channel.namespace == "zela.scene"
+        && crate::animation::target::target_entry(&channel.name).is_some()
+}
+
+fn validate_expression(expr: &Expr) -> Result<(), ExprBindError> {
+    CompiledExpr::compile(expr).map_err(|error| ExprBindError::BadExpression(error.to_string()))?;
+
+    // **B2**：方法先在注册表里解析（未知 / 参数个数不符 ⇒ 显式失败）。
+    struct Methods;
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Methods {
+        type Error = String;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, String> {
+            if let Some((method, _object, args)) = expr.node.method() {
+                return match crate::animation::target::method_entry(&method.name) {
+                    Some(spec) if spec.params.len() == args.len() => Ok(true),
+                    Some(spec) => Err(format!(
+                        "`{method}` 参数个数应为 {}，实际 {}",
+                        spec.params.len(),
+                        args.len()
+                    )),
+                    None => Err(format!("`{method}` 未注册")),
+                };
+            }
+            Ok(true)
+        }
+    }
+
+    if let Some(message) = expr.walk(&mut Methods).err() {
+        return Err(ExprBindError::UnknownMethod(message));
+    }
+
+    /// 未注通道检查：命中即用 `ChannelRef` 提前结束遍历（`walk` 的错误通道）。
+    struct Unsupported;
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Unsupported {
+        type Error = ChannelRef;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, ChannelRef> {
+            // `Read` 是叶子（children() 为空）：它的 channel 也要过注入检查，
+            // 否则未注册地址会在运行期才炸 —— 装配期就该显式拒绝。
+            let channel = expr
+                .node
+                .channel()
+                .or_else(|| expr.node.read().map(|(channel, _)| channel));
+            match channel {
+                Some(channel) if !is_injected(channel) => Err(channel.clone()),
+                _ => Ok(true),
+            }
+        }
+    }
+
+    match expr.walk(&mut Unsupported).err() {
+        Some(channel) => Err(ExprBindError::UnsupportedChannel(channel)),
+        None => Ok(()),
+    }
+}
+
+/// **G 批**：`Node::Read.object`（脚本局部句柄下标）必须落在已创建对象的范围内。
+///
+/// 越界说明脚本引用了不存在的句柄 —— 与绑定目标的 [`ExprBindError::UnknownObject`]
+/// 同一口径，装配期显式报错。
+fn check_read_objects(expr: &Expr, object_count: usize) -> Result<(), ExprBindError> {
+    struct Bad {
+        object_count: usize,
+    }
+
+    impl<'a> ze_comb::ExprVisitor<'a> for Bad {
+        type Error = usize;
+
+        fn enter(
+            &mut self,
+            expr: &'a Expr,
+            _parent: Option<&'a ze_comb::Node>,
+        ) -> Result<bool, usize> {
+            if let Some((_, object, _)) = expr.node.method() {
+                if object >= self.object_count as u64 {
+                    return Err(object as usize);
+                }
+                return Ok(true);
+            }
+            match expr.node.read() {
+                Some((_, object)) if object >= self.object_count as u64 => Err(object as usize),
+                _ => Ok(true),
+            }
+        }
+    }
+
+    match expr.walk(&mut Bad { object_count }).err() {
+        Some(index) => Err(ExprBindError::UnknownObject(index)),
+        None => Ok(()),
+    }
+}
+
+/// 录制一条**表达式绑定**（编码器与成品脚本共用）。
+///
+/// 对象用**脚本句柄**（提案 #6：`spawn` 已经返回句柄，按名字找对象的
+/// `find_named` / `Name{}` 依赖已删除）。
+///
+/// `duration > 0` 是**糖**：展开成 `predicate = clock.range(0, duration)` + `reset = hold`
+/// （产物里只留 predicate / reset；`duration` 不进新 payload）。
+fn record_expression(
+    timeline: &mut Timeline,
+    object_count: usize,
+    object: Handle,
+    target: &str,
+    expr: Expr,
+    library: LibraryRef,
+    clock: ClockProgram,
+    predicate: Option<Expr>,
+    reset: ResetBehavior,
+    duration: f64,
+) -> Result<(), ExprBindError> {
+    validate_expression(&expr)?;
+    if let Some(predicate) = &predicate {
+        validate_expression(predicate)?;
+    }
+    check_read_objects(&expr, object_count)?;
+    if let Some(predicate) = &predicate {
+        check_read_objects(predicate, object_count)?;
+    }
+    let (predicate, reset) = match (predicate, duration) {
+        (Some(_), duration) if duration > 0.0 => {
+            return Err(ExprBindError::ConflictingGate);
+        }
+        (Some(predicate), _) => (Some(predicate), reset),
+        (None, duration) if duration > 0.0 => {
+            (Some(duration_predicate(duration)), ResetBehavior::Hold)
+        }
+        (None, _) => (None, reset),
+    };
+    // **AH-07 硬约束**：Hold 是纯函数 `f(last_active(t))`。不可分析的时间门在装配期
+    // 拒绝，而不是留到运行期靠"上一帧写过什么"（那会重新引入顺序耦合）。
+    if reset == ResetBehavior::Hold {
+        if let Some(predicate) = &predicate {
+            // 阶段 2：`Hold` 的 `last_active` 只能按**时间**反算；predicate 若依赖
+            // 非时间连续量（`frame` / 组件字段读），显式拒绝（不静默当作恒真）。
+            match crate::animation::predicate::analyze(predicate) {
+                None => return Err(ExprBindError::UnanalyzableHold),
+                Some(active) if active.has_non_time_variable() => {
+                    return Err(ExprBindError::UnanalyzableHold);
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    let (make, _) = target_ctor_by_name(target)
+        .ok_or_else(|| ExprBindError::UnknownTarget(target.to_string()))?;
+    if object.0 >= object_count {
+        return Err(ExprBindError::UnknownObject(object.0));
+    }
+    timeline.bind_expr_pending(expr, library, clock, predicate, reset, make, object.0);
+    Ok(())
+}
+
+/// `duration` 的糖：`predicate = clock.range(0, duration)`（`time` 是绑定时钟的局部时间）。
+///
+/// 展开形状与脚本手写 `Predicate.Of { expr = clock.range(0.0, d) }` **逐字节相同**
+/// （`And [Ge [t, 0], Lt [t, d]]`）—— 因此把样板 predicate 换成 `duration = d`
+/// 不改变产物（全批验收 #9）。加 `Ge(t, 0)` 对全局时钟是恒真，但让"段"成为
+/// **闭合区间**：`clock.shift` 之后局部时间为负的前段不会被误算进窗口。
+///
+/// **装配层的用法**（`zela-app`）：在收集算子 revision **之前**先调用它把
+/// `duration` 展开成 predicate ⇒ 产物里的 `and` / `ge` / `lt` revision 与
+/// 手写 predicate 完全一致（否则两边的 `op_revisions` 会差三条）。
+pub fn duration_predicate(duration: f64) -> Expr {
+    let leaf = || Expr::channel(ChannelRef::builtin("time"));
+    let ge = Expr::call(
+        OpRef::new("zela.math", "ge"),
+        [leaf(), Expr::pure(0.0)],
+    );
+    let lt = Expr::call(
+        OpRef::new("zela.math", "lt"),
+        [leaf(), Expr::pure(duration)],
+    );
+    Expr::call(OpRef::new("zela.math", "and"), [ge, lt])
+}
 
 /// **Encoder 内的局部句柄**：声明期索引，`commit` 时才映射到 [`ObjectId`]。
 ///
@@ -157,69 +401,69 @@ impl SceneEncoder {
         self.despawns.push(handle);
     }
 
-    /// 录一段动画：`T` 是目标**类型**（`commit` 时按 `handle` 的真实 id 生成）。
-    pub fn animate<T: TargetCtor>(&mut self, handle: Handle, curve: Curve, dur: f64) -> &mut Self {
-        self.timeline.play_pending(curve, T::make, handle.0, dur);
-        self
-    }
-
-    /// 与上一段 `animate` **同区间**的额外动作。
-    pub fn parallel<T: TargetCtor>(&mut self, handle: Handle, curve: Curve) -> &mut Self {
-        self.timeline.parallel_pending(curve, T::make, handle.0);
-        self
-    }
-
-    /// 按 target **名字**录一段动画（脚本层入口：target 在 Lua 侧是字符串）。
+    /// 声明一条**表达式驱动**的动画（S3）：对象用本脚本内的句柄，目标按名字查表。
     ///
-    /// 名字 → 构造器复用持久化路径的集中表 [`target_ctor_by_name`]（该表因此获得
-    /// 第二个真实消费方）。未知名字 ⇒ 返回 `false`，且**不录制任何东西**。
-    pub fn animate_named(&mut self, handle: Handle, target: &str, curve: Curve, dur: f64) -> bool {
-        let Some((make, _)) = target_ctor_by_name(target) else {
-            return false;
-        };
-        self.timeline.play_pending(curve, make, handle.0, dur);
-        true
-    }
-
-    /// [`SceneEncoder::animate_named`] 的"与上一段同区间"版本。
-    pub fn parallel_named(&mut self, handle: Handle, target: &str, curve: Curve) -> bool {
-        let Some((make, _)) = target_ctor_by_name(target) else {
-            return false;
-        };
-        self.timeline.parallel_pending(curve, make, handle.0);
-        true
-    }
-
-    /// 按**构造器函数**录一段动画（S3：Transform 通道用）。
+    /// 表达式在这里就完成结构校验（悬空 Ref / 环 / 尚未注入的通道），
+    /// 错误是显式的 —— 不留给运行期静默跳过。
     ///
-    /// 与 [`SceneEncoder::animate_named`] 的差别只在目标来源：调用方已持有
-    /// `fn(ObjectId) -> Arc<dyn Target>`（通道已闭包在函数里），不必再查字符串表。
-    pub fn animate_with(
-        &mut self,
-        handle: Handle,
-        make: fn(ObjectId) -> Arc<dyn crate::animation::Target>,
-        curve: Curve,
-        dur: f64,
-    ) -> &mut Self {
-        self.timeline.play_pending(curve, make, handle.0, dur);
-        self
+    /// `duration > 0` 是糖（`predicate = t < duration` + `reset = hold`）。
+    /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
+    ///
+    /// 装饰性：不影响几何 / 状态；组件挂在创建载荷里 ⇒ 提交后与普通组件同样可见。
+    pub fn shader_fill(&mut self, object: Handle, paint: ze_render_ir::ShaderPaint) -> Result<(), String> {
+        let components = self
+            .creates
+            .get_mut(object.0 as usize)
+            .ok_or_else(|| format!("着色 codegen 的对象句柄无效：{}", object.0))?;
+        components.push(Box::new(paint));
+        Ok(())
     }
 
-    /// [`SceneEncoder::animate_with`] 的"与上一段同区间"版本。
-    pub fn parallel_with(
+    pub fn bind_expr(
         &mut self,
-        handle: Handle,
-        make: fn(ObjectId) -> Arc<dyn crate::animation::Target>,
-        curve: Curve,
-    ) -> &mut Self {
-        self.timeline.parallel_pending(curve, make, handle.0);
-        self
+        object: Handle,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        clock: ClockProgram,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        self.bind_expr_gated(
+            object,
+            target,
+            expr,
+            library,
+            clock,
+            None,
+            ResetBehavior::Hold,
+            duration,
+        )
     }
 
-    /// 推进时序游标（不产生节点）。
-    pub fn wait(&mut self, d: f64) -> &mut Self {
-        self.timeline.wait(d);
-        self
+    /// 带 **predicate / reset** 的表达式绑定（C 批入口）。
+    pub fn bind_expr_gated(
+        &mut self,
+        object: Handle,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        clock: ClockProgram,
+        predicate: Option<Expr>,
+        reset: ResetBehavior,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        record_expression(
+            &mut self.timeline,
+            self.creates.len(),
+            object,
+            target,
+            expr,
+            library,
+            clock,
+            predicate,
+            reset,
+            duration,
+        )
     }
 
     /// 收尾：产出一份不可变的 [`SceneScript`]。
@@ -258,6 +502,8 @@ pub struct SceneRecipe {
     pub bindings: BindingTable,
     /// `handles[i]` = 本脚本第 `i` 个 [`Handle`] 对应的 `ObjectId`。
     pub handles: Vec<ObjectId>,
+    /// **BX**：装配期仿射识别结果（side table：**不进产物**，供门禁 / 诊断）。
+    pub state_analyses: Vec<crate::animation::affine::StateAnalysis>,
 }
 
 impl SceneRecipe {
@@ -265,14 +511,41 @@ impl SceneRecipe {
     pub fn id(&self, h: Handle) -> Option<ObjectId> {
         self.handles.get(h.0).copied()
     }
+
+    /// **BZ-c**：`State` 依赖边 side table（`target → {通道集合}`，升序）。
+    ///
+    /// 派生量（不进 payload）：与 [`Self::state_analyses`] 同源，供门禁 / 诊断 /
+    /// 代价分区读取。多个 `State` 落在同一 target 时取并集。
+    pub fn state_dependencies(
+        &self,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+        let mut out: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+            std::collections::BTreeMap::new();
+        for analysis in &self.state_analyses {
+            out.entry(analysis.target.clone())
+                .or_default()
+                .extend(analysis.plan.dependencies().iter().cloned());
+        }
+        out
+    }
 }
 
 /// `commit` 的失败语义（§7.1.7）：`Create` 失败 ⇒ **中止整个 commit**，与
 /// `spawn_dyn` 既有的"不造半成品"口径一致。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptError {
     /// 第 `handle` 条创建命令被 Scene 拒绝（组件未登记 / 句柄非法）。
     CreateFailed { handle: Handle },
+    /// **G 批帧内定序**：装配期发现"读先于写"（见 [`ExprBindError::ReadOrderConflict`]）。
+    OrderConflict(ExprBindError),
+    /// **AI-07**：绑定需要历史重放（`SeekKind::Replay`），而引擎只实现了 `O1`。
+    /// 装配期显式失败，不允许 seek 到中间帧静默拿错值（见
+    /// [`crate::animation::BindingTable::reject_replay`]）。
+    ReplayRequiresHistory(crate::animation::ReplayUnsupported),
+    /// **BX**：`State.step` 不是关于 `prev` 的仿射表达式 ⇒ 装配期显式拒绝。
+    ///
+    /// 本批不把"不可识别的状态"降级成 `Replay`（那等于静默），也不放开 AI-07。
+    StateNotAffine(crate::animation::affine::StateUnsupported),
 }
 
 impl std::fmt::Display for ScriptError {
@@ -281,6 +554,9 @@ impl std::fmt::Display for ScriptError {
             ScriptError::CreateFailed { handle } => {
                 write!(f, "场景脚本 commit 失败：第 {} 条创建命令被拒绝", handle.0)
             }
+            ScriptError::OrderConflict(error) => write!(f, "{error}"),
+            ScriptError::ReplayRequiresHistory(error) => write!(f, "{error}"),
+            ScriptError::StateNotAffine(error) => write!(f, "{error}"),
         }
     }
 }
@@ -302,6 +578,38 @@ pub struct SceneScript {
     creates: Vec<Components>,
     despawns: Vec<Handle>,
     timeline: Timeline,
+}
+
+impl SceneScript {
+    /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
+    ///
+    /// 与 [`SceneEncoder::shader_fill`] 同一口径：装饰性，不影响几何 / 状态。
+    pub fn shader_fill(&mut self, object: Handle, paint: ze_render_ir::ShaderPaint) -> Result<(), String> {
+        let components = self
+            .creates
+            .get_mut(object.0 as usize)
+            .ok_or_else(|| format!("着色 codegen 的对象句柄无效：{}", object.0))?;
+        components.push(Box::new(paint));
+        Ok(())
+    }
+
+    /// **动画层阶段 1（plot）**：给对象挂一条**装配期采样**出来的折线（完整可见）。
+    ///
+    /// 与脚本手写 `Polyline` 走同一条路径（`Path2D::from_polyline` → `Reveal::visible`），
+    /// 因此渲染侧不需要新图元；`closed` 恒为 `false`（函数图像是开放折线）。
+    pub fn attach_polyline(&mut self, object: Handle, points: &[(f32, f32)]) -> Result<(), String> {
+        let vertices: Vec<ze_notion::Vec2> = points
+            .iter()
+            .map(|&(x, y)| ze_notion::Vec2::new(x, y))
+            .collect();
+        let path = ze_notion::Path2D::from_polyline(&vertices, false);
+        let components = self
+            .creates
+            .get_mut(object.0 as usize)
+            .ok_or_else(|| format!("函数图像的对象句柄无效：{}", object.0))?;
+        components.push(Box::new(crate::components::Reveal::visible(path)));
+        Ok(())
+    }
 }
 
 impl serde::Serialize for SceneScript {
@@ -373,6 +681,58 @@ impl SceneScript {
     pub fn from_json(text: &str) -> Result<Self, crate::persist::PersistError> {
         serde_json::from_str(text).map_err(|e| crate::persist::PersistError::Json(e.to_string()))
     }
+
+    /// 向**成品脚本**追加一条表达式绑定（S3：宿主编排完成后合并）。
+    ///
+    /// 对象用本脚本内的句柄（宿主把 pod 句柄在**装配期**转成它，产物不存 pod 句柄）；
+    /// `clock` 是这条绑定自己的时间源（空链 = 全局）；目标未知 / 句柄越界都是显式错误。
+    pub fn bind_expr(
+        &mut self,
+        object: Handle,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        clock: ClockProgram,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        self.bind_expr_gated(
+            object,
+            target,
+            expr,
+            library,
+            clock,
+            None,
+            ResetBehavior::Hold,
+            duration,
+        )
+    }
+
+    /// 带 **predicate / reset** 的成品脚本入口（C 批）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn bind_expr_gated(
+        &mut self,
+        object: Handle,
+        target: &str,
+        expr: Expr,
+        library: LibraryRef,
+        clock: ClockProgram,
+        predicate: Option<Expr>,
+        reset: ResetBehavior,
+        duration: f64,
+    ) -> Result<(), ExprBindError> {
+        record_expression(
+            &mut self.timeline,
+            self.creates.len(),
+            object,
+            target,
+            expr,
+            library,
+            clock,
+            predicate,
+            reset,
+            duration,
+        )
+    }
 }
 
 impl SceneScript {
@@ -385,9 +745,21 @@ impl SceneScript {
         self.creates.is_empty()
     }
 
-    /// 编排总时长（秒）—— 合并时 `other` 的首段起点即落到这里之后（§3.3）。
-    pub fn duration(&self) -> f64 {
-        self.timeline.total_duration()
+    /// **静止时刻**（秒；`None` = 不可推导，见 [`Timeline::still_time`]）。
+    ///
+    /// 它**不是**"作品时长"：录多长由 `ExportSpec { fps, frames }` 决定。
+    pub fn still_time(&self) -> Option<f64> {
+        self.timeline.still_time()
+    }
+
+    /// **阶段 2**：区分"不可分析"与"含非时间依赖"的完整报告。
+    pub fn still_time_report(&self) -> crate::animation::StillTimeReport {
+        self.timeline.still_time_report()
+    }
+
+    /// 产物里出现的**函子库身份**（输入流配对校验用；见 [`Timeline::libraries`]）。
+    pub fn libraries(&self) -> Vec<LibraryRef> {
+        self.timeline.libraries()
     }
 
     /// **合并**：把 `other` 整体接到本脚本之后（拼接命令序列，§3.3）。
@@ -395,7 +767,7 @@ impl SceneScript {
     /// 三条规则：
     /// 1. **句柄偏移**：`other` 的 `Handle(n)` → `Handle(base + n)`（`base = self.len()`），
     ///    `other` 内部**所有引用**（创建载荷里的占位引用 + 销毁 + 待解析动画目标）同步改写；
-    /// 2. **时间游标**：`other` 的时序接在 `self.duration()` 之后；
+    /// 2. **时间游标**：`other` 的步骤直接续在本脚本的步骤之后（顺序即游标）；
     /// 3. **返回 [`HandleRange`]**：告诉调用方 `other` 原句柄的新落位。
     ///
     /// 不做并行合并（两段时间轴对齐）—— 需要额外语义，等真实需求（§11.1）。
@@ -415,8 +787,11 @@ impl SceneScript {
         }
         self.despawns.append(&mut other.despawns);
 
-        // 3. 时序：时间游标接续 + 待解析目标句柄偏移。
-        self.timeline.append_shifted(&other.timeline, base);
+        // 3. 时序：后一段的时钟整体后移到本脚本静止时刻 + 待解析目标句柄偏移。
+        //    5b 之后没有顺序游标，"接在后面"必须显式落到时钟上。
+        let time_base = self.timeline.still_time().unwrap_or(0.0);
+        self.timeline
+            .append_shifted(&other.timeline, base, time_base);
 
         HandleRange {
             start: base,
@@ -429,7 +804,10 @@ impl SceneScript {
     /// - `Create` 失败 ⇒ 中止并返回 [`ScriptError`]（前面已创建的对象**保留**，
     ///   与 `Scene` 自身的提交粒度一致 —— Scene 无事务）；
     /// - 成功 ⇒ 产出 [`SceneRecipe`]（时钟树 + 绑定表 + 句柄映射），由调用方插入调度器。
-    pub fn commit<S: SceneContract>(self, scene: &mut S) -> Result<SceneRecipe, ScriptError> {
+    pub fn commit<S: SceneContract + crate::scene_write::SceneRead>(
+        mut self,
+        scene: &mut S,
+    ) -> Result<SceneRecipe, ScriptError> {
         let mut handles: Vec<ObjectId> = Vec::with_capacity(self.creates.len());
 
         for (i, mut components) in self.creates.into_iter().enumerate() {
@@ -464,16 +842,75 @@ impl SceneScript {
 
         let mut forest = ClockForest::new();
         let mut bindings = BindingTable::new();
+        // **G 批**：把 Expr 树里 `Node::Read.object`（脚本局部句柄下标）重写为
+        // `ObjectId` 打包值，再编译 ⇒ 运行期 `Mono::read_object` 解包读组件。
+        // 产物序列化发生在 commit **之前**（persist 走未编译的 `Timeline`），
+        // payload 里 `Read.object` 仍是脚本句柄下标。
+        self.timeline.rewrite_read_objects(&|object| {
+            handles
+                .get(object as usize)
+                .copied()
+                .unwrap_or(ObjectId::DANGLING)
+                .to_packed()
+        });
         self.timeline.compile_with(
             &|idx| handles.get(idx).copied().unwrap_or(ObjectId::DANGLING),
             &mut forest,
             &mut bindings,
         );
 
+        // **AI-07**：引擎只有 O1 求值器。需要历史重放的绑定（历史 payload 的
+        // predicate + Hold，或含 NatRec 的离散层）在装配期显式失败 ——
+        // seek 到中间帧拿错值却静默通过，是本批要消灭的那类洞。
+        bindings
+            .reject_replay()
+            .map_err(ScriptError::ReplayRequiresHistory)?;
+
+        // **BX**：`State` 的 `step` 必须关于 prev 仿射（识别器在 ze-scene-core：
+        // 只有这一层同时看得见表达式树与数学库）。不通过 ⇒ 显式拒绝，不降级 Replay。
+        let state_analyses = self
+            .timeline
+            .analyze_states()
+            .map_err(ScriptError::StateNotAffine)?;
+
+        // **BY**：`State` 计划必须与编译出的 `Step::State.id` 一一对应
+        // （分析器与编译器同为 DFS 序；不在 `Ref` 目标内）。对不上 ⇒ 显式失败，
+        // 不允许"部分 State 没有计划"静默退回重放。
+        for binding in &bindings.bindings {
+            let crate::animation::binding::BindingDriver::Expr(program) = &binding.driver else {
+                continue;
+            };
+            let mut ids = Vec::new();
+            collect_state_ids(program.lowered(), &mut ids);
+            if ids.len() != binding.state_plans.len() {
+                return Err(ScriptError::StateNotAffine(StateUnsupported {
+                    target: binding.target.name().to_string(),
+                    reason: format!(
+                        "State 计划数 {} 与编译出的 State 数 {} 不一致（State 位于 Ref 目标内？）",
+                        binding.state_plans.len(),
+                        ids.len()
+                    ),
+                }));
+            }
+        }
+
+        // **G 批帧内定序**：完整表 + 时钟森林都在手 ⇒ 装配期检查"读先于写"，
+        // 冲突显式报错（不留给运行期读到旧值 / 未定义值）。
+        check_read_order(&bindings, &forest).map_err(ScriptError::OrderConflict)?;
+
+        // `reset = Reset` 的**初值**：此刻场景刚建好、绑定还没写过任何字段
+        // ⇒ 直接读就是"绑定生效前的值"（之后每帧不再需要历史）。
+        for binding in &mut bindings.bindings {
+            if binding.reset == ResetBehavior::Reset && binding.initial.is_none() {
+                binding.initial = binding.target.read(scene);
+            }
+        }
+
         Ok(SceneRecipe {
             forest,
             bindings,
             handles,
+            state_analyses,
         })
     }
 }
@@ -482,4 +919,133 @@ impl From<SceneEncoder> for SceneScript {
     fn from(enc: SceneEncoder) -> Self {
         enc.finish()
     }
+}
+
+/// **BY**：按值表顺序收集 `Step::State.id`（含嵌套子程序）。
+fn collect_state_ids(program: &CompiledExpr, out: &mut Vec<u32>) {
+    use ze_comb::Step;
+    for step in program.steps() {
+        match step {
+            Step::State {
+                id,
+                init,
+                step,
+                predicate,
+            } => {
+                collect_state_ids(init, out);
+                collect_state_ids(step, out);
+                if let Some(predicate) = predicate {
+                    collect_state_ids(predicate, out);
+                }
+                out.push(*id);
+            }
+            Step::Select { then, r#else, .. } => {
+                collect_state_ids(then, out);
+                collect_state_ids(r#else, out);
+            }
+            Step::NatRec { init, step, .. } => {
+                collect_state_ids(init, out);
+                collect_state_ids(step, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// **G 批帧内定序**（装配期，显式报错）：对每条表达式绑定收集其读集
+/// `(规范地址, ObjectId)`（从 `Step::Read`）；对每个读，找同表内所有写
+/// **同一地址 + 同一对象**的绑定（曲线绑定也是写者）；若某写者的时钟起点
+/// **晚于**读者 ⇒ 同一帧内读者会读到旧值 ⇒ [`ExprBindError::ReadOrderConflict`]。
+/// 正确顺序（写者 start ≤ 读者 start）静默通过。
+fn check_read_order(bindings: &BindingTable, forest: &ClockForest) -> Result<(), ExprBindError> {
+    use crate::animation::binding::BindingDriver;
+    use ze_comb::{ChannelRef, CompiledExpr, Step};
+
+    /// 收集程序里的读集（含 `Select` 分支内的读 —— 分支子程序是独立值表，
+    /// 必须递归，否则漏检）。
+    fn collect_reads(program: &CompiledExpr, out: &mut Vec<(ChannelRef, u64)>) {
+        for step in program.steps() {
+            match step {
+                Step::Read { channel, object } => out.push((channel.clone(), *object)),
+                // **B2**：方法的读集来自 `MethodSpec.reads`（方法体是黑盒，
+                // 定序器看不见它读了什么 ⇒ 必须静态声明）。
+                Step::Method { method, object, .. } => {
+                    if let Some(spec) = crate::animation::target::method_entry(&method.name) {
+                        for address in spec.reads {
+                            out.push((ChannelRef::new("zela.scene", *address), *object));
+                        }
+                    }
+                }
+                Step::Select { then, r#else, .. } => {
+                    collect_reads(then, out);
+                    collect_reads(r#else, out);
+                }
+                // 阶段 3：`NatRec` 的 init / step 子程序各自带值表，必须递归。
+                Step::NatRec { init, step, .. } => {
+                    collect_reads(init, out);
+                    collect_reads(step, out);
+                }
+                // **BX**：`State` 同样有 init / step 两个子程序。
+                // **BY**：predicate 是独立的索引域表达式，也走同一读集收集。
+                Step::State {
+                    init,
+                    step,
+                    predicate,
+                    ..
+                } => {
+                    collect_reads(init, out);
+                    collect_reads(step, out);
+                    if let Some(predicate) = predicate {
+                        collect_reads(predicate, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for binding in &bindings.bindings {
+        let BindingDriver::Expr(program) = &binding.driver else {
+            continue; // 曲线绑定没有读集
+        };
+        let reader_start = forest.start_offset(binding.clock);
+        let mut reads = Vec::new();
+        collect_reads(program.lowered(), &mut reads);
+        for (channel, object) in reads {
+            for writer in &bindings.bindings {
+                if writer.target.address() == channel.name.as_str()
+                    && writer.target.target_id() == ObjectId::from_packed(object)
+                    && forest.start_offset(writer.clock) > reader_start
+                {
+                    return Err(ExprBindError::ReadOrderConflict {
+                        reader: binding.target.name().to_string(),
+                        writer: writer.target.name().to_string(),
+                        address: channel.name.clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// **阶段 0**：帧内定序检查也是装配期分析 pass。
+pub fn register_passes(registry: &mut ze_comb::PassRegistry) {
+    registry
+        .register(ze_comb::PassInfo {
+            name: "scene.read_order",
+            kind: ze_comb::PassKind::Analysis,
+            semantics: ze_comb::Semantics::Preserving,
+            owner: "ze-scene-core",
+        })
+        .expect("read order pass 名唯一");
+    // **BX**：`State.step` 的仿射识别也是装配期分析 pass（只读 IR、写 side table）。
+    registry
+        .register(ze_comb::PassInfo {
+            name: "scene.state_affine",
+            kind: ze_comb::PassKind::Analysis,
+            semantics: ze_comb::Semantics::Preserving,
+            owner: "ze-scene-core",
+        })
+        .expect("state affine pass 名唯一");
 }

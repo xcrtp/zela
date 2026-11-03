@@ -1,0 +1,171 @@
+//! 能力覆盖矩阵的门禁逻辑（B7 Step 5）——纯函数用例，不碰文件系统。
+//!
+//! 覆盖三件事：能力清单从源码抽得对、使用判定两种形态（方法调用 / 构造器）都认、
+//! 豁免必须指向真实存在的 GAPS 行且不能过期。
+
+use xtask::{Capability, Exemption, check_coverage, collect_capabilities, parse_exemptions};
+
+const API: &str = r#"
+pub struct SceneApi<'a> {
+    /// 构造圆组件。
+    pub circle: fn(&'a dyn Pod, shape: Circle) -> Handle,
+
+    /// 创建对象：组件句柄列表。
+    pub spawn: fn(&'a dyn Pod, components: Vec<Handle>) -> Handle,
+
+    /// 顺序播放一段动画。
+    pub animate: fn(&'a dyn Pod, object: Handle, clip: Handle, duration: f64) -> (),
+}
+
+pub struct ContentApi<'a> {
+    /// 编译纯文本为描边路径。
+    pub text: fn(&'a dyn Pod, spec: Text) -> PathList,
+}
+"#;
+
+const TYPES: &str = r#"
+pub enum TransformChannel {
+    // 注释要跳过
+    Position,
+    Rotation,
+}
+"#;
+
+const TARGET: &str = r#"
+scalar_spec!(CIRCLE_RADIUS, "CircleRadius", "Circle.radius", Circle, radius);
+scalar_spec!(MORPH_T, "MorphT", "MorphShape.t", MorphShape, t);
+pub static TRANSFORM_POSITION: FieldSpec = FieldSpec {
+    name: "TransformPosition",
+    address: "Transform.position",
+    component: "Transform",
+    field: "position",
+};
+"#;
+
+const GAPS: &str = r#"
+| W1-05 | 某能力 | 层 | **记账** | 证据 |
+"#;
+
+fn capabilities() -> Vec<Capability> {
+    collect_capabilities(API, TYPES, TARGET, &[]).expect("夹具源码应抽得出全部类别")
+}
+
+/// 方法名 / 枚举变体 / 构造器别名都从源码抽（顺序 = 源码顺序）。
+#[test]
+fn capabilities_come_from_source() {
+    let caps = capabilities();
+    let ids: Vec<String> = caps.iter().map(Capability::id).collect();
+    assert_eq!(
+        ids,
+        vec![
+            "scene:circle",
+            "scene:spawn",
+            "scene:animate",
+            "content:text",
+            "Target:CircleRadius",
+            "Target:MorphT",
+            "Target:TransformPosition",
+        ]
+    );
+    // 单结构体参数才有构造器别名；`Vec<Handle>` / 多参数没有。
+    let alias = caps
+        .iter()
+        .find(|cap| cap.name == "circle")
+        .and_then(|cap| cap.alias.as_deref());
+    assert_eq!(alias, Some("Circle"));
+    assert!(caps.iter().find(|c| c.name == "spawn").unwrap().alias.is_none());
+    assert!(caps.iter().find(|c| c.name == "animate").unwrap().alias.is_none());
+}
+
+/// 方法调用与构造器两种写法都算覆盖；`scene.clip` 不得被 `scene.clip_transform` 误判。
+#[test]
+fn usage_accepts_method_and_constructor_forms() {
+    let caps = capabilities();
+    let scripts = r#"
+        local c = Circle { x = 0.0, y = 0.0, r = 1.0 }
+        scene.spawn({ c })
+        content.text(Text { source = "AB" })
+        scene.animate(c, scene.clip("MorphT", Curve.Phase { omega = 1.0 }), 1.0)
+        scene.parallel(c, scene.clip("Circle.radius", Curve.Const { value = 1.0 }))
+        expr.bind { target = Transform.channel.position }
+    "#;
+    let exemptions: Vec<Exemption> = Vec::new();
+    let report = check_coverage(&caps, scripts, &exemptions, GAPS).expect("全部覆盖");
+    assert_eq!(report.total, caps.len());
+    assert_eq!(report.covered.len(), caps.len());
+}
+
+/// 两项能力的最小夹具（豁免 / 过期用例不需要整份源码）。
+fn two_caps() -> Vec<Capability> {
+    vec![
+        Capability {
+            kind: "scene".to_string(),
+            name: "spawn".to_string(),
+            alias: None,
+            spellings: Vec::new(),
+            location: "api.rs:7".to_string(),
+        },
+        Capability {
+            kind: "scene".to_string(),
+            name: "circle".to_string(),
+            alias: Some("Circle".to_string()),
+            spellings: Vec::new(),
+            location: "api.rs:4".to_string(),
+        },
+    ]
+}
+
+/// 未覆盖且未豁免 ⇒ 报错并点名（含出处）；补上豁免后通过。
+#[test]
+fn uncovered_capability_fails_unless_exempted() {
+    let caps = two_caps();
+    let scripts = "scene.spawn({})";
+    let error = check_coverage(&caps, scripts, &[], GAPS).expect_err("未覆盖 ⇒ fail");
+    assert!(error.contains("scene:circle"), "错误应点名：{error}");
+    assert!(error.contains("api.rs:4"), "错误应给出处：{error}");
+
+    let exemptions = parse_exemptions("scene:circle -> W1-05  # 说明\n").expect("合法豁免");
+    let report = check_coverage(&caps, scripts, &exemptions, GAPS).expect("豁免后通过");
+    assert_eq!(report.exempted.len(), 1);
+}
+
+/// 豁免必须指向 GAPS 里真实存在的表格行（不能只写在豁免文件里）。
+#[test]
+fn exemption_requires_a_real_gaps_row() {
+    let caps = capabilities();
+    let exemptions = parse_exemptions("scene:circle -> W1-99\n").expect("格式合法");
+    let error = check_coverage(&caps, "scene.spawn({})", &exemptions, GAPS)
+        .expect_err("GAPS 无此行 ⇒ fail");
+    assert!(error.contains("W1-99"), "错误应点名：{error}");
+}
+
+/// 豁免过期（能力已被作品用到）⇒ fail：机制不允许残留的死豁免。
+#[test]
+fn stale_exemption_fails() {
+    let caps = two_caps();
+    let exemptions = parse_exemptions("scene:circle -> W1-05\n").expect("格式合法");
+    let error = check_coverage(&caps, "scene.spawn({}) scene.circle(Circle {})", &exemptions, GAPS)
+        .expect_err("已覆盖还豁免 ⇒ fail");
+    assert!(error.contains("豁免已过期"), "错误应说明：{error}");
+}
+
+/// 豁免格式错误（缺 `->` / 缺 `kind:` / 编号不是 `<批次>-<序号>`）都要显式报错。
+#[test]
+fn exemption_format_is_enforced() {
+    for source in ["scene:circle", "circle -> W1-05", "scene:circle -> 101", "scene:circle -> w1-05"] {
+        assert!(
+            parse_exemptions(source).is_err(),
+            "`{source}` 应被拒绝"
+        );
+    }
+    // 任何**批次**的记账都可引用（`W1` / `AG` …），只要编号形态正确。
+    assert!(parse_exemptions("Target:Reveal.end -> AG-02\n").is_ok());
+}
+
+/// 整类能力抽不到（源码结构变了）⇒ 抽取阶段就显式报错，不得安静地少检查。
+#[test]
+fn missing_capability_class_is_an_explicit_error() {
+    let error = collect_capabilities(API, TYPES, "// 寻址表被挪走了\n", &[])
+        .expect_err("抽不到 Target ⇒ fail");
+    assert!(error.contains("Target"), "错误应点名缺失类别：{error}");
+}

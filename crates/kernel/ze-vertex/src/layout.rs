@@ -29,6 +29,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use super::aa::AaModel;
 use super::cache::CacheStrategy;
+use super::semantic::Semantic;
 
 // ─── 步进模式（实例化支持） ───────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ impl AttribType {
     /// B2-0a 修正：原规则是「对齐到属性自身大小」，但 3D 契约的紧凑布局
     /// （`uv(F32x2)@12` / `shading_normal(F32x3)@20`，stride 32）在该规则下无法表达
     /// （会算出 16 / 24 / stride 36），而这两个偏移是既有几何写出端的真实字节布局
-    /// （铁律 4：不得改顶点格式）。按后端的最小合法对齐（4）计算，既满足后端校验，
+    /// （不得改顶点格式）。按后端的最小合法对齐（4）计算，既满足后端校验，
     /// 又让 2D 既有布局的 offset **逐位不变**（`standard()` 仍是 0/8/16/20，stride 24）。
     pub const fn alignment(self) -> u32 {
         4
@@ -102,8 +103,18 @@ impl VertexAttrib {
     /// `shading_normal` 是 3D 布局（[`VertexLayout::standard_3d`]）专用（D1 顶点格式
     /// 不统一）。`validate()` 对 Vertex 步进 buffer 做**成员判定**（不是完整性判定），
     /// 扩词汇表不破坏任何既有布局。
-    pub const VOCABULARY: [&'static str; 6] = [
-        "position", "uv", "shading_normal", "attrib0", "attrib1", "attrib2",
+    ///
+    /// 字符串由 [`Semantic::as_str`](crate::Semantic::as_str) 派生 —— 词汇表只有一份
+    /// 定义（枚举），这里只是它的字符串视图。
+    pub const VOCABULARY: [&'static str; Semantic::COUNT] = [
+        Semantic::Position.as_str(),
+        Semantic::Uv.as_str(),
+        Semantic::ShadingNormal.as_str(),
+        Semantic::Attrib0.as_str(),
+        Semantic::Attrib1.as_str(),
+        Semantic::Attrib2.as_str(),
+        Semantic::Joints0.as_str(),
+        Semantic::Weights0.as_str(),
     ];
 }
 
@@ -198,7 +209,7 @@ pub enum VertexLayoutError {
         needed: u32,
     },
     // ── 实例化扩展 ──
-    #[error("Vertex 步进 buffer 的属性（下标 {index}）语义 {semantic:?} 不在契约词汇表 [\"position\", \"uv\", \"shading_normal\", \"attrib0\", \"attrib1\", \"attrib2\"] 内（宿主自定义语义请放 Instance 步进 buffer）")]
+    #[error("Vertex 步进 buffer 的属性（下标 {index}）语义 {semantic:?} 不在契约词汇表 [\"position\", \"uv\", \"shading_normal\", \"attrib0\", \"attrib1\", \"attrib2\", \"joints0\", \"weights0\"] 内（宿主自定义语义请放 Instance 步进 buffer）")]
     IllegalSemantic { index: usize, semantic: String },
     #[error("顶点输入描述至少需要一个 buffer")]
     EmptyInput,
@@ -274,6 +285,33 @@ impl VertexLayout {
         Self {
             attribs,
             stride,
+            aa_model: AaModel::None,
+            cache: CacheStrategy::Static,
+            step_mode: StepMode::Vertex,
+        }
+    }
+
+    /// 3D **线段**布局（顶点契约扩展）：`position(F32x3)@0` → stride = 12。
+    ///
+    /// 与 [`Self::standard_3d`] 并存的第二套 3D 布局：
+    /// - 线段不消费 UV（line 路径绑的是 1×1 透明黑兜底纹理，采样值恒 0）；
+    /// - 线段不需要逐顶点着色法线（常量 `(0,0,1)` 由 `vs_line` 入口给出，
+    ///   与默认头顶光点积为 1 ⇒ `lit = 1`，与写出端补 `(0,0,1)` 等价）。
+    ///
+    /// 因此只需位置：每顶点 12 字节，而非 32 字节。采纳布局由
+    /// `ze_vertex::reconcile`（需求 `[Position]` × 提供方）算出，本函数给出
+    /// 声明形态，两者逐字段一致（单测固定）。
+    pub fn standard_3d_lines() -> Self {
+        let mut attribs = vec![VertexAttrib {
+            semantic: Semantic::Position.as_str(),
+            ty: AttribType::F32x3,
+            offset: 0,
+        }];
+        let stride = Self::compute_layout(&mut attribs);
+        Self {
+            attribs,
+            stride,
+            // 与 standard_3d 同一套声明：3D 走硬件 MSAA、缓冲按内容寻址跨帧复用。
             aa_model: AaModel::None,
             cache: CacheStrategy::Static,
             step_mode: StepMode::Vertex,
@@ -455,6 +493,41 @@ mod tests {
         assert_eq!(l.aa_model, AaModel::None);
         assert_eq!(l.cache, CacheStrategy::Static, "R-E 实测：3D mesh/line 按版本/内容寻址跨帧复用");
         l.validate().unwrap();
+    }
+
+    /// 线段布局：只有位置，`position@0` / stride 12，且与调和结果逐字段一致。
+    ///
+    /// 后半段是这条契约的"第二份表达"对齐：`standard_3d_lines()` 与
+    /// `reconcile([Position], standard_3d())` 必须给出同一套属性与 stride。
+    #[test]
+    fn standard_3d_lines_contract() {
+        let l = VertexLayout::standard_3d_lines();
+        assert_eq!(l.attribs.len(), 1);
+        assert_eq!(l.attribs[0].semantic, "position");
+        assert_eq!(l.attribs[0].ty, AttribType::F32x3);
+        assert_eq!(l.attribs[0].offset, 0);
+        assert_eq!(l.stride, 12);
+        l.validate().unwrap();
+
+        let reconciled = crate::reconcile::reconcile(
+            &[Semantic::Position],
+            &VertexLayout::standard_3d(),
+        )
+        .unwrap();
+        assert_eq!(
+            reconciled.layout.attribs, l.attribs,
+            "线段布局必须等于 [Position] 的调和结果"
+        );
+        assert_eq!(reconciled.layout.stride, l.stride);
+    }
+
+    /// 词汇表只有一份定义：`VOCABULARY` 必须逐字等于 `Semantic::ALL` 的字符串视图。
+    ///
+    /// 这条断言的作用：新增语义时若只改枚举不改数组（或反过来），这里立刻红。
+    #[test]
+    fn vocabulary_is_derived_from_semantic_enum() {
+        let from_enum: Vec<&'static str> = Semantic::ALL.iter().map(|s| s.as_str()).collect();
+        assert_eq!(VertexAttrib::VOCABULARY.to_vec(), from_enum);
     }
 
     /// 词汇表增量：3D 语义在契约词汇表内（validate 通过），2D 语义仍是合法子集。

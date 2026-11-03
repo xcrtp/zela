@@ -1,5 +1,7 @@
 # zela-scene-ecs
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-scene-ecs.md`](../../../docs/modules/zela-scene-ecs.md)。
+
 > **场景层的 ECS 实现**（B3-1d 起；原 `zela-scene`）。只装"实现"：
 > ① `Scene`（hecs 适配）/ 资源 / 延迟命令 / 生命周期；
 > ② 全部 System（`BindingApply` / `MorphApply` / `CameraDrive` / `DirectorAdvance` / …）；
@@ -154,7 +156,7 @@ egui 原生输入的读取与翻译只发生在 `zela-egui` 的 host。
 |------|----------|
 | [`scene`] | `Scene`(hecs World + ResourceMap), `components`(= `comp`: `Camera3D`, `Projection`, `MeshGeometry`, `Material3D`, `Circle`, `Path`, `MorphShape`, `Line`, `PhaseAnim`, …), `primitives`(`wireframe_cube` / `solid_cube` / `parametric_surface`) |
 | [`contract`] | 契约层 hecs 实现：`WorldView` / `WorldScene` / `object_id_of` / `entity_of` + `SceneRead` 转发 |
-| [`animation`] | `Binding` / `BindingTable` / `SeekKind` / `Target`（P0 trait 化：`CircleRadius` / `Phase` / `CameraEye` / `MorphT` / `Camera2DFraming` / **`RevealRange`** / **`OpacityValue`** / **`TransformValue`**；T0-② 后 target 自报 `name()` / `target_id()`，分类清单已删除）/ `Timeline`（P3 顺序编排）+ `BindingApplySystem` / `MorphApplySystem` |
+| [`animation`] | `Binding` / `BindingTable` / `SeekKind` / `Target`（提案 #6：**寻址数据化** —— `FieldSpec` 一张表持有 `name` / `address` / `component` / `field` / `ty` / `write` / `read`，`TARGETS` 是唯一地址表；旧的 `CircleRadius` 等具体类型保留为委托包装，`TransformChannelValue` 走三条通道）/ `Timeline`（P3 顺序编排）+ `BindingApplySystem` / `MorphApplySystem` |
 | [`camera_input`] | `CameraInputSystem`（P1：相机状态归场景对象；K0：**按 `CameraMode` 分派**）+ 控制器纯函数 `apply_pan_zoom` / `apply_orbit` / `apply_fps` |
 | [`director_state`] | `DirectorState`(包装 `ze_time::Director`), `DirectorAdvanceSystem` |
 | [`domain`] | `CameraCommand` / `CameraMode`；`SceneEvent` / `InputEvents` / `WidgetId`；`SceneView` / `LayerDescriptor` / `LayerKind` / `LayerId` / `LayerBlend` / `ContentHandle` |
@@ -236,7 +238,7 @@ derive_more (full) / thiserror / smart-default / derive-new / derive_builder
 hecs = "0.11"
 ```
 
-> **2026-10-19 收口**：`glam` 依赖已从 Cargo.toml 删除；源码 0 处直接引用
+> **2026-10-19 定案**：`glam` 依赖已从 Cargo.toml 删除；源码 0 处直接引用
 > （数学类型一律走 `ze-notion` 或本层的转发模块 [`types`](src/types.rs)），
 > 仅剩 2 行说明性注释（`types.rs` 历史沿革 / `transform.rs` 的 Y 翻转约定）。
 

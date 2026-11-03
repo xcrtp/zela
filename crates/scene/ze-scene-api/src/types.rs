@@ -5,10 +5,10 @@
 //   `TypeSpec` + 双向转换 + `IntoPodTypeName`；
 // - 宿主侧 Service 把它们的值转成场景原语（`ze_object` / `ze_time` …）。
 
-use ze_scene_core::animation::target::TransformChannel as NativeTransformChannel;
-use ze_time::{AnimValue, Curve as NativeCurve, Interp as NativeInterp};
+use ze_time::Interp as NativeInterp;
 use ze_pod_core::Handle;
 use ze_pod_macro::PodType;
+use ze_scene_macros::SceneComponent;
 
 /// 颜色（取代旧的 `rgba: u32` 打包）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PodType)]
@@ -51,7 +51,7 @@ pub struct Vec4 {
 
 /// 3D 相机参数（B1-D）。`aspect` 缺省由渲染视口提供（每帧覆盖），
 /// 故不暴露；近 / 远裁剪固定 0.1 / 100（与 demo3d 一致）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Camera3D")]
 pub struct Camera3D {
     pub eye: Vec3,
@@ -60,9 +60,20 @@ pub struct Camera3D {
     pub fov_y: f32,
 }
 
+/// **BV-5**：3D 视图的光追开关。挂在**同一个对象**上（与 `Camera3D` 同一实体），
+/// 缺席 ⇒ 该视图只光栅（既有作品的图层与像素逐位不变）。
+///
+/// 只对矢量后端有意义：wgpu 没有光追 pass，路由层会显式拒绝而不是静默丢弃。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PodType, SceneComponent)]
+#[pod_type(name = "zela.RayTrace")]
+pub struct RayTrace {
+    /// `false` ⇒ 不跑光追（与不挂组件同义；保留开关是为了能按条件关掉）。
+    pub enabled: bool,
+}
+
 /// 立方体网格参数（B1-D）。**参数化构造器**：只传半边长，不传顶点数组 ——
 /// 顶点由宿主侧 `wireframe_cube` / `solid_cube` 生成（B1-D 硬约束）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Cube")]
 pub struct Cube {
     /// 半边长（模型空间中心在原点）。
@@ -71,10 +82,10 @@ pub struct Cube {
     pub solid: bool,
 }
 
-/// 3D 摆放（B1-D）。映射到原生 `Transform`（单一真源：位置 / 旋转 / 缩放
+/// 3D 摆放（B1-D）。映射到原生 `Transform`（唯一来源：位置 / 旋转 / 缩放
 /// 都在摆放组件上）。**不扩展** 2D 的 `Transform { x, y, z }` —— 那会破坏
 /// 冻结的 fourier / storyboard 脚本（Lua 绑定要求全字段）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Transform3D")]
 pub struct Transform3D {
     pub position: Vec3,
@@ -96,7 +107,7 @@ pub enum ShaderVariant {
 ///
 /// **只暴露意图**（D19）：`double_sided` / `transparent` 是作者语义，
 /// 后端把它们翻译成 `cull_mode` / `blend`（脚本不得出现 GPU 机制名）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Material3D")]
 pub struct Material3D {
     pub color: Color,
@@ -147,7 +158,7 @@ pub enum TextureFilter {
 }
 
 /// Surface 声明（B3 Step 0）：一次构造 `Surface` + `SurfaceRenderer` + `SurfaceTexture`。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Surface")]
 pub struct Surface {
     pub min_x: f32,
@@ -175,12 +186,12 @@ pub enum LightKind {
     /// 方向光：`direction` 是光传播方向（世界空间，从光源指向场景）。
     Directional { direction: Vec3 },
     /// 点光：`range` 是有效半径（世界单位）。**不带 position** —— 位置由
-    /// 同一对象的 `Transform` 提供（B1 铁律 3：单一真源）。
+    /// 同一对象的 `Transform` 提供（唯一来源）。
     Point { range: f32 },
 }
 
 /// 光源参数（B1-D）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Light")]
 pub struct Light {
     pub kind: LightKind,
@@ -189,7 +200,7 @@ pub struct Light {
 }
 
 /// 圆组件。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Circle")]
 pub struct Circle {
     pub x: f32,
@@ -198,7 +209,7 @@ pub struct Circle {
 }
 
 /// 描边组件（`color` 是结构体，不再打包）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Stroke")]
 pub struct Stroke {
     pub width: f32,
@@ -206,7 +217,7 @@ pub struct Stroke {
 }
 
 /// 2D 相机取景组件。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Camera2D")]
 pub struct Camera2D {
     pub center: Vec2,
@@ -214,7 +225,7 @@ pub struct Camera2D {
 }
 
 /// 书写动画组件（扁平点表的替代：`Array<Vec2>`）。
-#[derive(Clone, Debug, PartialEq, PodType)]
+#[derive(Clone, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Reveal")]
 pub struct Reveal {
     pub points: Vec<Vec2>,
@@ -225,7 +236,7 @@ pub struct Reveal {
 ///
 /// 它复用 `Reveal` 的组件与录制路径（含 S2 的 Transform 折算），
 /// 只是**初态可见**；仍可继续用 `Target.RevealRange` 做二次书写。
-#[derive(Clone, Debug, PartialEq, PodType)]
+#[derive(Clone, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Polyline")]
 pub struct Polyline {
     pub points: Vec<Vec2>,
@@ -237,6 +248,14 @@ pub struct Polyline {
 #[pod_type(name = "zela.Parent")]
 pub struct Parent {
     pub parent: Handle,
+    /// 三个变换维度的继承权重（`1.0` = 全量继承，旧行为）。
+    pub position: f32,
+    pub rotation: f32,
+    pub scale: f32,
+    /// 三个样式维度的继承权重（`0.0` = 不继承，旧行为）。
+    pub opacity: f32,
+    pub fill: f32,
+    pub stroke: f32,
 }
 
 /// 对象名（便于排查 / 文本组父对象）。
@@ -253,25 +272,40 @@ pub struct Opacity {
     pub value: f32,
 }
 
-/// Transform 的写入通道（S3）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PodType)]
-#[pod_type(name = "zela.TransformChannel")]
-pub enum TransformChannel {
-    Auto,
-    Position,
-    Rotation,
-    Scale,
+/// 组标签（B7 Step 4）：**纯组合**，不含变换。
+///
+/// 与 `Parent` 的分工（这也是「补作品而不是删」的依据）：`Parent` 级联父子变换，
+/// `Group` 只给对象打一个"同属一批"的标签，供整体查询 / 批量控制使用；
+/// 二者不能互相替代，也**不支持嵌套**。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PodType, SceneComponent)]
+#[pod_type(name = "zela.Group")]
+pub struct Group {
+    pub id: u32,
 }
 
-impl TransformChannel {
-    pub fn to_native(self) -> NativeTransformChannel {
-        match self {
-            Self::Auto => NativeTransformChannel::Auto,
-            Self::Position => NativeTransformChannel::Position,
-            Self::Rotation => NativeTransformChannel::Rotation,
-            Self::Scale => NativeTransformChannel::Scale,
-        }
-    }
+/// 函数图像相位参数（B7 Step 4）：`Target.Phase` 每帧写 `phase`。
+///
+/// `phase` 的消费者只有函数图像对象（`x + phase` 的采样平移）；脚本层目前
+/// 没有创建函数图像对象的入口 ⇒ 本组件可挂、可写，但**不改变像素**（GAPS W1-06）。
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.PhaseAnim")]
+pub struct PhaseAnim {
+    pub phase: f32,
+    pub omega: f32,
+}
+
+/// 可变形形状（B7 Step 4）：`from` / `to` 两条折线 + 形变参数 `t`。
+///
+/// `Target.MorphT` 每帧写 `t` ∈ [0,1]；渲染侧对两条折线按弧长插值。
+/// `samples = 0` 表示用默认顶点数（与 `MorphShape::new` 一致）。
+#[derive(Clone, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.Morph")]
+pub struct Morph {
+    pub from: Vec<Vec2>,
+    pub to: Vec<Vec2>,
+    pub closed: bool,
+    pub t: f32,
+    pub samples: u32,
 }
 
 /// 线样式（**纯值**；与组件 `Stroke` 分开，避免"类型构造器返回句柄"的歧义）。
@@ -283,7 +317,7 @@ pub struct LineStyle {
 }
 
 /// 坐标网格组件（容器；几何由 `AxesRefreshSystem` 每帧生成）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Axes2D")]
 pub struct Axes2D {
     /// 刻度的屏幕空间最小间距（像素）。
@@ -295,7 +329,7 @@ pub struct Axes2D {
 }
 
 /// 箭头图元。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Arrow")]
 pub struct Arrow {
     pub from: Vec2,
@@ -305,14 +339,67 @@ pub struct Arrow {
 }
 
 /// 实心填充样式。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Fill")]
 pub struct Fill {
     pub color: Color,
 }
 
+// ─── PE：绘制参数（后端已实现能力的场景层入口）────────────────────────────
+//
+// 每个组件**挂上即开启**（缺席 = 当前行为），字段语义与 `ze_render_ir::paint`
+// 一一对应；单位与坐标口径写在各字段上，脚本层不得自行换算。
+
+/// 渐变：色标沿 `from → to` **均匀分布**（后端原生支持多 stop）。
+///
+/// `from` / `to` 是**世界坐标**（与 `Circle` / `Path` 等图元同一空间、`z` 恒为 0）：
+/// 录制层用与几何同一份相机仿射换算到屏幕，再由矢量映射换算到后端世界坐标。
+#[derive(Clone, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.Gradient")]
+pub struct Gradient {
+    /// 至少两个色标。
+    pub stops: Vec<Color>,
+    pub from: Vec3,
+    pub to: Vec3,
+}
+
+/// 虚线：三项都是**曲线参数 u**（1 = 一整条曲线），不是屏幕像素。
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.Dash")]
+pub struct Dash {
+    pub period: f32,
+    pub duty: f32,
+    pub phase: f32,
+}
+
+/// 第二套 paint（tween 的另一端）：`mix` = 0 全用第一套、1 全用第二套。
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.SecondPaint")]
+pub struct SecondPaint {
+    pub fill: Color,
+    pub stroke: Color,
+    pub background: Color,
+    pub mix: f32,
+}
+
+/// 背景描边（第三色）：画在填充之下；`width` 是场景单位。
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.BackgroundStroke")]
+pub struct BackgroundStroke {
+    pub color: Color,
+    pub width: f32,
+}
+
+/// 部分路径窗口 `[lo, hi]`：单位是**曲线索引 + t**，不是像素。
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.CurveWindow")]
+pub struct CurveWindow {
+    pub lo: f32,
+    pub hi: f32,
+}
+
 /// 逐对象摆放（当前只暴露位置；旋转 / 缩放沿用默认）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.Transform")]
 pub struct Transform {
     pub x: f32,
@@ -358,17 +445,36 @@ impl ze_pod_core::IntoPodTypeName for PathList {
 }
 
 /// 书写组件组：`Reveal` + `StrokeSolid`（一个句柄对应多个组件）。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.RevealPath")]
 pub struct RevealPath {
     pub path: Path,
 }
 
 /// 静态路径组件组：`Path` + `StrokeSolid`。
-#[derive(Clone, Copy, Debug, PartialEq, PodType)]
+#[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.PathShape")]
 pub struct PathShape {
     pub path: Path,
+}
+
+/// 路径跟随组件（动画层阶段 2）：对象沿折线按**归一化弧长** `t` 移动。
+///
+/// `points` / `closed` 与 `Reveal` / `Polyline` 同一口径（折线点表 → `Path2D`），
+/// 因此"跟随"与"绘制"用的是同一条路径数据；`t` 是唯一的每帧变量
+/// （`Target.PathFollow.t` 写），`orient` 决定是否把切线方向写进 `Transform.rotation`。
+///
+/// 与 `PathShape` 的区别：那个是**绘制**（`Path` + 描边），本组件**不绘制** ——
+/// 它只驱动同对象 `Transform` 的摆放。
+#[derive(Clone, Debug, PartialEq, PodType, SceneComponent)]
+#[pod_type(name = "zela.PathFollow")]
+pub struct PathFollow {
+    pub points: Vec<Vec2>,
+    pub closed: bool,
+    /// 归一化弧长 ∈ [0, 1]（超出按端点钳位）。
+    pub t: f32,
+    /// `true` ⇒ 同时按切线方向旋转（`atan2(tangent.y, tangent.x)`）。
+    pub orient: bool,
 }
 
 /// 公式编译请求。
@@ -416,104 +522,45 @@ impl KeyframeInterp {
     }
 }
 
-/// 曲线：脚本侧的统一枚举（取代 sin / phase / constant / ramp / ramp2 五个函数）。
-///
-/// `dur` 用 `f64`：段内关键帧时间与 `Timeline` 的 `duration` 同精度，
-/// 否则 `1/N` 这类时长在 f32 上会与手写分镜差一个 ulp。
-#[derive(Clone, Debug, PartialEq, PodType)]
-#[pod_type(name = "zela.Curve")]
-pub enum Curve {
-    Const { value: f32 },
-    Sin { base: f32, amp: f32, omega: f32 },
-    Phase { omega: f32 },
-    Ramp { from: f32, to: f32, dur: f64 },
-    Ramp2 { from: Vec2, to: Vec2, dur: f64 },
-    /// **2D 公转**（S4）：`r * (cos θ, sin θ)`，`θ = speed * t + initial_angle`。
-    Orbit { radius: f32, speed: f32, initial_angle: f32 },
-    /// **标量关键帧**（S4）：段内 `t` → 值，按 `interpolation` 插值。
-    Keyframes { keys: Vec<ScalarKey>, interpolation: KeyframeInterp },
-}
-
-impl Curve {
-    /// 绑定层的曲线 → 场景层的曲线（装配期一次）。
-    pub fn to_native(&self) -> NativeCurve {
-        match self {
-            Curve::Const { value } => NativeCurve::Const(AnimValue::Scalar(*value)),
-            Curve::Sin { base, amp, omega } => NativeCurve::Sin {
-                base: *base,
-                amp: *amp,
-                omega: *omega,
-            },
-            Curve::Phase { omega } => NativeCurve::Phase { omega: *omega },
-            Curve::Ramp { from, to, dur } => NativeCurve::Keyframes {
-                keys: vec![
-                    (0.0, AnimValue::Scalar(*from)),
-                    (*dur, AnimValue::Scalar(*to)),
-                ],
-                interpolation: NativeInterp::Linear,
-            },
-            Curve::Ramp2 { from, to, dur } => NativeCurve::Keyframes {
-                keys: vec![
-                    (0.0, AnimValue::Vec2(ze_notion::Vec2::new(from.x, from.y))),
-                    (*dur, AnimValue::Vec2(ze_notion::Vec2::new(to.x, to.y))),
-                ],
-                interpolation: NativeInterp::Linear,
-            },
-            Curve::Orbit {
-                radius,
-                speed,
-                initial_angle,
-            } => NativeCurve::Orbit2D {
-                radius: *radius,
-                speed: *speed,
-                initial_angle: *initial_angle,
-            },
-            Curve::Keyframes { keys, interpolation } => NativeCurve::Keyframes {
-                keys: keys
-                    .iter()
-                    .map(|key| (key.t, AnimValue::Scalar(key.value)))
-                    .collect(),
-                interpolation: interpolation.to_native(),
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// E 批验收：组件的 `SceneComponent` 常量与既有 `register_fn1_named`
+    /// 手写字符串**逐字一致**（声明文件因此逐字节不变）。
     #[test]
-    fn script_orbit_maps_to_2d_orbit() {
-        let native = Curve::Orbit {
-            radius: 2.0,
-            speed: 1.0,
-            initial_angle: 0.0,
+    fn component_names_match_registered_ctors() {
+        fn check<T: crate::SceneComponent>(ctor: &str, pod: &str) {
+            assert_eq!(T::CTOR_NAME, ctor, "CTOR_NAME");
+            assert_eq!(T::POD_TYPE_NAME, pod, "POD_TYPE_NAME");
         }
-        .to_native();
-        assert!(matches!(native, NativeCurve::Orbit2D { radius, .. } if radius == 2.0));
+        check::<Circle>("circle", "zela.Circle");
+        check::<Stroke>("stroke", "zela.Stroke");
+        check::<Camera2D>("camera2d", "zela.Camera2D");
+        check::<Camera3D>("camera3d", "zela.Camera3D");
+        check::<RayTrace>("ray_trace", "zela.RayTrace");
+        check::<Cube>("cube", "zela.Cube");
+        check::<Material3D>("material3d", "zela.Material3D");
+        check::<Light>("light", "zela.Light");
+        check::<Surface>("surface", "zela.Surface");
+        check::<Group>("group", "zela.Group");
+        check::<PhaseAnim>("phase_anim", "zela.PhaseAnim");
+        check::<Morph>("morph", "zela.Morph");
+        check::<Transform3D>("transform3d", "zela.Transform3D");
+        check::<Reveal>("reveal", "zela.Reveal");
+        check::<Polyline>("polyline", "zela.Polyline");
+        check::<Axes2D>("axes2d", "zela.Axes2D");
+        check::<Arrow>("arrow", "zela.Arrow");
+        check::<Fill>("fill", "zela.Fill");
+        check::<Gradient>("gradient", "zela.Gradient");
+        check::<Dash>("dash", "zela.Dash");
+        check::<SecondPaint>("second_paint", "zela.SecondPaint");
+        check::<BackgroundStroke>("background_stroke", "zela.BackgroundStroke");
+        check::<CurveWindow>("curve_window", "zela.CurveWindow");
+        check::<Transform>("transform", "zela.Transform");
+        check::<RevealPath>("reveal_path", "zela.RevealPath");
+        check::<PathShape>("path_shape", "zela.PathShape");
+        check::<PathFollow>("path_follow", "zela.PathFollow");
     }
 
-    #[test]
-    fn script_keyframes_map_to_scalar_keyframes() {
-        let native = Curve::Keyframes {
-            keys: vec![
-                ScalarKey { t: 0.0, value: 0.0 },
-                ScalarKey { t: 1.0, value: 2.0 },
-            ],
-            interpolation: KeyframeInterp::Step,
-        }
-        .to_native();
-        match native {
-            NativeCurve::Keyframes {
-                keys,
-                interpolation,
-            } => {
-                assert_eq!(keys.len(), 2);
-                assert_eq!(keys[1].1.scalar(), 2.0);
-                assert!(matches!(interpolation, NativeInterp::Step));
-            }
-            other => panic!("期望 Keyframes，实际 {other:?}"),
-        }
-    }
 }

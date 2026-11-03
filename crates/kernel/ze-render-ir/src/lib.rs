@@ -23,39 +23,52 @@
 // 为什么 `ToShape2D` 吃的是仿射矩阵而不是相机：见 `degrade.rs` 顶部注释
 // （相机在场景对象层，IR 层认识它会成环）。
 
+pub mod bind;
 pub mod caps;
 pub mod degrade;
 pub mod draw;
 pub mod layer;
 pub mod mesh;
+pub mod paint;
+pub mod params;
 pub mod pipeline;
 pub mod shape;
 pub mod style;
 pub mod target;
 pub mod uniform;
 
-pub use degrade::ToShape2D;
+pub use bind::{BindSymbolError, BindSymbols, GroupSymbol};
 pub use caps::{
-    CapabilityNegotiationError, NAMESPACES, PINNED_FINGERPRINTS, RenderCapabilitySet,
-    fingerprints, negotiate, signatures_of,
+    CapabilityNegotiationError, MeshForm, MeshFormError, MeshForms, NAMESPACES,
+    PINNED_FINGERPRINTS, RenderCapabilitySet, fingerprints, negotiate, signatures_of,
 };
+pub use degrade::ToShape2D;
 pub use draw::{DrawCommand, ZIndex, ZOrder};
 pub use layer::{LayerBlend, LayerId};
 pub use mesh::{PrimitiveTopology, ShaderVariant, TextureHandle, UvProjection};
+pub use paint::{
+    BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint, ShaderPaint,
+    ShaderParam, ShaderParamKind,
+};
+pub use params::{
+    AmbientOcclusion, Bloom, Msaa, RenderParamError, RenderParams, TextureFilter, ToneCurve,
+    ToneMapping,
+};
 pub use pipeline::{
     Capabilities, CapabilityError, ColorFormat, CullMode, DepthFormat, PassDepth, PassDesc,
-    PipelineDesc,
+    PipelineDesc, PostCaps, ShaderRequirements, VS_LINE, VS_MAIN, vs_entry_for, vs_requirements,
+    vs_requirements_for,
 };
 pub use shape::{CustomShapeData, CustomSpec, CustomSpecs, Shape2D, SpecId, Style2D};
 pub use style::{
-    FillSolid, FillStyle, Opacity, ResolveStyle, StrokeSolid, StrokeStyle, fill_style,
-    stroke_style_raw,
+    FillSolid, FillStyle, Opacity, ResolveStyle, StrokeCap, StrokeJoin, StrokeShape, StrokeSolid,
+    StrokeStyle, fill_style, stroke_style_raw,
 };
+pub use target::{RenderTargetDesc, TargetDescError};
 pub use uniform::{
     UniformField, UniformLayout, UniformLayoutError, UniformType, cube_lights_layout,
     cube_uniforms_layout,
 };
-pub use target::{RenderTargetDesc, TargetDescError};
 
 /// 呈现层度量空间：宽度属**世界**（随缩放）还是**屏幕**（不随缩放）。
 ///

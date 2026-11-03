@@ -1,15 +1,18 @@
 //! Breadth-first dirty propagation.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::BTreeSet;
 
 use ze_node_core::algo::DirtyTracker;
 use ze_node_core::graph::Graph;
 use ze_node_core::id::{NodeId, OutputSocketId};
 
+use crate::GraphTopology;
+
 /// Dirty tracker that propagates marks along downstream edges via BFS.
 #[derive(Debug, Default)]
 pub struct BfsDirtyTracker {
-    dirty: HashSet<NodeId>,
+    /// `BTreeSet`：输出顺序由 `NodeId` 决定，不随哈希种子漂移。
+    dirty: BTreeSet<NodeId>,
 }
 
 impl BfsDirtyTracker {
@@ -24,26 +27,20 @@ impl DirtyTracker for BfsDirtyTracker {
     }
 
     fn mark_socket_dirty(&mut self, graph: &dyn Graph, socket: OutputSocketId) {
-        // Walk downstream: output -> inputs -> their nodes -> their outputs -> ...
-        let mut queue: VecDeque<OutputSocketId> = VecDeque::new();
-        let mut visited: HashSet<OutputSocketId> = HashSet::new();
-        queue.push_back(socket);
-        visited.insert(socket);
-
-        while let Some(out) = queue.pop_front() {
-            for input in graph.downstream(out) {
-                let node = input.node();
-                self.dirty.insert(node);
-                // enqueue every output of the now-dirty node
-                if let Some(n) = graph.get_node(node) {
-                    for i in 0..n.outputs().len() {
-                        let next = OutputSocketId::new(node, i as u32);
-                        if visited.insert(next) {
-                            queue.push_back(next);
-                        }
-                    }
-                }
-            }
+        // 直接下游（socket 级）→ 节点级脏传播（`ze-graph-core`，确定性升序）。
+        let mut seeds: Vec<NodeId> = graph
+            .downstream(socket)
+            .into_iter()
+            .map(|input| input.node())
+            .collect();
+        seeds.sort_unstable();
+        seeds.dedup();
+        for &node in &seeds {
+            self.dirty.insert(node);
+        }
+        let topology = GraphTopology::new(graph);
+        for node in ze_graph_core::dirty_downstream(&topology, &seeds) {
+            self.dirty.insert(node);
         }
     }
 
@@ -55,8 +52,9 @@ impl DirtyTracker for BfsDirtyTracker {
         self.dirty.remove(&node);
     }
 
-    fn collect_dirty(&self) -> HashSet<NodeId> {
-        self.dirty.clone()
+    fn collect_dirty(&self) -> Vec<NodeId> {
+        // `BTreeSet` 的迭代顺序即升序 ⇒ 与哈希种子无关。
+        self.dirty.iter().copied().collect()
     }
 }
 
@@ -108,7 +106,7 @@ mod tests {
     fn mk(n_in: usize, n_out: usize) -> N {
         let tag: Box<dyn ze_node_core::TypeTag> = Box::new(NamedTypeTag::new("f32"));
         N {
-            meta: NodeMeta::new("t", "t", 1),
+            meta: NodeMeta::new("t", 1),
             inputs: (0..n_in)
                 .map(|i| InputSocket::new(tag.clone()).with_index(i as u32))
                 .collect(),
@@ -140,5 +138,17 @@ mod tests {
         assert!(t.is_dirty(b));
         assert!(t.is_dirty(c));
         assert!(!t.is_dirty(a)); // source not marked, only downstream
+    }
+
+    /// 同一个 tracker 两次收集必须逐位相同，且升序（硬约束 1）。
+    #[test]
+    fn collect_dirty_is_sorted_and_repeatable() {
+        let mut t = BfsDirtyTracker::new();
+        for id in [3u64, 1, 2] {
+            t.mark_dirty(NodeId(id));
+        }
+        let first = t.collect_dirty();
+        assert_eq!(first, vec![NodeId(1), NodeId(2), NodeId(3)]);
+        assert_eq!(first, t.collect_dirty());
     }
 }

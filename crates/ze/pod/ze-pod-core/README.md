@@ -1,5 +1,7 @@
 # ze-pod-core
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-pod-core.md`](../../../../docs/modules/ze-pod-core.md)。
+
 > **A Pod is not a virtual machine, and not a scripting-language runtime.**
 >
 > A Pod is an **opaque state machine plus a capability set**: its internal state is

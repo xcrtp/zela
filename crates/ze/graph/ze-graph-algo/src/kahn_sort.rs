@@ -1,10 +1,10 @@
 //! Kahn's algorithm topological sort.
 
-use std::collections::{HashMap, HashSet, VecDeque};
-
 use ze_node_core::algo::{CycleError, TopoSort};
 use ze_node_core::graph::Graph;
-use ze_node_core::id::{InputSocketId, NodeId};
+use ze_node_core::id::NodeId;
+
+use crate::GraphTopology;
 
 /// Topological sort via Kahn's algorithm (BFS over in-degrees).
 #[derive(Debug, Default)]
@@ -18,70 +18,10 @@ impl KahnSorter {
 
 impl TopoSort for KahnSorter {
     fn sort(&self, graph: &dyn Graph) -> Result<Vec<NodeId>, CycleError> {
-        // Build node-level dependency edges (deduplicated).
-        let mut succ: HashMap<NodeId, HashSet<NodeId>> = HashMap::new();
-        let mut in_degree: HashMap<NodeId, usize> = HashMap::new();
-        let all: HashSet<NodeId> = graph.all_nodes().collect();
-
-        for n in graph.all_nodes() {
-            in_degree.entry(n).or_insert(0);
-            succ.entry(n).or_default();
-            let node = match graph.get_node(n) {
-                Some(nd) => nd,
-                None => continue,
-            };
-            for i in 0..node.inputs().len() {
-                let in_id = InputSocketId::new(n, i as u32);
-                for out in graph.upstream(in_id) {
-                    let from = out.node();
-                    if from == n {
-                        continue; // ignore self-loops for degree; cycle caught later
-                    }
-                    if succ.entry(from).or_default().insert(n) {
-                        *in_degree.entry(n).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-
-        let mut queue: VecDeque<NodeId> = in_degree
-            .iter()
-            .filter(|(_, d)| **d == 0)
-            .map(|(k, _)| *k)
-            .collect();
-        // Deterministic-ish: sort initial queue by id.
-        let mut start: Vec<NodeId> = queue.drain(..).collect();
-        start.sort_unstable();
-        for n in start {
-            queue.push_back(n);
-        }
-
-        let mut order = Vec::with_capacity(all.len());
-        while let Some(n) = queue.pop_front() {
-            order.push(n);
-            if let Some(succs) = succ.get(&n) {
-                let mut next_zero: Vec<NodeId> = Vec::new();
-                for &s in succs {
-                    let d = in_degree.get_mut(&s).unwrap();
-                    *d -= 1;
-                    if *d == 0 {
-                        next_zero.push(s);
-                    }
-                }
-                next_zero.sort_unstable();
-                for s in next_zero {
-                    queue.push_back(s);
-                }
-            }
-        }
-
-        if order.len() == all.len() {
-            Ok(order)
-        } else {
-            let remaining: Vec<NodeId> =
-                all.iter().filter(|n| !order.contains(n)).copied().collect();
-            Err(CycleError::Cycle { nodes: remaining })
-        }
+        // 算法在 `ze-graph-core`（纯拓扑、确定性）；本层只做适配与错误翻译。
+        let topology = GraphTopology::new(graph);
+        ze_graph_core::topo_sort(&topology)
+            .map_err(|cycle| CycleError::Cycle { nodes: cycle.nodes })
     }
 }
 
@@ -133,7 +73,7 @@ mod tests {
     fn mk(n_in: usize, n_out: usize) -> N {
         let tag: Box<dyn ze_node_core::TypeTag> = Box::new(NamedTypeTag::new("f32"));
         N {
-            meta: NodeMeta::new("t", "t", 1),
+            meta: NodeMeta::new("t", 1),
             inputs: (0..n_in)
                 .map(|i| InputSocket::new(tag.clone()).with_index(i as u32))
                 .collect(),
@@ -182,5 +122,29 @@ mod tests {
         .unwrap();
         let err = KahnSorter::new().sort(&g);
         assert!(matches!(err, Err(CycleError::Cycle { .. })));
+    }
+
+    /// 同一张图跑两次，拓扑序逐位相同（硬约束 1）。
+    #[test]
+    fn sort_is_deterministic() {
+        let mut g = SimpleGraph::default();
+        let a = g.add_node(Box::new(mk(0, 1)));
+        let b = g.add_node(Box::new(mk(0, 1)));
+        let c = g.add_node(Box::new(mk(2, 0)));
+        g.quick_connect(
+            ze_node_core::OutputSocketId::new(a, 0),
+            ze_node_core::InputSocketId::new(c, 0),
+        )
+        .unwrap();
+        g.quick_connect(
+            ze_node_core::OutputSocketId::new(b, 0),
+            ze_node_core::InputSocketId::new(c, 1),
+        )
+        .unwrap();
+        let sorter = KahnSorter::new();
+        let first = sorter.sort(&g).unwrap();
+        assert_eq!(first, sorter.sort(&g).unwrap());
+        assert_eq!(first.last().copied(), Some(c), "汇点最后");
+        assert_eq!(first[0], first[..2].iter().copied().min().unwrap());
     }
 }

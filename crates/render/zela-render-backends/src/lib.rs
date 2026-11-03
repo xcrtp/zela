@@ -43,6 +43,16 @@ pub mod render_backend;
 pub mod render_layer;
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub mod render_target;
+// B4 Step 4：后端注册与选择（补完 B3-0.5 未竟的装配点）。
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub mod registry;
+// B11 Step 4：后端路由（帧内容 × 后端自述能力 ⇒ 选后端 + 拒绝理由）。
+// 放在本 crate 而不是宿主：native 与浏览器必须用**同一份**决策。
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub mod routing;
+// B12 Step 4：GPU 时间归因（timestamp query）。不支持 ⇒ 显式 unsupported，不静默给 0。
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub mod gpu_timing;
 pub mod resource_cache;
 
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
@@ -52,6 +62,15 @@ pub use render_backend::{
 };
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use render_layer::RenderLayer;
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub use registry::{
+    AdapterFacts, BackendAvailability, BackendFeatures, BackendKind, BackendRegistry,
+    BackendRegistryError,
+};
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub use routing::{FrameContent, LoopBackend, RoutingDecision};
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub use gpu_timing::{GpuSpan, GpuTimingState, GpuTimingSupport};
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use render_target::RenderTarget;
 pub use resource_cache::{DeferredDestroyer, GpuResourceCache, ResourceCache, ResourceKey};
@@ -112,8 +131,11 @@ pub use frame::build_scene_callback;
 // W1：不依赖 egui 的装配 + 渲染入口。
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use standard_backends::{
-    BackendStore, ScreenParams, StandardBackends, render_frame_headless_async,
-    render_frame_to_view,
+    BackendStore, HeadlessTiming, RenderTiming, ScreenParams, StandardBackends,
+    render_frame_headless_async, render_frame_to_view, render_frame_to_view_timed,
 };
 #[cfg(all(feature = "blocking", any(feature = "wgpu", feature = "egui-wgpu")))]
-pub use standard_backends::{render_frame_headless, render_single_frame};
+pub use standard_backends::{
+    HeadlessTarget, render_frame_headless, render_frame_headless_cached,
+    render_frame_headless_cached_timed, render_frame_headless_to_target, render_single_frame,
+};

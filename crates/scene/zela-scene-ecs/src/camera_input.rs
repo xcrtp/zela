@@ -84,7 +84,12 @@ impl System for CameraInputSystem {
                 }
             }
             // 回写朝向状态（`Look` 累积的结果必须持久化，否则下一帧又回到初始朝向）。
-            let _ = ctx.world.insert_one(entity, fps);
+            // 只在 FPS 模式下写：Orbit 模式的相机朝向由 `eye/target` 表达，派生出的
+            // `FpsView` 一帧后就过时；留进组件会让下次进 FPS 时读到旧朝向（见
+            // `CameraDriveSystem::write_mode` 的模式切换作废逻辑）。
+            if mode == CameraMode::Fps {
+                let _ = ctx.world.insert_one(entity, fps);
+            }
         }
     }
 }
@@ -436,6 +441,111 @@ mod tests {
         }
     }
 
+    /// **实测 bug 的回归**：FPS 内 `|eye − target|` 必须保持不变。
+    ///
+    /// 矢量后端的取景尺度就是它（`focal = |eye − target|`）⇒ 旧实现把 target 固定成
+    /// `eye + forward`（距离 1）会让一拖拽就把画面缩到 1/5；`Move` 后再用旧 target 量
+    /// 距离还会让焦距随位移漂移（前进时越来越短）。
+    #[test]
+    fn fps_preserves_the_focal_distance() {
+        let mut camera = Camera3D::new(
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::ZERO,
+            Vec3::Y,
+            Projection::perspective(1.0, 1.0, 0.1, 100.0),
+        );
+        let mut fps = FpsView::from_camera(&camera);
+        assert!(((camera.target - camera.eye).length() - 5.0).abs() < 1e-4);
+
+        // ① 转头：eye 不动，焦距仍是 5（旧实现塌到 1）。
+        apply_fps(&mut fps, &mut camera, cam_look_cmd(0.5, 0.2));
+        assert!(
+            ((camera.target - camera.eye).length() - 5.0).abs() < 1e-4,
+            "转头后焦距 = {}",
+            (camera.target - camera.eye).length()
+        );
+
+        // ② 前进：焦距仍为 5（旧实现会把位移量算进去）。
+        apply_fps(
+            &mut fps,
+            &mut camera,
+            CameraCommand::Move {
+                delta: Vec3::new(0.0, 0.0, 2.0),
+            },
+        );
+        assert!(
+            ((camera.target - camera.eye).length() - 5.0).abs() < 1e-4,
+            "前进后焦距 = {}",
+            (camera.target - camera.eye).length()
+        );
+    }
+
+    /// **实测 bug 的回归**：相机以 `+Z` 为上时，WASD 仍必须按**屏幕**方向走。
+    ///
+    /// 旧实现固定用世界 Y 构造右/上 ⇒ 对 `up = +Z` 的场景（`capability_gaps`）会出现
+    /// "D 往上、W 往侧面"——看起来像"按世界坐标算的"。现在基取自 `FpsView.up`。
+    #[test]
+    fn fps_move_uses_the_cameras_up_axis() {
+        // eye = +X 侧、看向原点、上方向 = +Z ⇒ 视线 -X、屏幕右 = +Y、屏幕上 = +Z。
+        let mut camera = Camera3D::new(
+            Vec3::new(5.0, 0.0, 0.0),
+            Vec3::ZERO,
+            Vec3::Z,
+            Projection::perspective(1.0, 1.0, 0.1, 100.0),
+        );
+        let mut fps = FpsView::from_camera(&camera);
+        let dir = (camera.target - camera.eye).normalize();
+        assert!(
+            (fps.forward() - dir).length() < 1e-4,
+            "接管时朝向必须与相机一致：{:?} vs {dir:?}",
+            fps.forward()
+        );
+
+        // D（x = 右）= +Y。
+        apply_fps(
+            &mut fps,
+            &mut camera,
+            CameraCommand::Move {
+                delta: Vec3::new(1.0, 0.0, 0.0),
+            },
+        );
+        assert!(
+            (camera.eye.y - 1.0).abs() < 1e-4
+                && (camera.eye.x - 5.0).abs() < 1e-4
+                && camera.eye.z.abs() < 1e-4,
+            "D 应沿屏幕右（+Y），实际 eye = {:?}",
+            camera.eye
+        );
+
+        // W（z = 前）= -X。
+        apply_fps(
+            &mut fps,
+            &mut camera,
+            CameraCommand::Move {
+                delta: Vec3::new(0.0, 0.0, 1.0),
+            },
+        );
+        assert!(
+            (camera.eye.x - 4.0).abs() < 1e-4,
+            "W 应沿视线（-X），实际 eye = {:?}",
+            camera.eye
+        );
+
+        // E（y = 上）= +Z。
+        apply_fps(
+            &mut fps,
+            &mut camera,
+            CameraCommand::Move {
+                delta: Vec3::new(0.0, 1.0, 0.0),
+            },
+        );
+        assert!(
+            (camera.eye.z - 1.0).abs() < 1e-4,
+            "E 应沿屏幕上（+Z），实际 eye = {:?}",
+            camera.eye
+        );
+    }
+
     /// Move 沿自身朝向位移：eye 移动、朝向不变、距离保持（target 跟随）。
     #[test]
     fn fps_move_translates_eye_keeping_orientation() {
@@ -522,8 +632,13 @@ mod tests {
         // 初始朝向 = -Z ⇒ 前进使 z 从 5 减到 4。
         assert!((camera.eye.z - 4.0).abs() < 1e-3, "eye = {:?}", camera.eye);
         assert!((camera.eye.x).abs() < 1e-4);
-        // target 跟随 eye（朝向不变、距离保持 1）。
-        assert!(((camera.target - camera.eye).length() - 1.0).abs() < 1e-4);
+        // target 跟随 eye（朝向不变）；**焦距保持初始的 5**（矢量后端取景尺度，
+        // 旧实现会塌成 1 —— 见 `fps_preserves_the_focal_distance`）。
+        assert!(
+            ((camera.target - camera.eye).length() - 5.0).abs() < 1e-4,
+            "焦距 = {}",
+            (camera.target - camera.eye).length()
+        );
     }
 
     /// Orbit 模式不消费 Look/Move（模式互不重叠）；PanZoom 相机不消费任何 3D 命令。

@@ -63,7 +63,7 @@ use crate::render_backend::{GpuHandle, RenderBackend3D};
 use crate::render_layer::RenderLayer;
 use crate::render_target::RenderTarget;
 use crate::resource_cache::{ResourceCache, ResourceKey};
-use ze_render_ir::{LayerId, PrimitiveTopology, ShaderVariant, UvProjection};
+use ze_render_ir::{LayerId, PostCaps, PrimitiveTopology, ShaderVariant, UvProjection};
 use ze_render_ir::{
     Capabilities, CapabilityError, ColorFormat, CullMode, DepthFormat, LayerBlend, ZOrder,
 };
@@ -92,10 +92,10 @@ const UNIFORM_MIN_BINDING_SIZE: NonZeroU64 = match NonZeroU64::new(UNIFORM_SIZE)
 /// 与 `cube.wgsl` 的 `Lights` 结构逐字段对应（全部 `vec4<f32>`，无对齐陷阱）。
 pub const LIGHT_UNIFORM_SIZE: u64 = 288;
 
-/// 方向光数量上限（**编译期常量**，超限显式报错 —— 铁律 2：不静默丢弃）。
+/// 方向光数量上限（**编译期常量**，超限显式报错，不静默丢弃）。
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
 
-/// 点光数量上限（B1-B，**编译期常量**，超限显式报错 —— 铁律 2）。
+/// 点光数量上限（B1-B，**编译期常量**，超限显式报错）。
 pub const MAX_POINT_LIGHTS: usize = 4;
 
 /// `LIGHT_UNIFORM_SIZE` 的常量形式（同 `UNIFORM_MIN_BINDING_SIZE`）。
@@ -113,7 +113,7 @@ pub const DYNAMIC_OFFSET_ALIGNMENT: u64 = 256;
 /// B2-0a：3D 顶点布局由 kernel 层契约声明
 /// [`ze_vertex::VertexLayout::standard_3d`]（pos3@0 + uv2@12 + shading_normal3@20，stride 32），
 /// 后端只做「契约 → wgpu 类型」翻译。原硬编码 `VERTEX_ATTRIBUTES` / `VERTEX_LAYOUT`
-/// 已删除（铁律 4：产物字节格式逐位不变，只是声明来源换成契约）。
+/// 已删除（产物字节格式逐位不变，只是声明来源换成契约）。
 fn to_wgpu_format(ty: AttribType) -> wgpu::VertexFormat {
     match ty {
         AttribType::F32 => wgpu::VertexFormat::Float32,
@@ -179,11 +179,18 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// 因此该映射是后端侧的自由函数而非 `ShaderVariant` 的固有方法。
 /// 该 match 是**穷尽**的 —— 新增变体漏写入口即编译失败（B1-E 起以此替代原
 /// `SHADER_VARIANTS` 预建穷举测试：按需构建下不再有"预建表"可漏）。
-fn variant_entry_point(variant: ShaderVariant) -> &'static str {
-    match variant {
-        ShaderVariant::Flat => "fs_flat",
-        ShaderVariant::Lambert => "fs_lambert",
-        ShaderVariant::Pbr => "fs_pbr",
+///
+/// **PI-04（PF-02）**：透明桶（`LayerBlend::Alpha` = 预乘 alpha over）必须用 `*_pm`
+/// 入口 —— `fs_*` 输出的是**直色**，直接进预乘混合会偏亮（`fusion` 的两个半透明面板）。
+/// 不透明（REPLACE）与 `Additive`（One/One）沿用直色入口，逐位不变。
+fn variant_entry_point(variant: ShaderVariant, blend: LayerBlend) -> &'static str {
+    match (variant, blend) {
+        (ShaderVariant::Flat, LayerBlend::Alpha) => "fs_flat_pm",
+        (ShaderVariant::Lambert, LayerBlend::Alpha) => "fs_lambert_pm",
+        (ShaderVariant::Pbr, LayerBlend::Alpha) => "fs_pbr_pm",
+        (ShaderVariant::Flat, _) => "fs_flat",
+        (ShaderVariant::Lambert, _) => "fs_lambert",
+        (ShaderVariant::Pbr, _) => "fs_pbr",
     }
 }
 
@@ -233,6 +240,23 @@ fn cull_mode_for(topology: PrimitiveTopology, double_sided: bool) -> CullMode {
     }
 }
 
+/// 线段拓扑**不支持** `Pbr` 变体：显式拒绝，不静默降级。
+///
+/// 依据：线段走 `vs_line`，布局只有位置，UV 由入口给常量 `(0,0)`；而 `color_pbr`
+/// 用 UV 导数构造屏幕空间 TBN（`det = uv1.x·uv2.y − uv2.x·uv1.y`）——
+/// 常量 UV ⇒ 导数恒 0 ⇒ `det = 0` ⇒ 除零得 NaN。
+///
+/// 为什么是拒绝而不是降级到 Lambert：降级会让"作者写 PBR、画面按 Lambert 出"这件事
+/// 无声发生；拒绝会在第一次绘制时当面报错。
+fn assert_variant_supported(topology: PrimitiveTopology, variant: ShaderVariant) {
+    if topology == PrimitiveTopology::Lines && variant == ShaderVariant::Pbr {
+        panic!(
+            "不静默：线段拓扑（Lines）不支持 PBR 变体（vs_line 不提供 UV，\
+             屏幕空间 TBN 会除零产生 NaN）；请改用 Lambert / Flat"
+        );
+    }
+}
+
 /// IR `CullMode` → wgpu `Face`（后端翻译，B2-2）。
 fn to_wgpu_cull_mode(cull: CullMode) -> Option<wgpu::Face> {
     match cull {
@@ -245,7 +269,7 @@ fn to_wgpu_cull_mode(cull: CullMode) -> Option<wgpu::Face> {
 /// IR `LayerBlend` → wgpu `BlendState`（后端翻译，B2-2）。
 ///
 /// - `Opaque` → `REPLACE`（与 B2-2 之前逐位一致）；
-/// - `Alpha` → **预乘** alpha over（`cube.wgsl` 输出预乘色，见 RC.1 注释）；
+/// - `Alpha` → **预乘** alpha over（透明桶走 `fs_*_pm` 入口，见 `variant_entry_point`）；
 /// - `Additive` → `src: One, dst: One`。
 fn to_wgpu_blend(blend: LayerBlend) -> wgpu::BlendState {
     match blend {
@@ -299,6 +323,11 @@ struct CachedMeshBuffers {
     vertex_count: u32,
     index_count: u32,
     topology: PrimitiveTopology,
+    /// 该缓冲是按哪个顶点布局打包的（生产端随 `VertexBufferData` 给出）。
+    ///
+    /// 布局随缓冲一起缓存：命中缓存时也必须能拿到同一份布局，否则管线会按
+    /// "另一套布局"解释同一段字节。
+    layout: ze_vertex::VertexLayout,
 }
 
 /// ResourceKey 类型标签：用于 mesh（顶点+索引）缓冲内容缓存。
@@ -323,6 +352,11 @@ pub struct PreparedDraw3D {
     pub vertex_count: u32,
     pub index_count: u32,
     pub topology: PrimitiveTopology,
+    /// 该顶点缓冲的布局（生产端声明，录制时**读取**而非现场构造）。
+    ///
+    /// D15 的第五维从"写死 standard_3d()"变成"随 draw 携带"——同一条 draw 的字节
+    /// 与解释它的管线必须来自同一份声明。
+    pub layout: ze_vertex::VertexLayout,
     /// 着色变体：与 `topology` 一起构成 pipeline 表的查表键。
     pub variant: ShaderVariant,
     /// B2-2：背面剔除（IR 类型，不再存 wgpu 类型）。
@@ -456,7 +490,7 @@ impl WgpuBackend3D {
     ///
     /// 调用方应先用 [`Self::capabilities`] 查询 `max_sample_count`，再用
     /// `Capabilities::require_sample_count` 校验后传入；不支持的取值 ⇒ **显式 panic**
-    /// （铁律 2，不静默降级）。支持 1（关闭）与 4（与 2D 对齐）。
+    /// （不静默降级）。支持 1（关闭）与 4（与 2D 对齐）。
     pub fn new_with_samples(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -857,6 +891,8 @@ impl WgpuBackend3D {
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            // B12 Step 5：资源计数（**创建**次数；稳态逐帧增量应为 0）。
+            crate::diagnostics::record_textures_created(1);
             guard.insert(
                 layer_id,
                 MsaaTarget {
@@ -903,6 +939,8 @@ impl WgpuBackend3D {
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            // B12 Step 5：资源计数（**创建**次数；稳态逐帧增量应为 0）。
+            crate::diagnostics::record_textures_created(1);
             guard.insert(
                 layer_id,
                 DepthTarget {
@@ -966,7 +1004,7 @@ impl WgpuBackend3D {
         let lines: Vec<&LineDraw> = lines.into_iter().collect();
         // B1-A/B/C：每帧覆写场景级光源 uniform。**空灯光 = 默认光照**（单方向光
         // (0,0,1) + ambient 0.2，与硬编码时代逐位一致）；超限**显式报错**
-        // （铁律 2：不静默丢弃）。`camera_pos` 一并写入（PBR 视线向量用）。
+        // （不静默丢弃）。`camera_pos` 一并写入（PBR 视线向量用）。
         let bytes = if lights.is_empty() && point_lights.is_empty() {
             default_light_bytes(camera_pos)
         } else {
@@ -998,6 +1036,8 @@ impl WgpuBackend3D {
             vertex_count: u32,
             index_count: u32,
             topology: PrimitiveTopology,
+            /// 顶点布局（随缓冲携带；`record_prepared` 直接读它构造管线键）。
+            layout: ze_vertex::VertexLayout,
             /// 着色变体（pipeline 查表键之一）。
             variant: ShaderVariant,
             /// B2-2：剔除模式（pipeline 查表键）。
@@ -1025,6 +1065,7 @@ impl WgpuBackend3D {
                 vertex_count: cached.vertex_count,
                 index_count: cached.index_count,
                 topology: cached.topology,
+                layout: cached.layout.clone(),
             }
         }
         struct CachedMeshBuffersCopy {
@@ -1033,11 +1074,14 @@ impl WgpuBackend3D {
             vertex_count: u32,
             index_count: u32,
             topology: PrimitiveTopology,
+            layout: ze_vertex::VertexLayout,
         }
 
         // ── MeshDraws：按几何 id + version 寻址（几何内容变化时 bump_version 失效）──
         for md in meshes {
             let geometry = &md.geometry;
+            // 线段拓扑不能用 PBR（vs_line 不提供 UV）；显式拒绝，不静默降级。
+            assert_variant_supported(geometry.topology, md.material.variant);
             // UV 来源（几何自带 vs 兜底策略）参与缓存键：同一几何在不同投影策略下
             // 顶点数据不同，必须区分（见 `uv_source_code`）。
             let uv_code = uv_source_code(geometry.uvs.is_some(), md.material.uv_projection);
@@ -1075,6 +1119,7 @@ impl WgpuBackend3D {
                     vertex_count: data.vertex_count,
                     index_count: data.indices.len() as u32,
                     topology: geometry.topology,
+                    layout: data.layout.clone(),
                 };
                 let copy = CachedMeshBuffersCopy {
                     vertex_buffer: cached.vertex_buffer.clone(),
@@ -1082,6 +1127,7 @@ impl WgpuBackend3D {
                     vertex_count: cached.vertex_count,
                     index_count: cached.index_count,
                     topology: cached.topology,
+                    layout: cached.layout.clone(),
                 };
                 let owned = GpuHandle::new(cached);
                 let _ = cache_guard.insert_handle(key, (), owned);
@@ -1115,6 +1161,7 @@ impl WgpuBackend3D {
                 vertex_count: cached_copy.vertex_count,
                 index_count: cached_copy.index_count,
                 topology: cached_copy.topology,
+                layout: cached_copy.layout,
                 variant: md.material.variant,
                 // B2-2：意图层 → 状态（材质未声明双面 ⇒ 剔除背面，与旧行为一致）。
                 cull: cull_mode_for(cached_copy.topology, md.material.double_sided),
@@ -1155,7 +1202,7 @@ impl WgpuBackend3D {
             let cached_copy = if let Some(handle_ref) = cache_guard.get(line_key) {
                 extract_buffers(handle_ref)
             } else {
-                // B3-0b：line 顶点也走生产端（B7：内联是第二份真源）。
+                // B3-0b：line 顶点也走生产端（B7：内联是第二个来源）。
                 let data = zela_render::vertex_record::line_vertex_buffer(line.start, line.end)
                     .unwrap_or_else(|error| {
                         panic!("不静默：3D 线段顶点生产失败：{error}")
@@ -1171,6 +1218,7 @@ impl WgpuBackend3D {
                     vertex_count: 2,
                     index_count: 0,
                     topology: PrimitiveTopology::Lines,
+                    layout: data.layout.clone(),
                 };
                 let copy = CachedMeshBuffersCopy {
                     vertex_buffer: cached.vertex_buffer.clone(),
@@ -1178,6 +1226,7 @@ impl WgpuBackend3D {
                     vertex_count: 2,
                     index_count: 0,
                     topology: PrimitiveTopology::Lines,
+                    layout: cached.layout.clone(),
                 };
                 let owned = GpuHandle::new(cached);
                 let _ = cache_guard.insert_handle(line_key, (), owned);
@@ -1196,6 +1245,7 @@ impl WgpuBackend3D {
                 vertex_count: cached_copy.vertex_count,
                 index_count: cached_copy.index_count,
                 topology: cached_copy.topology,
+                layout: cached_copy.layout,
                 // line 默认走 Lambert（法线填 (0,0,1) → lit = 1，外观不受光照影响）。
                 variant: ShaderVariant::Lambert,
                 // B2-2：线段没有面朝向 ⇒ 恒不剔除；不透明混合（与旧行为一致）。
@@ -1269,6 +1319,7 @@ impl WgpuBackend3D {
                     vertex_count: s.vertex_count,
                     index_count: s.index_count,
                     topology: s.topology,
+                    layout: s.layout,
                     variant: s.variant,
                     cull: s.cull,
                     blend: s.blend,
@@ -1303,8 +1354,8 @@ impl WgpuBackend3D {
                 variant: d.variant,
                 cull: d.cull,
                 blend: d.blend,
-                // D15：3D 顶点布局是第五维（当前全部 3D draw 共用 standard_3d）。
-                layout: ze_vertex::VertexLayout::standard_3d(),
+                // D15：布局是第五维，**取自本 draw 携带的声明**（不再现场构造）。
+                layout: d.layout.clone(),
             };
             let pipeline = self.get_or_create_pipeline(key);
             rpass.set_pipeline(&pipeline);
@@ -1323,7 +1374,7 @@ impl WgpuBackend3D {
     /// B1-E/B2-2：按需构建 + 缓存 pipeline（key 五维：topology / variant / cull / blend / layout）。
     ///
     /// 命中直接返回缓存克隆；未命中则创建并缓存。**无回退路径** —— 与预建时代
-    /// 「查表落空回退 Lambert」不同，这里不存在"漏建"状态（不静默，铁律 2）。
+    /// 「查表落空回退 Lambert」不同，这里不存在"漏建"状态（不静默）。
     /// wgpu 30 的 `create_render_pipeline` 不可失败（内部校验失败即 panic，且携带
     /// key 化的 label），故创建路径本身就是显式报错。
     fn get_or_create_pipeline(&self, key: PipelineKey) -> wgpu::RenderPipeline {
@@ -1347,13 +1398,16 @@ impl WgpuBackend3D {
                 layout: Some(&self.pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &self.shader,
-                    entry_point: Some("vs_main"),
+                    // 顶点入口按拓扑查表（`vs_entry_for`）：三角形走 vs_main，
+                    // 线段走 vs_line（只读位置）。入口名与语义需求由 IR 声明，
+                    // 与 `cube.wgsl` 的一致性由 `tests/wgsl_requirements.rs` 核对。
+                    entry_point: Some(ze_render_ir::vs_entry_for(key.topology)),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &vertex_buffers,
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &self.shader,
-                    entry_point: Some(variant_entry_point(key.variant)),
+                    entry_point: Some(variant_entry_point(key.variant, key.blend)),
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: self.format,
@@ -1399,7 +1453,7 @@ impl WgpuBackend3D {
     /// B2-0c（D22）：**能力查询** —— target 决定的最大 MSAA 采样数与格式。
     ///
     /// `sample_count` / 颜色格式 / 深度格式是"能力"不是"命令"：消费者（B2-5 的
-    /// AA 统一）先查后请求；不支持 ⇒ [`CapabilityError`]（铁律 2，不静默降级）。
+    /// AA 统一）先查后请求；不支持 ⇒ [`CapabilityError`]（不静默降级）。
     ///
     /// 需要 `adapter`：wgpu 30 的 `get_texture_format_features` 是 `Adapter` 方法
     /// （`Device` 上没有）。调用方必须持有 adapter（B2-5 接线时补进装配层）。
@@ -1419,6 +1473,8 @@ impl WgpuBackend3D {
             max_sample_count: max_sample_count_from_flags(flags),
             color_format,
             depth_format: DepthFormat::Depth32Float,
+            // wgpu 三角化后端没有后处理栈 / IBL：显式声明不支持（B4 Step 1）。
+            post: PostCaps::none(),
         })
     }
 
@@ -1706,7 +1762,7 @@ mod tests {
     // ── B1-A：光源 uniform 打包（纯 CPU，无需 GPU） ─────────────────────
 
     /// B2-0a：3D 顶点布局契约 → wgpu 翻译产物与旧硬编码布局**逐位相同**
-    /// （铁律 4：只换声明来源，不改顶点格式；因此像素不变）。
+    /// （只换声明来源，不改顶点格式；因此像素不变）。
     #[test]
     fn test_vertex_layout_translation_matches_legacy_format() {
         let layout = ze_vertex::VertexLayout::standard_3d();
@@ -1780,12 +1836,14 @@ mod tests {
             max_sample_count: 2,
             color_format: ColorFormat::Rgba8UnormSrgb,
             depth_format: DepthFormat::Depth32Float,
+            post: PostCaps::none(),
         };
         assert!(caps.require_sample_count(4).is_err());
         let caps = Capabilities {
             max_sample_count: 4,
             color_format: ColorFormat::Rgba8UnormSrgb,
             depth_format: DepthFormat::Depth32Float,
+            post: PostCaps::none(),
         };
         assert_eq!(caps.require_sample_count(4).unwrap(), 4);
     }
@@ -2840,8 +2898,25 @@ mod tests {
         );
     }
 
+    /// 线段 + PBR ⇒ **必须显式报错**（`vs_line` 不提供 UV，屏幕空间 TBN 会除零）。
+    ///
+    /// 证伪：若改成"静默降级到 Lambert"，本 `should_panic` 测试变红。
+    #[test]
+    #[should_panic(expected = "线段拓扑（Lines）不支持 PBR 变体")]
+    fn test_lines_with_pbr_variant_is_rejected() {
+        assert_variant_supported(PrimitiveTopology::Lines, ShaderVariant::Pbr);
+    }
+
+    /// 三角形 + PBR 仍然是合法组合（拒绝只针对线段）。
+    #[test]
+    fn test_triangles_with_pbr_variant_is_allowed() {
+        assert_variant_supported(PrimitiveTopology::Triangles, ShaderVariant::Pbr);
+        assert_variant_supported(PrimitiveTopology::Lines, ShaderVariant::Lambert);
+        assert_variant_supported(PrimitiveTopology::Lines, ShaderVariant::Flat);
+    }
+
     /// **B1-F 验收（真实设备）**：点列表拓扑 ⇒ **必须显式报错**，不得静默跳过
-    /// （铁律 2「不静默」：丢弃一个 draw 而不报错，会让"画面少东西"无从查起）。
+    /// （不静默：丢弃一个 draw 而不报错，会让"画面少东西"无从查起）。
     ///
     /// 证伪：若恢复「静默 continue」，本 `should_panic` 测试变红。
     #[test]
@@ -3052,8 +3127,8 @@ mod tests {
         );
     }
 
-    /// **B1-A 验收（真实设备）**：方向光数量超上限 ⇒ **显式报错**（铁律 2：
-    /// 不静默丢弃）。空灯光为默认光照；`MAX_DIRECTIONAL_LIGHTS + 1` 个光必须 panic。
+    /// **B1-A 验收（真实设备）**：方向光数量超上限 ⇒ **显式报错**
+    /// （不静默丢弃）。空灯光为默认光照；`MAX_DIRECTIONAL_LIGHTS + 1` 个光必须 panic。
     #[test]
     #[should_panic(expected = "超过上限")]
     fn test_directional_light_over_limit_panics() {
@@ -3091,8 +3166,8 @@ mod tests {
         pixels.chunks_exact(4).filter(|p| p[3] > 0).count()
     }
 
-    /// **B1-B 验收（真实设备）**：点光数量超上限 ⇒ **显式报错**（铁律 2：
-    /// 不静默丢弃）。`MAX_POINT_LIGHTS + 1` 个点光必须 panic。
+    /// **B1-B 验收（真实设备）**：点光数量超上限 ⇒ **显式报错**
+    /// （不静默丢弃）。`MAX_POINT_LIGHTS + 1` 个点光必须 panic。
     #[test]
     #[should_panic(expected = "超过上限")]
     fn test_point_light_over_limit_panics() {
@@ -3409,3 +3484,4 @@ mod tests {
         assert_eq!(frames[0], p_base, "轨迹起点 = 初始位姿 ⇒ 画面应逐位一致");
     }
 }
+

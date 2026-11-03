@@ -30,8 +30,91 @@ mod tests {
     }
 
     /// 经契约适配器施加一次动画值。
-    fn apply_once(t: &dyn Target, scene: &mut SceneStruct, v: AnimValue) {
-        t.apply(&mut WorldScene::new(scene.world_mut()), &v);
+    fn apply_once(t: &dyn Target, scene: &mut SceneStruct, v: AnimValue) -> Result<(), TargetError> {
+        t.apply(&mut WorldScene::new(scene.world_mut()), &v)
+    }
+
+    /// **#6 硬约束 1**：组件名必须等于组件登记表的名字（不出现第三套命名）。
+    #[test]
+    fn component_names_come_from_the_registry() {
+        use crate::contract::known_type_name;
+        assert_eq!(ze_scene_core::object::primitives::CIRCLE_RADIUS.component, known_type_name::<Circle>().unwrap());
+        assert_eq!(ze_scene_core::components::PHASE_ANIM_PHASE.component, known_type_name::<PhaseAnim>().unwrap());
+        assert_eq!(ze_scene_core::object::camera::CAMERA3D_EYE.component, known_type_name::<Camera3D>().unwrap());
+        assert_eq!(
+            ze_scene_core::components::MORPH_SHAPE_T.component,
+            known_type_name::<ze_scene_core::components::MorphShape>().unwrap()
+        );
+        assert_eq!(
+            ze_scene_core::object::camera::FRAMING2D_SCALE.component,
+            known_type_name::<Framing2D>().unwrap()
+        );
+        assert_eq!(ze_scene_core::components::REVEAL_END.component, known_type_name::<Reveal>().unwrap());
+        assert_eq!(
+            TRANSFORM_POSITION.component,
+            known_type_name::<Transform>().unwrap()
+        );
+        assert_eq!(OPACITY_VALUE.component, known_type_name::<Opacity>().unwrap());
+
+        // `name` 与 `address` 共用**同一个**查表命名空间（见 `target_entry`）：
+        // 单字段规格的 `name` 就是 `address`；组合目标没有单一地址，二者也相同。
+        // 任一键重复 ⇒ 查表会静默命中错误字段。
+        let mut keys = std::collections::BTreeSet::new();
+        for entry in TARGETS {
+            assert!(
+                keys.insert(entry.spec.name),
+                "重复的寻址键：{}",
+                entry.spec.name
+            );
+            if entry.spec.address != entry.spec.name {
+                assert!(
+                    keys.insert(entry.spec.address),
+                    "重复的规范地址：{}",
+                    entry.spec.address
+                );
+            }
+        }
+
+        // 单字段规格的规范地址必须是 `Component.field`，且查表要命回它自己。
+        for entry in TARGETS {
+            let spec = entry.spec;
+            if spec.address == format!("{}.{}", spec.component, spec.field) {
+                let hit = target_entry(spec.address).expect("规范地址可查");
+                assert_eq!(hit.spec.name, spec.name);
+            }
+        }
+    }
+
+    /// **#6 硬约束 2**：类型不符是**显式错误**，不是静默跳过。
+    #[test]
+    fn type_mismatch_is_an_explicit_error() {
+        let mut scene = SceneStruct::new();
+        let id = spawn_one(&mut scene, Circle::new((0.0, 0.0), 1.0));
+        let err = apply_once(&CircleRadius { id }, &mut scene, AnimValue::Vec3(Vec3::ONE))
+            .expect_err("Vec3 → Circle.radius 必须报错");
+        assert_eq!(
+            err,
+            TargetError::TypeMismatch {
+                target: "CircleRadius",
+                expected: "scalar",
+                actual: "vec3",
+            }
+        );
+    }
+
+    /// **#6 读方向**：read 与 write 是同一个 `FieldSpec` 的两半。
+    #[test]
+    fn read_direction_comes_from_the_same_spec() {
+        let mut scene = SceneStruct::new();
+        let id = spawn_one(&mut scene, Circle::new((0.0, 0.0), 1.0));
+        apply_once(&CircleRadius { id }, &mut scene, AnimValue::Scalar(2.5)).unwrap();
+        let value = ze_scene_core::scene_write::read_component::<Circle, _>(
+            &WorldScene::new(scene.world_mut()),
+            id,
+            |c| c.radius,
+        )
+        .expect("组件在场景里");
+        assert_eq!(value, 2.5);
     }
 
     /// 读回组件（缺失 ⇒ 测试失败）。
@@ -43,7 +126,7 @@ mod tests {
         scene.with::<T, _>(id, f).expect("组件在场景里")
     }
 
-    /// `CircleRadius`：`Scalar` 写入半径；类型不符跳过（不 panic）。
+    /// `CircleRadius`：`Scalar` 写入半径；类型不符显式报错。
     #[test]
     fn circle_radius_writes_scalar_and_skips_mismatch() {
         let mut scene = SceneStruct::new();
@@ -163,36 +246,62 @@ mod tests {
         assert_eq!(Camera2DFraming { id }.name(), "Camera2DFraming");
         assert_eq!(RevealRange { id }.name(), "RevealRange");
         assert_eq!(OpacityValue { id }.name(), "OpacityValue");
-        assert_eq!(TransformValue::auto(id).name(), "TransformValue");
+        assert_eq!(
+            TransformChannelValue {
+                id,
+                channel: TransformChannel::Rotation
+            }
+            .name(),
+            "TransformRotation"
+        );
         // 全部 target 都如实报告自己的对象句柄（筛选的唯一依据）。
         assert_eq!(CircleRadius { id }.target_id(), id);
-        assert_eq!(TransformValue::auto(id).target_id(), id);
+        assert_eq!(
+            TransformChannelValue {
+                id,
+                channel: TransformChannel::Position
+            }
+            .target_id(),
+            id
+        );
         assert_eq!(OpacityValue { id }.target_id(), id);
     }
 
-    /// `TransformValue`：按 `AnimValue` 变体分派 —— `Vec2` → `position.xy`（z 不动）、
-    /// `Vec3` → 整个 `position`、`Scalar` → 统一缩放。
+    /// **B7**：`Target.TransformValue` 已删除 ⇒ 按名字反查构造器必须返回 `None`
+    /// （脚本 / 旧 ZSB 引用它时在装配期显式失败，不是静默跳过）。
     #[test]
-    fn transform_value_dispatches_by_variant() {
+    fn transform_value_is_no_longer_a_target() {
+        assert!(
+            target_ctor_by_name("TransformValue").is_none(),
+            "TransformValue 已删除，不得还能按名字构造"
+        );
+        // 三条显式通道仍然可用。
+        for name in ["TransformPosition", "TransformRotation", "TransformScale"] {
+            assert!(target_ctor_by_name(name).is_some(), "{name} 应仍然可用");
+        }
+    }
+
+    /// `TransformPosition`：`Vec2` → `position.xy`（z 不动）、`Vec3` → 整个 `position`。
+    #[test]
+    fn transform_position_channel_writes_vec2_and_vec3() {
         let mut scene = SceneStruct::new();
         let id = spawn_one(&mut scene, Transform::default());
-        let t = TransformValue::auto(id);
+        let t = TransformChannelValue {
+            id,
+            channel: TransformChannel::Position,
+        };
         let read_tr =
             |scene: &SceneStruct| read::<Transform, _>(scene, id, |tr| (tr.position, tr.scale));
-
-        // 只动 xy，z 保持。
-        apply_once(&t, &mut scene, AnimValue::Vec2(Vec2::new(2.0, -3.0)));
-        assert_eq!(read_tr(&scene).0, Vec3::new(2.0, -3.0, 0.0));
-        assert_eq!(read_tr(&scene).1, Vec3::ONE, "Vec2 不得改缩放");
 
         // 整体写位置。
         apply_once(&t, &mut scene, AnimValue::Vec3(Vec3::new(1.0, 2.0, 3.0)));
         assert_eq!(read_tr(&scene).0, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(read_tr(&scene).1, Vec3::ONE, "Position 通道不得改缩放");
 
-        // 统一缩放。
-        apply_once(&t, &mut scene, AnimValue::Scalar(2.5));
-        assert_eq!(read_tr(&scene).1, Vec3::splat(2.5));
-        assert_eq!(read_tr(&scene).0, Vec3::new(1.0, 2.0, 3.0), "缩放不改位置");
+        // 再只用 Vec2：xy 变、**z 保持**（混排作品里 z 可能被 3D 内容占用）。
+        apply_once(&t, &mut scene, AnimValue::Vec2(Vec2::new(2.0, -3.0)));
+        assert_eq!(read_tr(&scene).0, Vec3::new(2.0, -3.0, 3.0), "Vec2 不得清零 z");
+        assert_eq!(read_tr(&scene).1, Vec3::ONE, "Vec2 不得改缩放");
     }
 
     /// **S3**：`Rotation` 通道把 `Scalar` 写成绕 Z 的 `Quat`，且不改位置 / 缩放。
@@ -200,7 +309,7 @@ mod tests {
     fn transform_rotation_channel_rotates_about_z() {
         let mut scene = SceneStruct::new();
         let id = spawn_one(&mut scene, Transform::default());
-        let t = TransformValue {
+        let t = TransformChannelValue {
             id,
             channel: TransformChannel::Rotation,
         };
@@ -230,7 +339,7 @@ mod tests {
         let id = spawn_one(&mut scene, Transform::default());
 
         apply_once(
-            &TransformValue {
+            &TransformChannelValue {
                 id,
                 channel: TransformChannel::Position,
             },
@@ -238,7 +347,7 @@ mod tests {
             AnimValue::Vec2(Vec2::new(2.0, 3.0)),
         );
         apply_once(
-            &TransformValue {
+            &TransformChannelValue {
                 id,
                 channel: TransformChannel::Rotation,
             },
@@ -246,7 +355,7 @@ mod tests {
             AnimValue::Scalar(std::f32::consts::FRAC_PI_2),
         );
         apply_once(
-            &TransformValue {
+            &TransformChannelValue {
                 id,
                 channel: TransformChannel::Scale,
             },

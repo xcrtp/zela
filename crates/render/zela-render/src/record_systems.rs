@@ -84,6 +84,7 @@ fn resolve_camera(
 pub struct SceneRecordSystem;
 impl System for SceneRecordSystem {
     // N5：`GroupVisibility` 进入 Read（组级开关；缺席 ⇒ 默认空 ⇒ 所有组可见）。
+    // BC：样式继承随 `WorldTransforms` 一同派生（同一次父链遍历），故不用新资源。
     type Reads = (ViewRect, Camera2DHandle, GroupVisibility, WorldTransforms);
     type Writes = (DrawQueue,);
 
@@ -113,6 +114,7 @@ impl System for SceneRecordSystem {
                 camera_tag,
                 &groups,
                 worlds.as_ref(),
+                worlds.as_ref().map(|w| w.inherit()),
                 queue,
             );
         });
@@ -134,7 +136,8 @@ impl System for SceneRecordSystem {
 pub struct MorphRecordSystem;
 impl System for MorphRecordSystem {
     // N5：与 `SceneRecordSystem` 同口径（过滤 + 组级开关）。
-    type Reads = (ViewRect, Camera2DHandle, GroupVisibility);
+    // BC：不透明度继承随 `WorldTransforms` 派生（本 System 不消费变换本身）。
+    type Reads = (ViewRect, Camera2DHandle, GroupVisibility, WorldTransforms);
     type Writes = (MorphQueue,);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
@@ -144,6 +147,7 @@ impl System for MorphRecordSystem {
             .unwrap_or_else(|| ViewRect::default().rect);
         let camera_tag = ctx.get::<Camera2DHandle>().map(|h| h.0);
         let groups = ctx.get::<GroupVisibility>().cloned().unwrap_or_default();
+        let worlds = ctx.get::<WorldTransforms>().cloned();
         let Some(camera) = resolve_camera(ctx, rect) else {
             return;
         };
@@ -167,7 +171,7 @@ impl System for MorphRecordSystem {
                     morph.t,
                     morph.samples,
                     stroke,
-                    opacity_of(&scene, id),
+                    opacity_of(&scene, id, worlds.as_ref().map(|w| w.inherit())),
                     &camera,
                 );
             });
@@ -230,7 +234,7 @@ impl System for RevealRecordSystem {
                     reveal.start,
                     reveal.end,
                     stroke,
-                    opacity_of(&scene, id),
+                    opacity_of(&scene, id, worlds.as_ref().map(|w| w.inherit())),
                     &camera,
                 );
             });
@@ -267,7 +271,14 @@ impl System for ContentTextureRecordSystem {
             // B3 Step 1：复用全组合录制入口 + Surface 归属过滤（Parent 链唯一条件）。
             for spec in &specs.0 {
                 let queue = queues.queue_mut(spec.layer_id());
-                record_scene_for_surface(&scene, spec.surface, &spec.camera, worlds.as_ref(), queue);
+                record_scene_for_surface(
+                    &scene,
+                    spec.surface,
+                    &spec.camera,
+                    worlds.as_ref(),
+                    worlds.as_ref().map(|w| w.inherit()),
+                    queue,
+                );
             }
         });
     }
@@ -292,7 +303,7 @@ impl System for SceneRecord3DSystem {
         let worlds = ctx.get::<WorldTransforms>().cloned();
         // 光源：清空并录制。方向光的 `direction` 声明在组件内；点光（B1-B）的
         // **位置**由 `Transform` → `WorldTransforms` 解析 —— `Light` 组件本身
-        // 不带 position（单一真源，铁律 3）。
+        // 不带 position（唯一来源）。
         ctx.with_world_and_resource_mut::<LightQueue, _>(|world, lights| {
             lights.clear();
             let scene = WorldView::new(world);
@@ -624,7 +635,7 @@ mod tests {
                 [256, 256],
                 ze_scene_core::TextureFilter::Linear,
                 false,
-            ),
+            ).with_composite(true),
         )));
         let surface_b = object_id_of(world.spawn((
             ze_scene_core::Surface::new(
@@ -637,7 +648,7 @@ mod tests {
                 [256, 256],
                 ze_scene_core::TextureFilter::Linear,
                 false,
-            ),
+            ).with_composite(true),
         )));
 
         // A：1 世界单位长的线（屏幕跨度 ≈ 128px）；B：0.2 单位（≈ 25.6px）。
@@ -982,7 +993,7 @@ mod tests {
     }
 
     /// **B1-A 验收**：世界中的 `Light` 组件被录进 `LightQueue`（方向光逐字段保留，
-    /// 颜色归一化到 [0,1]、强度原样）。`Light` **不带 position**（单一真源）。
+    /// 颜色归一化到 [0,1]、强度原样）。`Light` **不带 position**（唯一来源）。
     #[test]
     fn record_directional_lights_into_queue() {
         use ze_notion::Color32;
@@ -1025,7 +1036,7 @@ mod tests {
     }
 
     /// **B1-B 验收**：点光被录进 `LightQueue.points`，且位置**来自世界矩阵**
-    /// （父子累乘），而非 `Light` 组件字段（单一真源：Light 不带 position）。
+    /// （父子累乘），而非 `Light` 组件字段（唯一来源：Light 不带 position）。
     #[test]
     fn record_point_lights_resolve_world_position() {
         use ze_notion::Color32;
@@ -1083,5 +1094,40 @@ mod tests {
         assert_eq!(p.intensity, 2.0);
         // 方向光队列不受影响（此场景无方向光）。
         assert!(lq.directional.is_empty());
+    }
+
+    /// **BC 验收**：继承来的填充色与不透明度在录制侧生效 ——
+    /// 子对象没有 `Fill` 也能拿到父色，不透明度按最终值只缩 alpha。
+    #[test]
+    fn scene_record_applies_inherited_fill_and_opacity() {
+        let (mut world, handle) = world_with_camera(Framing2D::new(Vec2::ZERO, 40.0));
+        let child = world.spawn((
+            Circle::new((0.0, 0.0), 1.0),
+            StrokeSolid::new(2.0, (0, 255, 0, 255)),
+        ));
+        let child_id = object_id_of(child);
+
+        let red = ze_notion::Color32::new(255, 0, 0, 255);
+        let mut inherit = ze_scene_core::WorldInherit::new();
+        inherit.insert_fill(child_id, red);
+        inherit.insert_opacity(child_id, 0.5);
+        let worlds = WorldTransforms::default().with_inherit(inherit);
+
+        let mut res = resources_with(rect_800x600(), handle);
+        res.insert(DrawQueue::new());
+        res.insert(worlds);
+        let mut sched = Scheduler::new(world, res);
+        sched.add_system(Phase::RenderCommit, SceneRecordSystem);
+        sched.init_resources();
+        sched.run_frame(0.016);
+
+        let q = sched.resources().get::<DrawQueue>().unwrap();
+        assert_eq!(q.len(), 1);
+        let fill = q.commands()[0]
+            .style
+            .fill
+            .expect("继承的填充色应出现在样式里");
+        assert_eq!((fill.r(), fill.g(), fill.b()), (255, 0, 0));
+        assert_eq!(fill.a(), 128, "不透明度 0.5 ⇒ alpha 减半");
     }
 }

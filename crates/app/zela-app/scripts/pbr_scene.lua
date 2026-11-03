@@ -22,31 +22,30 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
-end
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 0.0, y = 2.6, z = 7.2 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
+        eye = scene.vec3(0.0, 2.6, 7.2),
         fov_y = 1.0,
     },
-})
--- 2D 相机（渲染器 2D 通道要求 Framing2D；本场景无 2D 对象，仅占位）。
-scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
 })
 
 -- ── 光照：方向光主光 + 4 盏巡游点光 ───────────────────────────────────
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.3, y = -0.5, z = -0.81 },
+            direction = scene.vec3(0.3, -0.5, -0.81),
         },
-        color = rgba(255, 250, 240, 255),
+        color = scene.rgba(255, 250, 240, 255),
         intensity = 1.1,
     },
 })
@@ -54,10 +53,10 @@ scene.spawn({
 -- 巡游点光：{ 出生 x, 出生 y, 目标 x, 目标 y, z, range, 颜色, 强度 }
 -- 出生点都在 range 之外（× 距离熄灭），扫描入场时灯光效果逐渐叠加。
 local LIGHTS = {
-    { -6.5, -2.2, 1.2, -2.2, 1.4, 3.4, rgba(255, 90, 80, 255), 1.0 },
-    { -6.5, 0.4, -1.2, 0.4, 0.4, 3.2, rgba(80, 225, 130, 255), 0.9 },
-    { 6.5, 1.6, 1.2, 1.6, -0.6, 3.6, rgba(100, 150, 255, 255), 0.95 },
-    { 6.5, -0.9, -1.2, -0.9, -1.6, 3.0, rgba(255, 200, 90, 255), 0.85 },
+    { -6.5, -2.2, 1.2, -2.2, 1.4, 3.4, scene.rgba(255, 90, 80, 255), 1.0 },
+    { -6.5, 0.4, -1.2, 0.4, 0.4, 3.2, scene.rgba(80, 225, 130, 255), 0.9 },
+    { 6.5, 1.6, 1.2, 1.6, -0.6, 3.6, scene.rgba(100, 150, 255, 255), 0.95 },
+    { 6.5, -0.9, -1.2, -0.9, -1.6, 3.0, scene.rgba(255, 200, 90, 255), 0.85 },
 }
 local lights = {}
 for i = 1, 4 do
@@ -74,11 +73,11 @@ end
 -- ── 立方体：材质光谱一字排开 ─────────────────────────────────────────
 -- { x, 颜色, metallic, roughness }
 local SPECTRUM = {
-    { -2.4, rgba(220, 80, 60, 255), 0.0, 0.15 },    -- 电介质 · 亮面
-    { -1.2, rgba(195, 120, 60, 255), 0.7, 0.35 },   -- 青铜金属
-    { 0.0, rgba(215, 218, 225, 255), 1.0, 0.2 },    -- 银金属 · 亮面
-    { 1.2, rgba(60, 190, 130, 255), 0.5, 0.55 },    -- 半金属
-    { 2.4, rgba(170, 90, 230, 255), 0.0, 0.75 },    -- 电介质 · 哑面
+    { -2.4, scene.rgba(220, 80, 60, 255), 0.0, 0.15 },    -- 电介质 · 亮面
+    { -1.2, scene.rgba(195, 120, 60, 255), 0.7, 0.35 },   -- 青铜金属
+    { 0.0, scene.rgba(215, 218, 225, 255), 1.0, 0.2 },    -- 银金属 · 亮面
+    { 1.2, scene.rgba(60, 190, 130, 255), 0.5, 0.55 },    -- 半金属
+    { 2.4, scene.rgba(170, 90, 230, 255), 0.0, 0.75 },    -- 电介质 · 哑面
 }
 local cubes = {}
 for i = 1, 5 do
@@ -89,14 +88,11 @@ for i = 1, 5 do
             variant = ShaderVariant.Pbr,
             metallic = SPECTRUM[i][3],
             roughness = SPECTRUM[i][4],
-            double_sided = false,
-            transparent = false,
-            texture = Texture.None,
         },
         Transform3D {
-            position = Vec3 { x = SPECTRUM[i][1], y = 0.0, z = 0.0 },
+            position = scene.vec3(SPECTRUM[i][1], 0.0, 0.0),
             rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-            scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+            scale = scene.vec3(1.0, 1.0, 1.0),
         },
     })
 end
@@ -113,98 +109,92 @@ for i = 1, 5 do
     end
 end
 
--- 每幕起点：`animate(cubes[1])` 开新段，其余立方体与灯光动作并行挂入。
--- `dur` 必须等于该幕的段时长（巡游幕 ACT、终幕 FINALE）。
-local function spin_clip(i, a, dur)
-    local from = 0.0
-    if a > 1 then
-        from = turns[i][a - 1]
+-- ── 幕 1（0–4s）：红灯从左缘横扫入场 ─────────────────────────────────
+local function act(a, start)
+    for i = 1, 5 do
+        local from = 0.0
+        if a > 1 then
+            from = turns[i][a - 1]
+        end
+        expr.bind {
+            object = cubes[i],
+            target = Transform.channel.rotation,
+            root = sugar.ramp(from, turns[i][a], ACT),
+            clock = clock.shift(start),
+            duration = ACT,
+        }
     end
-    return scene.clip_transform(TransformChannel.Rotation, Curve.Ramp {
-        from = from,
-        to = turns[i][a],
-        dur = dur,
-    })
 end
 
--- ── 幕 1（0–4s）：红灯从左缘横扫入场 ─────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 1, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 1, ACT))
+-- 一盏点光的横扫入场（旧 `Ramp2`：xy 插值，**保留**光的 z 高度）。
+local function light_sweep(a, start)
+    expr.bind {
+        object = lights[a],
+        target = Transform.channel.position,
+        root = Vec3FromVec2 {
+            v = Mix {
+                a = Vec2Of {
+                    x = expr.pure(q(LIGHTS[a][1])),
+                    y = expr.pure(q(LIGHTS[a][2])),
+                },
+                b = Vec2Of {
+                    x = expr.pure(q(LIGHTS[a][3])),
+                    y = expr.pure(q(LIGHTS[a][4])),
+                },
+                t = Clamp {
+                    x = Scale { k = 1.0 / ACT, of = clock.time() },
+                    lo = expr.pure(0.0),
+                    hi = expr.pure(1.0),
+                },
+            },
+            z = expr.pure(LIGHTS[a][5]),
+        },
+        clock = clock.shift(start),
+        duration = ACT,
+    }
 end
-scene.parallel(
-    lights[1],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[1][1]), y = q(LIGHTS[1][2]) },
-        to = Vec2 { x = q(LIGHTS[1][3]), y = q(LIGHTS[1][4]) },
-        dur = ACT,
-    })
-)
+
+act(1, 0.0)
+light_sweep(1, 0.0)
 
 -- ── 幕 2（4–8s）：绿灯自左入场 ───────────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 2, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 2, ACT))
-end
-scene.parallel(
-    lights[2],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[2][1]), y = q(LIGHTS[2][2]) },
-        to = Vec2 { x = q(LIGHTS[2][3]), y = q(LIGHTS[2][4]) },
-        dur = ACT,
-    })
-)
+act(2, ACT)
+light_sweep(2, ACT)
 
 -- ── 幕 3（8–12s）：蓝灯自右缘入场 ────────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 3, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 3, ACT))
-end
-scene.parallel(
-    lights[3],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[3][1]), y = q(LIGHTS[3][2]) },
-        to = Vec2 { x = q(LIGHTS[3][3]), y = q(LIGHTS[3][4]) },
-        dur = ACT,
-    })
-)
+act(3, 2 * ACT)
+light_sweep(3, 2 * ACT)
 
 -- ── 幕 4（12–16s）：琥珀灯自右入场 ───────────────────────────────────
-scene.animate(cubes[1], spin_clip(1, 4, ACT), ACT)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 4, ACT))
-end
-scene.parallel(
-    lights[4],
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(LIGHTS[4][1]), y = q(LIGHTS[4][2]) },
-        to = Vec2 { x = q(LIGHTS[4][3]), y = q(LIGHTS[4][4]) },
-        dur = ACT,
-    })
-)
+act(4, 3 * ACT)
+light_sweep(4, 3 * ACT)
 
 -- ── 终幕（16–22s）：四光齐照，琥珀光转为公转，银立方体呼吸 ────────────
 -- 琥珀光的巡游终点 (-1.2, -0.9) 恰好落在半径 1.5 的圆上
 -- （初始角 = atan2(-0.9, -1.2) ≈ π + atan(0.75) ≈ 3.7851），
 -- 转轨时位置连续不跳变。
-scene.animate(cubes[1], spin_clip(1, 5, FINALE), FINALE)
-for i = 2, 5 do
-    scene.parallel(cubes[i], spin_clip(i, 5, FINALE))
+local FINALE_START = 4 * ACT
+for i = 1, 5 do
+    expr.bind {
+        object = cubes[i],
+        target = Transform.channel.rotation,
+        root = sugar.ramp(turns[i][4], turns[i][5], FINALE),
+        clock = clock.shift(FINALE_START),
+        duration = FINALE,
+    }
 end
-scene.parallel(
-    lights[4],
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = 1.5,
-        speed = 1.2,
-        initial_angle = 3.7851,
-    })
-)
+expr.bind {
+    object = lights[4],
+    target = Transform.channel.position,
+    root = sugar.orbit2d(1.5, 1.2, 3.7851),
+    clock = clock.shift(FINALE_START),
+    duration = FINALE,
+}
 -- 银立方体（正中央）缩放呼吸。
-scene.parallel(
-    cubes[3],
-    scene.clip_transform(TransformChannel.Scale, Curve.Sin {
-        base = 1.0,
-        amp = 0.16,
-        omega = 1.4,
-    })
-)
+expr.bind {
+    object = cubes[3],
+    target = Transform.channel.scale,
+    root = sugar.wave(1.0, 0.16, 1.4),
+    clock = clock.shift(FINALE_START),
+    duration = FINALE,
+}

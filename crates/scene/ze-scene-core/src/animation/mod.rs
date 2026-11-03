@@ -9,13 +9,25 @@
 // ECS 侧（`zela-scene`）保留三个 System：`BindingApplySystem` / `CameraDriveSystem` /
 // `MorphApplySystem`，并通过 re-export 保持 `zela_scene_ecs::animation::*` 路径不变。
 
+pub mod affine;
 pub mod binding;
+pub mod params;
+pub mod predicate;
 pub mod target;
 pub mod timeline;
 
-pub use binding::{Binding, BindingTable, SeekKind};
-pub use target::{
-    Camera2DFraming, CameraEye, CircleRadius, MorphT, OpacityValue, Phase, RevealRange, Target,
-    TargetCtor, TargetKind, TransformValue,
+pub use affine::{AffineError, AffineMap, init_width, recognize as recognize_affine};
+pub use params::{PARAM_WIDGET_BASE, ParamError, apply as apply_param, build_registry, widget_id, widget_index};
+pub use binding::{
+    Binding, BindingDriver, BindingTable, LibraryRef, ReplayUnsupported, ResetBehavior, SeekKind,
 };
-pub use timeline::Timeline;
+pub use predicate::{
+    Interval, IntervalSet, MultiIntervalSet, TIME_VARIABLE, analyze as analyze_predicate,
+};
+pub use target::{
+    Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, METHODS, MethodSpec, MorphT,
+    OpacityValue, Phase, REVEAL_CURRENT_POS_METHOD, RevealRange, TARGETS, Target, TargetCtor,
+    TargetEntry, TargetError, TransformChannel, TransformChannelValue, method_entry,
+    target_ctor_by_name, target_entry,
+};
+pub use timeline::{StillTimeReport, Timeline};

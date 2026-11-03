@@ -7,26 +7,139 @@ use crate::capability::{Capability, Resolved};
 use crate::error::PodError;
 use crate::handle::PodId;
 use crate::qualified::QualifiedName;
+use crate::typespec::TypeSpec;
 
-/// per-Pod 局部的函数编号（函数集合属于某个状态机）。
+/// 一个可被脚本选择的**通道声明**（提案 #6）。
+///
+/// Pod 自述"我有哪些字段地址"，语言绑定据此在组件构造器上挂常量
+/// （`Circle.channel.radius`）。与 [`Pod::functions`] 一样是**自述面**，不参与协商。
+///
+/// **命名**：脚本侧的通道**值**类型叫 `ChannelSpec`（`ze-pod-func`）；
+/// 这里是**声明**，故叫 `ChannelDecl`（计划 §0.2：同名 `pub struct` 只允许一处）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelDecl {
+    /// 命名词汇表的 namespace（如 `zela.scene`）。
+    pub namespace: &'static str,
+    /// 所属组件（`Circle`）。
+    pub component: &'static str,
+    /// 字段名（`radius`）。
+    pub name: &'static str,
+    /// 规范地址（`Circle.radius`）。
+    pub address: &'static str,
+    /// 字段类型（写方向 / 文档用）。
+    pub ty: &'static TypeSpec,
+    /// 常量**值**的 PodType 名（`{ namespace, name }` 结构体；声明文件用它标注）。
+    pub value_type: &'static str,
+}
+
+/// 一个可被脚本调用的**方法声明**（B2 方法目录的自述面）。
+///
+/// 与 [`ChannelDecl`] 同构：语言绑定据此把方法挂到组件构造器上
+/// （`Reveal.current_pos(curve)` 等价于 `expr.method { name = "Reveal.current_pos", object = curve }`）。
+///
+/// 与通道的区别是**类型级的**：方法不在写表里 ⇒ 永远选不中作绑定目标。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MethodDecl {
+    /// 命名词汇表的 namespace（如 `zela.scene`）。
+    pub namespace: &'static str,
+    /// 所属组件（`Reveal`）。
+    pub component: &'static str,
+    /// 成员名（`current_pos`）。
+    pub name: &'static str,
+    /// 规范方法名（`Reveal.current_pos`；`expr.method.name` 用它）。
+    pub qualified: &'static str,
+    /// **显式**参数个数（接收者不计）。
+    pub arity: usize,
+    /// 返回类型（声明文件 / 编辑期提示用）。
+    pub ret: &'static TypeSpec,
+}
+
+/// 函数句柄：**per-Pod 局部槽位 + generation**（计划 §0.2 的第六个句柄）。
+///
+/// 旧形态是裸 `u64`（只有编号、没有 owner / generation），查找靠
+/// `functions().iter().position(..)` —— 线性扫描，且槽位复用后会读到别人的函数。
+/// 现在是 generation 感知句柄：机制与 [`crate::Handle`] 同源
+/// （`ze_reflect::handle::HandleCore`），Pod 在装配期建立符号表，之后是整数槽位。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FunctionId(u64);
+pub struct FunctionId {
+    owner: PodId,
+    slot: u64,
+    generation: u32,
+}
 
 impl FunctionId {
-    /// 直接构造（自定义 Pod 可在慢路径里使用）。
+    /// 直接构造（自定义 Pod 的慢路径兼容入口：owner = `PodId(0)`、generation = 0）。
     pub const fn new(raw: u64) -> Self {
-        Self(raw)
+        Self {
+            owner: PodId::new(0),
+            slot: raw,
+            generation: 0,
+        }
     }
 
-    /// 原始值。
+    /// 带 owner + generation 的构造（装配期符号表用）。
+    pub const fn local(owner: PodId, slot: u64, generation: u32) -> Self {
+        Self {
+            owner,
+            slot,
+            generation,
+        }
+    }
+
+    /// 所属 Pod。
+    pub const fn owner(&self) -> PodId {
+        self.owner
+    }
+
+    /// 槽位号（= 旧形态的"函数编号"）。
+    pub const fn slot(&self) -> u64 {
+        self.slot
+    }
+
+    /// 槽位代数（防 ABA）。
+    pub const fn generation(&self) -> u32 {
+        self.generation
+    }
+
+    /// 原始槽位号（兼容旧的 `get()`）。
     pub const fn get(self) -> u64 {
-        self.0
+        self.slot
+    }
+
+    /// 校验句柄属于 `owner`；不属于 ⇒ [`PodError::CrossPodHandle`]。
+    ///
+    /// `owner = PodId(0)` 视为"未绑定 owner 的兼容句柄"，不参与校验。
+    pub fn ensure_owner(&self, owner: PodId) -> Result<(), PodError> {
+        if self.owner == owner || self.owner == PodId::new(0) {
+            Ok(())
+        } else {
+            Err(PodError::CrossPodHandle {
+                expected: owner.get(),
+                actual: self.owner.get(),
+            })
+        }
+    }
+}
+
+impl ze_reflect::handle::HandleCore for FunctionId {
+    type Owner = PodId;
+
+    fn owner(&self) -> PodId {
+        self.owner
+    }
+
+    fn slot(&self) -> u64 {
+        self.slot
+    }
+
+    fn generation(&self) -> u32 {
+        self.generation
     }
 }
 
 impl fmt::Display for FunctionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{}", self.0)
+        write!(f, "#{}", self.slot)
     }
 }
 
@@ -65,12 +178,30 @@ pub trait Pod: 'static {
     /// 慢路径（保底）：按函数编号 + 类型擦除实参调用。
     fn call(&self, id: FunctionId, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError>;
 
-    /// 按完整函数名取函数编号（默认按 [`Pod::functions`] 的顺序）。
+    /// 本 Pod 可被脚本选择的**通道常量**（默认空）。
+    ///
+    /// 语言绑定用它把 `Circle.channel.radius` 挂到组件构造器上；端点（写方向）仍由
+    /// 各语言的地址表/宿主校验决定。
+    fn channels(&self) -> &'static [ChannelDecl] {
+        &[]
+    }
+
+    /// 本 Pod 可被脚本调用的**方法**（默认空）。
+    ///
+    /// 语言绑定用它把 `Reveal.current_pos(curve)` 挂到组件构造器上 ——
+    /// 方法不在写表里，作者面只有这一条调用路径（`expr.method { … }` 是底层形态）。
+    fn methods(&self) -> &'static [MethodDecl] {
+        &[]
+    }
+
+    /// 按完整函数名取函数句柄（默认按 [`Pod::functions`] 的顺序，线性扫描）。
+    ///
+    /// 有符号表的 Pod（如 `RegistryPod`）应覆盖它：装配期解析一次，之后 O(1)。
     fn function_id(&self, name: &QualifiedName) -> Option<FunctionId> {
         self.functions()
             .iter()
             .position(|n| n == name)
-            .map(|i| FunctionId::new(i as u64))
+            .map(|i| FunctionId::local(self.id(), i as u64, 0))
     }
 
     /// 以 capability struct 为泛型实参协商；**全有或全无**。

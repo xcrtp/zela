@@ -32,6 +32,15 @@ jobs:
         with:
           shared-key: native
 
+      # xtask 给所有子进程硬注入 ZELA_TYPST_FONT_DIR（缺失即报错，防止静默退回
+      # 系统字体 ⇒ payload / 帧哈希随机器漂移）。fonts 不入库，必须先下载。
+      #
+      # **顺序**：必须在 rust-cache 之后 —— 缓存恢复会重建整个 `target/`，
+      # 放在它前面下载的 `target/fonts` 会被覆盖掉。
+      - name: Fetch deterministic fonts
+        run: pwsh crates/web/zela-web/build.ps1 -FontsOnly
+        shell: pwsh
+
       # pyo3（zela-app 默认 feature）需要带开发头的解释器。
       # 单测里还有直接构造 `RenderContext::headless()` 的 GPU 像素用例；
       # 托管 runner 无 GPU，lavapipe 提供软件 Vulkan（否则测试在 expect 处 panic）。
@@ -41,7 +50,7 @@ jobs:
           sudo apt-get install -y python3-dev mesa-vulkan-drivers libvulkan1
         shell: bash
 
-      # 以下步骤统一走 `cargo verify --step …`（命令定义单一真源）。
+      # 以下步骤统一走 `cargo verify --step …`（命令定义只有一处）。
       - name: Cargo Check Workspace
         run: cargo verify --step check
         shell: bash
@@ -66,7 +75,9 @@ jobs:
 
       - name: Install cargo-workspace-analyzer (pinned)
         if: steps.analyzer-cache.outputs.cache-hit != 'true'
-        run: cargo install cargo-workspace-analyzer --version "$ANALYZER_VERSION"
+        # `--force`：runner 的 ~/.cargo/bin 可能已有同名二进制（缓存命中判定与实际
+        # 文件不一致时），不带 --force 会以 "binary already exists" 直接失败。
+        run: cargo install cargo-workspace-analyzer --version "$ANALYZER_VERSION" --force
         shell: bash
 
       - name: Workspace Analyzer (cycles + DAG)
@@ -116,6 +127,11 @@ jobs:
           # 与 native job 的默认 features 产物不同，单独一份缓存避免互相冲刷。
           shared-key: hashes
 
+      # 必须在 rust-cache 之后：缓存恢复会重建 `target/`，吃掉 `target/fonts`。
+      - name: Fetch deterministic fonts
+        run: pwsh crates/web/zela-web/build.ps1 -FontsOnly
+        shell: pwsh
+
       # GitHub 托管的 Linux runner 无 GPU：装 Vulkan loader + lavapipe，让 headless wgpu
       # 能拿到一个软件 adapter（否则 `RenderContext::headless` 直接失败）。
       # 指定了 ZELA_HASH_RUNNER（自托管 GPU 机器）时不执行这一步。
@@ -153,6 +169,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm
+
+      # 必须在 rust-cache 之后：缓存恢复会重建 `target/`，吃掉 `target/fonts`。
+      - name: Fetch deterministic fonts
+        run: pwsh crates/web/zela-web/build.ps1 -FontsOnly
+        shell: pwsh
 
       # kernel 组 / 门面（ze-pod / ze-node / zela）/ ZSB bundle /
       # render-backends / playback 都在 xtask 的 wasm step 内；

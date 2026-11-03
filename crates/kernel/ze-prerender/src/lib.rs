@@ -1,7 +1,7 @@
 // ze-prerender: 排版引擎接入层（kernel 重 crate）。
 //
 // 依赖方向：ze-notion ← ze-content ← ze-prerender。
-// 铁律：不能依赖任何 graph / render / ui / app。
+// 约定：不能依赖任何 graph / render / ui / app。
 // 重引擎依赖（typst 等）必须放在 feature 后；默认 feature 关闭应能独立编译。
 
 pub mod cache;

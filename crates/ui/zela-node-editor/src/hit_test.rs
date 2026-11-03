@@ -38,6 +38,8 @@ pub struct HitTestContext<'a> {
     pub output_socket_pos: &'a dyn Fn(OutputSocketId) -> Option<Vec2>,
     /// Committed-edge path lookup.
     pub edge_path: &'a dyn Fn(OutputSocketId, InputSocketId) -> Option<EdgePath>,
+    /// UI 展示信息查表（`type_name → NodePresentation`；side table）。
+    pub presentation: &'a dyn Fn(&str) -> ze_node_core::NodePresentation,
 }
 
 /// Strategy object deciding what UI element sits under a graph-local point.
@@ -108,7 +110,10 @@ impl DefaultHitTestPolicy {
             let Some(n) = ctx.graph.get_node(node) else {
                 continue;
             };
-            if !n.meta().interaction.resizable {
+            if !(ctx.presentation)(&n.meta().type_name)
+                .interaction
+                .resizable
+            {
                 continue;
             }
             if let Some(rect) = (ctx.node_rect)(node) {
@@ -189,6 +194,7 @@ mod tests {
         graph: SimpleGraph,
         positions: std::collections::HashMap<NodeId, Vec2>,
         sizes: std::collections::HashMap<NodeId, Vec2>,
+        presentations: crate::PresentationTable,
     }
 
     impl Harness {
@@ -197,6 +203,7 @@ mod tests {
                 graph: SimpleGraph::default(),
                 positions: std::collections::HashMap::new(),
                 sizes: std::collections::HashMap::new(),
+                presentations: crate::PresentationTable::default(),
             }
         }
 
@@ -259,6 +266,7 @@ mod tests {
             input_socket_pos: &|s| h.socket_pos(&layout, s.node(), s.index(), false),
             output_socket_pos: &|s| h.socket_pos(&layout, s.node(), s.index(), true),
             edge_path: &|_, _| None,
+            presentation: &|t| h.presentations.of(t),
         };
 
         // Exactly on the corner → grip.
@@ -281,9 +289,15 @@ mod tests {
     #[test]
     fn non_resizable_node_has_no_grip() {
         let mut h = Harness::new();
-        // Node whose metadata disables resize.
-        let node = TestNode::new("f32", 1, 1)
-            .with_interaction(ze_node_core::NodeInteraction::default().resizable(false));
+        // Node whose presentation disables resize (UI side table, not core meta).
+        h.presentations.insert(
+            "test.node",
+            ze_node_core::NodePresentation::new(
+                "TestNode",
+                ze_node_core::NodeInteraction::default().resizable(false),
+            ),
+        );
+        let node = TestNode::new("f32", 1, 1);
         let id = h.graph.add_node(Box::new(node));
         h.positions.insert(id, Vec2::new(0.0, 0.0));
         h.sizes.insert(id, Vec2::new(160.0, 120.0));
@@ -299,6 +313,7 @@ mod tests {
             input_socket_pos: &|s| h.socket_pos(&layout, s.node(), s.index(), false),
             output_socket_pos: &|s| h.socket_pos(&layout, s.node(), s.index(), true),
             edge_path: &|_, _| None,
+            presentation: &|t| h.presentations.of(t),
         };
 
         // Corner falls through to a card hit.
@@ -323,6 +338,7 @@ mod tests {
             input_socket_pos: &|s| h.socket_pos(&layout, s.node(), s.index(), false),
             output_socket_pos: &|s| h.socket_pos(&layout, s.node(), s.index(), true),
             edge_path: &|_, _| None,
+            presentation: &|t| h.presentations.of(t),
         };
         assert_eq!(
             h.policy().hit_test(&ctx, pin),

@@ -323,6 +323,68 @@ impl Path2D {
         resample_by_arc_length(&pts, &cum, total, n, closed)
     }
 
+    /// 归一化弧长 `t` 处的**点**（`t` 钳到 `[0, 1]`）。
+    ///
+    /// 口径：先 [`flatten`](Self::flatten)`(tolerance)`，再按**累计弦长**定位 ——
+    /// 与渲染侧 reveal 裁剪同一条采样。空路径 ⇒ `Vec2::ZERO`；单点 / 零长 ⇒ 首点。
+    ///
+    /// 这是**唯一一份**"路径 + 归一化弧长 → 点"的实现：
+    /// `Reveal::current_pos` 与 `Reveal.point_at` 方法都走它（tolerance 由调用方给，
+    /// 默认口径是 `0.25`）。
+    pub fn point_at(&self, t: f32, tolerance: f32) -> Vec2 {
+        let flat = self.flatten(tolerance);
+        if flat.is_empty() {
+            return Vec2::ZERO;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+        let cumulative = cumulative_lengths(&flat);
+        let total = *cumulative.last().expect("cumulative 与 flat 同长且非空");
+        if total <= f32::EPSILON {
+            return flat[0];
+        }
+        let target = t.clamp(0.0, 1.0) * total;
+        for index in 0..flat.len() - 1 {
+            if cumulative[index + 1] >= target {
+                let span = (cumulative[index + 1] - cumulative[index]).max(f32::EPSILON);
+                let local = ((target - cumulative[index]) / span).clamp(0.0, 1.0);
+                return flat[index] + (flat[index + 1] - flat[index]) * local;
+            }
+        }
+        *flat.last().expect("flat 非空")
+    }
+
+    /// 归一化弧长 `t` 处的**单位切向量**（与 [`point_at`](Self::point_at) 取同一段）。
+    ///
+    /// 退化输入（空路径 / 单点 / 零长段）⇒ `Vec2::X`（返回 NaN 会让旋转变静默错误）。
+    pub fn tangent_at(&self, t: f32, tolerance: f32) -> Vec2 {
+        let flat = self.flatten(tolerance);
+        if flat.len() < 2 {
+            return Vec2::X;
+        }
+        let cumulative = cumulative_lengths(&flat);
+        let total = *cumulative.last().expect("cumulative 与 flat 同长且非空");
+        if total <= f32::EPSILON {
+            return Vec2::X;
+        }
+        let target = t.clamp(0.0, 1.0) * total;
+        let mut index = flat.len() - 2;
+        for i in 0..flat.len() - 1 {
+            if cumulative[i + 1] >= target {
+                index = i;
+                break;
+            }
+        }
+        let delta = flat[index + 1] - flat[index];
+        let length = delta.length();
+        if length > f32::EPSILON {
+            delta / length
+        } else {
+            Vec2::X
+        }
+    }
+
     /// 形变后的顶点列表：按弧长对齐后逐点插值。
     ///
     /// 长度恒为 `samples`（闭合环，**不含**重复的尾点）——这是"稳定开销"的
@@ -981,6 +1043,40 @@ mod tests {
 
         // n = 0 → 空
         assert!(single.resample_arc_length(0, 0.1, false).is_empty());
+    }
+
+    /// `point_at`：按归一化弧长取点（两端 == 端点，中点 != 端点）。
+    #[test]
+    fn point_at_walks_the_normalized_arc_length() {
+        let line = Path2D::from_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0)], false);
+        assert_eq!(line.point_at(0.0, 0.25), Vec2::new(0.0, 0.0));
+        assert_eq!(line.point_at(1.0, 0.25), Vec2::new(4.0, 0.0));
+        assert_eq!(line.point_at(0.5, 0.25), Vec2::new(2.0, 0.0));
+        // 钳位：越界值不越出路径。
+        assert_eq!(line.point_at(-3.0, 0.25), Vec2::new(0.0, 0.0));
+        assert_eq!(line.point_at(9.0, 0.25), Vec2::new(4.0, 0.0));
+
+        // 退化输入不 panic。
+        assert_eq!(Path2D::new().point_at(0.5, 0.25), Vec2::ZERO);
+        let single = Path2D::from_polyline(&[Vec2::new(3.0, 4.0)], false);
+        assert_eq!(single.point_at(0.5, 0.25), Vec2::new(3.0, 4.0));
+    }
+
+    /// `tangent_at`：折线段的单位方向；退化输入给 `Vec2::X`（不是 NaN）。
+    #[test]
+    fn tangent_at_is_the_unit_direction_of_the_segment() {
+        let path = Path2D::from_polyline(
+            &[Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 2.0)],
+            false,
+        );
+        // 总长 3：t=0.5 → 弧长 1.5 ⇒ 第二段（0,1）→（1,2）的方向 (0,1)。
+        assert_eq!(path.tangent_at(0.0, 0.25), Vec2::new(1.0, 0.0));
+        assert_eq!(path.tangent_at(0.5, 0.25), Vec2::new(0.0, 1.0));
+        assert_eq!(path.tangent_at(1.0, 0.25), Vec2::new(0.0, 1.0));
+
+        assert_eq!(Path2D::new().tangent_at(0.5, 0.25), Vec2::X);
+        let single = Path2D::from_polyline(&[Vec2::new(3.0, 4.0)], false);
+        assert_eq!(single.tangent_at(0.5, 0.25), Vec2::X);
     }
 
     /// 圆 → 方：t=0.5 时不同顶点数 == samples，且包围盒介于两者之间。

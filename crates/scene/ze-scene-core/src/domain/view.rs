@@ -145,6 +145,28 @@ pub fn content_texture_specs(
         let texture = scene
             .with::<SurfaceTexture, _>(id, |texture| *texture)
             .ok_or(SurfaceError::MissingTexture(id))?;
+        // S4-14（B5 A-2）：Renderer2D + composite=false 且**无人消费**该纹理 ⇒ 内容
+        // 既不在视口画（S4-10 起视口跳过归属内容）、也不参与合成、也没有代理平面
+        // ⇒ 完全不可见且不报错。这是 S4-10 把"双份可见"修成"彻底沉默"后留下的洞。
+        if !texture.composite {
+            let handle = content_texture_handle(id);
+            let mut consumed = false;
+            scene.for_each::<crate::components::Material3D>(|_, material| {
+                if material.texture == Some(handle) {
+                    consumed = true;
+                }
+            });
+            // 脚本作者写的是 `Texture.Surface{surface}`：装配期以 `SurfaceTextureRef`
+            // 承载（提交时才解析成句柄）⇒ 它同样是"消费者"，必须认。
+            scene.for_each::<crate::surface::SurfaceTextureRef>(|_, reference| {
+                if reference.0 == id {
+                    consumed = true;
+                }
+            });
+            if !consumed {
+                return Err(SurfaceError::UnconsumedSurface { surface: id });
+            }
+        }
         let camera = texture.camera_for(surface.bounds)?;
         specs.push(ContentTextureSpec {
             surface: id,

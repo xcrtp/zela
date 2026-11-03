@@ -1,5 +1,7 @@
 # ze-time
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-time.md`](../../../docs/modules/ze-time.md)。
+
 > **纯逻辑时间内核** — 时钟树 + 动画曲线 + Director（导演）。
 > 零渲染 / 零 ECS / 零 UI 依赖；全部求值为**纯函数**，全部状态可序列化。
 
@@ -21,8 +23,8 @@ zela 动画架构的时间单向管道中，本 crate 承担全部「时间 → 
 seek（跳转）、倒放（负 rate/speed）、循环回绕因此**免费且必然正确**，
 且与渲染帧率完全解耦。
 
-**硬约束**：仅依赖 `ze-notion` / `serde` / `thiserror`；
-`glam` 为**禁用项**（数学类型一律经 `ze-notion`，见 `Cargo.toml` 依赖铁律注释）；
+**强制约束**：仅依赖 `ze-notion` / `serde` / `thiserror`；
+`glam` 为**禁用项**（数学类型一律经 `ze-notion`，见 `Cargo.toml` 依赖约定注释）；
 `hecs` / `egui` / `wgpu` / 任何 `zela-*` 绝对禁止。
 **路线甲**：可依赖 `ze-notion`（插值原语），但**不得**依赖 `ze-content`——
 语义配对（按源码锚点）的知识留在外层。
@@ -78,8 +80,8 @@ let id = forest.insert(looper).unwrap();
 ```
 
 **环检测**：`insert` 天然不可能成环（新 id 不在任何已有节点的祖先链上）；
-`set_parent` 沿祖先链检测，遇环返回 `Err(TimeError::CycleDetected)` 且
-林结构保持不变（测试锁定：失败后求值行为不受影响）。
+`set_parent` 沿祖先链检测，遇环返回 `Err(TimeError::CycleDetected { chain })`
+（`chain` 为完整环路径，首尾相同）且林结构保持不变（测试锁定：失败后求值行为不受影响）。
 
 ---
 

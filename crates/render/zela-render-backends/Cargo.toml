@@ -13,7 +13,7 @@ ze-scene-core = { path = "../../scene/ze-scene-core" }
 # S2：图层合成概念与 3D 渲染描述符已下沉渲染 IR 层；后端不再直接依赖场景实现。
 ze-render-ir = { path = "../../kernel/ze-render-ir" }
 # B2-0a：3D 顶点布局契约在 kernel 层声明（VertexLayout::standard_3d），
-# 后端只做「契约 → wgpu 类型」的翻译（铁律 4：不改顶点格式）。
+# 后端只做「契约 → wgpu 类型」的翻译（不改顶点格式）。
 ze-vertex = { path = "../../kernel/ze-vertex" }
 # B3-0.5e：resource_cache / render_backend 的纯数据部分（GpuHandle / ResourceKey / ...）
 # 在 kernel 层；后端 crate 直接依赖它，不再经 zela-render 转口。
@@ -21,6 +21,10 @@ ze-resource = { path = "../../kernel/ze-resource" }
 
 thiserror.workspace = true
 pollster = { workspace = true, optional = true }
+# 跨平台墙钟：`std::time::Instant::now()` 在 wasm32-unknown-unknown 上是
+# `panic!("time not implemented on this platform")` —— 网页首次出帧就会炸（黑屏）。
+# `web-time` 在 wasm 用 `performance.now()`，native 直接转发 `std::time::Instant`。
+web-time = "1"
 # GPU 测试汇报：直接写 fd 2，绕过 libtest 的线程输出捕获。
 # S4：仅 native blocking 构建需要（wasm 构建不编译 gpu_test）。
 libc = { workspace = true, optional = true }
@@ -35,6 +39,8 @@ egui-wgpu = { workspace = true, optional = true }
 [dev-dependencies]
 # 仅测试：像素级用例要构造真实 ECS 场景（生产边不得依赖场景实现，见 S2 CI 规则）。
 zela-scene-ecs = { path = "../../scene/zela-scene-ecs" }
+# B4 Step 6：双后端回归（wgpu 三角化 vs 矢量解析 AA，按容差比较）。
+zela-render-vector = { path = "../zela-render-vector" }
 egui.workspace = true
 eframe.workspace = true
 egui-wgpu.workspace = true
@@ -46,6 +52,9 @@ hecs.workspace = true
 # B3-2：渲染契约探针（`render_pod_probe`）要**真的实现 Pod trait** 并走慢路径。
 # 仅 dev 边：生产依赖图仍与 B3-0.5 一致（structure 判据只查生产边）。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
+# 阶段 4-A：WGSL codegen 的三后端对拍（生成器在 ze-comb / ze-func，执行在 wgpu）。
+ze-comb = { path = "../../kernel/ze-comb" }
+ze-func = { path = "../../kernel/ze-func" }
 serde.workspace = true
 serde_json.workspace = true
 

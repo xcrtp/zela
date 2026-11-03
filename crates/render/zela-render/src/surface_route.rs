@@ -23,10 +23,10 @@ use ze_scene_contract::{ObjectId, SceneRead};
 use ze_scene_core::components::{ContentTextureItem, MorphShape, Reveal};
 use ze_scene_core::{
     resolve_surface, Surface, SurfaceError, SurfaceMapping, SurfaceOwner, SurfaceRenderer, Transform,
-    WorldTransforms,
+    WorldInherit, WorldTransforms,
 };
 
-use crate::draw::{apply_opacity, opacity_of, DrawItem, DrawQueue};
+use crate::draw::{apply_inherit, apply_opacity, opacity_of, DrawItem, DrawQueue};
 use crate::draw_queue_3d::MeshDraw;
 use crate::shape_to_mesh::{derive_mesh, ShapeMeshError};
 
@@ -76,6 +76,7 @@ pub(crate) fn try_record_direct<S, A, B>(
     style_component: &B,
     z: Option<ZOrder>,
     worlds: Option<&WorldTransforms>,
+    inherit: Option<&WorldInherit>,
     queue: &mut DrawQueue,
 ) -> bool
 where
@@ -130,7 +131,8 @@ where
     let local_shape = shape_component.to_shape2d(&Transform2D::identity());
     // 1 px = 1 世界单位（与 `derive_mesh` 的 tolerance 同一约定）。
     let mut style = style_component.resolve_style(1.0);
-    apply_opacity(&mut style, opacity_of(scene, id));
+    apply_inherit(&mut style, inherit, id);
+    apply_opacity(&mut style, opacity_of(scene, id, inherit));
 
     let derived = match derive_mesh(&local_shape, &style) {
         Ok(derived) => derived,
@@ -217,9 +219,12 @@ mod tests {
         assert!(queue.surface_errors().is_empty());
     }
 
-    /// Renderer2D ⇒ 默认 2D 路径（Step 4 才接纹理）。
+    /// Renderer2D ⇒ 内容只进该 Surface 的纹理层，**不再**重复画在屏幕视口上。
+    ///
+    /// 两套相机（视口 2D 相机 vs `SurfaceTexture::camera_for`）位置与缩放都不同，
+    /// 重复绘制会得到"同一对象出现两次且带偏移"的画面。
     #[test]
-    fn renderer2d_keeps_default_shape_path() {
+    fn renderer2d_content_is_not_drawn_in_viewport() {
         let mut world = World::new();
         let surface = spawn_surface(
             &mut world,
@@ -235,7 +240,7 @@ mod tests {
         let mut queue = DrawQueue::new();
         record_scene(&WorldView::new(&world), &camera(), &mut queue);
 
-        assert_eq!(queue.commands().len(), 1);
+        assert_eq!(queue.commands().len(), 0, "视口层不得重复绘制 Surface 内容");
         assert_eq!(queue.meshes().count(), 0);
         assert!(queue.surface_errors().is_empty());
     }

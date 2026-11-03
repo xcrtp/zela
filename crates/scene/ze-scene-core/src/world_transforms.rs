@@ -2,7 +2,7 @@
 //
 // B3-1 收尾：数据结构下沉核心层（渲染层只读它，不该依赖 ECS 实现）。
 // **生产**（父子累乘）在 `zela-scene-ecs::transform_hierarchy::TransformHierarchySystem`；
-// 本模块只提供容器与读取口径（3D 唯一真源 + 2D 投影视图）。
+// 本模块只提供容器与读取口径（3D 唯一来源 + 2D 投影视图）。
 //
 // 组合约定（与生成侧一致）：`scale → rotation → translation`；父子
 // `world = parent ∘ local`。无 `Parent` 的对象其世界矩阵与 local 逐位相同。
@@ -12,16 +12,38 @@ use std::collections::HashMap;
 use ze_notion::{Transform2D, Transform3D};
 use ze_scene_contract::ObjectId;
 
-/// 每帧派生的**世界矩阵**（Resource；不进持久化）。
+use crate::world_inherit::WorldInherit;
+
+/// 每帧派生的**世界矩阵** + **样式继承结果**（Resource；不进持久化）。
+///
+/// `inherit` 与 `world` 由**同一次**父链遍历产出（`TransformHierarchySystem`）：
+/// 放在一起既省一次递归，也避开 `ResourceTuple` 不支持 5 元组的限制。
 #[derive(Debug, Clone, Default)]
 pub struct WorldTransforms {
     world: HashMap<ObjectId, Transform3D>,
+    inherit: WorldInherit,
 }
 
 impl WorldTransforms {
     /// 由"对象 → 世界矩阵"映射构造（生成侧每帧重建时用）。
-    pub fn from_map(world: HashMap<ObjectId, Transform3D>) -> Self {
-        Self { world }
+    ///
+    /// 接受任意 `IntoIterator`：生成侧用 `BTreeMap`（排序确定），测试可用数组 / 哈希表。
+    pub fn from_map(world: impl IntoIterator<Item = (ObjectId, Transform3D)>) -> Self {
+        Self {
+            world: world.into_iter().collect(),
+            inherit: WorldInherit::default(),
+        }
+    }
+
+    /// 附上样式继承结果（与矩阵同帧产出）。
+    pub fn with_inherit(mut self, inherit: WorldInherit) -> Self {
+        self.inherit = inherit;
+        self
+    }
+
+    /// 样式继承结果（不透明度 / 填充 / 描边；缺席条目 = 沿用本地组件）。
+    pub fn inherit(&self) -> &WorldInherit {
+        &self.inherit
     }
 
     /// 写入 / 覆盖一个对象的世界矩阵（测试与增量构建用）。
@@ -29,7 +51,7 @@ impl WorldTransforms {
         self.world.insert(id, transform);
     }
 
-    /// 取对象的**世界矩阵**（3D 唯一真源；缺席 ⇒ 该对象没有 Transform，
+    /// 取对象的**世界矩阵**（3D 唯一来源；缺席 ⇒ 该对象没有 Transform，
     /// 渲染侧回退 local / 恒等）。
     pub fn get(&self, id: ObjectId) -> Option<&Transform3D> {
         self.world.get(&id)

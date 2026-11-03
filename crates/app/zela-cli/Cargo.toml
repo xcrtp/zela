@@ -1,0 +1,28 @@
+[package]
+name = "zela-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "zela 伞命令（bin = zela）：CommandSpec → clap 适配 + 宿主实现"
+
+# 阶段 1：只挂 render / list；阶段 2/3 补齐其余命令。
+[[bin]]
+name = "zela"
+path = "src/main.rs"
+
+[dependencies]
+zela-app = { path = "../zela-app", default-features = false }
+zela-commands = { path = "../zela-commands", default-features = false }
+zela-scene-bundle = { path = "../../scene/zela-scene-bundle" }
+zela-render-backends = { path = "../../render/zela-render-backends", default-features = false, features = ["wgpu"] }
+# `gui` 子命令：只转发到 zela-gui 的 launch（本 crate 不碰 egui 类型）。
+zela-gui = { path = "../zela-gui", optional = true }
+clap = "4"
+png.workspace = true
+
+[features]
+default = ["typst"]
+typst = ["zela-app/typst", "zela-commands/typst"]
+python = ["zela-app/python", "zela-commands/python"]
+js = ["zela-app/js", "zela-commands/js"]
+gui = ["dep:zela-gui"]

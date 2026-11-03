@@ -1,0 +1,29 @@
+[package]
+name = "ze-pod-func"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+description = "Expression functor pod (zela.math namespace): leaf operators as a capability"
+
+# 依赖约定（与 `crates/ze/pod` 其余成员一致）：
+#   ✅ ze-pod-core / ze-pod-macro — Pod / capability 机制
+#   ✅ ze-comb — 组合子表达式内核（kernel 层，不含宿主状态）
+#   ✅ ze-func — 基础函子库（算子语义 + OpDef 元数据）；本 crate 只剩接线 + infer
+#   ✅ serde_json — 表达式导出（产物侧证据）
+#   ❌ 任何 zela-* —— 由 `cargo verify --step structure` 的 JQ_POD_LAYER 判据守住
+[dependencies]
+ze-pod-core = { path = "../ze-pod-core" }
+ze-pod-macro = { path = "../ze-pod-macro" }
+ze-comb = { path = "../../../kernel/ze-comb" }
+ze-func = { path = "../../../kernel/ze-func" }
+ze-reflect = { path = "../../../kernel/ze-reflect" }
+ze-type = { path = "../../../kernel/ze-type" }
+serde_json.workspace = true
+
+[dev-dependencies]
+ze-pod-binding = { path = "../ze-pod-binding" }
+ze-pod-lua = { path = "../ze-pod-lua" }
+# 存根（.d.ts / .pyi）对 L2 签名的映射：只用到纯 Rust 的导出器。
+ze-pod-js = { path = "../ze-pod-js" }
+ze-pod-py = { path = "../ze-pod-py" }

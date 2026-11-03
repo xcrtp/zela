@@ -1,0 +1,33 @@
+[package]
+name = "ze-comb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+description = "Combinator expression kernel: structural nodes, stable tags, no host state"
+
+# 依赖约定：ze-comb 在 kernel 层，只做「表达」，不做「取数」
+#   ✅ serde — 表达式必须**整体可序列化**（节点图拓扑可序列化而节点内容不可，是本 crate 要补的不对称）
+#   ✅ thiserror — 装配期错误（悬空 Ref / 环 / 重名 id）
+#   ❌ glam / ze-notion — 数学入口在 ze-notion；本 crate 不解释数值，也不依赖任何向量类型
+#   ❌ 任何宿主 crate（ze-time / zela-* / hecs / egui / wgpu）— 时间 / 帧 / 事件只经 M 注入，
+#      不是编译期依赖
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+# 冲突诊断只有一处定义（`ze-type::conflict`）：重名不再有第二套说法。
+ze-type = { path = "../ze-type" }
+# 纯拓扑层：Expr DAG 的图视图 / 遍历器（零 crate 依赖，不产生反向边）。
+ze-graph-core = { path = "../ze-graph-core" }
+
+[dev-dependencies]
+serde_json.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "expr_bench"
+harness = false
+
+[[bench]]
+name = "eval_bench"
+harness = false

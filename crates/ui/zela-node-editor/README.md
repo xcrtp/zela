@@ -1,8 +1,10 @@
 # zela-node-editor
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-node-editor.md`](../../../docs/modules/zela-node-editor.md)。
+
 > **纯逻辑节点编辑器状态机**。位于领域模型（ze-node-core）与任何 UI 层之间。
 >
-> **硬约束**：**绝不引入 egui / eframe，绝不依赖 zela-scene/zela-render**。
+> **强制约束**：**绝不引入 egui / eframe，绝不依赖 zela-scene/zela-render**。
 > 保证可被 CLI、WASM、移动端等非 egui 前端复用。
 >
 > 它的坐标空间永远是"图本地"（`glam::Vec2`，左上原点、y 下、1:1 像素），

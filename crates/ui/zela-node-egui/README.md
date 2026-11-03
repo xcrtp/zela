@@ -1,5 +1,7 @@
 # zela-node-egui
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/zela-node-egui.md`](../../../docs/modules/zela-node-egui.md)。
+
 > **egui 渲染与交互层**：把 `zela-node-editor` 的纯逻辑状态机
 > （图、命令、撤销、连接校验）绘制成可交互的节点画布。
 >

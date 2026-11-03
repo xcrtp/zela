@@ -4,7 +4,9 @@
 //! layer. Provides:
 //!   * [`Property`] / [`PropertyValue`] — a serializable, UI-neutral vocabulary
 //!     of parameter kinds (scalar, vec, color, enum, range, function, dynamic,
-//!     list, …);
+//!     list, …). **Defined in the kernel crate [`ze_property`]** (CA-a) and
+//!     re-exported here so the historical `ze_node_schema::Property` path keeps
+//!     working;
 //!   * [`NodeSpec`] — the declarative property interface a node implements on
 //!     top of [`ze_node_core::Node`];
 //!   * [`NodeRegistry`] — a type-erased catalogue that can spawn node instances
@@ -13,28 +15,28 @@
 //!   * [`DynamicObject`] — a runtime-extensible bag of named properties so
 //!     users can add fields without recompiling.
 //!
-//! Hard constraint (plan §1): this crate depends only on `ze_node_core` + `serde`.
-//! It must **not** depend on `egui`, `zela-node-editor`, `zela-node-egui(-ui)`
-//! or any project-internal crate other than `zela-node`. That keeps the
-//! "backend-swappable / WASM / headless" architecture promise.
+//! Hard constraint (plan §1): this crate depends only on `ze_node_core`,
+//! `ze_property` + `serde`. It must **not** depend on `egui`, `zela-node-editor`,
+//! `zela-node-egui(-ui)` or any project-internal crate other than `zela-node`.
+//! That keeps the "backend-swappable / WASM / headless" architecture promise.
 
 #![forbid(unsafe_code)]
 
-pub mod dynamic;
 pub mod dynamic_node;
-pub mod error;
-pub mod property;
 pub mod registry;
 pub mod spec;
 
-pub use dynamic::{DynamicField, DynamicObject};
-pub use dynamic_node::{DynamicNode, DynamicNodeBuilder};
-pub use error::PropertyError;
-pub use property::{
-    BoolConfig, ColorConfig, DoubleConfig, DynamicConfig, EnumConfig, FunctionConfig,
-    FunctionHandle, IntegerConfig, ListConfig, Property, PropertyValue, RangeConfig, ScalarConfig,
-    StringConfig, StringKind, VEC_MAX_COMPONENTS, VecNConfig,
+// The property vocabulary itself lives in the kernel now (CA-a). Re-export the
+// **modules** as well as the items: `ze_node_schema::property::Property` and
+// `crate::dynamic::DynamicObject` paths keep resolving for existing callers.
+pub use ze_property::{dynamic, error, property};
+pub use ze_property::{
+    BoolConfig, ColorConfig, DoubleConfig, DynamicConfig, DynamicField, DynamicObject, EnumConfig,
+    FunctionConfig, FunctionHandle, IntegerConfig, ListConfig, ParameterEntry, ParameterRegistry,
+    Property, PropertyError, PropertyValue, RangeConfig, ScalarConfig, StringConfig, StringKind,
+    VEC_MAX_COMPONENTS, VecNConfig,
 };
+pub use dynamic_node::{DynamicNode, DynamicNodeBuilder};
 pub use registry::{NodeRegistry, RegistryCategory, RegistryNodeInfo};
 pub use spec::{NodeSpec, property_schema, property_value};
 

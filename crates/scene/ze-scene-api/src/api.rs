@@ -9,19 +9,40 @@
 // `content.*` 表与 `Circle { ... }` / `Curve.Phase { ... }` 构造器由
 // `binding.rs` 按 `TypeSpec` **自动生成**。
 
-use ze_scene_core::animation::TargetKind;
 use crate::types::{
-    Arrow, Axes2D, Camera2D, Camera3D, Circle, Cube, Curve, Fill, Formula, Light, Material3D, Name,
-    Opacity, Parent, PathList, PathShape, Polyline, Reveal, RevealPath, Stroke, Surface, Text,
-    Transform, Transform3D, TransformChannel,
+    Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
+    Fill, Formula, Gradient, Group, Light, Material3D, Morph, Name, Opacity, Parent, PathFollow,
+    PathList, PathShape, PhaseAnim, Polyline, RayTrace, Reveal, RevealPath, SecondPaint, Stroke,
+    Surface, Text, Transform, Transform3D, Vec2, Vec3,
 };
 use ze_pod_core::Handle;
 use ze_pod_macro::capability;
 
 /// 宿主暴露给脚本的场景装配接口。
+///
+/// `@7 → @8`（B7 Step 1）：删除 `Target.TransformValue`（按值类型猜写哪一列的静默兜底）
+/// 与 `TransformChannel.Auto`。删一个零使用方法**不改变任何像素**，但改变能力表面
+/// ⇒ 必须升版本，让"脚本引用了不存在的目标"在装配期显式失败。
+///
+/// `@8 → @9`（B7 Step 4，用户明确豁免 A6「指纹只变一次」）：补齐三个此前
+/// **脚本层不可达**的能力入口 —— `group`（`Group` 标签）、`phase_anim`（`Target.Phase`
+/// 的写入对象）、`morph`（`Target.MorphT` 的写入对象）。它们此前不是"没人用"，
+/// 而是**没有入口**（见 GAPS W1-05）。
+/// `@9 → @10`（PE Step 2）：把 PD 已暴露的 5 项绘制参数接上场景层入口 ——
+/// `gradient` / `dash` / `second_paint` / `background_stroke` / `curve_window`。
+/// 它们此前**后端有、脚本无入口**（不是"没人用"）；组件挂上即开启，缺席 = 当前行为
+/// ⇒ 既有作品像素逐位不变。
+///
+/// `@10 → @11`（提案 #6）：`clip` 的 `target` 从 `TargetKind` 枚举改为**地址字符串**。
+/// 旧名（`CircleRadius` / `RevealRange` / …）仍然接受，规范地址 `Circle.radius` /
+/// `Reveal.end` / … 同时可用；未知地址在装配期显式失败。
+///
+/// `@14 → @15`（BV-5）：新增 `ray_trace`（3D 视图的光追开关组件 `RayTrace`）。
+/// 它是一个**新类型**，既有作品不引用 ⇒ payload 逐位不变（`SceneScript` 只记录
+/// 实际挂上的组件）；只有用到它的作品才在产物里多一个 `RayTrace`。
 #[capability(
     namespace = "zela.scene",
-    version = "7",
+    version = "15",
     description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
     bindings
 )]
@@ -37,6 +58,10 @@ pub struct SceneApi<'a> {
 
     /// 构造 3D 相机组件（B1-D）。
     pub camera3d: fn(&'a dyn Pod, camera: Camera3D) -> Handle,
+
+    /// 构造 3D 视图的光追开关组件（BV-5）：挂在**同一个对象**上（与 `Camera3D` 同一实体），
+    /// 缺席 = 只光栅。仅矢量后端有光追 pass（wgpu 侧由路由显式拒绝）。
+    pub ray_trace: fn(&'a dyn Pod, ray_trace: RayTrace) -> Handle,
 
     /// 构造立方体网格组件（B1-D，**参数化**：只传半边长，顶点由宿主生成）。
     pub cube: fn(&'a dyn Pod, cube: Cube) -> Handle,
@@ -83,32 +108,52 @@ pub struct SceneApi<'a> {
     /// 由内容路径构造静态对象（`Path` + `StrokeSolid` 组件组）。
     pub path_shape: fn(&'a dyn Pod, shape: PathShape) -> Handle,
 
+    /// 构造路径跟随组件（动画层阶段 2）：`PathFollow.t` 每帧写 `t`，
+    /// 系统把 `t` 处的位置（及切线朝向）写进同对象的 `Transform`。
+    pub path_follow: fn(&'a dyn Pod, follow: PathFollow) -> Handle,
+
     /// 创建对象：组件句柄列表（异构 ⇒ 保持 `Array<Opaque>`）。
     pub spawn: fn(&'a dyn Pod, components: Vec<Handle>) -> Handle,
 
     /// 销毁对象（`commit` 时执行）。
     pub despawn: fn(&'a dyn Pod, object: Handle) -> (),
 
-    /// 构造动画动作：**目标枚举** + **曲线枚举**（拼错在绑定层即报错）。
-    pub clip: fn(&'a dyn Pod, target: TargetKind, curve: Curve) -> Handle,
-
-    /// 构造 **Transform 通道**动作（S3：Position / Rotation / Scale）。
-    ///
-    /// 与 `clip(Target.TransformValue, ...)` 的区别：显式指定写哪一列，
-    /// 因此 `Position` 与 `Rotation` 可以在 `parallel` 里并存。
-    pub clip_transform: fn(&'a dyn Pod, channel: TransformChannel, curve: Curve) -> Handle,
-
-    /// 顺序播放一段动画（动作 + 时长，秒）。
-    pub animate: fn(&'a dyn Pod, object: Handle, clip: Handle, duration: f64) -> (),
-
-    /// 与**上一段**动画同区间的额外动作。
-    pub parallel: fn(&'a dyn Pod, object: Handle, clip: Handle) -> (),
-
-    /// 推进时序游标（不产生动画段）。
-    pub wait: fn(&'a dyn Pod, seconds: f64) -> (),
-
     /// 构造 Surface（B3 Step 0）：`Surface` + `SurfaceRenderer` + `SurfaceTexture` 组件组。
     pub surface: fn(&'a dyn Pod, surface: Surface) -> Handle,
+
+    /// 构造组标签组件（B7 Step 4）：**纯组合**，不做父子变换累乘（与 `Parent` 分工）。
+    pub group: fn(&'a dyn Pod, group: Group) -> Handle,
+
+    /// 构造函数图像相位组件（B7 Step 4）：`Target.Phase` 每帧写 `phase`。
+    pub phase_anim: fn(&'a dyn Pod, phase: PhaseAnim) -> Handle,
+
+    /// 构造可变形形状组件（B7 Step 4）：`Target.MorphT` 每帧写 `t`。
+    pub morph: fn(&'a dyn Pod, morph: Morph) -> Handle,
+
+    /// 构造渐变组件（PE）：色标沿两个端点的轴均匀分布（多 stop 原生支持）。
+    pub gradient: fn(&'a dyn Pod, gradient: Gradient) -> Handle,
+
+    /// 构造虚线组件（PE）：单位是**曲线参数 u**，不是像素。
+    pub dash: fn(&'a dyn Pod, dash: Dash) -> Handle,
+
+    /// 构造第二套 paint 组件（PE）：`mix` 是混合进度。
+    pub second_paint: fn(&'a dyn Pod, second: SecondPaint) -> Handle,
+
+    /// 构造背景描边组件（PE）：填充之下的第三色。
+    pub background_stroke: fn(&'a dyn Pod, background: BackgroundStroke) -> Handle,
+
+    /// 构造曲线窗口组件（PE）：单位是曲线索引 + t。
+    pub curve_window: fn(&'a dyn Pod, window: CurveWindow) -> Handle,
+
+    // ─── 第 BB 批（阶段 4）：构造糖（值形态，不进 payload）─────────────
+    /// `rgba(r, g, b, a)`：`Color { r, g, b, a }` 的函数形态（各分量 0–255）。
+    pub rgba: fn(&'a dyn Pod, r: f64, g: f64, b: f64, a: f64) -> Color,
+
+    /// `vec2(x, y)`：`Vec2 { x, y }` 的函数形态。
+    pub vec2: fn(&'a dyn Pod, x: f64, y: f64) -> Vec2,
+
+    /// `vec3(x, y, z)`：`Vec3 { x, y, z }` 的函数形态。
+    pub vec3: fn(&'a dyn Pod, x: f64, y: f64, z: f64) -> Vec3,
 }
 
 /// 宿主暴露给脚本的内容编译接口。
@@ -136,9 +181,22 @@ pub struct ContentApi<'a> {
 // 指纹算法是固定 FNV-1a（跨 Rust 版本稳定），见 `ze_pod_core::capability_fingerprint`。
 
 /// `zela.scene` 的当前自述版本（必须与 `#[capability(version = ...)]` 逐字一致）。
-pub const SCENE_API_VERSION: &str = "7";
+///
+/// `@12 → @13`（第 BB 批，阶段 4）：新增三个**构造糖** `rgba` / `vec2` / `vec3`。
+/// 它们只返回值、不碰录制状态（展开成与 `Color{…}` / `Vec2{…}` 相同的值），
+/// 因此这个版本号不进产物（ZSB 的 libraries 只记表达式函子库）⇒ payload 不变。
+///
+/// `@13 → @14`（动画层补全 · 阶段 2）：新增 `path_follow`（路径跟随组件）。
+/// 它进 `signatures()` ⇒ 指纹与版本一起动；既有作品不引用它 ⇒ 像素不变，
+/// 但 `zela.scene` 版本进产物 ⇒ payload 需重录（像素基线不动）。
+///
+/// `@14 → @15`（BV-5）：新增 `ray_trace`（3D 视图的光追开关组件 `RayTrace`）。
+/// 指纹随 `signatures()` 一起动；**payload 不动** —— `SceneScript` 只记录实际挂上的
+/// 组件，既有作品不引用 `RayTrace` ⇒ 产物逐字节相同（与 `@13 → @14` 不同，那一版
+/// 改的是产物里出现的能力名）。
+pub const SCENE_API_VERSION: &str = "15";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 15_573_081_187_359_822_637;
+pub const SCENE_API_FINGERPRINT: u64 = 17_936_327_828_547_956_008;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

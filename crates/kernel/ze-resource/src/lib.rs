@@ -10,5 +10,5 @@
 pub mod render_backend;
 pub mod resource_cache;
 
-pub use render_backend::{AccessError, GpuHandle, GpuResourceId};
+pub use render_backend::{AccessError, AnyBox, GpuHandle, GpuResourceId};
 pub use resource_cache::{DeferredDestroyer, GpuResourceCache, ResourceCache, ResourceKey};

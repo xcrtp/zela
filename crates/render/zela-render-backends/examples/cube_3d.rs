@@ -58,7 +58,10 @@ impl eframe::App for Cube3dApp {
         // S3-2 修复：2D/3D 合并为**单个**回调，一次性合成全部图层。
         let layers = vec![SceneLayer {
             id: LayerId(0),
-            kind: LayerKind::Viewport3D { camera },
+            kind: LayerKind::Viewport3D {
+                camera,
+                raytrace: false,
+            },
             blend: LayerBlend::Alpha,
             opacity: 1.0,
         }];

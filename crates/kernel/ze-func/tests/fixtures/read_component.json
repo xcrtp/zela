@@ -1,0 +1,32 @@
+{
+  "name": "read_component",
+  "expr": {
+    "node": {
+      "type": "call",
+      "data": {
+        "op": { "namespace": "zela.math", "name": "add" },
+        "args": [
+          {
+            "node": {
+              "type": "read",
+              "data": {
+                "channel": { "namespace": "zela.scene", "name": "Circle.radius" },
+                "object": 7
+              }
+            }
+          },
+          {
+            "node": {
+              "type": "channel",
+              "data": { "channel": { "namespace": "", "name": "time" } }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "channels": { "time": [0.0, 0.5] },
+  "objects": { "7": { "Circle.radius": 2.5 } },
+  "expect": [2.5, 3.0],
+  "expect_hash": "0x8b9fbcf06eee5c39"
+}

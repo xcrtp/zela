@@ -22,31 +22,61 @@ local function q(v)
     return math.floor(v * 10000.0 + 0.5) / 10000.0
 end
 
-local function rgba(r, g, b, a)
-    return Color { r = r, g = g, b = b, a = a }
+-- 动画值域是 f32，而表达式层是 f64：`narrow_f32` 在旧曲线的同一位置落位
+-- （第 5a 批：迁移后的每一帧必须与旧 `Curve` 逐位相同）。
+
+-- `Keyframes`（三点线性）⇒ 两个 `mix` + 一个 `Select`：
+-- `t < t1` 走第一段（否则第二段），段外由 clamp 钳到端点。
+local function keyed3(t1, v1, t2, v2)
+    local first = Mix {
+        a = expr.pure(0.0),
+        b = expr.pure(v1),
+        t = Clamp {
+            x = Scale { k = 1.0 / t1, of = clock.time() },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+    local second = Mix {
+        a = expr.pure(v1),
+        b = expr.pure(v2),
+        t = Clamp {
+            x = Scale {
+                k = 1.0 / (t2 - t1),
+                of = Add { a = clock.time(), b = expr.pure(-t1) },
+            },
+            lo = expr.pure(0.0),
+            hi = expr.pure(1.0),
+        },
+    }
+    return Select {
+        cond = Lt { a = clock.time(), b = expr.pure(t1) },
+        ["then"] = first,
+        otherwise = second,
+    }
 end
+
+-- `Sin { base, amp, omega }` ⇒ `base + amp · sin(omega · t)`（f32 口径）。
+
+-- `Orbit2D` ⇒ `(r cos θ, r sin θ, 0)`，`θ = speed · t + initial_angle`（f32 口径）。
+
+-- 旧 `Step::Play` 区间：局部时间 `[0, dur)`（段外由 Hold 钳到两端）。
 
 -- ── 相机（静态；aspect 由渲染视口覆盖）─────────────────────────────────
 scene.spawn({
     Camera3D {
-        eye = Vec3 { x = 0.0, y = 3.0, z = 6.6 },
-        target = Vec3 { x = 0.0, y = 0.0, z = 0.0 },
-        up = Vec3 { x = 0.0, y = 1.0, z = 0.0 },
+        eye = scene.vec3(0.0, 3.0, 6.6),
         fov_y = 1.05,
     },
 })
--- 2D 相机（渲染器 2D 通道要求 Framing2D；本场景无 2D 对象，仅占位）。
-scene.spawn({
-    Camera2D { center = Vec2 { x = 0.0, y = 0.0 }, scale = 55.0 },
-})
 
--- ── 光照：方向光主光 + 冷暖两点光副光（位置由 Transform 提供，铁律 3）──
+-- ── 光照：方向光主光 + 冷暖两点光副光（位置由 Transform 提供）──
 scene.spawn({
     Light {
         kind = LightKind.Directional {
-            direction = Vec3 { x = 0.35, y = -0.5, z = -0.79 },
+            direction = scene.vec3(0.35, -0.5, -0.79),
         },
-        color = rgba(255, 242, 224, 255),
+        color = scene.rgba(255, 242, 224, 255),
         intensity = 1.5,
     },
 })
@@ -54,7 +84,7 @@ scene.spawn({
 local light_a = scene.spawn({
     Light {
         kind = LightKind.Point { range = 6.0 },
-        color = rgba(135, 190, 255, 255),
+        color = scene.rgba(135, 190, 255, 255),
         intensity = 0.9,
     },
     Transform { x = 3.7, y = 0.0, z = 1.6 },
@@ -63,7 +93,7 @@ local light_a = scene.spawn({
 local light_b = scene.spawn({
     Light {
         kind = LightKind.Point { range = 5.5 },
-        color = rgba(255, 168, 88, 255),
+        color = scene.rgba(255, 168, 88, 255),
         intensity = 0.85,
     },
     Transform { x = q(3.1 * math.cos(2.4)), y = q(3.1 * math.sin(2.4)), z = -1.6 },
@@ -72,9 +102,9 @@ local light_b = scene.spawn({
 -- ── 材质网格：金属度（列）× 粗糙度（行）───────────────────────────────
 local METALLIC = { 0.0, 0.5, 1.0 }
 local COLORS = {
-    rgba(215, 95, 65, 255),     -- 电介质（F0 = 0.04，高光弱、颜色主导）
-    rgba(70, 185, 150, 255),    -- 半金属（F0 居中）
-    rgba(235, 190, 70, 255),    -- 金属（F0 = 反照率，高光带色）
+    scene.rgba(215, 95, 65, 255),     -- 电介质（F0 = 0.04，高光弱、颜色主导）
+    scene.rgba(70, 185, 150, 255),    -- 半金属（F0 居中）
+    scene.rgba(235, 190, 70, 255),    -- 金属（F0 = 反照率，高光带色）
 }
 local ROUGH = { 0.12, 0.45, 0.82 }
 
@@ -90,14 +120,11 @@ for row = 0, 2 do
                 variant = ShaderVariant.Pbr,
                 metallic = METALLIC[col + 1],
                 roughness = ROUGH[row + 1],
-                double_sided = false,
-                transparent = false,
-                texture = Texture.None,
             },
             Transform3D {
-                position = Vec3 { x = x, y = y, z = 0.0 },
+                position = scene.vec3(x, y, 0.0),
                 rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-                scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+                scale = scene.vec3(1.0, 1.0, 1.0),
             },
         })
     end
@@ -107,106 +134,81 @@ end
 local flat = scene.spawn({
     Cube { half_extent = 0.45, solid = true },
     Material3D {
-        color = rgba(45, 205, 220, 255),
+        color = scene.rgba(45, 205, 220, 255),
         variant = ShaderVariant.Flat,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
     },
     Transform3D {
-        position = Vec3 { x = 3.5, y = -1.35, z = 0.0 },
+        position = scene.vec3(3.5, -1.35, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 local lambert = scene.spawn({
     Cube { half_extent = 0.45, solid = true },
     Material3D {
-        color = rgba(185, 100, 230, 255),
-        variant = ShaderVariant.Lambert,
-        metallic = 0.0,
-        roughness = 0.5,
-        double_sided = false,
-        transparent = false,
-        texture = Texture.None,
+        color = scene.rgba(185, 100, 230, 255),
     },
     Transform3D {
-        position = Vec3 { x = 3.5, y = 1.35, z = 0.0 },
+        position = scene.vec3(3.5, 1.35, 0.0),
         rotation = Vec4 { x = 0.0, y = 0.0, z = 0.0, w = 1.0 },
-        scale = Vec3 { x = 1.0, y = 1.0, z = 1.0 },
+        scale = scene.vec3(1.0, 1.0, 1.0),
     },
 })
 
 -- ── 主段（0–16s，单段并行）：差速自转 + 点光公转 / 横扫 + 中心呼吸 ────
 -- 网格立方体：Keyframes 三段自转（0→0.4 圈 → 满圈），各立方体速率不同。
 local RATES = { 0.8, 1.0, 0.7, 1.1, 0.9, 1.2, 0.6, 1.05, 0.85 }
-scene.animate(
-    grid[1],
-    scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes {
-        keys = {
-            ScalarKey { t = 0.0, value = 0.0 },
-            ScalarKey { t = 7.0, value = q(TAU * RATES[1] * 0.5) },
-            ScalarKey { t = 16.0, value = q(TAU * RATES[1]) },
-        },
-        interpolation = KeyframeInterp.Linear,
-    }),
-    MAIN
-)
-for i = 2, 9 do
-    scene.parallel(
-        grid[i],
-        scene.clip_transform(TransformChannel.Rotation, Curve.Keyframes {
-            keys = {
-                ScalarKey { t = 0.0, value = 0.0 },
-                ScalarKey { t = 7.0, value = q(TAU * RATES[i] * 0.5) },
-                ScalarKey { t = 16.0, value = q(TAU * RATES[i]) },
-            },
-            interpolation = KeyframeInterp.Linear,
-        })
-    )
+for i = 1, 9 do
+    expr.bind {
+        object = grid[i],
+        target = Transform.channel.rotation,
+        root = keyed3(7.0, q(TAU * RATES[i] * 0.5), 16.0, q(TAU * RATES[i])),
+        clock = clock.scale(1.0),
+        duration = MAIN,
+    }
 end
 -- 变体对照也缓慢自转：转面时 Lambert 无高光、Flat 恒定纯色，与 Pbr 对照。
-scene.parallel(
-    flat,
-    scene.clip_transform(TransformChannel.Rotation, Curve.Ramp {
-        from = 0.0,
-        to = q(TAU * 0.8),
-        dur = MAIN,
-    })
-)
-scene.parallel(
-    lambert,
-    scene.clip_transform(TransformChannel.Rotation, Curve.Ramp {
-        from = 0.0,
-        to = q(TAU * 0.8),
-        dur = MAIN,
-    })
-)
+for _, object in ipairs({ flat, lambert }) do
+    expr.bind {
+        object = object,
+        target = Transform.channel.rotation,
+        root = sugar.ramp(0.0, q(TAU * 0.8), MAIN),
+        clock = clock.scale(1.0),
+        duration = MAIN,
+    }
+end
 -- 冷光公转（Orbit）、暖光横扫（Ramp2）：高光在网格上移动。
-scene.parallel(
-    light_a,
-    scene.clip_transform(TransformChannel.Position, Curve.Orbit {
-        radius = 3.7,
-        speed = 1.1,
-        initial_angle = 0.0,
-    })
-)
-scene.parallel(
-    light_b,
-    scene.clip_transform(TransformChannel.Position, Curve.Ramp2 {
-        from = Vec2 { x = q(-6.5), y = q(-1.1) },
-        to = Vec2 { x = q(6.5), y = q(-1.1) },
-        dur = MAIN,
-    })
-)
+expr.bind {
+    object = light_a,
+    target = Transform.channel.position,
+    root = sugar.orbit2d(3.7, 1.1, 0.0),
+    clock = clock.scale(1.0),
+    duration = MAIN,
+}
+expr.bind {
+    object = light_b,
+    target = Transform.channel.position,
+    -- 旧 `Ramp2` 写 `Vec2`：`coerce::position3` 保留原 z（这里 = -1.6）。
+    root = Vec3FromVec2 {
+        v = Mix {
+            a = Vec2Of { x = expr.pure(q(-6.5)), y = expr.pure(q(-1.1)) },
+            b = Vec2Of { x = expr.pure(q(6.5)), y = expr.pure(q(-1.1)) },
+            t = Clamp {
+                x = Scale { k = 1.0 / MAIN, of = clock.time() },
+                lo = expr.pure(0.0),
+                hi = expr.pure(1.0),
+            },
+        },
+        z = expr.pure(-1.6),
+    },
+    clock = clock.scale(1.0),
+    duration = MAIN,
+}
 -- 中心立方体（半金属青绿）：缩放呼吸，突显粗糙度对镜面高光宽度的影响。
-scene.parallel(
-    grid[5],
-    scene.clip_transform(TransformChannel.Scale, Curve.Sin {
-        base = 1.0,
-        amp = 0.18,
-        omega = 1.3,
-    })
-)
+expr.bind {
+    object = grid[5],
+    target = Transform.channel.scale,
+    root = sugar.wave(1.0, 0.18, 1.3),
+    clock = clock.scale(1.0),
+    duration = MAIN,
+}

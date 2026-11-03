@@ -1,5 +1,7 @@
 # ze-graph-algo
 
+> 模块文档（职责 / 运行机制 / 边界与自动生成的事实区）见 [`docs/modules/ze-graph-algo.md`](../../../../docs/modules/ze-graph-algo.md)。
+
 > 为 `ze-node-core` 提供的**具体图算法实现**。只依赖
 > `ze-node-core`（trait 层），不依赖任何上层。算法可随时替换——只要新的实现满足
 > 相同的 `TopoSort` / `DirtyTracker` / `CycleDetector` trait。

@@ -51,6 +51,8 @@ pub struct Editor {
     /// Source sockets parallel to the undo stack's redo entries: a replayed
     /// `CompleteConnection` has no live drag, so its source is carried here.
     redo_source_hint: Vec<Option<OutputSocketId>>,
+    /// UI 展示数据的 side table（计划 §4「第一刀」）：core 的 `Node` trait 看不到。
+    presentation: crate::PresentationTable,
 }
 
 impl Editor {
@@ -71,7 +73,34 @@ impl Editor {
             events: VecDeque::new(),
             undo_stack: UndoStack::new(),
             redo_source_hint: Vec::new(),
+            presentation: crate::PresentationTable::new(),
         }
+    }
+
+    // --- presentation (UI side table) ---
+
+    /// 展示信息表（只读）。
+    pub fn presentation(&self) -> &crate::PresentationTable {
+        &self.presentation
+    }
+
+    /// 展示信息表（可变）：宿主在装配期把 schema registry 的条目灌进来。
+    pub fn presentation_mut(&mut self) -> &mut crate::PresentationTable {
+        &mut self.presentation
+    }
+
+    /// 登记一个节点类型的展示信息。
+    pub fn set_presentation(
+        &mut self,
+        type_name: impl Into<String>,
+        presentation: ze_node_core::NodePresentation,
+    ) {
+        self.presentation.insert(type_name, presentation);
+    }
+
+    /// 按节点查展示信息（缺省回退：类型名 + 默认交互）。
+    pub fn presentation_of(&self, node: &dyn ze_node_core::Node) -> ze_node_core::NodePresentation {
+        self.presentation.of_node(node)
     }
 
     // --- accessors ---
@@ -246,7 +275,8 @@ impl Editor {
                     .graph
                     .get_node(node)
                     .map(|n| {
-                        let [w, h] = n.meta().interaction.clamp_size(size.x, size.y);
+                        let interaction = self.presentation.interaction(&n.meta().type_name);
+                        let [w, h] = interaction.clamp_size(size.x, size.y);
                         Vec2::new(w, h)
                     })
                     .unwrap_or(size);
@@ -517,6 +547,7 @@ impl Editor {
             input_socket_pos: &|id| self.input_socket_pos(id),
             output_socket_pos: &|id| self.output_socket_pos(id),
             edge_path: &|src, dst| self.connection_path(src, dst),
+            presentation: &|type_name| self.presentation.of(type_name),
         };
         self.hit_policy.hit_test(&ctx, pos)
     }
@@ -946,11 +977,16 @@ mod tests {
     #[test]
     fn resize_node_clamps_to_interaction_bounds_and_undoes_as_one_gesture() {
         let mut editor = make_editor();
-        let node = TestNode::f32_passthrough().with_interaction(
-            ze_node_core::NodeInteraction::default()
-                .min_size(100.0, 50.0)
-                .max_size(300.0, 200.0),
+        editor.set_presentation(
+            "test.node",
+            ze_node_core::NodePresentation::new(
+                "TestNode",
+                ze_node_core::NodeInteraction::default()
+                    .min_size(100.0, 50.0)
+                    .max_size(300.0, 200.0),
+            ),
         );
+        let node = TestNode::f32_passthrough();
         editor
             .apply(Command::AddNode {
                 node: Box::new(node),

@@ -30,6 +30,7 @@ use crate::spec::NodeSpec;
 /// runtime.
 pub struct DynamicNode {
     meta: NodeMeta,
+    presentation: ze_node_core::NodePresentation,
     inputs: Vec<InputSocket>,
     outputs: Vec<OutputSocket>,
     state_tag: Box<dyn TypeTag>,
@@ -55,7 +56,11 @@ impl DynamicNode {
         display_name: impl Into<String>,
     ) -> DynamicNodeBuilder {
         DynamicNodeBuilder {
-            meta: NodeMeta::new(type_name, display_name, 1),
+            meta: NodeMeta::new(type_name, 1),
+            presentation: ze_node_core::NodePresentation::new(
+                display_name,
+                ze_node_core::NodeInteraction::default(),
+            ),
             inputs: Vec::new(),
             outputs: Vec::new(),
             state_tag: Box::new(NamedTypeTag::new("()")),
@@ -100,6 +105,9 @@ impl Node for DynamicNode {
 }
 
 impl NodeSpec for DynamicNode {
+    fn presentation(&self) -> ze_node_core::NodePresentation {
+        self.presentation.clone()
+    }
     fn properties(&self) -> Vec<(String, Property)> {
         self.object.properties()
     }
@@ -111,6 +119,7 @@ impl NodeSpec for DynamicNode {
 /// Builder for [`DynamicNode`].
 pub struct DynamicNodeBuilder {
     meta: NodeMeta,
+    presentation: ze_node_core::NodePresentation,
     inputs: Vec<InputSocket>,
     outputs: Vec<OutputSocket>,
     state_tag: Box<dyn TypeTag>,
@@ -192,6 +201,7 @@ impl DynamicNodeBuilder {
     pub fn build(self) -> DynamicNode {
         DynamicNode {
             meta: self.meta,
+            presentation: self.presentation,
             inputs: self.inputs,
             outputs: self.outputs,
             state_tag: self.state_tag,

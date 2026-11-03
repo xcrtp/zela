@@ -19,10 +19,14 @@
 // `object/*.rs` 内部的 `crate::camera` / `crate::primitives` 等路径是搬迁前
 // （`ze-object` 根）的写法；根级 `pub use` 让这些路径继续成立，搬迁零改写。
 
+// `#[derive(Channels)]` 生成的全限定路径引用 `::ze_scene_core::...`（F 批）。
+extern crate self as ze_scene_core;
+
 pub mod object;
 
 // 组件 / 图元 / 纯数据（B3-1b 从 `zela-scene` 下沉）。
 pub mod animation;
+pub mod bounds;
 pub mod camera_input;
 pub mod components;
 pub mod composer;
@@ -45,6 +49,8 @@ pub mod transform;
 pub mod types;
 /// 每帧派生的世界矩阵容器（生产在 ECS 层，消费在渲染层）。
 pub mod world_transforms;
+/// 每帧派生的样式继承结果（与 `WorldTransforms` 同批生产）。
+pub mod world_inherit;
 
 // 让 `object/*.rs` 内部的 `crate::{affine, camera, …}` 继续解析（见文件头）。
 pub use object::{affine, axes, camera, content_texture, graph, layer, placement, primitives, zorder};
@@ -53,8 +59,8 @@ pub use object::{
     AXIS_Z, Arrow, Axes2D, AxesLine, CONTENT_TEXTURE_HEIGHT, CONTENT_TEXTURE_ID,
     CONTENT_TEXTURE_WIDTH, CONTENT_Z, Camera2D, Camera2DHandle, Camera3D, Camera3DHandle, Circle,
     FPS_PITCH_LIMIT, FpsView, Framing2D, FunctionGraph, GRID_Z, LayerBlend, LayerId, LayerKind,
-    Line, Path, Projection, Rect, TextureHandle, TickSpec, Transform, ZOrder, map_path_affine,
-    spawn_camera2d, spawn_camera3d, uniform_scale,
+    Line, Path, Projection, RayTrace, Rect, TextureHandle, TickSpec, Transform, ZOrder,
+    map_path_affine, spawn_camera2d, spawn_camera3d, uniform_scale,
 };
 
 pub use surface::{
@@ -65,4 +71,5 @@ pub use time_state::TimeState;
 pub use transform::{Transform2D, Transform2DInto};
 pub use types::{Color32, Rect2D, Vec2, Vec3, Vec4};
 pub use world_transforms::WorldTransforms;
+pub use world_inherit::WorldInherit;
 
