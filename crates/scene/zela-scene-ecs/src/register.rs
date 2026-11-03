@@ -22,7 +22,6 @@ use crate::deferred::{DeferredApplySystem, ReplaySystem};
 use crate::director_state::DirectorAdvanceSystem;
 use crate::geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 use crate::input::{ParamPanelSystem, TimeControlSystem};
-use crate::interact::InteractSystem;
 use crate::lifetime::LifetimeFlushSystem;
 use crate::transform_hierarchy::TransformHierarchySystem;
 
@@ -67,10 +66,8 @@ pub fn register_systems(
 
     // S0：UI 输入的**场景侧**消费者（从 zela-egui 归位；面板 chrome 仍在 UI 层）。
     scheduler.add_system(Phase::LogicUpdate, TimeControlSystem);
+    // S0 + **CE-e**：参数回写（egui 控件 id 与场景内面板共用一条路径）。
     scheduler.add_system(Phase::LogicUpdate, ParamPanelSystem);
-    // CE-e：场景内参数面板的交互（命中 → 路由 → `params::apply`）。
-    // 在 `ParamPanelSystem` 之后：同一帧内先按面板控件回写，再处理场景内拖拽。
-    scheduler.add_system(Phase::LogicUpdate, InteractSystem);
     // S5：父子变换累乘（BindingApply 写入 local 之后、录制之前）。
     scheduler.add_system(Phase::Prepare, TransformHierarchySystem);
     // S0：场景几何刷新（从 zela-egui 归位；几何算法在对象层）。

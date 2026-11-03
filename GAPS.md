@@ -2073,11 +2073,31 @@
 
 ---
 
+## CE. ze-interact 与 View 空间面（2026-11-03）
+
+> 计划《CE 批次执行计划：ze-interact 与 View 空间面》。让 CC 的作用域拿到**真消费者**，
+> 让 R-08 的冻结条件成立，并接上 CD 的 `rebuild` 运行时入口。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CE-01 | 场景层命中测试零实现（`contains_point` / `hit_test` 全仓无） | 内核 / 场景 | **已关闭** | 新建 `crates/kernel/ze-interact`（零依赖 / 零 glam / 零 HashMap）：`Point` / `Rect`（半开区间：相邻控件不在共享边双命中）/ `HitIndex` trait / `LinearHitIndex`（z 降序、同 z 稳定）。曲线求交只留 `CurveHitTester` 接口（现有贝塞尔实现依赖 glam，不搬进来）。`crates/kernel/ze-interact/src` 已加入 `NO_HASHMAP_PATHS`。用例 `rect_normalizes_and_contains_half_open` / `adjacent_rects_do_not_double_hit_at_the_shared_edge` / `hit_index_is_z_descending_and_stable`。 |
+| CE-02 | 布局无处可放；引约束求解器会是零消费者 | 内核 / 场景 | **已关闭** | `BoxLayout`（垂直）/ `FlowLayout`（换行）均为**纯函数**；`apply_layout` 一处实现「自动布局不得覆盖用户手选位置」（`auto_layout_supported() == false` 时原样返回）。约定写进模块文档：布局只在**结构变化时**算，不在每帧。未引入 kasuari。用例 `box_layout_stacks_vertically_with_gap_and_padding` / `flow_layout_wraps_at_the_available_width` / `auto_layout_disabled_keeps_manual_positions` / `auto_layout_fills_only_unplaced_items`。 |
+| CE-03 | 路由只有 `WidgetId` 纯 ID 匹配（无 hover / focus / capture） | 场景 / UI | **已关闭** | `Router`：hover 每帧重算、focus 点击后保持、capture 按下建立 / 抬起解除；投递按 capture > focus > hover。路由键 = 作用域路径 + 命中目标（两个面板的同号控件是两个目标）。路由状态**不进产物**（类型不派生 serde），靠事件流重建。用例 `capture_wins_even_when_the_pointer_moves_out` / `focus_survives_pointer_leaving_until_the_next_press` / `scope_is_part_of_the_route_key`。 |
+| CE-04 | View 缺空间与事件两个面（CC 作用域没有消费者；R-08 冻结条件未成立） | 场景 / UI | **已关闭** | `ze_scene_core::view::{View, ViewMapping}`（bounds + Screen\|World），进入组件登记表可持久化；嵌套走既有 `Parent`；命名空间**复用** CC 的 `object_scopes`（新增 `SceneScript::object_scope` / `views`），不新建第二套来源。`Surface` 的 5 个生产消费者零改动（组合而非提升）。用例 `views_nest_and_reuse_the_cc_scope` / `view_survives_tagged_json_roundtrip`。R-08 的冻结条件由此成立：交互接口已稳定，节点编辑器迁移留 CF。 |
+| CE-05 | 参数面板只在 egui 覆盖层，无法实例化两个且不进场景 | 场景 / UI | **已关闭** | `zela-scene-ecs::interact`：`build_panel` 用场景图元生成面板（`Rect` 轨道 + `Circle` 滑块 + typst 烘焙的 `Path` 标签），`build_panels_for_views` 按 View 的作用域吸收该作用域的标量参数；`ParamPanelSystem` 消费 `ViewportHover` / `ViewportClick` / 新增的 `ViewportRelease`，经命中 → 路由 → `params::apply` 回写（与 CA 注册表同一条入口；与 egui 控件 id 分支共用同一个 System，避免两个 System 抢写同一对资源）。装配期在 `zela-playback` 与 `zela-app` 为每个 View 生成面板并注入资源；作品 `zela_authored::panels` + `SceneChoice::Panels` + GUI 入口是生产消费者。用例 `interact_system_writes_only_the_captured_panel`（按 A 的 75% 只改 A，B 保持 0.5）/ `dragging_one_panel_does_not_touch_the_other` / `panels_are_scoped_and_do_not_share_addresses`。 |
+| CE-06 | 场景内面板不在 GPU 像素基线里 | 作品 / 门禁 | **记账** | `SceneChoice::Panels` 是内置场景（GUI 入口），不属 `demo/manifest.txt` 的作品集，因此没有帧序列基线；本批用 headless 交互用例覆盖"命中 → 路由 → 回写"，像素层由 GUI 手测。触发条件：出现 GUI 截图基线机制，或把它提升为 manifest 作品（需同时录 GPU 基线）。 |
+| CE-07 | CD-05：`ContentMode::Rebuild` 只有用例消费，回放端仍走 restore | 回放 / 产物 | **已关闭** | `SceneScript::rebuild_content` 用源重算并替换 `Path` / `Reveal` 几何（闭包返回 `None` ⇒ 保留烘焙数据）；`zela-playback::build_bundle_runtime_with` 按 `Bundle::content_mode` 决定是否调用，`rebuild_script_content` 把判定与替换分开（可 headless 测）；`Runtime.content_mode` 如实报告。`zela-app` 用现有 typst 作重建后端，且只在 payload 带源 / 场景有 View 时初始化引擎。用例 `rebuild_replaces_geometry_and_reports_the_mode` / `failed_rebuild_falls_back_to_restore` / `without_content_capability_the_hook_is_not_called`。口径按计划定死：**重建后不重录像素基线**。 |
+| CE-08 | 统一深度 / 2D–3D 互遮挡（issue #9 §6） | 渲染 | **记账** | 本批只做「谁在前面就先命中谁」（z-order），**不解决** 2D–3D 互遮挡 —— 与 CC-05 同一件事，继续推迟。触发条件：单独批次论证深度模型。 |
+
+**CE 段小计**：已关闭 6（CE-01 / CE-02 / CE-03 / CE-04 / CE-05 / CE-07）· 部分关闭 0 · 记账 2（CE-06 / CE-08）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CD**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CD 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CE**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CE 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

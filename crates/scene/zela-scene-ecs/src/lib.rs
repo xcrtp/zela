@@ -62,7 +62,8 @@ pub use fingerprint::{
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 pub use input::{ParamPanelSystem, TimeControlSystem};
 pub use interact::{
-    InteractSet, InteractState, InteractSystem, PanelEntry, PanelSpec, SliderSpec, build_panel,
+    InteractSet, InteractState, PanelEntry, PanelSpec, SliderSpec, build_panel,
+    build_panels_for_views, default_panel_metrics,
 };
 pub use lifetime::{
     LifetimeEvent, LifetimeEventKind, LifetimeEvents, LifetimeFlushSystem, LifetimeTracker,

@@ -195,99 +195,73 @@ pub struct InteractState {
     pub router: Router,
 }
 
-/// **交互 System**：把 `ViewportHover` / `ViewportClick` / `ViewportRelease`
-/// 翻译成参数回写。
+/// **场景内面板的一次事件消费**（由 `ParamPanelSystem` 调用，不单独注册 System）。
 ///
-/// 拖拽语义（capture）：按下命中 → 锁定该滑块；期间指针移出仍写它；
-/// 抬起解除。这条"故意不按命中结果走"的规则由 `Router` 表达（CE-c）。
-pub struct InteractSystem;
-
-impl zela_schedule::system::System for InteractSystem {
-    type Reads = (InputEvents, InteractSet);
-    type Writes = (BindingTable, ParameterRegistry, InteractState);
-
-    fn run(&mut self, ctx: &mut zela_schedule::context::ExecutorContext<'_>) {
-        let events: Vec<SceneEvent> = match ctx.get::<InputEvents>() {
-            Some(events) => events.iter().copied().collect(),
-            None => return,
-        };
-        if events.is_empty() {
-            return;
-        }
-        let set = match ctx.get::<InteractSet>() {
-            Some(set) if !set.is_empty() => set.clone(),
-            _ => return,
-        };
-
-        let mut state = ctx.get::<InteractState>().cloned().unwrap_or_default();
-        let mut table = ctx.get::<BindingTable>().cloned().unwrap_or_default();
-        let mut registry = ctx.get::<ParameterRegistry>().cloned().unwrap_or_default();
-        let mut writes: Vec<(ze_scene_contract::ObjectId, f32, String, f32)> = Vec::new();
-
-        for event in events {
-            match event {
-                SceneEvent::ViewportClick { scene_pos, .. } => {
-                    let hit = set.hit(scene_pos);
-                    let key = hit.map(|slider| RouteKey::new(slider.scope.clone(), slider.target));
-                    state.router.pressed(key);
-                    if let Some(slider) = hit {
+/// 拖拽语义（capture）：按下命中 → 锁定该滑块；期间指针移出仍写它；抬起解除。
+/// 这条"故意不按命中结果走"的规则由 `Router` 表达（CE-c）。
+///
+/// 返回需要移动的滑块圆心 `(对象 id, 新 x)`；世界写回由调用方做
+/// （`ParamPanelSystem` 与 egui 面板共用同一条回写路径，避免两个 System 抢写
+/// 同一对资源）。
+pub fn apply_viewport_events(
+    events: &[SceneEvent],
+    set: &InteractSet,
+    state: &mut InteractState,
+    table: &mut BindingTable,
+    registry: &mut ParameterRegistry,
+) -> Vec<(ze_scene_contract::ObjectId, f32)> {
+    if set.is_empty() {
+        return Vec::new();
+    }
+    let mut writes: Vec<(ze_scene_contract::ObjectId, f32, String, f32)> = Vec::new();
+    for event in events {
+        match event {
+            SceneEvent::ViewportClick { scene_pos, .. } => {
+                let hit = set.hit(*scene_pos);
+                let key = hit.map(|slider| RouteKey::new(slider.scope.clone(), slider.target));
+                state.router.pressed(key);
+                if let Some(slider) = hit {
+                    let value = slider.value_at(scene_pos.x);
+                    writes.push((slider.knob, slider.x_at(value), slider.address.clone(), value));
+                }
+            }
+            SceneEvent::ViewportHover { scene_pos, .. } => {
+                let hit = set.hit(*scene_pos);
+                let key = hit.map(|slider| RouteKey::new(slider.scope.clone(), slider.target));
+                state.router.pointer_moved(key);
+                // 只有 capture 期间才边移动边写（hover 本身不改参数）。
+                if let Some(active) = state.router.capture() {
+                    if let Some(slider) = set.sliders().iter().find(|slider| {
+                        slider.target == active.target && slider.scope == active.scope
+                    }) {
                         let value = slider.value_at(scene_pos.x);
-                        writes.push((slider.knob, slider.x_at(value), slider.address.clone(), value));
+                        writes.push((
+                            slider.knob,
+                            slider.x_at(value),
+                            slider.address.clone(),
+                            value,
+                        ));
                     }
-                }
-                SceneEvent::ViewportHover { scene_pos, .. } => {
-                    let hit = set.hit(scene_pos);
-                    let key = hit.map(|slider| RouteKey::new(slider.scope.clone(), slider.target));
-                    state.router.pointer_moved(key);
-                    // 只有 capture 期间才边移动边写（hover 本身不改参数）。
-                    if let Some(active) = state.router.capture() {
-                        if let Some(slider) = set
-                            .sliders()
-                            .iter()
-                            .find(|slider| slider.target == active.target && slider.scope == active.scope)
-                        {
-                            let value = slider.value_at(scene_pos.x);
-                            writes.push((
-                                slider.knob,
-                                slider.x_at(value),
-                                slider.address.clone(),
-                                value,
-                            ));
-                        }
-                    }
-                }
-                SceneEvent::ViewportRelease { .. } => state.router.released(),
-                _ => {}
-            }
-        }
-
-        // 回写参数（与 `ParamPanelSystem` 同一入口：`params::apply` + 注册表同步）。
-        for (knob, knob_x, address, value) in &writes {
-            match params::apply(&mut table, address, *value) {
-                Ok(()) => {
-                    let _ = registry.set_value(address, PropertyValue::Scalar(*value));
-                    if let Some(entity) = crate::contract::entity_of(*knob) {
-                        if let Ok(mut circle) = ctx.world.get::<&mut ze_scene_core::Circle>(entity) {
-                            circle.0.center.x = *knob_x;
-                        }
-                    }
-                }
-                Err(error) => {
-                    eprintln!("[zela] 参数 `{address}` 写入被拒绝：{error}");
                 }
             }
-        }
-
-        if let Some(slot) = ctx.get_mut::<BindingTable>() {
-            *slot = table;
-        }
-        if let Some(slot) = ctx.get_mut::<ParameterRegistry>() {
-            *slot = registry;
-        }
-        if let Some(slot) = ctx.get_mut::<InteractState>() {
-            *slot = state;
+            SceneEvent::ViewportRelease { .. } => state.router.released(),
+            _ => {}
         }
     }
+
+    let mut moves = Vec::with_capacity(writes.len());
+    for (knob, knob_x, address, value) in writes {
+        match params::apply(table, &address, value) {
+            Ok(()) => {
+                let _ = registry.set_value(&address, PropertyValue::Scalar(value));
+                moves.push((knob, knob_x));
+            }
+            Err(error) => {
+                eprintln!("[zela] 参数 `{address}` 写入被拒绝：{error}");
+            }
+        }
+    }
+    moves
 }
 
 /// **装配期**：把一组参数摆成面板（场景对象），返回可命中的滑块表。
@@ -492,7 +466,7 @@ mod tests {
         assert_ne!(a_key, b_key);
     }
 
-    /// **端到端**：`InteractSystem` 只写被按下的那个面板。
+    /// **端到端**：`ParamPanelSystem` 只写被按下的那个面板。
     #[test]
     fn interact_system_writes_only_the_captured_panel() {
         use crate::animation::{params as param_ops, Binding, BindingDriver, CircleRadius};
@@ -582,7 +556,7 @@ mod tests {
         resources.insert(InteractState::default());
 
         let mut sched = Scheduler::new(scene.into_world(), resources);
-        sched.add_system(Phase::LogicUpdate, InteractSystem);
+        sched.add_system(Phase::LogicUpdate, crate::input::ParamPanelSystem);
         sched.init_resources();
         sched.run_frame(0.016);
 
