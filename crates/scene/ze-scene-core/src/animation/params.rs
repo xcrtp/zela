@@ -38,6 +38,7 @@ use ze_time::{ClockId, Curve};
 
 use crate::animation::affine::{AffineError, StatePlan};
 use crate::animation::binding::{BindingDriver, BindingTable};
+use crate::animation::scope::ScopeId;
 use crate::domain::WidgetId;
 
 /// 动态参数 `WidgetId` 的起始值（既有手写 id 是 1–16）。
@@ -231,6 +232,12 @@ fn object_key(id: ObjectId) -> String {
 }
 
 fn parse_address(address: &str) -> Option<ParamWrite> {
+    // **CC-a**：地址最前面是作用域序号段（`0:curve:…` / `2:state:…`）。
+    // 回写按 `(ObjectId, ClockId)` 语义匹配 ⇒ 作用域段只用于区分地址，不参与匹配。
+    let address = match address.split_once(':') {
+        Some((head, rest)) if !head.is_empty() && head.bytes().all(|b| b.is_ascii_digit()) => rest,
+        _ => address,
+    };
     let mut parts = address.split(':');
     match parts.next()? {
         "curve" => {
@@ -281,11 +288,23 @@ pub fn build_registry(bindings: &BindingTable) -> ParameterRegistry {
             continue;
         }
         let name = binding.target.name();
+        let scope = binding.scope;
+        let scope_path = bindings.scope_path(scope);
         if let BindingDriver::Curve(curve) = &binding.driver {
-            collect_curve(index, target, binding.clock, name, curve, &mut raw);
+            collect_curve(index, target, binding.clock, scope, scope_path, name, curve, &mut raw);
         }
         for (plan_index, plan) in binding.state_plans.iter().enumerate() {
-            collect_state(index, target, binding.clock, name, plan_index, plan, &mut raw);
+            collect_state(
+                index,
+                target,
+                binding.clock,
+                scope,
+                scope_path,
+                name,
+                plan_index,
+                plan,
+                &mut raw,
+            );
         }
     }
 
@@ -316,10 +335,13 @@ pub fn build_registry(bindings: &BindingTable) -> ParameterRegistry {
     registry
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_curve(
     binding: usize,
     target: ObjectId,
     clock: ClockId,
+    scope: ScopeId,
+    scope_path: &str,
     name: &str,
     curve: &Curve,
     out: &mut Vec<RawParam>,
@@ -344,17 +366,27 @@ fn collect_curve(
         };
         out.push(RawParam {
             address: format!(
-                "curve:{binding:04}:{}:{}:{}",
+                "{}:curve:{binding:04}:{}:{}:{}",
+                scope.0,
                 object_key(target),
                 clock.0,
                 field.as_str()
             ),
-            base_label: format!("{name} · {}", field.as_str()),
+            base_label: scoped_label(scope_path, name, field.as_str()),
             value,
             min,
             max,
             step,
         });
+    }
+}
+
+/// 参数显示名：非根作用域加路径前缀（`panel_a/Circle.radius · amp`）。
+fn scoped_label(scope_path: &str, name: &str, field: &str) -> String {
+    if scope_path.is_empty() {
+        format!("{name} · {field}")
+    } else {
+        format!("{scope_path}/{name} · {field}")
     }
 }
 
@@ -365,10 +397,13 @@ fn is_spring_form(plan: &StatePlan) -> bool {
         && plan.linear(0, 1).is_some_and(|v| (v - 1.0).abs() < 1e-12)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_state(
     binding: usize,
     target: ObjectId,
     clock: ClockId,
+    scope: ScopeId,
+    scope_path: &str,
     name: &str,
     plan_index: usize,
     plan: &StatePlan,
@@ -392,12 +427,13 @@ fn collect_state(
         };
         out.push(RawParam {
             address: format!(
-                "state:{binding:04}:{}:{}:{plan_index}:{}",
+                "{}:state:{binding:04}:{}:{}:{plan_index}:{}",
+                scope.0,
                 object_key(target),
                 clock.0,
                 field.address_suffix()
             ),
-            base_label: format!("{name} · {}", field.label()),
+            base_label: scoped_label(scope_path, name, &field.label()),
             value,
             min,
             max,
@@ -508,6 +544,8 @@ mod tests {
     ) -> Binding {
         Binding {
             clock,
+            scope: ScopeId::ROOT,
+            priority: 0,
             driver,
             target: Arc::new(CircleRadius { id: target }),
             predicate: None,
@@ -536,14 +574,14 @@ mod tests {
         let addresses: Vec<&str> = registry.addresses().collect();
         assert_eq!(
             addresses,
-            vec!["state:0000:7.1:3:0:damp", "state:0000:7.1:3:0:stiff"]
+            vec!["0:state:0000:7.1:3:0:damp", "0:state:0000:7.1:3:0:stiff"]
         );
-        let stiff = registry.value("state:0000:7.1:3:0:stiff").unwrap();
-        let damp = registry.value("state:0000:7.1:3:0:damp").unwrap();
+        let stiff = registry.value("0:state:0000:7.1:3:0:stiff").unwrap();
+        let damp = registry.value("0:state:0000:7.1:3:0:damp").unwrap();
         assert!(matches!(stiff, ze_property::PropertyValue::Scalar(v) if (v - 0.02).abs() < 1e-6));
         assert!(matches!(damp, ze_property::PropertyValue::Scalar(v) if (v - 0.97).abs() < 1e-6));
         let label = registry
-            .get("state:0000:7.1:3:0:stiff")
+            .get("0:state:0000:7.1:3:0:stiff")
             .unwrap()
             .label()
             .to_string();
@@ -563,12 +601,12 @@ mod tests {
             ),
             vec![spring_plan()],
         ));
-        apply(&mut table, "state:0000:7.1:3:0:damp", 0.5).unwrap();
+        apply(&mut table, "0:state:0000:7.1:3:0:damp", 0.5).unwrap();
         assert!((table.bindings[0].state_plans[0].linear(1, 1).unwrap() - 0.5).abs() < 1e-6);
 
         // damp = 1、stiff = 0.03 ⇒ det = 1.03 ⇒ 谱半径 > 1 ⇒ 显式拒绝，原值不动。
-        apply(&mut table, "state:0000:7.1:3:0:stiff", 0.03).unwrap();
-        let err = apply(&mut table, "state:0000:7.1:3:0:damp", 1.0).unwrap_err();
+        apply(&mut table, "0:state:0000:7.1:3:0:stiff", 0.03).unwrap();
+        let err = apply(&mut table, "0:state:0000:7.1:3:0:damp", 1.0).unwrap_err();
         assert!(matches!(err, ParamError::Affine(AffineError::Unstable { .. })));
         assert!((table.bindings[0].state_plans[0].linear(1, 1).unwrap() - 0.5).abs() < 1e-6);
     }
@@ -629,5 +667,34 @@ mod tests {
             assert_eq!(registry.index_of(entry.address), Some(index));
             assert_eq!(widget_index(widget_id(index)), Some(index));
         }
+    }
+
+    /// **CC-a**：两个作用域的同名参数地址不同；标签带作用域路径。
+    #[test]
+    fn scoped_parameters_get_distinct_addresses_and_labels() {
+        let mut table = BindingTable::new();
+        let a = table.declare_scope("panel_a");
+        let b = table.declare_scope("panel_b");
+        for (index, scope) in [(0u32, a), (1u32, b)] {
+            let mut binding = binding_with(
+                object(index),
+                ClockId(index),
+                BindingDriver::Curve(Curve::Sin {
+                    base: 0.0,
+                    amp: 1.0,
+                    omega: 1.0,
+                }),
+                Vec::new(),
+            );
+            binding.scope = scope;
+            table.add(binding);
+        }
+        let registry = build_registry(&table);
+        let addresses: Vec<&str> = registry.addresses().collect();
+        assert!(addresses.iter().all(|address| address.starts_with('1') || address.starts_with('2')));
+        assert_eq!(addresses.len(), 6);
+        let labels: Vec<String> = registry.iter().map(|e| e.property.label().into()).collect();
+        assert!(labels.iter().any(|label| label.starts_with("panel_a/")));
+        assert!(labels.iter().any(|label| label.starts_with("panel_b/")));
     }
 }
