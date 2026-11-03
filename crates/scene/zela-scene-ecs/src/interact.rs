@@ -29,7 +29,7 @@ use ze_property::{ParameterRegistry, PropertyValue};
 use ze_render_ir::{FillSolid, StrokeSolid};
 
 use crate::animation::{params, BindingTable};
-use crate::domain::{InputEvents, SceneEvent};
+use crate::domain::SceneEvent;
 use crate::scene::Scene;
 use ze_scene_contract::Scene as _;
 
@@ -462,6 +462,7 @@ pub fn build_panels_for_views(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::InputEvents;
 
     fn spec() -> PanelSpec {
         PanelSpec::new(Vec2::new(0.0, 0.0), 120.0)
