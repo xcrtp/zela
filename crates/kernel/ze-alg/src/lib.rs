@@ -481,6 +481,88 @@ pub fn spectral_radius_slice(a: &[Vec<f64>]) -> f64 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 仿射递推 `x ↦ A·x + b`（当前消费者：scene-core 的 `AffineMap`）
+// ---------------------------------------------------------------------------
+
+/// 增广矩阵 `[[A, b], [0, 1]]` 的 `n` 次幂（幂表：可跨实例复用）。
+pub fn affine_powered_matrix(a: &[Vec<f64>], b: &[f64], n: u64) -> Vec<Vec<f64>> {
+    let k = a.len();
+    let mut base = vec![vec![0.0; k + 1]; k + 1];
+    for i in 0..k {
+        base[i][..k].copy_from_slice(&a[i]);
+        base[i][k] = b[i];
+    }
+    base[k][k] = 1.0;
+    mat_pow_slice(&base, n)
+}
+
+/// 用已算好的幂表把 `init` 推进一步（`O(k²)`）。
+pub fn affine_apply_powered(powered: &[Vec<f64>], init: &[f64]) -> Vec<f64> {
+    let k = init.len();
+    (0..k)
+        .map(|i| (0..k).map(|j| powered[i][j] * init[j]).sum::<f64>() + powered[i][k])
+        .collect()
+}
+
+/// **闭式定义**：`State(n) := (A, b)^n(init)`。
+///
+/// 纯函数 ⇒ seek 与路径无关；只用 `+ − ×` ⇒ IEEE754 逐位可复现。
+pub fn affine_apply(a: &[Vec<f64>], b: &[f64], init: &[f64], n: u64) -> Vec<f64> {
+    assert_eq!(init.len(), b.len(), "init 宽度必须与仿射图一致");
+    let powered = affine_powered_matrix(a, b, n);
+    affine_apply_powered(&powered, init)
+}
+
+/// 多实例共享**一次**矩阵幂（每个结果与 [`affine_apply`] 逐位相同）。
+pub fn affine_apply_many(
+    a: &[Vec<f64>],
+    b: &[f64],
+    inits: &[Vec<f64>],
+    n: u64,
+) -> Vec<Vec<f64>> {
+    let powered = affine_powered_matrix(a, b, n);
+    inits
+        .iter()
+        .map(|init| {
+            assert_eq!(init.len(), b.len(), "init 宽度必须与仿射图一致");
+            affine_apply_powered(&powered, init)
+        })
+        .collect()
+}
+
+/// 逐次重放（**近似实现 / 测试 oracle**，不是定义）。
+pub fn affine_replay(a: &[Vec<f64>], b: &[f64], init: &[f64], n: u64) -> Vec<f64> {
+    let mut state = init.to_vec();
+    for _ in 0..n {
+        state = (0..a.len())
+            .map(|i| {
+                (0..a.len())
+                    .map(|j| a[i][j] * state[j])
+                    .sum::<f64>()
+                    + b[i]
+            })
+            .collect();
+    }
+    state
+}
+
+/// 在 `0..=horizon` 上比对闭式定义与重放（**容差内**，不是逐位）。
+pub fn affine_replay_within(
+    a: &[Vec<f64>],
+    b: &[f64],
+    init: &[f64],
+    horizon: u64,
+    tolerance: f64,
+) -> bool {
+    (0..=horizon).all(|n| {
+        affine_apply(a, b, init, n)
+            .iter()
+            .zip(affine_replay(a, b, init, n))
+            .all(|(x, y)| !x.is_nan() && !y.is_nan() && (x - y).abs() <= tolerance)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,5 +647,23 @@ mod tests {
                 &[0.0, 0.0, 0.75],
             ]))
         );
+    }
+
+    #[test]
+    fn affine_recurrence_closed_form_and_replay_agree() {
+        let a = matrix(&[&[1.0, 1.0], &[-0.02, 0.97]]);
+        let b = vec![0.0, 0.0];
+        let init = [1.5, 0.0];
+
+        // 多实例共享一次幂表：每个结果与单点逐位相同。
+        let many = affine_apply_many(&a, &b, &vec![init.to_vec(); 4], 500);
+        assert!(
+            many.iter()
+                .all(|value| value == &affine_apply(&a, &b, &init, 500))
+        );
+
+        // 闭式定义 vs 逐次重放：只在容差内一致（舍入路径不同）。
+        assert!(affine_replay_within(&a, &b, &init, 200, 1e-3));
+        assert!(!affine_replay_within(&a, &b, &init, 200, 0.0));
     }
 }
