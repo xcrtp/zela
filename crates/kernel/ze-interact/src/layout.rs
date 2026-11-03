@@ -21,6 +21,8 @@
 //! 控件增删 / 文本变化才重算，**不在每帧**。与"文档不进场景"同一思路：
 //! 静态的东西不要放进每帧循环。调用方负责缓存结果（本 crate 无状态）。
 
+use std::collections::BTreeMap;
+
 use crate::hit::{Point, Rect};
 
 /// 布局中的控件 id（由宿主分配）。
@@ -199,6 +201,107 @@ pub fn apply_layout(
         .collect()
 }
 
+// ─── CG-e：约束的**稳定序**构造 + 求解缓存 ──────────────────────────────────
+
+/// 按 [`LayoutId`] 升序排列的约束集合。
+///
+/// **为什么是 `BTreeMap`**：约束的插入顺序来自控件声明的先后，而声明的先后会随
+/// 代码重构变化；布局结果要求稳定 ⇒ 求解前先按 id 排序（一次构造，处处同序）。
+/// 这也让「同一个集合用不同插入顺序构造」得到**逐位相同**的落点（有对拍用例）。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConstraintSet {
+    items: BTreeMap<LayoutId, Size>,
+}
+
+impl ConstraintSet {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, id: LayoutId, size: Size) {
+        self.items.insert(id, size);
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// 按 `LayoutId` 升序迭代（确定的解序）。
+    pub fn iter(&self) -> impl Iterator<Item = (LayoutId, Size)> + '_ {
+        self.items.iter().map(|(&id, &size)| (id, size))
+    }
+
+    /// 交给 [`BoxLayout`] 的条目表（顺序 = id 升序）。
+    pub fn to_items(&self) -> Vec<LayoutItem> {
+        self.iter()
+            .map(|(id, size)| LayoutItem::new(id, size.width, size.height))
+            .collect()
+    }
+
+    /// 该集合的自然高度加上行距 / 内边距（约束的上界）。
+    pub fn natural_height(&self, gap: f64, padding: f64) -> f64 {
+        let sum: f64 = self.items.values().map(|size| size.height).sum();
+        sum + gap * (self.items.len().saturating_sub(1)) as f64 + padding * 2.0
+    }
+}
+
+/// 约束集合 → （盒子布局, 约束）。**唯一入口**：顺序由集合决定，不靠调用方。
+pub fn layout_for_constraints(
+    set: &ConstraintSet,
+    gap: f64,
+    padding: f64,
+    max_width: f64,
+) -> (BoxLayout, Constraints) {
+    let constraints = Constraints::new(max_width, set.natural_height(gap, padding));
+    (BoxLayout::new(set.to_items(), gap, padding), constraints)
+}
+
+/// 布局结果缓存：**只有 revision 变化才重新求解**。
+///
+/// 这条是 CG 计划的硬约束「布局不在每帧」。Frame 每帧是纯值重算，
+/// 但重算 ≠ 重新求解：尤其将来接入迭代求解器，每帧跑一遍就是灾难。
+/// `revision` 由宿主在**结构变化**时递增（控件增删 / 文本变化 / 视口尺寸变化）。
+#[derive(Debug, Clone, Default)]
+pub struct LayoutCache {
+    revision: Option<u64>,
+    cached: Vec<PlacedRect>,
+    solves: u32,
+}
+
+impl LayoutCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 取布局结果：`revision` 与上次相同 ⇒ 直接返回缓存。
+    pub fn solve(
+        &mut self,
+        revision: u64,
+        layout: &dyn Layout,
+        constraints: Constraints,
+    ) -> &[PlacedRect] {
+        if self.revision != Some(revision) {
+            self.cached = layout.layout(constraints);
+            self.revision = Some(revision);
+            self.solves += 1;
+        }
+        &self.cached
+    }
+
+    /// 累计求解次数（诊断 / 用例：证明"没有每帧跑"）。
+    pub fn solves(&self) -> u32 {
+        self.solves
+    }
+
+    pub fn invalidate(&mut self) {
+        self.revision = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +382,57 @@ mod tests {
             resolved[1],
             Some(Rect::from_min_size(Point::new(0.0, 20.0), 100.0, 20.0))
         );
+    }
+
+    // ─── CG-e ───────────────────────────────────────────────────────────────
+
+    /// **稳定序**：同一个集合，不同插入顺序 ⇒ 落点逐位相同。
+    #[test]
+    fn constraint_set_is_order_independent() {
+        let mut a = ConstraintSet::new();
+        a.insert(LayoutId(2), Size::new(10.0, 30.0));
+        a.insert(LayoutId(0), Size::new(10.0, 10.0));
+        a.insert(LayoutId(1), Size::new(10.0, 20.0));
+
+        let mut b = ConstraintSet::new();
+        b.insert(LayoutId(1), Size::new(10.0, 20.0));
+        b.insert(LayoutId(2), Size::new(10.0, 30.0));
+        b.insert(LayoutId(0), Size::new(10.0, 10.0));
+
+        assert_eq!(a, b, "集合相等 ⇒ 插入顺序不影响内容");
+        let (layout_a, constraints) = layout_for_constraints(&a, 0.0, 0.0, 100.0);
+        let (layout_b, _) = layout_for_constraints(&b, 0.0, 0.0, 100.0);
+        let placed_a = layout_a.layout(constraints);
+        let placed_b = layout_b.layout(constraints);
+        assert_eq!(placed_a, placed_b, "落点必须逐位相同");
+        // 顺序 = id 升序（0 在最上）。
+        assert_eq!(
+            placed_a.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![LayoutId(0), LayoutId(1), LayoutId(2)]
+        );
+        assert_eq!(constraints.max.height, 60.0);
+    }
+
+    /// **布局不在每帧**：revision 不变 ⇒ 只求解一次。
+    #[test]
+    fn layout_cache_solves_only_when_structure_changes() {
+        let set = {
+            let mut set = ConstraintSet::new();
+            set.insert(LayoutId(0), Size::new(100.0, 20.0));
+            set.insert(LayoutId(1), Size::new(100.0, 20.0));
+            set
+        };
+        let (layout, constraints) = layout_for_constraints(&set, 0.0, 0.0, 200.0);
+        let mut cache = LayoutCache::new();
+
+        let first = cache.solve(1, &layout, constraints).to_vec();
+        for _ in 0..59 {
+            let again = cache.solve(1, &layout, constraints).to_vec();
+            assert_eq!(first, again, "同一 revision 的帧必须逐位相同");
+        }
+        assert_eq!(cache.solves(), 1, "60 帧只有 1 次求解");
+
+        cache.solve(2, &layout, constraints);
+        assert_eq!(cache.solves(), 2, "结构变化才重新求解");
     }
 }
