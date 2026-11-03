@@ -13,7 +13,9 @@
 use ze_node_core::{EdgeId, Graph, InputSocketId, NodeId, OutputSocketId};
 
 use crate::edge_geom::EdgePath;
-use crate::geometry::{HitTarget, NodePos, RESIZE_HIT_RADIUS, Rect, SOCKET_HIT_RADIUS};
+use crate::geometry::{
+    HitTarget, NodePos, RESIZE_HIT_RADIUS, Rect, SOCKET_HIT_RADIUS, interact_point,
+};
 
 /// Read-only view of the editor state a policy needs to resolve picks.
 ///
@@ -125,15 +127,29 @@ impl DefaultHitTestPolicy {
         HitTarget::Nothing
     }
 
+    /// 卡片命中：层次由 `ze_interact::LinearHitIndex` 决定（z 越大越先命中）。
+    ///
+    /// z 用「按 `NodeId` 升序的秩」：后插入的节点在上（与绘制顺序一致），
+    /// 同 z 不存在 ⇒ 无需依赖索引内部的稳定排序来分胜负。
     fn pick_cards(ctx: &HitTestContext<'_>, pos: NodePos, nodes: &[NodeId]) -> HitTarget {
-        for &node in nodes {
-            if let Some(rect) = (ctx.node_rect)(node)
-                && rect.contains(pos)
-            {
-                return HitTarget::Node(node);
+        // `nodes` 是降序（最新在前）；索引要升序建、按 z 降序查。
+        let mut ascending = nodes.to_vec();
+        ascending.reverse();
+        let mut targets = Vec::new();
+        for (rank, &node) in ascending.iter().enumerate() {
+            if let Some(rect) = (ctx.node_rect)(node) {
+                targets.push(ze_interact::HitTarget::rect(
+                    ze_interact::HitId(rank as u32),
+                    rect.to_interact(),
+                    rank as i32,
+                ));
             }
         }
-        HitTarget::Nothing
+        let index = ze_interact::LinearHitIndex::new(targets);
+        let hits = ze_interact::HitIndex::query(&index, interact_point(pos));
+        hits.first()
+            .and_then(|id| ascending.get(id.0 as usize).copied())
+            .map_or(HitTarget::Nothing, HitTarget::Node)
     }
 
     fn pick_edges(ctx: &HitTestContext<'_>, pos: NodePos, nodes: &[NodeId]) -> HitTarget {
@@ -191,8 +207,9 @@ mod tests {
     /// Minimal harness wiring a graph + layout + socket geometry to a context.
     struct Harness {
         graph: SimpleGraph,
-        positions: std::collections::HashMap<NodeId, NodePos>,
-        sizes: std::collections::HashMap<NodeId, NodePos>,
+        // 按 `NodeId` 升序的确定序（与编辑器的 `NodeSizeMap` 同口径）。
+        positions: std::collections::BTreeMap<NodeId, NodePos>,
+        sizes: std::collections::BTreeMap<NodeId, NodePos>,
         presentations: crate::PresentationTable,
     }
 
@@ -200,8 +217,8 @@ mod tests {
         fn new() -> Self {
             Self {
                 graph: SimpleGraph::default(),
-                positions: std::collections::HashMap::new(),
-                sizes: std::collections::HashMap::new(),
+                positions: std::collections::BTreeMap::new(),
+                sizes: std::collections::BTreeMap::new(),
                 presentations: crate::PresentationTable::default(),
             }
         }
@@ -315,8 +332,42 @@ mod tests {
             presentation: &|t| h.presentations.of(t),
         };
 
-        // Corner falls through to a card hit.
-        assert_eq!(h.policy().hit_test(&ctx, rect.max), HitTarget::Node(id));
+        // Corner falls through to a card hit（卡是半开区间：取角内侧一点）。
+        assert_eq!(
+            h.policy()
+                .hit_test(&ctx, rect.max - NodePos::new(1.0, 1.0)),
+            HitTarget::Node(id)
+        );
+    }
+
+    /// 两张卡重叠：后插入的（`NodeId` 更大）在上，命中它。
+    #[test]
+    fn overlapping_cards_pick_the_newest() {
+        let mut h = Harness::new();
+        let below = h.add(0, 0, NodePos::new(0.0, 0.0), NodePos::new(100.0, 100.0));
+        let above = h.add(0, 0, NodePos::new(20.0, 20.0), NodePos::new(100.0, 100.0));
+
+        let ctx = HitTestContext {
+            graph: &h.graph,
+            socket_hit_radius: DEFAULT_SOCKET_HIT_RADIUS,
+            edge_hit_radius: DEFAULT_SOCKET_HIT_RADIUS,
+            resize_hit_radius: DEFAULT_RESIZE_HIT_RADIUS,
+            node_rect: &|n| h.node_rect(n),
+            input_socket_pos: &|_| None,
+            output_socket_pos: &|_| None,
+            edge_path: &|_, _| None,
+            presentation: &|t| h.presentations.of(t),
+        };
+        // 重叠区（50,50）：两张卡都含该点 ⇒ 上层的 above 胜出。
+        assert_eq!(
+            h.policy().hit_test(&ctx, NodePos::new(50.0, 50.0)),
+            HitTarget::Node(above)
+        );
+        // 只有下层覆盖的区域。
+        assert_eq!(
+            h.policy().hit_test(&ctx, NodePos::new(5.0, 5.0)),
+            HitTarget::Node(below)
+        );
     }
 
     #[test]

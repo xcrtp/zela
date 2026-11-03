@@ -5,7 +5,7 @@
 //! All coordinates in and out of this module are graph-local ([`NodePos`]).
 //! The editor has no notion of pan/zoom.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use ze_node_core::{
     ConnectError, EdgeId, Graph, InputSocketId, NodeId, OutputSocketId, SimpleGraph, UnitEdge,
@@ -45,7 +45,9 @@ pub struct Editor {
     socket_layout: Box<dyn SocketLayout>,
     hit_policy: Box<dyn HitTestPolicy>,
     sizes: NodeSizeMap,
-    selection: HashSet<NodeId>,
+    /// 选中集：`BTreeSet`（不是 `HashSet`）—— 多选删除的先后会被 undo 记录继承，
+    /// 顺序必须确定。
+    selection: BTreeSet<NodeId>,
     pending: Option<PendingConnection>,
     events: VecDeque<EditorEvent>,
     undo_stack: UndoStack,
@@ -54,6 +56,11 @@ pub struct Editor {
     redo_source_hint: Vec<Option<OutputSocketId>>,
     /// UI 展示数据的 side table（计划 §4「第一刀」）：core 的 `Node` trait 看不到。
     presentation: crate::PresentationTable,
+    /// **CF-e**：hover / focus / capture 三档路由（与场景面板共用 `ze-interact`）。
+    router: ze_interact::Router,
+    /// 命中目标 → 路由键的稳定映射（`HitId` 是索引，`route_targets` 是反查表）。
+    route_ids: BTreeMap<HitTarget, ze_interact::HitId>,
+    route_targets: Vec<HitTarget>,
 }
 
 impl Editor {
@@ -69,12 +76,15 @@ impl Editor {
             socket_layout: Box::new(DefaultSocketLayout::default()),
             hit_policy: Box::new(DefaultHitTestPolicy::new()),
             sizes: NodeSizeMap::new(),
-            selection: HashSet::new(),
+            selection: BTreeSet::new(),
             pending: None,
             events: VecDeque::new(),
             undo_stack: UndoStack::new(),
             redo_source_hint: Vec::new(),
             presentation: crate::PresentationTable::new(),
+            router: ze_interact::Router::new(),
+            route_ids: BTreeMap::new(),
+            route_targets: Vec::new(),
         }
     }
 
@@ -136,7 +146,7 @@ impl Editor {
         self.hit_policy = policy;
     }
 
-    pub fn selection(&self) -> &HashSet<NodeId> {
+    pub fn selection(&self) -> &BTreeSet<NodeId> {
         &self.selection
     }
 
@@ -552,6 +562,67 @@ impl Editor {
         };
         self.hit_policy.hit_test(&ctx, pos)
     }
+
+    // --- routing (hover / focus / capture) ---
+
+    /// 交互路由状态（只读）：与场景面板共用 `ze_interact::Router`。
+    pub fn router(&self) -> &ze_interact::Router {
+        &self.router
+    }
+
+    /// 指针移动到 `pos`：更新 hover，返回本次命中的目标。
+    pub fn pointer_moved(&mut self, pos: NodePos) -> HitTarget {
+        let hit = self.hit_test(pos);
+        let key = self.route_key(hit);
+        self.router.pointer_moved(key);
+        hit
+    }
+
+    /// 指针离开画布：hover 清空（capture / focus 保持不变）。
+    pub fn pointer_left(&mut self) {
+        self.router.pointer_moved(None);
+    }
+
+    /// 按下：建立 focus 与 capture（按到空白 ⇒ 两者清空），返回命中的目标。
+    pub fn pointer_pressed(&mut self, pos: NodePos) -> HitTarget {
+        let hit = self.hit_test(pos);
+        let key = self.route_key(hit);
+        self.router.pressed(key);
+        hit
+    }
+
+    /// 抬起：只解除 capture（focus 保留到下一次按下）。
+    pub fn pointer_released(&mut self) {
+        self.router.released();
+    }
+
+    /// 清空全部路由状态（切场景 / 失去焦点）。
+    pub fn cancel_pointer(&mut self) {
+        self.router.cancel();
+    }
+
+    /// 当前投递目标（capture > focus > hover）。
+    pub fn routed_target(&self) -> Option<HitTarget> {
+        let key = self.router.dispatch()?;
+        self.route_targets.get(key.target.0 as usize).copied()
+    }
+
+    /// 命中目标 → 路由键。`HitTarget::Nothing` 没有键（⇒ None）。
+    ///
+    /// `HitId` 是 `BTreeMap` 里**首次出现**的序号：同一目标在同一编辑器实例内
+    /// 拿到同一个键（路由键必须稳定，否则 capture 会指向别的目标）。
+    fn route_key(&mut self, hit: HitTarget) -> Option<ze_interact::RouteKey> {
+        if matches!(hit, HitTarget::Nothing) {
+            return None;
+        }
+        if let Some(id) = self.route_ids.get(&hit) {
+            return Some(ze_interact::RouteKey::new("", *id));
+        }
+        let id = ze_interact::HitId(self.route_targets.len() as u32);
+        self.route_ids.insert(hit, id);
+        self.route_targets.push(hit);
+        Some(ze_interact::RouteKey::new("", id))
+    }
 }
 
 impl Default for Editor {
@@ -598,6 +669,40 @@ mod tests {
         let editor = make_editor();
         assert!(editor.all_edges().is_empty());
         assert_eq!(editor.graph().node_count(), 0);
+    }
+
+    /// **CF-e**：hover / focus / capture 由 `ze_interact::Router` 承载。
+    ///
+    /// 指针移出卡片后 capture 仍指向按下时的目标（拖拽不丢抓），抬起后回落。
+    #[test]
+    fn pointer_routing_keeps_capture_outside_the_card() {
+        let mut editor = make_editor();
+        let id = add_node(&mut editor, NodePos::new(0.0, 0.0));
+        let inside = NodePos::new(40.0, 30.0);
+        let outside = NodePos::new(2000.0, 2000.0);
+
+        assert_eq!(editor.pointer_moved(inside), HitTarget::Node(id));
+        assert!(editor.router().hover().is_some(), "悬停已建立");
+        assert_eq!(editor.routed_target(), Some(HitTarget::Node(id)));
+
+        assert_eq!(editor.pointer_pressed(inside), HitTarget::Node(id));
+        assert_eq!(editor.router().phase(), Some(ze_interact::RoutePhase::Capture));
+
+        // 指针移出卡片：capture 不跟命中走。
+        assert_eq!(editor.pointer_moved(outside), HitTarget::Nothing);
+        assert_eq!(editor.routed_target(), Some(HitTarget::Node(id)));
+
+        editor.pointer_released();
+        assert_eq!(editor.router().capture(), None);
+        assert_eq!(
+            editor.routed_target(),
+            Some(HitTarget::Node(id)),
+            "抬起后回落到 focus（focus 保留到下一次按下）"
+        );
+
+        // 按到空白 ⇒ focus 清空，投递目标消失。
+        assert_eq!(editor.pointer_pressed(outside), HitTarget::Nothing);
+        assert_eq!(editor.routed_target(), None);
     }
 
     #[test]

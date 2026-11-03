@@ -165,9 +165,17 @@ impl Rect {
         (self.min + self.max) * 0.5
     }
 
-    /// Point-in-rect test (inclusive on all edges, for hit-testing).
+    /// 投影到交互层（`ze-interact`）：命中判定与场景面板共用同一条口径。
+    pub fn to_interact(self) -> ze_interact::Rect {
+        ze_interact::Rect::new(interact_point(self.min), interact_point(self.max))
+    }
+
+    /// Point-in-rect test.
+    ///
+    /// **半开区间 `[min, max)`**（与 `ze_interact::Rect::contains` 同一实现）：
+    /// 两张卡贴边时，共享边只属于后一张 —— 命中结果唯一，不随遍历顺序变化。
     pub fn contains(self, p: NodePos) -> bool {
-        p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
+        self.to_interact().contains(interact_point(p))
     }
 
     /// Grow (or shrink, for negative `r`) the rectangle by `r` on every side.
@@ -180,10 +188,15 @@ impl Rect {
     }
 }
 
+/// 图坐标点 → 交互层点（`f32` → `f64`，边界唯一）。
+pub fn interact_point(p: NodePos) -> ze_interact::Point {
+    ze_interact::Point::from_f32(p.x, p.y)
+}
+
 /// Result of a hit test. Variants are ordered by z-priority: sockets are
 /// tested before resize grips, grips before cards, cards before edges;
 /// callers match top-down.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HitTarget {
     Node(NodeId),
     InputSocket(InputSocketId),
@@ -234,11 +247,23 @@ mod tests {
         assert!(r.expand(3.0).contains(p));
     }
 
+    /// 与场景交互层同一条半开口径：`min` 属于本矩形，`max` 属于下一个。
     #[test]
-    fn rect_contains_edges_inclusively() {
+    fn rect_contains_is_half_open() {
         let r = Rect::from_min_size((0.0, 0.0).into(), (10.0, 10.0).into());
-        assert!(r.contains((0.0, 0.0).into()));
-        assert!(r.contains((10.0, 10.0).into()));
+        assert!(r.contains((0.0, 0.0).into()), "min 端点属于本矩形");
+        assert!(r.contains((9.999, 9.999).into()));
+        assert!(!r.contains((10.0, 10.0).into()), "max 端点属于下一个");
+    }
+
+    /// 贴边的两张卡不会同时命中（命中唯一）。
+    #[test]
+    fn adjacent_cards_do_not_double_hit_at_the_shared_edge() {
+        let left = Rect::from_min_size((0.0, 0.0).into(), (10.0, 10.0).into());
+        let right = Rect::from_min_size((10.0, 0.0).into(), (10.0, 10.0).into());
+        let edge = (10.0, 5.0).into();
+        assert!(!left.contains(edge));
+        assert!(right.contains(edge));
     }
 
     #[test]

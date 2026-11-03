@@ -7004,7 +7004,9 @@ dependencies = [
  "ze-render-ir",
  "ze-scene-core",
  "ze-time",
+ "zela-node-editor",
  "zela-scene-ecs",
+ "zela-schedule",
 ]
 
 [[package]]
@@ -7087,6 +7089,7 @@ version = "0.1.1"
 dependencies = [
  "thiserror 2.0.20",
  "ze-graph-algo",
+ "ze-interact",
  "ze-node-core",
 ]
 
