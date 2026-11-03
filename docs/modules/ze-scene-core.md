@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：47 个 · 13289 行
+- 源文件：47 个 · 13427 行
 
 ### 文件清单
 
@@ -34,7 +34,7 @@
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
 | `src/domain/config.rs` | 76 | — |
-| `src/domain/event.rs` | 175 | — |
+| `src/domain/event.rs` | 313 | — |
 | `src/domain/mod.rs` | 24 | — |
 | `src/domain/view.rs` | 263 | — |
 | `src/domain/view_rect.rs` | 38 | — |
@@ -239,6 +239,12 @@ graph LR
 | `src/domain/config.rs` | `pub struct UiConfig` |
 | `src/domain/event.rs` | `pub struct WidgetId(pub u32)` |
 | `src/domain/event.rs` | `pub enum SceneEvent` |
+| `src/domain/event.rs` | `pub enum PointerButton` |
+| `src/domain/event.rs` | `pub enum PointerInput` |
+| `src/domain/event.rs` | `pub struct KeyModifiers` |
+| `src/domain/event.rs` | `pub enum KeyInput` |
+| `src/domain/event.rs` | `pub enum TextInput` |
+| `src/domain/event.rs` | `pub enum CommandInput` |
 | `src/domain/event.rs` | `pub struct InputEvents` |
 | `src/domain/view.rs` | `pub struct ContentHandle(u64)` |
 | `src/domain/view.rs` | `pub struct LayerDescriptor` |

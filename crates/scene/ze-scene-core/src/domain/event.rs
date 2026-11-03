@@ -45,12 +45,12 @@ pub mod ids {
 
 /// 场景语义事件。
 ///
-/// 注：不派生 `PartialEq`——`Vec2` 包装类型未实现（含 f32 语义问题）；
-/// 测试中用 `matches!` 按字段断言。
+/// 注：派生 `Clone` 但**不派生 `Copy`** —— CG-d 的 `Text` / `Command` 携带 `String`。
+/// 既有变体一个字节都不动（新增只是追加），老 payload 照常解码。
 ///
 /// **输入流**（D 批）把它按 tagged JSON 写进独立文件：帧索引 + 事件，
 /// 因此这里是跨进程格式的一部分（字段改名 = 新格式）。
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SceneEvent {
     // ─── 视口拾取（坐标已换算为场景坐标；非相机操作）───
@@ -90,6 +90,98 @@ pub enum SceneEvent {
     Button {
         id: WidgetId,
     },
+
+    // ─── CG-d：四类输入的**形状**（只定形状，暂不实现）───
+    //
+    // 为什么一次留够：这里是跨进程 tagged JSON，**字段改名 = 新格式**。
+    // headless 一旦依赖事件流，逐个加就是一次次破坏兼容；四类一次留好，
+    // 后续批次只填实现，不改格式。
+    Pointer {
+        input: PointerInput,
+    },
+    Key {
+        input: KeyInput,
+    },
+    Text {
+        input: TextInput,
+    },
+    Command {
+        input: CommandInput,
+    },
+}
+
+/// 指针按钮（CG-d 形状）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerButton {
+    Primary,
+    Secondary,
+    Middle,
+}
+
+/// **CG-d**：指针输入（形状）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PointerInput {
+    Moved {
+        scene_pos: Vec2,
+    },
+    Pressed {
+        scene_pos: Vec2,
+        button: PointerButton,
+    },
+    Released {
+        scene_pos: Vec2,
+        button: PointerButton,
+    },
+    /// 滚轮 / 触控板（`delta` 为场景单位）。
+    Wheel {
+        scene_pos: Vec2,
+        delta: Vec2,
+    },
+}
+
+/// **CG-d**：修饰键（形状）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct KeyModifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
+/// **CG-d**：键盘输入（形状）。`key` 用 W3C `KeyboardEvent.key` 口径（`"a"` / `"Enter"`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum KeyInput {
+    Down {
+        key: String,
+        modifiers: KeyModifiers,
+    },
+    Up {
+        key: String,
+        modifiers: KeyModifiers,
+    },
+}
+
+/// **CG-d**：文本输入（形状）。输入法组合单独一支（组合期不能当提交）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TextInput {
+    /// 已提交的文本（键入 / 粘贴）。
+    Commit { text: String },
+    /// 输入法组合中的临时文本（`composing = false` 表示组合结束）。
+    Compose { text: String, composing: bool },
+}
+
+/// **CG-d**：语义命令（形状）。Agent 与快捷键共用一条通道。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CommandInput {
+    /// 按名字触发（与控件语义名同一套命名）。
+    Invoke { name: String },
+    /// 直接设值（Agent 断言 / 脚本回放用；不经过拖拽）。
+    SetValue { name: String, value: f64 },
 }
 
 use crate::domain::view::LayerId;
@@ -171,5 +263,51 @@ mod tests {
         let drained: Vec<_> = events.drain().collect();
         assert_eq!(drained.len(), 3);
         assert!(events.is_empty());
+    }
+
+    /// **CG-d**：四类输入形状的 tagged JSON 往返（旧变体不受影响）。
+    #[test]
+    fn four_input_shapes_round_trip_through_json() {
+        let cases = [
+            SceneEvent::Pointer {
+                input: PointerInput::Pressed {
+                    scene_pos: Vec2::new(10.0, 20.0),
+                    button: PointerButton::Primary,
+                },
+            },
+            SceneEvent::Key {
+                input: KeyInput::Down {
+                    key: "Enter".to_string(),
+                    modifiers: KeyModifiers {
+                        shift: true,
+                        ..KeyModifiers::default()
+                    },
+                },
+            },
+            SceneEvent::Text {
+                input: TextInput::Commit {
+                    text: "你好".to_string(),
+                },
+            },
+            SceneEvent::Command {
+                input: CommandInput::SetValue {
+                    name: "panel_a.base".to_string(),
+                    value: 0.75,
+                },
+            },
+        ];
+        for event in cases {
+            let json = serde_json::to_string(&event).expect("可序列化");
+            let back: SceneEvent = serde_json::from_str(&json).expect("可反序列化");
+            assert_eq!(event, back, "四类形状必须可往返：{json}");
+        }
+    }
+
+    /// 老 payload（只有旧变体）照常解码 —— 新增变体是追加，不是改格式。
+    #[test]
+    fn legacy_payload_still_decodes() {
+        let json = r#"{"type":"button","id":3}"#;
+        let event: SceneEvent = serde_json::from_str(json).expect("老 payload 可解码");
+        assert!(matches!(event, SceneEvent::Button { id } if id == ids::PLAY_PAUSE));
     }
 }

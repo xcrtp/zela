@@ -286,7 +286,7 @@ impl Recorder {
         let Some(stream) = &mut self.stream else {
             return;
         };
-        stream.record(frame, events.iter().copied());
+        stream.record(frame, events.iter().cloned());
     }
 
     /// 收尾：关闭录制时返回 `None`（**没有流**，而不是空流）。

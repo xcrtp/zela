@@ -11,16 +11,17 @@
 - 路径：`crates/kernel/ze-interact`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-content`、`ze-prerender`、`zela-node-editor`、`zela-scene-ecs`
-- 源文件：6 个 · 1072 行
+- 源文件：7 个 · 1655 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
+| `src/control.rs` | 423 | **CG-d**：控件层 —— 从「画控件」变成「描述控件」。 |
 | `src/frame.rs` | 188 | **CG-c**：结构化帧（`Frame`）—— UI 的一次**快照**。 |
 | `src/hit.rs` | 241 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
-| `src/layout.rs` | 283 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
-| `src/lib.rs` | 51 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
+| `src/layout.rs` | 438 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
+| `src/lib.rs` | 56 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
 | `src/route.rs` | 205 | 路由（CE-c）：hover / focus / capture 三档。 |
 | `src/text.rs` | 104 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
 
@@ -41,6 +42,12 @@ graph LR
 
 | 文件 | 项 |
 |---|---|
+| `src/control.rs` | `pub enum ControlKind` |
+| `src/control.rs` | `pub struct ControlSpec` |
+| `src/control.rs` | `pub enum ControlEvent` |
+| `src/control.rs` | `pub enum ControlOutcome` |
+| `src/control.rs` | `pub struct ControlSet` |
+| `src/control.rs` | `pub fn constraints_for(specs: &[ControlSpec], max_width: f64) -> Constraints` |
 | `src/frame.rs` | `pub struct Frame` |
 | `src/frame.rs` | `pub struct SemanticNode` |
 | `src/hit.rs` | `pub struct Point` |
@@ -60,6 +67,9 @@ graph LR
 | `src/layout.rs` | `pub struct BoxLayout` |
 | `src/layout.rs` | `pub struct FlowLayout` |
 | `src/layout.rs` | `pub fn apply_layout(` |
+| `src/layout.rs` | `pub struct ConstraintSet` |
+| `src/layout.rs` | `pub fn layout_for_constraints(` |
+| `src/layout.rs` | `pub struct LayoutCache` |
 | `src/route.rs` | `pub struct RouteKey` |
 | `src/route.rs` | `pub enum RoutePhase` |
 | `src/route.rs` | `pub struct Router` |
