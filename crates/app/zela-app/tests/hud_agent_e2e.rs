@@ -107,6 +107,56 @@ fn dragging_one_panel_parameter_does_not_touch_the_other() {
     assert_eq!(value_before_b, value_after_b, "拖 A 不得影响 B");
 }
 
+/// **CH-a 判据**：窗口输入（逻辑像素）与场景事件走同一条换算 —— 同一个点、
+/// 同一帧，落到同一个值。`collect_events` 的视口判定 / 图层选择 / 相机换算
+/// 全部在纯函数里，Debug 与真人不再各走一条。
+#[test]
+fn window_input_reaches_the_same_value_as_scene_events() {
+    use ze_scene_core::domain::{PointerState, WindowInput};
+
+    let scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+    let before = scene.frame().expect("有 Frame");
+    let name = param_scopes(&before)
+        .values()
+        .next()
+        .and_then(|params| params.first())
+        .cloned()
+        .expect("有参数滑块");
+    let (wx, wy) = scene.slider_point(&name, 0.8).expect("世界坐标");
+    let context = scene.input_context().expect("有输入上下文");
+    let (_, camera) = context.layer2d.expect("有 2D 图层");
+    let screen = camera.world_to_screen(ze_notion::Vec2::new(wx, wy));
+
+    let mut input = WindowInput {
+        viewport: camera.rect,
+        window_size: ze_notion::Vec2::new(camera.rect.max.x, camera.rect.max.y),
+        ..WindowInput::default()
+    };
+    input.pointer = PointerState {
+        position: Some(screen),
+        hovering: true,
+        primary_pressed: true,
+        ..PointerState::default()
+    };
+    // 走 tagged JSON（Debug / RPC 的通道），证明序列化不丢信息。
+    let json = serde_json::to_string(&input).expect("窗口输入可序列化");
+    assert!(scene.inject_window_json(&json).expect("窗口输入可注入") > 0);
+    scene.advance(1, 1.0 / 60.0);
+
+    input.pointer.primary_pressed = false;
+    input.pointer.primary_released = true;
+    scene.inject_window(&input).expect("抬起可注入");
+    scene.advance(2, 1.0 / 60.0);
+    scene.clear_events();
+
+    let after = scene.frame().expect("拖拽后仍有 Frame");
+    assert_ne!(
+        before.value_of("slider", &name),
+        after.value_of("slider", &name),
+        "窗口坐标点击必须改到同一个控件的值"
+    );
+}
+
 /// **确定性**：同一场景、同一事件流 ⇒ 两帧 JSON 逐字节相同。
 #[test]
 fn same_events_give_bitwise_identical_frames() {

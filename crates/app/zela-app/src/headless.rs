@@ -23,7 +23,9 @@
 use std::sync::Arc;
 
 use ze_interact::Frame;
-use zela_scene_ecs::domain::{InputEvents, SceneEvent};
+use ze_scene_core::domain::{SceneInputContext, WindowInput};
+use zela_scene_ecs::contract::WorldView;
+use zela_scene_ecs::domain::{InputEvents, SceneEvent, UiConfig};
 use zela_scene_ecs::hud::HudState;
 use zela_scene_ecs::{DriverCommand, DriverPod};
 
@@ -47,6 +49,52 @@ impl HeadlessScene {
     pub fn inject_json(&self, json: &str) -> std::result::Result<usize, String> {
         let events: Vec<SceneEvent> =
             serde_json::from_str(json).map_err(|error| format!("事件流不是合法 JSON：{error}"))?;
+        let count = events.len();
+        self.driver.with_scheduler_mut(|scheduler| {
+            scheduler
+                .resources_mut()
+                .insert(InputEvents::from_events(events));
+        });
+        Ok(count)
+    }
+
+    /// **CH-a**：当前帧的窗口输入上下文（从视图声明推导，与 GUI 同一条）。
+    ///
+    /// 窗口坐标系 = `ViewRect`（headless 默认 800×600）；相机取景来自本帧视图声明。
+    /// `None` = 场景没有任何可操作图层（纯空场景）⇒ 窗口输入无处可投。
+    pub fn input_context(&self) -> Option<SceneInputContext> {
+        self.driver.with_scheduler(|scheduler| {
+            let config = scheduler
+                .resources()
+                .get::<UiConfig>()
+                .cloned()
+                .unwrap_or_default();
+            let view = zela_render::frame::build_scene_view(
+                &WorldView::new(scheduler.world()),
+                scheduler.resources(),
+                zela_render::FrameOptions::from_ui_config(&config),
+            );
+            let context = SceneInputContext::from_view(&view, config.viewport_camera);
+            (context.layer2d.is_some() || context.layer3d.is_some()).then_some(context)
+        })
+    }
+
+    /// **CH-a**：注入**窗口输入**（逻辑像素 + 环境参数）—— 换算与窗口里真人
+    /// 完全同一条 `collect_events`（视口判定 / 图层选择 / 相机 / HiDPI）。
+    ///
+    /// 返回派生出的场景事件数；环境缺失（没有可操作图层）⇒ 明确错误。
+    pub fn inject_window_json(&self, json: &str) -> std::result::Result<usize, String> {
+        let input: WindowInput =
+            serde_json::from_str(json).map_err(|error| format!("窗口输入不是合法 JSON：{error}"))?;
+        self.inject_window(&input)
+    }
+
+    /// [`Self::inject_window_json`] 的强类型版本。
+    pub fn inject_window(&self, input: &WindowInput) -> std::result::Result<usize, String> {
+        let context = self
+            .input_context()
+            .ok_or_else(|| "场景没有可操作的图层（2D / 3D 都没有）".to_string())?;
+        let events = ze_scene_core::domain::collect_events(input, &context);
         let count = events.len();
         self.driver.with_scheduler_mut(|scheduler| {
             scheduler

@@ -10,12 +10,18 @@
 pub mod camera;
 pub mod config;
 pub mod event;
+pub mod inject;
+pub mod input_window;
 pub mod view;
 pub mod view_rect;
 
 pub use camera::{CameraCommand, CameraMode};
 pub use config::{UiConfig, ViewportCamera};
 pub use event::{InputEvents, SceneEvent, WidgetId, ids};
+pub use inject::{InjectError, InjectSource, Injected, InjectedPayload, TagId};
+pub use input_window::{
+    collect_events, Key, PointerState, SceneInputContext, WindowInput,
+};
 pub use view::{
     content_layer_id, content_texture_handle, content_texture_specs, ContentHandle,
     ContentTextureSpec, ContentTextureSpecs, DEFAULT_BACKGROUND, LAYER_ID_VIEWPORT_2D,

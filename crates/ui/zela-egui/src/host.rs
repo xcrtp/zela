@@ -27,8 +27,10 @@ use zela_render::ViewRect;
 use zela_render_backends::SceneCompositorCallback;
 use zela_scene_ecs::contract::WorldView;
 use zela_scene_ecs::domain::{
-    CameraCommand, InputEvents, LayerKind, SceneEvent, SceneView,
+    InputEvents, SceneEvent, SceneView,
 };
+#[cfg(test)]
+use zela_scene_ecs::domain::LayerKind;
 use zela_schedule::resource::Resources;
 
 use crate::resources::{UiConfig, ViewportCamera};
@@ -135,193 +137,69 @@ impl EguiSceneHost {
 
     /// 把 egui 原生输入翻译为相机语义命令与视口拾取事件。
     ///
-    /// 视口交互路由到 SceneView 中第一个 2D 图层（B 阶段单视口；
-    /// 多视口命中路由在 S3 统一管线中实现）。
+    /// **CH-a**：换算本身已搬进 `ze_scene_core::domain::collect_events`（纯函数、
+    /// 零 egui 类型）；这里只把 `egui::InputState` 读成 [`WindowInput`]，再交给
+    /// 同一个函数 —— 真人与 Debug / RPC 从此走同一条 `WindowInput → SceneEvent`。
     ///
-    /// **操作目标由 `target` 决定**（K3，见 [`ViewportCamera`]）——2D / 3D 图层同屏
-    /// 占据同一矩形，坐标无法区分：
-    /// - [`ViewportCamera::TwoD`]：滚轮 → `Zoom { factor }`（factor = 1 + scroll × 0.001），
-    ///   右键/中键拖拽 → `Pan { delta }`（屏幕位移在此换算为**世界坐标**，含 Y 翻转）；
-    /// - [`ViewportCamera::ThreeDOrbit`]：拖拽 → `Orbit { delta_yaw, delta_pitch }`、
-    ///   滚轮 → `Dolly { delta }`（3D 语义，无需世界换算）；
-    /// - [`ViewportCamera::ThreeDFps`]：拖拽 → `Look { .. }`、
-    ///   `WASD`/`QE` → `Move { delta }`（x = 右、y = 上、z = 前；**按秒**，不依赖帧率，
-    ///   也不要求指针停在视口内；文本输入时让位）。
-    ///
-    /// 悬停 / 点击（拾取类事件）与操作目标无关，两种目标下都上报。
+    /// 视口交互路由到 SceneView 中第一个 2D 图层（B 阶段单视口）；
+    /// 操作目标由 `target` 决定（K3，见 [`ViewportCamera`]）。
     pub fn collect_events(
         ui: &egui::Ui,
         view: &SceneView,
         target: ViewportCamera,
         viewport: Rect2D,
     ) -> Vec<SceneEvent> {
-        // **纯 3D 作品没有 2D 图层**：此前这里 `let ... else { return }` 直接吞掉全部输入
-        // ⇒ 3D 相机控制"无效"（实测）。现在只要求"有可操作的图层"：优先 2D，其次 3D。
-        let layer2d = view.layers.iter().find_map(|layer| match &layer.kind {
-            LayerKind::Viewport2D { camera } => Some((layer.id, camera)),
-            _ => None,
-        });
-        let layer = match layer2d {
-            Some((id, _)) => id,
-            None => match view
-                .layers
-                .iter()
-                .find(|layer| matches!(layer.kind, LayerKind::Viewport3D { .. }))
-            {
-                Some(layer) => layer.id,
-                None => return Vec::new(),
-            },
-        };
+        let context = ze_scene_core::domain::SceneInputContext::from_view(view, target);
+        let input = Self::window_input(ui, viewport);
+        ze_scene_core::domain::collect_events(&input, &context)
+    }
 
-        // 指针是否落在视口矩形内：相机命令同样只认视口内的交互 ——
-        // 否则在左侧面板里滚动 / 拖滑动条也会缩放或转动相机。
-        let in_viewport = |p: egui::Pos2| {
-            p.x >= viewport.min.x
-                && p.x <= viewport.max.x
-                && p.y >= viewport.min.y
-                && p.y <= viewport.max.y
-        };
-
-        // 每帧位移/旋转换算系数（交互手感，纯数值选择）。
-        /// 3D 拖拽 → 旋转角（弧度/像素）。
-        const ORBIT_RAD_PER_PX: f32 = 0.01;
-        /// 滚轮 → Dolly 步长（世界单位/滚轮量）。
-        const DOLLY_PER_SCROLL: f32 = 0.02;
-        /// FPS 按键 → 每秒位移（世界单位/秒）。
-        ///
-        /// **按时间而不是按帧**：旧实现是 `0.08 / 帧`，60 Hz 与 144 Hz 下速度差 2.4 倍
-        /// （且掉帧时变慢）—— 这是"手感飘/忽快忽慢"的直接来源。
-        const MOVE_PER_SECOND: f32 = 4.8;
-
-        // 文本输入（参数面板 / 文件名等）时不抢 WASD/QE：否则一边改名一边相机乱飞。
-        let typing = ui.ctx().egui_wants_keyboard_input();
-
-        let mut events = Vec::new();
+    /// egui 输入 → [`WindowInput`]（纯读取，不做任何场景换算）。
+    ///
+    /// 坐标语义：egui 的指针位置已是**逻辑点**，与 `viewport` 同一坐标系 ⇒
+    /// `scale_factor` 只记录、不参与换算（否则 2× DPI 落点会漂）。
+    pub fn window_input(ui: &egui::Ui, viewport: Rect2D) -> ze_scene_core::domain::WindowInput {
+        let ctx = ui.ctx();
+        let typing = ctx.egui_wants_keyboard_input();
+        let scale_factor = ctx.pixels_per_point();
         ui.input(|i| {
-            let inside = i.pointer.hover_pos().is_some_and(in_viewport);
-            match target {
-                ViewportCamera::TwoD => {
-                    // 滚轮缩放（语义命令；只在视口内生效）。
-                    let scroll = i.smooth_scroll_delta.y;
-                    if inside && scroll != 0.0 {
-                        events.push(SceneEvent::Camera {
-                            layer,
-                            command: CameraCommand::Zoom {
-                                factor: 1.0 + scroll * 0.001,
-                            },
-                        });
-                    }
-
-                    // 右键/中键拖拽 → 平移（屏幕位移经对象层的
-                    // `Camera2D::screen_delta_to_world` 换算为世界位移：缩放 + Y 翻转都在那里；
-                    // 「拖拽方向 → 取景中心反向移动」取负是**控制器语义**，留在本层）。
-                    if let Some((_, camera)) = layer2d {
-                        if inside && (i.pointer.secondary_down() || i.pointer.middle_down()) {
-                            let d = i.pointer.delta();
-                            if d != egui::Vec2::ZERO {
-                                events.push(SceneEvent::Camera {
-                                    layer,
-                                    command: CameraCommand::Pan {
-                                        delta: -camera.screen_delta_to_world((d.x, d.y).into()),
-                                    },
-                                });
-                            }
-                        }
-                    }
-                }
-                ViewportCamera::ThreeDOrbit => {
-                    // 滚轮 → Dolly（向前滚 = 靠近 target）。
-                    let scroll = i.smooth_scroll_delta.y;
-                    if inside && scroll != 0.0 {
-                        events.push(SceneEvent::Camera {
-                            layer,
-                            command: CameraCommand::Dolly {
-                                delta: scroll * DOLLY_PER_SCROLL,
-                            },
-                        });
-                    }
-                    // 拖拽（左/右/中键任一）→ 绕目标公转：向右拖 = 场景向右转。
-                    if inside
-                        && (i.pointer.primary_down()
-                            || i.pointer.secondary_down()
-                            || i.pointer.middle_down())
-                    {
-                        let d = i.pointer.delta();
-                        if d != egui::Vec2::ZERO {
-                            events.push(SceneEvent::Camera {
-                                layer,
-                                command: CameraCommand::Orbit {
-                                    delta_yaw: -d.x * ORBIT_RAD_PER_PX,
-                                    delta_pitch: -d.y * ORBIT_RAD_PER_PX,
-                                },
-                            });
-                        }
-                    }
-                }
-                ViewportCamera::ThreeDFps => {
-                    // 拖拽 → 原地转头（与鼠标移动同向）。
-                    if inside
-                        && (i.pointer.primary_down()
-                            || i.pointer.secondary_down()
-                            || i.pointer.middle_down())
-                    {
-                        let d = i.pointer.delta();
-                        if d != egui::Vec2::ZERO {
-                            events.push(SceneEvent::Camera {
-                                layer,
-                                command: CameraCommand::Look {
-                                    delta_yaw: d.x * ORBIT_RAD_PER_PX,
-                                    delta_pitch: -d.y * ORBIT_RAD_PER_PX,
-                                },
-                            });
-                        }
-                    }
-                    // WASD → 前后左右；QE → 上下（沿用 3D 建模软件惯例）。
-                    //
-                    // 键盘**不要求指针悬停在视口内**：按 WASD 时手常常停在面板上
-                    // （旧实现的 `inside` 会让"移动一会儿后突然不动"）。只在文本输入
-                    // 时让位，避免抢用户的按键。
-                    let axis = |neg: egui::Key, pos: egui::Key| {
-                        (i.key_down(pos) as i32 - i.key_down(neg) as i32) as f32
-                    };
-                    let delta = ze_notion::Vec3::new(
-                        axis(egui::Key::A, egui::Key::D),
-                        axis(egui::Key::Q, egui::Key::E),
-                        axis(egui::Key::S, egui::Key::W),
-                    ) * (MOVE_PER_SECOND * i.stable_dt);
-                    if !typing && delta != ze_notion::Vec3::ZERO {
-                        events.push(SceneEvent::Camera {
-                            layer,
-                            command: CameraCommand::Move { delta },
-                        });
-                    }
+            let mut keys = std::collections::BTreeSet::new();
+            for (egui_key, key) in [
+                (egui::Key::W, ze_scene_core::domain::Key::W),
+                (egui::Key::A, ze_scene_core::domain::Key::A),
+                (egui::Key::S, ze_scene_core::domain::Key::S),
+                (egui::Key::D, ze_scene_core::domain::Key::D),
+                (egui::Key::Q, ze_scene_core::domain::Key::Q),
+                (egui::Key::E, ze_scene_core::domain::Key::E),
+            ] {
+                if i.key_down(egui_key) {
+                    keys.insert(key);
                 }
             }
-
-            // 悬停 / 点击（视口内；拾取类事件，与操作目标无关）。
-            // 只在有 2D 相机时上报：`screen_to_world` 是 2D 语义。
-            if let (Some((_, camera)), Some(pos)) = (layer2d, i.pointer.latest_pos()) {
-                if in_viewport(pos) {
-                    events.push(SceneEvent::ViewportHover {
-                        layer,
-                        scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
-                    });
-                    if i.pointer.primary_pressed() {
-                        events.push(SceneEvent::ViewportClick {
-                            layer,
-                            scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
-                        });
-                    }
-                    if i.pointer.primary_released() {
-                        events.push(SceneEvent::ViewportRelease {
-                            layer,
-                            scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
-                        });
-                    }
-                }
+            let screen_size = i.raw.screen_rect.map(|rect| rect.size()).unwrap_or_default();
+            ze_scene_core::domain::WindowInput {
+                pointer: ze_scene_core::domain::PointerState {
+                    position: i
+                        .pointer
+                        .latest_pos()
+                        .map(|p| ze_notion::Vec2::new(p.x, p.y)),
+                    hovering: i.pointer.hover_pos().is_some(),
+                    delta: ze_notion::Vec2::new(i.pointer.delta().x, i.pointer.delta().y),
+                    scroll_y: i.smooth_scroll_delta.y,
+                    primary_down: i.pointer.primary_down(),
+                    secondary_down: i.pointer.secondary_down(),
+                    middle_down: i.pointer.middle_down(),
+                    primary_pressed: i.pointer.primary_pressed(),
+                    primary_released: i.pointer.primary_released(),
+                },
+                keys,
+                typing,
+                stable_dt: i.stable_dt,
+                window_size: ze_notion::Vec2::new(screen_size.x, screen_size.y),
+                scale_factor,
+                viewport,
             }
-        });
-        events
+        })
     }
 
     // ─── 布局信息 ──────────────────────────────────────────────────────────
