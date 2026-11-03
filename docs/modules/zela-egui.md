@@ -11,7 +11,7 @@
 - 路径：`crates/ui/zela-egui`
 - 生产依赖（上游，dev-deps 不计）：`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-property`、`ze-scene-core`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-gui`
-- 源文件：6 个 · 1118 行
+- 源文件：6 个 · 1106 行
 
 ### 文件清单
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | `src/frame.rs` | 229 | — |
 | `src/health.rs` | 193 | — |
-| `src/host.rs` | 486 | — |
+| `src/host.rs` | 474 | — |
 | `src/lib.rs` | 35 | — |
 | `src/progress.rs` | 90 | — |
 | `src/resources.rs` | 85 | — |
@@ -35,6 +35,7 @@ graph LR
     f0 --> f1
     f0 --> f2
     f1 --> f3
+    f2 --> f3
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）

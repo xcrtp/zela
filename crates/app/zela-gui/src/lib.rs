@@ -239,6 +239,17 @@ impl App {
         }
         install_visuals(&ctx.egui_ctx);
 
+        // **CH-e**：确定性字体在**装配前**就位 —— HUD 标签是烘焙成 `Path` 的，
+        // 装配期用哪一套 face 决定了它的几何。`compile` / `check` / `render` /
+        // `doctor` 早已如此，GUI 是最后一个缺口。
+        // 缺字体不中止：HUD 退化为"有轨道 / 滑块、无标签"，诊断层会如实报告缺失清单。
+        match zela_app::fonts::ensure_font_dir() {
+            Some(dir) => eprintln!("[zela] 确定性字体：{}", dir.display()),
+            None => eprintln!(
+                "[zela] 警告：确定性字体未就绪（标签可能缺失）；先运行 `zela fonts` 下载并校验"
+            ),
+        }
+
         // 渲染环境（后端 + 合成器 + RenderContext）由 backends 侧的"标准安装"负责。
         let wgpu_state = ctx
             .wgpu_render_state

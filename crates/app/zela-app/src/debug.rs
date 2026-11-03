@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use ze_interact::Frame;
 use ze_scene_core::domain::{
     InjectError, InjectSource, Injected, InjectedPayload, SceneInputContext, SceneEvent, TagId,
+    WindowInput,
 };
 use zela_scene_ecs::contract::WorldView;
 use zela_scene_ecs::domain::{InputEvents, UiConfig};
@@ -172,7 +173,7 @@ pub struct SemanticChange {
     pub after: Option<String>,
 }
 
-/// 派生态诊断：命中谁 / 路由去向 / 为什么落空。
+/// 派生态诊断：命中谁 / 路由去向 / 为什么落空 / **装配环境**。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Diagnostics {
     /// capture > focus > hover 的当前投递目标（语义名）。
@@ -181,6 +182,31 @@ pub struct Diagnostics {
     /// 没有可观察帧时的说明（例如纯 3D 场景）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// **CH-e**：本帧的装配环境（窗口尺寸 / DPI / 视口 / 字体 face 清单）。
+    #[serde(default)]
+    pub environment: Environment,
+}
+
+/// **CH-e**：装配环境 —— 让同一个 `(x, y)` 在不同机器上的落点**可解释**。
+///
+/// 为什么必须显式：窗口坐标是逻辑像素，2× DPI 上同一个 `(x, y)` 落到不同控件；
+/// 字体 face 不同则标签几何不同。二者都不进 payload（不是内容），但回执不写清楚，
+/// 跨机器复现就只能靠猜。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Environment {
+    /// 窗口尺寸（逻辑像素）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_size: Option<[f32; 2]>,
+    /// HiDPI 缩放比（**不参与**换算，只作解释）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale_factor: Option<f32>,
+    /// 中央视口矩形 `[min.x, min.y, max.x, max.y]`（逻辑像素）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<[f32; 4]>,
+    /// 字体 face 清单 / 版本（CD 的 `Baked` 角色：回放端不执行，不进
+    /// `required_capabilities`；版本差异是可解释的差异）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fonts: Option<crate::fonts::FontEnvironment>,
 }
 
 /// **Frame 差分**：按 `(role, name)` 对齐，值不同 ⇒ `changed`。
@@ -263,16 +289,37 @@ pub fn outcomes_of(driver: &DriverPod) -> Vec<OutcomeRecord> {
 }
 
 /// 派生态诊断（当前投递目标；没有可观察帧时给出说明）。
+///
+/// **CH-e**：环境参数与 `routed` 一并回执 —— 同一个 `(x, y)` 在不同 DPI / 窗口尺寸
+/// 上落到不同控件，不写明环境就无法判断"回执不同"是不是 bug。
 pub fn diagnostics_of(driver: &DriverPod) -> Diagnostics {
-    let Some(hud) = hud_of(driver) else {
-        return Diagnostics {
+    let environment = driver.with_scheduler(|scheduler| {
+        let input = scheduler.resources().get::<WindowInput>();
+        Environment {
+            window_size: input.map(|input| [input.window_size.x, input.window_size.y]),
+            scale_factor: input.map(|input| input.scale_factor),
+            viewport: input.map(|input| {
+                [
+                    input.viewport.min.x,
+                    input.viewport.min.y,
+                    input.viewport.max.x,
+                    input.viewport.max.y,
+                ]
+            }),
+            fonts: crate::fonts::environment(),
+        }
+    });
+    match hud_of(driver) {
+        None => Diagnostics {
             routed: None,
             note: Some("本场景没有结构化帧（无自研面板），只有事件层回执".into()),
-        };
-    };
-    Diagnostics {
-        routed: hud.routed_name().map(str::to_string),
-        note: None,
+            environment,
+        },
+        Some(hud) => Diagnostics {
+            routed: hud.routed_name().map(str::to_string),
+            note: None,
+            environment,
+        },
     }
 }
 
@@ -294,7 +341,20 @@ pub fn input_context_of(driver: &DriverPod) -> Option<SceneInputContext> {
     })
 }
 
+/// **CH-e**：把本帧窗口输入写进资源（诊断环境的唯一来源）。
+///
+/// GUI 在 `EguiSceneHost::begin_frame` 里写、headless 注入时写 —— 两条入口都落
+/// 同一个资源，诊断快照因此不会出现"GUI 有环境、headless 没有"的分叉。
+pub fn store_window_input(driver: &DriverPod, input: &WindowInput) {
+    driver.with_scheduler_mut(|scheduler| {
+        scheduler.resources_mut().insert(input.clone());
+    });
+}
+
 /// **只投递，不驱动**：把一条带标记的事件放进本帧 `InputEvents`。
+///
+/// 窗口载荷同时写进 `WindowInput` 资源（**CH-e**）：诊断快照要如实反映"这一帧
+/// 的窗口尺寸 / DPI / 视口"，否则注入的回执会说谎。
 pub fn inject_injected(driver: &DriverPod, injected: &Injected) -> Result<usize, String> {
     injected.validate().map_err(|error| error.to_string())?;
     let current = driver.frame();
@@ -308,7 +368,9 @@ pub fn inject_injected(driver: &DriverPod, injected: &Injected) -> Result<usize,
         InjectedPayload::Window(input) => {
             let context = input_context_of(driver)
                 .ok_or_else(|| "场景没有可操作的图层（2D / 3D 都没有）".to_string())?;
-            ze_scene_core::domain::collect_events(input, &context)
+            let events = ze_scene_core::domain::collect_events(input, &context);
+            store_window_input(driver, input);
+            events
         }
         InjectedPayload::Scene(event) => vec![event.clone()],
         InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
@@ -342,7 +404,9 @@ pub fn trace_on(
         InjectedPayload::Window(input) => {
             let context = input_context_of(driver)
                 .ok_or_else(|| TraceError::Input("场景没有可操作的图层".into()))?;
-            ze_scene_core::domain::collect_events(input, &context)
+            let events = ze_scene_core::domain::collect_events(input, &context);
+            store_window_input(driver, input);
+            events
         }
         InjectedPayload::Scene(event) => vec![event.clone()],
         InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
