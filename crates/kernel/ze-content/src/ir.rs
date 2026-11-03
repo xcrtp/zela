@@ -124,6 +124,11 @@ pub struct ContentIR {
     pub baseline: f32,
     /// 生成时字号（pt）。
     pub nominal_font_size: f32,
+    /// **CG-b**：逐字符盒（字符下标 ↔ 矩形）。
+    ///
+    /// 与 `items` **平行**：轮廓决定"长什么样"，字符盒决定"点在哪、念什么"。
+    /// 非文本内容（公式轮廓 / 图元）为空；旧引擎不产出它，因此空是合法状态。
+    pub runs: Vec<crate::text_metrics::TextRun>,
 }
 
 impl ContentIR {
@@ -134,7 +139,13 @@ impl ContentIR {
             bounds: Rect2D::default(),
             baseline: 0.0,
             nominal_font_size,
+            runs: Vec::new(),
         }
+    }
+
+    /// 第一个字符盒（单行文本的便捷入口）。
+    pub fn text_run(&self) -> Option<&crate::text_metrics::TextRun> {
+        self.runs.first()
     }
 
     /// 墨迹包围盒 = 所有 path bounds 的并集。
