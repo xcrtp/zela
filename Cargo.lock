@@ -6581,6 +6581,7 @@ version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
+ "ze-interact",
  "ze-notion",
 ]
 
@@ -6624,6 +6625,10 @@ dependencies = [
 [[package]]
 name = "ze-interact"
 version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "ze-macro"
@@ -6816,6 +6821,7 @@ dependencies = [
  "typst",
  "typst-library",
  "ze-content",
+ "ze-interact",
  "ze-notion",
 ]
 

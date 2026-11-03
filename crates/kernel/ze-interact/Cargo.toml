@@ -4,4 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Interaction skeleton: hit testing, box/flow layout, and hover/focus/capture routing. No glam, no HashMap, zero dependencies."
+description = "Interaction skeleton: hit testing, box/flow layout, hover/focus/capture routing, and structured frames. No glam, no HashMap, zero default dependencies."
+
+[dependencies]
+# CG-c：`Frame` 可导出成 JSON（Agent 读一帧）。默认关闭 ⇒ 仍是零依赖。
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dev-dependencies]
+serde_json.workspace = true

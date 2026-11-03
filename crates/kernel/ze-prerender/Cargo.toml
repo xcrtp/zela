@@ -11,6 +11,8 @@ license.workspace = true
 [dependencies]
 ze-notion = { path = "../ze-notion" }
 ze-content = { path = "../ze-content" }
+# CG-b：`TextRun`（字符索引 ↔ 矩形）与结构化帧同住 `ze-interact`。
+ze-interact = { path = "../ze-interact" }
 thiserror = { workspace = true }
 derive_more = { workspace = true }
 # 诊断输出（替代 eprintln!，由订阅方决定是否可见）。

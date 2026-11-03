@@ -10,26 +10,39 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-interact`
 - 生产依赖（上游，dev-deps 不计）：（无）
-- 被依赖（下游）：`zela-node-editor`、`zela-scene-ecs`
-- 源文件：4 个 · 769 行
+- 被依赖（下游）：`ze-content`、`ze-prerender`、`zela-node-editor`、`zela-scene-ecs`
+- 源文件：6 个 · 1072 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/hit.rs` | 239 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
-| `src/layout.rs` | 281 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
-| `src/lib.rs` | 44 | `ze-interact` — 交互骨架（命中 / 布局 / 路由）。 |
+| `src/frame.rs` | 188 | **CG-c**：结构化帧（`Frame`）—— UI 的一次**快照**。 |
+| `src/hit.rs` | 241 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
+| `src/layout.rs` | 283 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
+| `src/lib.rs` | 51 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
 | `src/route.rs` | 205 | 路由（CE-c）：hover / focus / capture 三档。 |
+| `src/text.rs` | 104 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
-（未解析到文件级 `use` 边）
+```mermaid
+graph LR
+    f0["src/frame.rs"]
+    f1["src/hit.rs"]
+    f2["src/layout.rs"]
+    f3["src/text.rs"]
+    f0 --> f1
+    f0 --> f2
+    f0 --> f3
+```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
 
 | 文件 | 项 |
 |---|---|
+| `src/frame.rs` | `pub struct Frame` |
+| `src/frame.rs` | `pub struct SemanticNode` |
 | `src/hit.rs` | `pub struct Point` |
 | `src/hit.rs` | `pub struct Rect` |
 | `src/hit.rs` | `pub struct HitId(pub u32)` |
@@ -50,6 +63,8 @@
 | `src/route.rs` | `pub struct RouteKey` |
 | `src/route.rs` | `pub enum RoutePhase` |
 | `src/route.rs` | `pub struct Router` |
+| `src/text.rs` | `pub struct CharBox` |
+| `src/text.rs` | `pub struct TextRun` |
 <!-- AUTO:END -->
 
 ## 职责

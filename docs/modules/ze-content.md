@@ -9,22 +9,22 @@
 
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-content`
-- 生产依赖（上游，dev-deps 不计）：`ze-notion`
+- 生产依赖（上游，dev-deps 不计）：`ze-interact`、`ze-notion`
 - 被依赖（下游）：`ze-prerender`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-render`、`zela-scene-ecs`
-- 源文件：8 个 · 1689 行
+- 源文件：8 个 · 1629 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/ir.rs` | 249 | — |
+| `src/ir.rs` | 250 | — |
 | `src/lib.rs` | 21 | — |
 | `src/normalize.rs` | 109 | — |
 | `src/pair.rs` | 204 | — |
 | `src/placeholder.rs` | 169 | — |
 | `src/stroke.rs` | 297 | — |
 | `src/svg.rs` | 267 | — |
-| `src/text_metrics.rs` | 373 | 字体度量表（装配期烘焙的**纯值**）。 |
+| `src/text_metrics.rs` | 312 | 字体度量表（装配期烘焙的**纯值**）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -60,8 +60,6 @@ graph LR
 | `src/text_metrics.rs` | `pub struct TextMetrics` |
 | `src/text_metrics.rs` | `pub struct TextLine` |
 | `src/text_metrics.rs` | `pub fn is_cjk(ch: char) -> bool` |
-| `src/text_metrics.rs` | `pub struct CharBox` |
-| `src/text_metrics.rs` | `pub struct TextRun` |
 <!-- AUTO:END -->
 
 ## 职责
