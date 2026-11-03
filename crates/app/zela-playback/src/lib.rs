@@ -90,6 +90,10 @@ pub struct Runtime {
     ///
     /// `None` = 该装配路径没有可配对的 ZSB（例如纯内置能力 demo）⇒ 不录制。
     pub pairing: Option<Pairing>,
+    /// **CE-f**：本次回放消费内容的方式（诊断；不参与渲染）。
+    ///
+    /// `Restore` = 用 payload 的烘焙轮廓；`Rebuild` = 用源 + 本地引擎重算。
+    pub content_mode: zela_scene_bundle::ContentMode,
 }
 
 /// [`assemble_runtime`] 的输入：**场景已经建好**，只差资源 / 系统图 / Driver。
@@ -135,13 +139,55 @@ fn scene_capability() -> Capability {
     Capability::new(name, meta.version)
 }
 
-/// **ZSB → Runtime**：可还原性检查 → 渲染参数校验 → 还原 `SceneScript` → commit → 公共尾装配。
+/// **CE-f**：内容重建钩子 —— 给定 payload 里的源，返回重算的几何。
+///
+/// `None` = **保留烘焙数据**（显式降级，不是错误）。宿主（`zela-app`）用现有
+/// typst 引擎实现它；浏览器没有内容引擎 ⇒ 不传钩子，走 restore。
+pub type ContentRebuild<'a> =
+    dyn Fn(&ze_scene_core::components::ContentOrigin) -> Option<ze_notion::Path2D> + 'a;
+
+/// **CE-f**：按模式重写脚本几何（**不触碰 GPU / Scene**，可 headless 测）。
+///
+/// 返回**实际**模式：只有至少一条几何被替换才是 `Rebuild`；否则 `Restore`
+/// （诊断如实反映，不谎报）。判定与替换分开，是为了让这条路径能脱离渲染后端验证。
+pub fn rebuild_script_content(
+    bundle: &Bundle,
+    available: &Available,
+    script: &mut zela_scene_ecs::scene_script::SceneScript,
+    rebuild: &ContentRebuild<'_>,
+) -> Result<zela_scene_bundle::ContentMode> {
+    if bundle.content_mode(available)? != zela_scene_bundle::ContentMode::Rebuild {
+        return Ok(zela_scene_bundle::ContentMode::Restore);
+    }
+    let report = script.rebuild_content(|origin| rebuild(origin));
+    Ok(if report.rebuilt > 0 {
+        zela_scene_bundle::ContentMode::Rebuild
+    } else {
+        zela_scene_bundle::ContentMode::Restore
+    })
+}
+
+/// **ZSB → Runtime**（无内容重建钩子）：等价于 restore。
 pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Result<Runtime> {
-    bundle.check_restorable(&available_playback_caps())?;
+    build_bundle_runtime_with(render_ctx, bundle, &available_playback_caps(), None)
+}
+
+/// **ZSB → Runtime**：可还原性检查 → 渲染参数校验 → 还原 `SceneScript`
+/// →（按 `ContentMode` 决定是否重建内容几何）→ commit → 公共尾装配。
+///
+/// `available` 是**宿主能力集**：它决定 `ContentMode::Rebuild` 是否成立
+/// （回放端自带的最小集只有 scene，够用于 restore）。
+pub fn build_bundle_runtime_with(
+    render_ctx: RenderContext,
+    bundle: &Bundle,
+    available: &Available,
+    rebuild: Option<&ContentRebuild<'_>>,
+) -> Result<Runtime> {
+    bundle.check_restorable(available)?;
     // B4 Step 2 / D1：参数非法 ⇒ 显式错误（不静默纠正）。
     let _params = bundle_render_params(bundle)?;
 
-    let script = bundle.script()?;
+    let mut script = bundle.script()?;
     // **第 4 批**：产物记录的算子 revision vs 当前库 —— 不符即**点名算子**失败
     // （不是笼统的库版本不符）。老 payload 没有记录 ⇒ 空表，直接通过。
     for library in script.libraries() {
@@ -151,9 +197,15 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
     // 静止时刻是**派生量**（可能不可推导）；录多长仍由调用方的 frames 决定。
     let record_hint = script.still_time();
 
+    // **CE-f**：只有「Meta 标了 Source + payload 有源 + 宿主给了钩子」才重建；
+    // 一条都没替换成功 ⇒ 退回 restore（诊断如实反映，不谎报）。
+    let mut content_mode = zela_scene_bundle::ContentMode::Restore;
+    if let Some(rebuild) = rebuild {
+        content_mode = rebuild_script_content(bundle, available, &mut script, rebuild)?;
+    }
+
     let mut scene = Scene::new();
     let recipe = script
-        .clone()
         .commit(&mut scene)
         .map_err(|e| PlaybackError::Assembly(format!("ZSB commit 失败：{e}")))?;
     let camera2d = find_camera2d(&scene)?;
@@ -163,7 +215,7 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
     let content_textures = (!content_textures.is_empty()).then_some(content_textures);
     let world = scene.into_world();
 
-    Ok(assemble_runtime(
+    let mut runtime = assemble_runtime(
         render_ctx,
         SceneAssembly {
             world,
@@ -176,7 +228,9 @@ pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Resul
             content_textures,
             pairing: Pairing::for_bundle(bundle).ok(),
         },
-    ))
+    );
+    runtime.content_mode = content_mode;
+    Ok(runtime)
 }
 
 /// **回放端读渲染参数**（B4 Step 2 / D1）：取 Meta → 有效性校验 → 返回。
@@ -312,6 +366,8 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         render_ctx,
         duration,
         pairing,
+        // **CE-f**：装配尾不知道内容来源；由 `build_bundle_runtime_with` 覆写。
+        content_mode: zela_scene_bundle::ContentMode::Restore,
     }
 }
 
@@ -600,4 +656,120 @@ pub fn rgba_to_target(ctx: &RenderContext, rgba: &[u8]) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ze_notion::{Path2D, Vec2};
+    use ze_scene_core::components::ContentOrigin;
+    use zela_scene_bundle::{Bundle, Capability, CapabilityRole, ContentMode, MetaInput, Pod};
+    use zela_scene_ecs::scene_script::SceneEncoder;
+
+    fn baked() -> Path2D {
+        Path2D::from_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)], false)
+    }
+
+    fn rebuilt() -> Path2D {
+        Path2D::from_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(20.0, 0.0)], false)
+    }
+
+    fn text_script() -> zela_scene_ecs::scene_script::SceneScript {
+        let mut enc = SceneEncoder::new();
+        enc.spawn(vec![
+            Box::new(ze_scene_core::Path(baked())),
+            Box::new(ContentOrigin {
+                text: "Hi".to_string(),
+                font_size: 32.0,
+                x: 1.0,
+                y: 2.0,
+                path_index: 0,
+            }),
+        ]);
+        enc.finish()
+    }
+
+    fn bundle() -> Bundle {
+        Bundle::encode(
+            &text_script(),
+            MetaInput {
+                capabilities: vec![
+                    Capability::new("scene", Some("1")),
+                    Capability::new("content", Some("1")).with_role(CapabilityRole::Source),
+                ],
+                required_capabilities: vec![
+                    Capability::new("scene", Some("1")),
+                    Capability::new("content", Some("1")).with_role(CapabilityRole::Source),
+                ],
+                pods: vec![Pod::new("scene", "0.1.0")],
+                required_pods: vec![Pod::new("scene", "0.1.0")],
+                downgrades: Vec::new(),
+                source_sha256: None,
+                render_params: Default::default(),
+            },
+        )
+        .expect("encode")
+    }
+
+    fn with_content() -> Available {
+        Available::new(
+            vec![
+                Capability::new("scene", Some("1")),
+                Capability::new("content", Some("1")),
+            ],
+            vec![Pod::new("scene", "0.1.0")],
+        )
+    }
+
+    /// **CE-f 主判据**：模式成立时回放端真的替换了几何（不再只走 restore）。
+    #[test]
+    fn rebuild_replaces_geometry_and_reports_the_mode() {
+        let bundle = bundle();
+        let mut script = bundle.script().expect("script");
+        let before = script.to_json().expect("序列化");
+
+        let rebuild = |origin: &ContentOrigin| {
+            assert_eq!(origin.text, "Hi");
+            Some(rebuilt())
+        };
+        let mode = rebuild_script_content(&bundle, &with_content(), &mut script, &rebuild)
+            .expect("重建");
+
+        assert_eq!(mode, ContentMode::Rebuild);
+        assert_ne!(
+            script.to_json().expect("序列化"),
+            before,
+            "几何必须被替换（不是空跑）"
+        );
+    }
+
+    /// 闭包返回 `None` ⇒ 保留烘焙数据，模式如实退回 `Restore`。
+    #[test]
+    fn failed_rebuild_falls_back_to_restore() {
+        let bundle = bundle();
+        let mut script = bundle.script().expect("script");
+        let before = script.to_json().expect("序列化");
+
+        let rebuild = |_: &ContentOrigin| None;
+        let mode = rebuild_script_content(&bundle, &with_content(), &mut script, &rebuild)
+            .expect("降级不是错误");
+
+        assert_eq!(mode, ContentMode::Restore);
+        assert_eq!(script.to_json().expect("序列化"), before, "烘焙数据不变");
+    }
+
+    /// 本地没有内容能力 ⇒ 判据不成立，连闭包都不该被调用。
+    #[test]
+    fn without_content_capability_the_hook_is_not_called() {
+        let bundle = bundle();
+        let mut script = bundle.script().expect("script");
+        let scene_only = Available::new(vec![Capability::new("scene", Some("1"))], Vec::new());
+
+        let rebuild = |_: &ContentOrigin| -> Option<Path2D> {
+            panic!("没有内容能力时不得调用重建钩子")
+        };
+        let mode = rebuild_script_content(&bundle, &scene_only, &mut script, &rebuild)
+            .expect("restore");
+        assert_eq!(mode, ContentMode::Restore);
+    }
 }

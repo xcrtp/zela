@@ -556,6 +556,15 @@ pub struct SceneRecipe {
     pub state_analyses: Vec<crate::animation::affine::StateAnalysis>,
 }
 
+/// **CE-f**：`rebuild_content` 的结果（诊断用，不进产物）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RebuildReport {
+    /// 用源重算并替换了几何的对象数。
+    pub rebuilt: usize,
+    /// 保留烘焙数据的对象数（闭包返回 `None`，或没有可替换的几何组件）。
+    pub kept_baked: usize,
+}
+
 impl SceneRecipe {
     /// 句柄 → `ObjectId`（越界 ⇒ `None`）。
     pub fn id(&self, h: Handle) -> Option<ObjectId> {
@@ -814,6 +823,63 @@ impl SceneScript {
     /// View 的命名空间**复用**这里（不新建第二套作用域来源）。
     pub fn object_scope(&self, handle: Handle) -> Option<&ScopeSpec> {
         self.object_scopes.get(handle.0).and_then(Option::as_ref)
+    }
+
+    /// **CE-f**：用源重新烘焙内容几何（`rebuild` 路径）。
+    ///
+    /// 对每个携带 [`ContentOrigin`](crate::components::ContentOrigin) 的对象，
+    /// 用 `rebuild(origin)` 的结果替换 `Path` / `Reveal` 的几何：
+    ///
+    /// - 闭包返回 `Some(path)` ⇒ 替换（该对象走 rebuild）；
+    /// - 返回 `None` ⇒ **保留烘焙数据**（显式降级，计入 `kept_baked`）；
+    /// - 对象没有可替换的几何组件 ⇒ 同样计入 `kept_baked`。
+    ///
+    /// 返回计数供诊断：`rebuild` 与 `restore` 的差异必须是**可解释的差异**，
+    /// 不是错误（见 `zela_scene_bundle::Meta` 文档）。
+    pub fn rebuild_content(
+        &mut self,
+        mut rebuild: impl FnMut(&crate::components::ContentOrigin) -> Option<ze_notion::Path2D>,
+    ) -> RebuildReport {
+        let mut report = RebuildReport::default();
+        for components in &mut self.creates {
+            let Some(origin) = components
+                .iter()
+                .find_map(|component| {
+                    component
+                        .as_any()
+                        .downcast_ref::<crate::components::ContentOrigin>()
+                })
+                .cloned()
+            else {
+                continue;
+            };
+            let Some(path) = rebuild(&origin) else {
+                report.kept_baked += 1;
+                continue;
+            };
+            let mut replaced = false;
+            for component in components.iter_mut() {
+                if let Some(native) = component
+                    .as_any_mut()
+                    .downcast_mut::<crate::object::Path>()
+                {
+                    native.0 = path.clone();
+                    replaced = true;
+                } else if let Some(reveal) = component
+                    .as_any_mut()
+                    .downcast_mut::<crate::components::Reveal>()
+                {
+                    reveal.path = path.clone();
+                    replaced = true;
+                }
+            }
+            if replaced {
+                report.rebuilt += 1;
+            } else {
+                report.kept_baked += 1;
+            }
+        }
+        report
     }
 
     /// **CD-b**：payload 里记录的**内容源**（`ContentOrigin` 组件）。
