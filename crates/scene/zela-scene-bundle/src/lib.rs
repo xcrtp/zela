@@ -148,7 +148,7 @@ pub enum ContentMode {
 /// # restore 与 rebuild 是两个操作（CD）
 ///
 /// - **restore（恢复）**：直接用 payload 里的烘焙数据 ⇒ 逐位一致，可哈希校验；
-/// - **rebuild（重建）**：用 payload 里的**源**（如 `ContentSource`）+ 本地能力
+/// - **rebuild（重建）**：用 payload 里的**源**（如 `ContentOrigin`）+ 本地能力
 ///   重新烘焙 ⇒ 可复现，但**不保证**与原产物逐位相同。
 ///
 /// `Source` 能力的版本差异因此是**可解释的差异**，不是错误。
@@ -451,10 +451,10 @@ impl Bundle {
     /// **CD-b**：payload 里记录的内容源（`rebuild` 的输入；`restore` 不需要）。
     ///
     /// 没有内容源的产物（纯几何 / 老 ZSB）返回空表 —— 不失败。
-    pub fn text_sources(&self) -> Result<Vec<ze_scene_core::components::ContentSource>, BundleError> {
+    pub fn text_sources(&self) -> Result<Vec<ze_scene_core::components::ContentOrigin>, BundleError> {
         Ok(self
             .script()?
-            .content_sources()
+            .content_origins()
             .into_iter()
             .cloned()
             .collect())
@@ -785,7 +785,7 @@ mod tests {
 
     fn text_script(text: &str) -> SceneScript {
         let mut enc = SceneEncoder::new();
-        enc.spawn(vec![Box::new(ze_scene_core::components::ContentSource {
+        enc.spawn(vec![Box::new(ze_scene_core::components::ContentOrigin {
             text: text.to_string(),
             font_size: 24.0,
             x: 10.0,

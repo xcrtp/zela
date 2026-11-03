@@ -69,7 +69,7 @@ pub use ze_scene_contract::{
 use crate::composer::Composer;
 use crate::domain::CameraMode;
 use crate::scene::components::{
-    ContentSource, ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
+    ContentOrigin, ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
 };
 
 // B3-1 收尾：hecs 只读适配器与身份互转已抽到 `ze-scene-hecs`

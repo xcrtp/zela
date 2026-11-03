@@ -25,7 +25,7 @@ use ze_content::StrokeOutline;
 use ze_notion::{Color32 as NotionColor, Path2D, Vec2 as NotionVec2};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 use ze_prerender::InMemoryEngine;
-use ze_scene_core::components::ContentSource;
+use ze_scene_core::components::ContentOrigin;
 
 use crate::types::{Color, Formula, Path, PathList, Text};
 
@@ -46,7 +46,7 @@ pub struct PathStore(Arc<Mutex<PathStoreInner>>);
 #[derive(Clone)]
 struct StoredPath {
     path: Path2D,
-    source: Option<ze_scene_core::components::ContentSource>,
+    origin: Option<ContentOrigin>,
 }
 
 struct PathStoreInner {
@@ -72,13 +72,13 @@ impl PathStore {
     pub(crate) fn insert(
         &self,
         path: Path2D,
-        source: Option<ze_scene_core::components::ContentSource>,
+        origin: Option<ContentOrigin>,
     ) -> Handle {
         self.0
             .lock()
             .expect("路径表锁中毒")
             .table
-            .insert(StoredPath { path, source })
+            .insert(StoredPath { path, origin })
     }
 
     pub(crate) fn get(&self, handle: &Handle) -> Result<Path2D, PodError> {
@@ -91,14 +91,14 @@ impl PathStore {
     }
 
     /// **CD-b**：取该路径记录的内容源（无源 ⇒ `None`，老产物 / 公式）。
-    pub(crate) fn source(&self, handle: &Handle) -> Option<ze_scene_core::components::ContentSource> {
+    pub(crate) fn origin(&self, handle: &Handle) -> Option<ContentOrigin> {
         self.0
             .lock()
             .expect("路径表锁中毒")
             .table
             .get(handle)
             .ok()
-            .and_then(|stored| stored.source.clone())
+            .and_then(|stored| stored.origin.clone())
     }
 
     /// 每轮脚本开始前清空（旧句柄随之失效）。
@@ -184,7 +184,7 @@ fn content_formula(pod: &dyn Pod, spec: Formula) -> PathList {
 fn content_text(pod: &dyn Pod, spec: Text) -> PathList {
     let source = ze_content::text_literal_source(&spec.source);
     // **CD-b**：烘焙轮廓 + 原始文本**同时**进产物（后者供 rebuild）。
-    let origin = content_source_meta(&spec.source, spec.font_size, spec.x, spec.y);
+    let origin = content_origin_meta(&spec.source, spec.font_size, spec.x, spec.y);
     compile(
         pod,
         &source,
@@ -197,13 +197,13 @@ fn content_text(pod: &dyn Pod, spec: Text) -> PathList {
 }
 
 /// 内容源的公共部分（`path_index` 在 `store_paths` 里按顺序补上）。
-fn content_source_meta(
+fn content_origin_meta(
     text: &str,
     font_size: f32,
     x: f32,
     y: f32,
-) -> ContentSource {
-    ContentSource {
+) -> ContentOrigin {
+    ContentOrigin {
         text: text.to_string(),
         font_size,
         x,
@@ -220,7 +220,7 @@ fn compile(
     x: f32,
     y: f32,
     sort_reading_order: bool,
-    origin: Option<ContentSource>,
+    origin: Option<ContentOrigin>,
 ) -> PathList {
     let this = service(pod);
     // 记录"内容能力被实际使用"（供 ZSB Meta 取最小 capability 集）。
@@ -239,7 +239,7 @@ fn compile(
 fn store_paths(
     store: &PathStore,
     outlines: Vec<StrokeOutline>,
-    origin: Option<ContentSource>,
+    origin: Option<ContentOrigin>,
 ) -> Vec<Path> {
     outlines
         .into_iter()
@@ -247,9 +247,9 @@ fn store_paths(
         .map(|(index, outline)| Path {
             path: store.insert(
                 outline.path,
-                origin.clone().map(|mut source| {
-                    source.path_index = index;
-                    source
+                origin.clone().map(|mut origin| {
+                    origin.path_index = index;
+                    origin
                 }),
             ),
             color: to_color(outline.color),

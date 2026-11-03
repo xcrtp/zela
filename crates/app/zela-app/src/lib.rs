@@ -224,7 +224,7 @@ fn scene_capability() -> zela_scene_bundle::Capability {
 
 fn content_capability() -> zela_scene_bundle::Capability {
     // **CD-d**：内容能力的角色是 **Source** —— payload 同时带烘焙轮廓与源文本
-    // （`ContentSource`）。回放端有同名能力 ⇒ 可重建；没有 ⇒ 用烘焙数据，不失败。
+    // （`ContentOrigin`）。回放端有同名能力 ⇒ 可重建；没有 ⇒ 用烘焙数据，不失败。
     //
     // CE 引入真字体库 / 排版引擎时**沿用同一 role**（只换后端，不重新论证）。
     capability_of::<zela_scene_ecs::pod::ContentApi<'static>>()
@@ -1983,7 +1983,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             MetaInput {
                 capabilities: available.capabilities.clone(),
                 required_capabilities: required_playback_capabilities(
-                    !script.content_sources().is_empty(),
+                    !script.content_origins().is_empty(),
                 ),
                 pods: available.pods.clone(),
                 required_pods: required_playback_pods(),
@@ -2038,7 +2038,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
     /// 两侧用**同一个**引擎 ⇒ 本用例在两种构建下都成立。
     #[test]
     fn content_restore_and_rebuild_agree() {
-        use ze_scene_core::components::ContentSource;
+        use ze_scene_core::components::ContentOrigin;
         use ze_scene_core::Path as ObjectPath;
         use zela_scene_bundle::{Bundle, CapabilityRole, ContentMode, MetaInput};
         use zela_scene_ecs::contract::SceneRead;
@@ -2099,7 +2099,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             .commit(&mut scene)
             .expect("commit");
         let mut restored: Vec<(usize, ze_notion::Path2D)> = Vec::new();
-        scene.for_each::<ContentSource>(|id, source| {
+        scene.for_each::<ContentOrigin>(|id, source| {
             if let Some(path) = scene.with::<ObjectPath, _>(id, |p| p.0.clone()) {
                 restored.push((source.path_index, path));
             }
@@ -2146,7 +2146,7 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             MetaInput {
                 capabilities: available.capabilities.clone(),
                 required_capabilities: required_playback_capabilities(
-                    !script.content_sources().is_empty(),
+                    !script.content_origins().is_empty(),
                 ),
                 pods: available.pods.clone(),
                 required_pods: required_playback_pods(),

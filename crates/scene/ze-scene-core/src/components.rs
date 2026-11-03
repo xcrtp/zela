@@ -103,8 +103,11 @@ pub struct ContentTextureItem;
 /// 烘焙轮廓负责 `restore`（逐位一致）；本组件负责 `rebuild`（用本地能力从
 /// `text` 重算）。`path_index` 是该文本编译出的第几条描边（一次文本可出多条路径，
 /// 每条挂一个对象）。既有不含本组件的 payload 仍可读（`restore` 路径不依赖它）。
+///
+/// 命名与 `ze_content::ContentSource` 区分：后者是**归一化源码 + 内容哈希**，
+/// 本组件是**脚本层的内容来源声明**（作者文本 + 摆放 + 描边序号）。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ContentSource {
+pub struct ContentOrigin {
     /// 原始文本（`content.text` 的 `source`，不是 Typst 字面量包装后的串）。
     pub text: String,
     pub font_size: f32,

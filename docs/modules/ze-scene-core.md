@@ -10,8 +10,8 @@
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
-- 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：46 个 · 13020 行
+- 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
+- 源文件：46 个 · 13058 行
 
 ### 文件清单
 
@@ -29,7 +29,7 @@
 | `src/bounds.rs` | 197 | — |
 | `src/camera_input.rs` | 160 | — |
 | `src/components/3d.rs` | 402 | — |
-| `src/components.rs` | 223 | — |
+| `src/components.rs` | 242 | — |
 | `src/composer.rs` | 146 | — |
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
@@ -54,8 +54,8 @@
 | `src/object/primitives.rs` | 475 | — |
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
-| `src/registry.rs` | 219 | — |
-| `src/scene_script.rs` | 1117 | — |
+| `src/registry.rs` | 222 | — |
+| `src/scene_script.rs` | 1133 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
@@ -221,6 +221,7 @@ graph LR
 | `src/components.rs` | `pub struct PhaseAnim` |
 | `src/components.rs` | `pub struct MorphShape` |
 | `src/components.rs` | `pub struct ContentTextureItem` |
+| `src/components.rs` | `pub struct ContentOrigin` |
 | `src/components.rs` | `pub struct Reveal` |
 | `src/components.rs` | `pub struct PathFollow` |
 | `src/composer.rs` | `pub struct Composer` |

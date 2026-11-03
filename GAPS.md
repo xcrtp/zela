@@ -2050,11 +2050,33 @@
 
 ---
 
+## CD. capability 协商与「源 + 烘焙」双轨（2026-11-03）
+
+> 计划《CD 批次执行计划：capability 协商与「源 + 烘焙」双轨》。一个 ZSB 是
+> 「一系列 capability 与 version 协商」的产物：既记录能力，也记录源字符串。
+> 原样重放用预烘焙数据；换能力重放时用源重新烘焙 —— 两条路都成立。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CD-01 | 可还原性检查是一元的：版本不相等即失败，没有"有则重建 / 无则用烘焙"的中间态 | 场景 / 内核 | **已关闭** | `CapabilityRole::{Baked, Source, Runtime}`（`#[serde(default)]` 缺省 `Runtime` ⇒ 老 ZSB 行为不变）；`check_restorable` 按 role 分派：`Baked` 不校验、`Source` 缺失不失败、`Runtime` 仍要求名字 + 版本相等；`Available::can_rebuild` 是协商查询入口（只看名字，版本差异由重建方在诊断里报告）。用例 `legacy_capability_json_defaults_to_runtime` / `role_decides_whether_missing_capability_fails` / `can_rebuild_is_a_name_query`。 |
+| CD-02 | `content.text` 的源字符串不在产物里 ⇒ 换字体重烘焙无法实现（F-08 的前置） | 场景 / 产物 | **已关闭** | `ze_scene_core::components::ContentOrigin`（文本 / 字号 / 位置 / 描边序号）与烘焙轮廓**同时**进 payload：`PathStore` 按路径句柄记录源，`scene.path_shape` / `scene.reveal_path` 把它挂到对象上；`SceneScript::content_origins` + `Bundle::text_sources` 提供 rebuild 的源侧输入。无源的既有 payload 不出现该组件 ⇒ 仍可读写。用例 `payload_keeps_content_source_for_rebuild` / `payload_without_content_source_still_decodes`。 |
+| CD-03 | 没有"restore 与 rebuild 是两种操作"的可观测判据与诊断 | 场景 / 产物 | **已关闭** | `Bundle::content_mode(&Available) -> ContentMode::{Restore, Rebuild}`：Meta 有 `role = Source` 的能力且本地可重建、payload 有源 ⇒ `Rebuild`；否则 `Restore`。`Meta` 文档写明两者的一致性要求不同（restore 逐位一致；rebuild 可复现但不保证逐位相同）。用例 `content_mode_reports_restore_or_rebuild` / `content_mode_without_source_is_restore`；端到端用例 `content_restore_and_rebuild_agree`（zela-app）：同一 payload 的烘焙轮廓与用 `ContentOrigin` 重算的轮廓逐位相同，开 / 关 typst 两种构建都通过。 |
+| CD-04 | 内容能力被当作回放期强制依赖的候选（CE 引入字体库时会重演误报） | 装配 / 产物 | **已关闭** | `zela-app` 的 `content_capability()` 带 `role = Source`，用到内容时写入 Meta 的 `capabilities` 与 `required_capabilities`；`zela-playback::available_playback_caps` 仍只有 scene ⇒ 无内容引擎的回放端照常通过 `check_restorable`。CE 的字体库 / 排版引擎沿用 `role = Source`（只换后端，不重新论证）。用例 `compiled_capabilities_are_the_minimal_used_set`（断言 role）。 |
+| CD-05 | `rebuild` 尚无运行时入口（本批只证明路径成立与诊断可用） | 回放 / 产物 | **记账** | `ContentMode::Rebuild` 目前只在用例里被消费：`zela-playback::build_bundle_runtime` 仍走 restore（用烘焙数据），尚未实现"用源重新烘焙后再提交场景"。触发条件：CE 引入字体库 / 排版引擎时，由回放端按 `content_mode` 选择分支接上；届时先定"重建后是否重录像素基线"的口径。 |
+
+**CD 段小计**：已关闭 4（CD-01 / CD-02 / CD-03 / CD-04）· 部分关闭 0 · 记账 1（CD-05）· 未执行 0 · 已记录 0。
+
+> 本批另有一次性动作：含 `content.text` 的作品因新增 `ContentOrigin` 组件而 payload
+> 变化（纯几何作品不变），已按 `typst` 字体目录重跑批量编译，只改写
+> `crates/app/zela-app/scripts/demo/manifest.txt` 的 hash 列；像素基线不动。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CC**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CC 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CD**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CD 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

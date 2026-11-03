@@ -809,18 +809,18 @@ impl SceneScript {
         self.creates.is_empty()
     }
 
-    /// **CD-b**：payload 里记录的**内容源**（`ContentSource` 组件）。
+    /// **CD-b**：payload 里记录的**内容源**（`ContentOrigin` 组件）。
     ///
     /// `restore` 不读它（用烘焙轮廓）；`rebuild` 用它 + 本地能力重算。
     /// 顺序 = 对象声明顺序，可复现。
-    pub fn content_sources(&self) -> Vec<&crate::components::ContentSource> {
+    pub fn content_origins(&self) -> Vec<&crate::components::ContentOrigin> {
         self.creates
             .iter()
             .flat_map(|components| components.iter())
             .filter_map(|component| {
                 component
                     .as_any()
-                    .downcast_ref::<crate::components::ContentSource>()
+                    .downcast_ref::<crate::components::ContentOrigin>()
             })
             .collect()
     }
