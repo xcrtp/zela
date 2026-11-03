@@ -1986,7 +1986,7 @@
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`。**CB 已给纯算法正当去处**：`ze-alg`（kernel 级、零 glam）承接矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径 / 仿射递推，`animation/` 由 5356 降到 5192 行（< 6k）。**处方修正**（CB §11.1）：原「给 `ze-comb` 窄数学接口」不成立 —— `ze-notion` 只是 glam 再导出，没有复数 / 谱半径 / 任意 k×k / f64。触发条件不变：`animation/` > 6k，或出现第二个同类落点需求。 |
+| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`。**CB 已给纯算法正当去处**：`ze-alg`（kernel 级、零 glam）承接矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径 / 仿射递推，`animation/` 由 5356 降到 5192 行（CB 后），CC 再增至 5737（仍 < 6k）。**处方修正**（CB §11.1）：原「给 `ze-comb` 窄数学接口」不成立 —— `ze-notion` 只是 glam 再导出，没有复数 / 谱半径 / 任意 k×k / f64。触发条件不变：`animation/` > 6k，或出现第二个同类落点需求。 |
 | BZ-02 | 仿射 `State` 的稳定性无门禁（错参数静默拿到 inf/NaN） | 内核 / 场景 | **已关闭** | `AffineMap::spectral_radius`（1/2 阶解析式；3/4 阶 Faddeev–LeVerrier + Durand–Kerner，固定初值 ⇒ 确定性）；`plan_from_expr` 在 `\|λ\|max ≥ 1`（或非有限）时显式 `AffineError::Unstable`，错误含谱半径与稳定条件提示（1 阶 `\|a\| < 1`、2 阶 `damp + stiff < 1`，边缘稳定同样拒绝）。现有 `spring_state`（0.97 / 0.02 ⇒ `sqrt(0.99)`）不受影响；用例 `unstable_affine_state_is_rejected` / `marginal_affine_state_is_rejected` / `stable_spring_is_accepted` / `unstable_state_is_rejected_at_assembly`。 |
 | BZ-03 | `Recorder::capture` 生产零调用（AI-08：输入流能放不能录） | 回放 / GUI | **已关闭** | GUI：`SceneFrame::with_input_recording`（`ZELA_RECORD_INPUT=<path>`）在推进前捕获本帧 `InputEvents`，`Drop` 时 `finish()` 落盘；headless：`zela-render --record-input` 每帧捕获、收尾写盘。`disabled()` 仍是零 no-op（关闭时连资源读取都跳过）。往返判据 `recorded_stream_replays_the_same_trajectory`：录到的流与输入流逐字节相同，且回放得到同一条轨迹。 |
 | BZ-04 | 依赖边未提取、事件 predicate 不存在 | 内核 / 场景 | **已关闭** | `StatePlan::dependencies`（`BTreeSet` 升序，`namespace::name` 键）+ `SceneRecipe::state_dependencies`（side table，不进 payload）。事件 predicate：`event` 通道 = 本帧 `InputEvents` 非空（HostState ⇒ 只可能进 CPU 求值）；计划标记 `event_gated`，`SeekKind::EventReplay`（**L2**：只重放事件帧，帧间 identity），运行期由 `StateEventLog` 记升序匹配帧、`value_at_event` 用 `partition_point` 计数。无事件依赖的 State 档位不变（`OLogN` / `OPerInterval`）。自引用仍显式失败（`PredicateRefsState`）。用例 `event_predicate_uses_sparse_matched_frames` / `event_gated_state_advances_only_on_event_frames` / `event_gated_state_records_dependency_and_seek_kind`。 |
@@ -2032,11 +2032,29 @@
 
 ---
 
+## CC. 时钟与绑定表作用域（2026-11-03）
+
+> 计划《CC 批次执行计划：时钟与绑定表作用域》。核心判据：**两个实例如果共享同一条
+> 时间轴，它们就不是两个实例** ⇒ 作用域必须同时带时钟与命名空间。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CC-01 | 绑定表平铺、时钟无作用域 ⇒ 实例化只能共享时间轴 | 场景 / 内核 | **已关闭** | `ScopeId`（内部声明序号）+ `ScopeSpec`（对外路径 + 自带时钟）；`Binding.scope` + `BindingTable::{declare_scope, scope_path}`；`SceneEncoder::{begin_scope, end_scope}` 记录对象作用域，表达式绑定**继承目标对象的作用域**；`Timeline::compile_with` 为每个作用域建独立 `ClockNode` 根（根作用域沿用既有语义）。产物只序列化 `object_scopes: [{ path, clock }]`，**不出现运行期 id**（空列表不序列化 ⇒ 既有 payload 逐字节不变）。脚本入口 `scene.scope_begin/scope_end` + 前置换块 `scene.with_scope`（`zela.scene@16`）。用例 `scopes_get_independent_clock_roots` / `root_scope_keeps_global_clock` / `scoped_parameters_get_distinct_addresses_and_labels`。 |
+| CC-02 | 一段脚本无法调用 N 次并得到 N 组独立实例 | 场景 / 脚本 | **已关闭** | 同一 Lua 函数在 `scene.with_scope(path, shift, fn)` 内调用 N 次 ⇒ N 组对象、N 条时钟根、N 组参数地址（地址最前面是作用域序号）。参数是 **Lua 实参**（装配期常量）⇒ 表达式构造时已有值；调用次序只影响声明序号，不影响数值。用例 `scoped_instances_get_independent_clocks_and_parameters`：两个实例的 `stiff` 分别为 0.02 / 0.01，`ClockId` 不同，产物只含 `path`（断言不含 `ordinal`）。 |
+| CC-03 | 写冲突无中间层（issue #9 §7） | 场景 / UI | **部分关闭** | 新增字段级仲裁 `animation::resolve`：`Target::write_fields`（单字段 = 地址；复合目标列举全部可能字段）+ `Binding.priority`（声明在绑定侧）+ `WriteResolution`（被抑制写入：对象 / 字段 / 来源 / 胜者）。规则：高优先级胜；**同优先级不抑制**（按声明顺序写入，保留既有覆盖语义）；复合目标全或无。`BindingApplySystem` 在写前仲裁并把结果写回 Resource。用例 `higher_priority_wins_the_field` / `equal_priority_never_suppresses` / `different_fields_do_not_conflict` / `composite_target_is_all_or_nothing` / `field_level_resolution_records_suppressed_write`。**残留**：用户输入（`CameraInputSystem` 直接写组件）尚未接入仲裁，`CameraDriveSystem` 仍以"移出绑定"处理相机接管；事件流确定性沿用 BZ-03 / BZ-04。 |
+| CC-04 | Composer 合成图仍内联，无命名空间（issue #3） | 场景 / 渲染 | **记账** | 作用域路径已可作为图节点的命名空间（`BindingTable::scope_path` / 参数地址前缀），但 Composer 的独立存储与图寻址**未接线**。触发条件：issue #3 进入实现；届时用作用域路径作节点键，不新建运行期 id。 |
+| CC-05 | 统一深度 / 2D-3D 互遮挡（issue #9 §6） | 渲染 | **记账** | 本批**明确不做**（计划 §8）：避免被误认为顺带解决。触发条件：单独批次论证深度模型。 |
+| CC-06 | `scene.scope_begin` / `scope_end` 暂无 manifest 作品使用 | 作品 / 门禁 | **记账** | 能力已由 `scoped_instances_get_independent_clocks_and_parameters` 用例覆盖（脚本 → 绑定表 → 注册表），但 `demo/manifest.txt` 里还没有长期使用它的作品 ⇒ `capability_exemptions.txt` 临时豁免。触发条件：出现"同一作品多实例"时补一个 demo（需同时录像素基线）。 |
+
+**CC 段小计**：已关闭 2（CC-01 / CC-02）· 部分关闭 1（CC-03）· 记账 3（CC-04 / CC-05 / CC-06）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CB**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CB 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CC**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CC 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

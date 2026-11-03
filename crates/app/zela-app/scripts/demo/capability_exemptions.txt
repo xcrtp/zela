@@ -12,7 +12,12 @@
 # · GAPS 编号必须是 GAPS.md 里**真实存在的表格行**（`| W1-01 |` / `| AG-02 |`），否则检查失败
 # · 该能力一旦被作品覆盖，这一行就会变成"豁免过期"⇒ 检查失败，必须删掉
 #
-# 当前清单：**空**。
+# 当前清单：2 条（CC-a：作用域入口；用例已覆盖，manifest 作品待补）。
+
+# CC-06：作用域已由 `scoped_instances_get_independent_clocks_and_parameters` 用例覆盖，
+# 但还没有 manifest 作品长期占用它；触发条件：出现"同一作品多实例"时补一个 demo。
+scene:scope_begin -> CC-06
+scene:scope_end -> CC-06
 #
 # 5b（A1–A4）删除了脚本侧全部旧动画 API：
 #   · `zela.Curve` 与 `zela.TransformChannel`（Pod 类型）已删除；
