@@ -51,6 +51,10 @@ zela-render-vector = { path = "../../render/zela-render-vector" }
 ze-scene-core = { path = "../../scene/ze-scene-core" }
 # CG-f：参数注册表的条目（`Property::Scalar` 的范围 / 当前值）用于生成 HUD 滑块。
 ze-property = { path = "../../kernel/ze-property" }
+# CG-g：headless 出口直接读写结构化帧（`Frame` 的 JSON）与控件几何。
+ze-interact = { path = "../../kernel/ze-interact", features = ["serde"] }
+
+serde_json.workspace = true
 
 wgpu.workspace = true
 hecs.workspace = true

@@ -47,6 +47,8 @@ mod assembly;
 pub mod demos;
 pub mod export;
 mod formula;
+// **CG-g**：Headless 出口（零窗口 / 零 GPU / 零 egui；注入事件 → 读一帧 Frame）。
+pub mod headless;
 // 内嵌 Python 的前置探测：pyo3 初始化失败是 CPython 的 Fatal（abort），
 // Rust 侧捕获不到 ⇒ 必须在第一次碰 pyo3 之前先探测（见模块文档）。
 #[cfg(feature = "python")]
@@ -431,6 +433,20 @@ fn build_runtime(
     source: SceneSource,
     with_demo3d: bool,
 ) -> Result<Runtime> {
+    let assembly = build_scene_assembly(source, with_demo3d)?;
+    let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
+    install_native_clock(&runtime);
+    Ok(runtime)
+}
+
+/// **装配：场景 → [`zela_playback::SceneAssembly`]**（不碰渲染上下文）。
+///
+/// GUI（[`build_runtime`]）与 headless（`crate::headless`）共用这一份：
+/// 场景、系统图、资源序列完全相同，差别只在"有没有 GPU"。
+fn build_scene_assembly(
+    source: SceneSource,
+    with_demo3d: bool,
+) -> Result<zela_playback::SceneAssembly> {
     let mut scene = Scene::new();
 
     // 排版引擎在 App 侧建一次：内容纹理、分镜脚本与内容服务共用。
@@ -463,7 +479,7 @@ fn build_runtime(
     let content_textures = (!content_textures.is_empty()).then_some(content_textures);
 
     // **装配尾唯一实现**位于 `zela-playback`（脚本路径与 `--bundle` / 浏览器共用）。
-    let assembly = zela_playback::SceneAssembly {
+    Ok(zela_playback::SceneAssembly {
         world: scene.into_world(),
         forest: forest2d,
         bindings: bindings2d,
@@ -475,10 +491,7 @@ fn build_runtime(
         pairing,
         interact,
         hud,
-    };
-    let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
-    install_native_clock(&runtime);
-    Ok(runtime)
+    })
 }
 
 /// 场景来源 → 时钟树 / 绑定表 / 2D 相机 / 组开关 / 脚本时长。

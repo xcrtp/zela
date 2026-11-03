@@ -9,9 +9,9 @@
 
 - 层：`app`（`crates/app`）
 - 路径：`crates/app/zela-app`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-macro`、`ze-notion`、`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-core`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
+- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-core`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`、`zela-commands`、`zela-gui`
-- 源文件：9 个 · 7752 行
+- 源文件：10 个 · 7880 行
 
 ### 文件清单
 
@@ -24,7 +24,8 @@
 | `src/export.rs` | 467 | — |
 | `src/formula.rs` | 585 | — |
 | `src/frame_loop.rs` | 739 | 帧循环（B9 Step 3）：`zela-render` 与 `zela-verify` 共用的**唯一**渲染循环。 |
-| `src/lib.rs` | 3132 | — |
+| `src/headless.rs` | 115 | **CG-g**：Headless 出口 —— 零窗口 / 零 GPU / 零 egui 也能跑一帧结构化 UI。 |
+| `src/lib.rs` | 3145 | — |
 | `src/python_env.rs` | 141 | 内嵌 Python 的**前置探测**（`feature = "python"`）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -67,6 +68,8 @@
 | `src/frame_loop.rs` | `pub fn frames_for(runtime: &Runtime, fps: f64) -> u32` |
 | `src/frame_loop.rs` | `pub struct FrameRun` |
 | `src/frame_loop.rs` | `pub fn run_frames(` |
+| `src/headless.rs` | `pub struct HeadlessScene` |
+| `src/headless.rs` | `pub fn build(choice: SceneChoice) -> Result<HeadlessScene>` |
 | `src/lib.rs` | `pub enum SceneChoice` |
 | `src/lib.rs` | `pub enum ScriptLanguage` |
 | `src/lib.rs` | `pub fn language_from_path(path: &std::path::Path) -> Result<ScriptLanguage>` |
