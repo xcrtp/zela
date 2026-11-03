@@ -1328,6 +1328,7 @@
 | ze-type | 纯代数类型层 | `TypeSpec` / `Layout` / `unify` / `ReflectError` / 单态化上界（no_std） |
 | ze-property | kernel 级属性模型 | `Property` / `PropertyValue` / `DynamicObject` / `PropertyError` / `ParameterRegistry`（no egui / no glam / 无节点依赖） |
 | ze-alg | 抽象代数与纯数值算法 | `Field` / `RealField` / `ComplexField` / `Complex` / `SquareOps` / `char_poly` / `root_moduli` / `spectral_radius`（零依赖 / 零 glam） |
+| ze-interact | 交互骨架（命中 / 布局 / 路由） | `Point` / `Rect` / `HitIndex` / `LinearHitIndex` / `Layout` / `BoxLayout` / `FlowLayout` / `Router`（零依赖 / 零 glam / 零 HashMap；不绘制、不认 egui、不排版） |
 | ze-reflect | 运行时反射 | `SlotTable` / `SymbolTable` / `TypeRegistry` / `Codec` / `MonoCache` |
 | ze-graph-core | 纯拓扑图算法 | `Topology` / `topo_sort` / `scc` / `reachable` / `dirty_downstream`（只认节点 id + 边） |
 | ze-notion | 数学与几何基元 | `Path2D` / `Transform` / `Vec` 运算 |
