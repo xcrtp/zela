@@ -315,14 +315,40 @@ pub fn available_runtime_caps() -> zela_scene_bundle::Available {
 
 /// **headless 回放入口**：ZSB 产物 → 与脚本路径**同一条** Runtime。
 ///
-/// 实现已下沉到 [`zela_playback::build_bundle_runtime`]（浏览器共用）；
-/// 这里只补 native 的真实时钟注入。
+/// 实现已下沉到 [`zela_playback::build_bundle_runtime_with`]（浏览器共用）；
+/// 这里补两件 native 专属输入：真实时钟注入 + **内容重建钩子**（CE-f）。
 pub fn build_bundle_runtime(
     render_ctx: RenderContext,
     bundle: &zela_scene_bundle::Bundle,
 ) -> Result<Runtime> {
-    let runtime = zela_playback::build_bundle_runtime(render_ctx, bundle)
-        .map_err(|e| Error::InitializationError(e.to_string()))?;
+    // **CE-f**：用现有 typst 作为重建后端（不引入新字体库）。
+    // 编译失败 ⇒ 返回 `None` ⇒ 该对象保留烘焙数据（显式降级，不是错误）。
+    // 只有 payload 真的带源时才初始化引擎（纯几何产物不为重建付代价）。
+    let has_sources = bundle
+        .text_sources()
+        .map(|sources| !sources.is_empty())
+        .unwrap_or(false);
+    let engine = has_sources.then(formula::build_engine);
+    let rebuild = |origin: &ze_scene_core::components::ContentOrigin| {
+        let engine = engine.as_ref()?;
+        let outlines = ze_scene_core::content::compile(
+            engine,
+            &ze_content::text_literal_source(&origin.text),
+            origin.font_size,
+            ze_notion::Vec2::new(origin.x, origin.y),
+            false,
+        );
+        outlines
+            .get(origin.path_index)
+            .map(|outline| outline.path.clone())
+    };
+    let runtime = zela_playback::build_bundle_runtime_with(
+        render_ctx,
+        bundle,
+        &available_runtime_caps(),
+        has_sources.then_some(&rebuild as &zela_playback::ContentRebuild<'_>),
+    )
+    .map_err(|e| Error::InitializationError(e.to_string()))?;
     install_native_clock(&runtime);
     Ok(runtime)
 }

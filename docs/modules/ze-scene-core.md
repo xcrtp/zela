@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：47 个 · 13199 行
+- 源文件：47 个 · 13265 行
 
 ### 文件清单
 
@@ -55,7 +55,7 @@
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
 | `src/registry.rs` | 225 | — |
-| `src/scene_script.rs` | 1140 | — |
+| `src/scene_script.rs` | 1206 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
@@ -297,6 +297,7 @@ graph LR
 | `src/scene_script.rs` | `pub struct ScopeToken(pub usize)` |
 | `src/scene_script.rs` | `pub struct HandleRange` |
 | `src/scene_script.rs` | `pub struct SceneRecipe` |
+| `src/scene_script.rs` | `pub struct RebuildReport` |
 | `src/scene_script.rs` | `pub enum ScriptError` |
 | `src/scene_script.rs` | `pub struct SceneScript` |
 | `src/scene_script.rs` | `pub fn register_passes(registry: &mut ze_comb::PassRegistry)` |
