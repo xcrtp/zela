@@ -171,7 +171,7 @@ pub fn rebuild_script_content(
 
 /// **CE-e**：把标签文字烘成轮廓（由宿主提供；浏览器没有排版引擎 ⇒ 不传）。
 pub type LabelBake<'a> =
-    dyn Fn(&str, ze_notion::Vec2) -> Vec<ze_notion::Path2D> + 'a;
+    dyn Fn(&str, ze_notion::Vec2, f32) -> Vec<ze_notion::Path2D> + 'a;
 
 /// **ZSB → Runtime**（无内容重建钩子）：等价于 restore。
 pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Result<Runtime> {
@@ -246,8 +246,8 @@ pub fn build_bundle_runtime_with(
             &views,
             recipe.bindings.scopes(),
             zela_scene_ecs::interact::default_panel_metrics(),
-            |text, anchor| match bake_label {
-                Some(bake) => bake(text, anchor),
+            |text, anchor, font_size| match bake_label {
+                Some(bake) => bake(text, anchor, font_size),
                 None => Vec::new(),
             },
         );

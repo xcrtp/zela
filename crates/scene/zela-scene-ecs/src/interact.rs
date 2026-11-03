@@ -33,6 +33,19 @@ use crate::domain::{InputEvents, SceneEvent};
 use crate::scene::Scene;
 use ze_scene_contract::Scene as _;
 
+/// 面板各层的绘制层级。
+///
+/// # 为什么必须显式声明
+///
+/// 录制器按 `(图元, 样式)` 组合分组录制，且同 `ZOrder` 内保持稳定插入序 ——
+/// 而组合的枚举顺序是 **Circle → Path → Line → Rect → Arrow**。也就是说：
+/// 若不声明层级，**矩形一定画在圆与路径之上**，滑块会被轨道盖住、标签会被槽盖住。
+///
+/// 整层压在内容（默认 `0`）之上；槽 < 标签 < 滑块。
+pub const PANEL_TRACK_Z: i32 = 100;
+pub const PANEL_LABEL_Z: i32 = 110;
+pub const PANEL_KNOB_Z: i32 = 120;
+
 /// 面板的几何参数（装配期常量；只在 `build_panel` 里算一次）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PanelSpec {
@@ -50,6 +63,8 @@ pub struct PanelSpec {
     pub knob_radius: f32,
     /// 左侧留给文字标签的宽度（0 = 不留）。
     pub label_width: f32,
+    /// 标签字号（场景坐标单位）：必须**小于**行高，否则文字会串行。
+    pub label_font_size: f32,
 }
 
 impl PanelSpec {
@@ -62,6 +77,7 @@ impl PanelSpec {
             padding: 12.0,
             knob_radius: 5.0,
             label_width: 0.0,
+            label_font_size: 8.0,
         }
     }
 
@@ -84,26 +100,46 @@ impl PanelSpec {
     pub fn row_y(&self, index: usize) -> f32 {
         self.origin.y + self.padding + index as f32 * (self.row_height + self.gap)
     }
+
+    /// 标签的烘焙原点（左上角）：行内**垂直居中**。
+    ///
+    /// typst 的原点在文字左上方、文字向下生长 ⇒ 要让文字居中，就得把原点放在
+    /// `行中心 - 字号/2`（否则小字会贴着行的下半边）。
+    pub fn label_anchor(&self, index: usize) -> Vec2 {
+        Vec2::new(
+            self.origin.x + self.padding,
+            self.row_y(index) + (self.row_height - self.label_font_size) * 0.5,
+        )
+    }
 }
 
-/// 面板里的一行：参数地址 + 取值范围 + 可选的文字标签几何（装配期烘焙）。
+/// 面板里的一行：参数地址 + 取值范围 + 当前值 + 可选的文字标签几何。
 #[derive(Debug, Clone)]
 pub struct PanelEntry {
     /// 参数地址（CA 注册表口径，含作用域前缀）。
     pub address: String,
     /// 取值区间（滑块两端）。
     pub range: (f32, f32),
+    /// 当前值（决定滑块初始位置；装配后由交互更新）。
+    pub value: f32,
     /// 文字标签的**多条**轮廓（由调用方用 typst 烘焙：一个字形一条；空 = 不画）。
     pub labels: Vec<Path2D>,
 }
 
 impl PanelEntry {
+    /// 新建：当前值取区间左端（与"滑块从左端开始"的旧行为一致）。
     pub fn new(address: impl Into<String>, range: (f32, f32)) -> Self {
         Self {
             address: address.into(),
             range,
+            value: range.0,
             labels: Vec::new(),
         }
+    }
+
+    pub fn with_value(mut self, value: f32) -> Self {
+        self.value = value;
+        self
     }
 
     pub fn with_labels(mut self, labels: Vec<Path2D>) -> Self {
@@ -140,10 +176,7 @@ impl SliderSpec {
 
     /// 取值 → 轨道上的 x（画滑块圆心用）。
     pub fn x_at(&self, value: f32) -> f32 {
-        let (lo, hi) = self.range;
-        let span = (hi - lo).abs().max(f32::EPSILON);
-        let t = ((value - lo) / span).clamp(0.0, 1.0);
-        self.track.min.x + (self.track.max.x - self.track.min.x) * t
+        x_on_track(self.track, self.range, value)
     }
 
     fn hit_rect(&self) -> HitRect {
@@ -152,6 +185,14 @@ impl SliderSpec {
             Point::new(f64::from(self.track.max.x), f64::from(self.track.max.y)),
         )
     }
+}
+
+/// `取值 → 轨道上的 x`（`SliderSpec::x_at` 与装配期初值共用同一份映射）。
+fn x_on_track(track: Rect2D, range: (f32, f32), value: f32) -> f32 {
+    let (lo, hi) = range;
+    let span = (hi - lo).abs().max(f32::EPSILON);
+    let t = ((value - lo) / span).clamp(0.0, 1.0);
+    track.min.x + (track.max.x - track.min.x) * t
 }
 
 /// 一组滑块（Resource）。命中索引在装配期建好，运行时只查。
@@ -281,10 +322,13 @@ pub fn build_panel(
     let mut sliders = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
         let track = spec.track(index);
+        // 层级必须显式：录制器的组合顺序是 Circle → Path → Rect，
+        // 不声明层级时矩形会盖住圆与标签（见 `PANEL_TRACK_Z` 的文档）。
         scene
             .spawn_dyn(vec![
                 Box::new(ze_scene_core::Rect(track)),
                 Box::new(FillSolid::new(ze_notion::Color32::new(52, 54, 64, 255))),
+                Box::new(ze_scene_core::ZOrder::new(PANEL_TRACK_Z)),
             ])
             .expect("Rect / FillSolid 已登记");
 
@@ -297,12 +341,13 @@ pub fn build_panel(
                             1.0,
                             ze_notion::Color32::new(210, 214, 226, 255),
                         )),
+                        Box::new(ze_scene_core::ZOrder::new(PANEL_LABEL_Z)),
                     ])
                     .expect("Path / StrokeSolid 已登记");
             }
         }
 
-        let value_x = track.min.x;
+        let value_x = x_on_track(track, entry.range, entry.value);
         let knob = scene
             .spawn_dyn(vec![
                 Box::new(ze_scene_core::Circle::new(
@@ -310,6 +355,7 @@ pub fn build_panel(
                     spec.knob_radius,
                 )),
                 Box::new(FillSolid::new(ze_notion::Color32::new(228, 232, 244, 255))),
+                Box::new(ze_scene_core::ZOrder::new(PANEL_KNOB_Z)),
             ])
             .expect("Circle / FillSolid 已登记");
 
@@ -328,12 +374,12 @@ pub fn build_panel(
 }
 
 /// 面板左侧标签预留宽度（世界单位；默认口径的一部分）。
-pub const LABEL_WIDTH: f32 = 2.2;
+pub const LABEL_WIDTH: f32 = 1.8;
 
 /// **默认尺寸口径**（世界单位，与 `View::bounds` 同一坐标系）。
 ///
 /// 场景坐标是像素还是世界单位由作品决定；这里是本仓库作品使用的口径
-/// （面板宽 6 世界单位、行高 0.55）。调用方要换单位就自己构造 `PanelSpec`。
+/// （面板宽 6 世界单位、行高 0.55、标签字号 0.30）。调用方要换单位就自己构造 `PanelSpec`。
 pub fn default_panel_metrics() -> PanelSpec {
     PanelSpec {
         origin: Vec2::ZERO,
@@ -343,6 +389,8 @@ pub fn default_panel_metrics() -> PanelSpec {
         padding: 0.25,
         knob_radius: 0.16,
         label_width: LABEL_WIDTH,
+        // 字号必须明显小于行高（0.55）：0.9 会把标签顶出行外、并压到相邻行。
+        label_font_size: 0.30,
     }
 }
 
@@ -355,15 +403,16 @@ pub fn default_panel_metrics() -> PanelSpec {
 /// `metrics` 提供面板的**尺寸口径**（原点与宽度会被 View 的 `bounds` 覆盖）：
 /// 场景坐标是像素还是世界单位由调用方决定，本函数不猜。
 ///
-/// `bake_label(text, anchor)` 由调用方实现（typst / 占位引擎）：返回该文字的
-/// **多条轮廓**（一个字形一条）。面板只负责摆放，不认排版。
+/// `bake_label(text, anchor, font_size)` 由调用方实现（typst / 占位引擎）：
+/// 返回该文字的**多条轮廓**（一个字形一条）。字号由 `metrics` 给出（一处定义），
+/// 面板只负责摆放，不认排版。
 pub fn build_panels_for_views(
     scene: &mut Scene,
     registry: &ParameterRegistry,
     views: &[(ze_scene_contract::ObjectId, String)],
     scope_ordinals: &[String],
     metrics: PanelSpec,
-    mut bake_label: impl FnMut(&str, Vec2) -> Vec<Path2D>,
+    mut bake_label: impl FnMut(&str, Vec2, f32) -> Vec<Path2D>,
 ) -> InteractSet {
     use ze_property::Property;
     use ze_scene_contract::SceneRead as _;
@@ -394,13 +443,11 @@ pub fn build_panels_for_views(
             let Property::Scalar(config) = entry.property else {
                 continue;
             };
-            let anchor = Vec2::new(
-                spec.origin.x + spec.padding,
-                spec.row_y(entries.len()) + spec.row_height * 0.5,
-            );
+            let anchor = spec.label_anchor(entries.len());
             entries.push(
                 PanelEntry::new(entry.address, (config.min, config.max))
-                    .with_labels(bake_label(&config.label, anchor)),
+                    .with_value(config.value)
+                    .with_labels(bake_label(&config.label, anchor, spec.label_font_size)),
             );
         }
         if entries.is_empty() {
@@ -464,6 +511,39 @@ mod tests {
         let a_key = RouteKey::new("panel_a", HitId(0));
         let b_key = RouteKey::new("panel_b", HitId(0));
         assert_ne!(a_key, b_key);
+    }
+
+    /// **层级**：滑块必须画在轨道之上、标签之上。
+    ///
+    /// 录制器的组合顺序是 Circle → Path → Rect，同 `ZOrder` 内稳定保持插入序 ⇒
+    /// 不显式声明层级时，轨道矩形一定会盖住滑块与标签。
+    #[test]
+    fn knob_and_label_draw_above_the_track() {
+        use ze_scene_contract::SceneRead as _;
+
+        let mut scene = Scene::new();
+        let set = build_panel(
+            &mut scene,
+            &spec(),
+            "panel_a",
+            &[PanelEntry::new("0:state:0000", (0.0, 1.0))],
+        );
+        let knob = set.sliders()[0].knob;
+        assert_eq!(
+            scene.with::<ze_scene_core::ZOrder, _>(knob, |z| z.0),
+            Some(PANEL_KNOB_Z),
+            "滑块必须显式落在滑块层"
+        );
+
+        let mut layers = Vec::new();
+        scene.for_each::<ze_scene_core::ZOrder>(|_, z| layers.push(z.0));
+        layers.sort_unstable();
+        assert_eq!(
+            layers,
+            vec![PANEL_TRACK_Z, PANEL_KNOB_Z],
+            "轨道与滑块各一层；标签未烘焙时不出对象"
+        );
+        assert!(PANEL_TRACK_Z < PANEL_LABEL_Z && PANEL_LABEL_Z < PANEL_KNOB_Z);
     }
 
     /// **端到端**：`ParamPanelSystem` 只写被按下的那个面板。

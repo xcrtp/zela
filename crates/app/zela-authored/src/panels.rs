@@ -140,7 +140,7 @@ mod tests {
             &p.views,
             p.bindings.scopes(),
             zela_scene_ecs::interact::default_panel_metrics(),
-            |_, _| Vec::new(),
+            |_, _, _| Vec::new(),
         );
         // 每条 `Sin` 曲线三个参数（base / amp / omega）⇒ 两块面板共 6 个滑块。
         assert_eq!(set.sliders().len(), 6, "3 + 3");
