@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-app`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-core`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`、`zela-commands`、`zela-gui`
-- 源文件：13 个 · 9099 行
+- 源文件：13 个 · 9109 行
 
 ### 文件清单
 
@@ -20,7 +20,7 @@
 | `src/assembly.rs` | 1006 | — |
 | `src/bin/zela-parity.rs` | 788 | `zela-parity`：**作品级**双后端对拍（B13 Step 1/2）。 |
 | `src/bin/zela-render.rs` | 739 | `zela-render`：headless 薄壳 —— 脚本直接渲到视频。 |
-| `src/debug.rs` | 565 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
+| `src/debug.rs` | 575 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
 | `src/demos.rs` | 155 | 内置作品清单（GUI 的"作品"下拉；默认加载**全部** demo）。 |
 | `src/export.rs` | 467 | — |
 | `src/fonts.rs` | 165 | **CH-e**：确定性字体的环境解析（`tools/typst-fonts.txt` 清单 + 本地校验）。 |
