@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-prerender`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：8 个 · 1416 行
+- 源文件：9 个 · 1702 行
 
 ### 文件清单
 
@@ -19,7 +19,8 @@
 |---|---|---|
 | `src/cache.rs` | 55 | — |
 | `src/engine.rs` | 192 | — |
-| `src/lib.rs` | 67 | — |
+| `src/lib.rs` | 73 | — |
+| `src/metrics.rs` | 280 | 字体度量（装配期）：用 `fontdb` 找字体、`ttf-parser` 取 advance。 |
 | `src/placeholder.rs` | 64 | — |
 | `src/request.rs` | 77 | — |
 | `src/typst/convert.rs` | 482 | — |
@@ -49,6 +50,8 @@ graph LR
 | `src/cache.rs` | `pub struct ContentCache` |
 | `src/engine.rs` | `pub trait ContentEngine: Send + Sync` |
 | `src/engine.rs` | `pub struct InMemoryEngine` |
+| `src/metrics.rs` | `pub enum MetricsError` |
+| `src/metrics.rs` | `pub struct MetricsDb` |
 | `src/placeholder.rs` | `pub fn compile(src: &ContentSource, cfg: &ContentConfig) -> ContentResult` |
 | `src/placeholder.rs` | `pub fn engine() -> InMemoryEngine` |
 | `src/request.rs` | `pub struct ContentHandle(pub NonZeroU64)` |

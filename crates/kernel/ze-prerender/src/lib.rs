@@ -9,11 +9,17 @@ pub mod engine;
 pub mod placeholder;
 pub mod request;
 
+/// CG-a：字体度量（装配期；运行期只查表）。
+#[cfg(feature = "metrics")]
+pub mod metrics;
+
 #[cfg(feature = "typst")]
 pub mod typst;
 
 pub use cache::ContentCache;
 pub use engine::{CompileFn, ContentEngine, InMemoryEngine};
+#[cfg(feature = "metrics")]
+pub use metrics::{FONT_DIR_ENV, MetricsDb, MetricsError};
 pub use placeholder::engine as placeholder_engine;
 pub use request::{
     CacheKey, ContentConfig, ContentError, ContentHandle, ContentResult, ContentStatus,

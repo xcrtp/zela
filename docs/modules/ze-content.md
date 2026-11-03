@@ -11,19 +11,20 @@
 - 路径：`crates/kernel/ze-content`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`
 - 被依赖（下游）：`ze-prerender`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-render`、`zela-scene-ecs`
-- 源文件：7 个 · 1303 行
+- 源文件：8 个 · 1599 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/ir.rs` | 238 | — |
-| `src/lib.rs` | 19 | — |
+| `src/lib.rs` | 21 | — |
 | `src/normalize.rs` | 109 | — |
 | `src/pair.rs` | 204 | — |
 | `src/placeholder.rs` | 169 | — |
 | `src/stroke.rs` | 297 | — |
 | `src/svg.rs` | 267 | — |
+| `src/text_metrics.rs` | 294 | 字体度量表（装配期烘焙的**纯值**）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -55,6 +56,10 @@ graph LR
 | `src/stroke.rs` | `pub fn text_literal_source(text: &str) -> String` |
 | `src/svg.rs` | `pub struct SvgOptions` |
 | `src/svg.rs` | `pub fn to_svg(ir: &ContentIR, opts: &SvgOptions) -> String` |
+| `src/text_metrics.rs` | `pub struct GlyphMetrics` |
+| `src/text_metrics.rs` | `pub struct TextMetrics` |
+| `src/text_metrics.rs` | `pub struct TextLine` |
+| `src/text_metrics.rs` | `pub fn is_cjk(ch: char) -> bool` |
 <!-- AUTO:END -->
 
 ## 职责

@@ -14,3 +14,6 @@ serde = { workspace = true, optional = true }
 [features]
 default = []
 serde = ["dep:serde", "ze-notion/serde"]
+
+[dev-dependencies]
+serde_json.workspace = true
