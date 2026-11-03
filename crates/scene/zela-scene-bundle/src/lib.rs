@@ -130,6 +130,20 @@ pub struct Downgrade {
     pub path: String,
 }
 
+/// **CD-c**：回放端本次消费内容的方式（诊断输出用，不写进产物）。
+///
+/// 两者**不是**同一种操作（见 [`Meta`] 文档）：
+/// - [`Restore`](Self::Restore)：用 payload 里的烘焙轮廓 ⇒ 逐位一致；
+/// - [`Rebuild`](Self::Rebuild)：用 payload 里的源 + 本地能力重算 ⇒ 可复现，
+///   但**不保证**与原产物逐位相同。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentMode {
+    /// 直接用烘焙数据。
+    Restore,
+    /// 用源重新烘焙。
+    Rebuild,
+}
+
 /// Meta 段（不进内容 hash）。
 /// # restore 与 rebuild 是两个操作（CD）
 ///
@@ -444,6 +458,25 @@ impl Bundle {
             .into_iter()
             .cloned()
             .collect())
+    }
+
+    /// **CD-c 诊断**：本次回放走 `restore` 还是 `rebuild`。
+    ///
+    /// 判据只有两条，且都从产物与本地能力推出（不猜）：
+    /// 1. Meta 里有 `role = Source` 的能力，且本地有同名实现（[`Available::can_rebuild`]）；
+    /// 2. payload 里确实有内容源（没有源就无从重建）。
+    ///
+    /// 两条都成立 ⇒ [`ContentMode::Rebuild`]；否则 （无本字库/排版引擎、或无源）
+    /// ⇒ [`ContentMode::Restore`] —— 回放端用烘焙数据，行为不变。
+    pub fn content_mode(&self, available: &Available) -> Result<ContentMode, BundleError> {
+        let can_rebuild = self.meta().required_capabilities.iter().any(|capability| {
+            capability.role == CapabilityRole::Source && available.can_rebuild(capability)
+        });
+        if can_rebuild && !self.text_sources()?.is_empty() {
+            Ok(ContentMode::Rebuild)
+        } else {
+            Ok(ContentMode::Restore)
+        }
     }
 
     pub fn meta(&self) -> &Meta {
@@ -783,6 +816,64 @@ mod tests {
         let read = Bundle::from_bytes(&bundle.to_bytes()).expect("decode");
         assert!(read.text_sources().expect("源表可为空").is_empty());
         assert_eq!(read.script().expect("script").len(), 1);
+    }
+
+    // ─── CD-c：restore / rebuild 诊断 ──────────────────────────────────
+
+    fn source_bundle() -> Bundle {
+        let mut input = meta_input();
+        // 内容能力标为 Source（CD-d 起由 zela-app 自动写入；此处显式构造）。
+        input.required_capabilities = vec![
+            Capability::new("scene", Some("4")),
+            Capability::new("content", Some("1")).with_role(CapabilityRole::Source),
+        ];
+        Bundle::encode(&text_script("Hi"), input).expect("encode")
+    }
+
+    /// 本地有内容能力 + payload 有源 ⇒ rebuild；缺任一条 ⇒ restore。
+    #[test]
+    fn content_mode_reports_restore_or_rebuild() {
+        let bundle = source_bundle();
+        let with_content = Available::new(
+            vec![
+                Capability::new("scene", Some("4")),
+                Capability::new("content", Some("1")),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            bundle.content_mode(&with_content).expect("诊断"),
+            ContentMode::Rebuild
+        );
+
+        // 只有 scene（例如浏览器无内容引擎）⇒ 用烘焙数据。
+        let scene_only = Available::new(vec![Capability::new("scene", Some("4"))], Vec::new());
+        assert_eq!(
+            bundle.content_mode(&scene_only).expect("诊断"),
+            ContentMode::Restore
+        );
+    }
+
+    /// 没有内容源的产物：即使本地有内容能力，也没有可重建的输入 ⇒ restore。
+    #[test]
+    fn content_mode_without_source_is_restore() {
+        let mut input = meta_input();
+        input.required_capabilities = vec![
+            Capability::new("scene", Some("4")),
+            Capability::new("content", Some("1")).with_role(CapabilityRole::Source),
+        ];
+        let bundle = Bundle::encode(&tiny_script(), input).expect("encode");
+        let with_content = Available::new(
+            vec![
+                Capability::new("scene", Some("4")),
+                Capability::new("content", Some("1")),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            bundle.content_mode(&with_content).expect("诊断"),
+            ContentMode::Restore
+        );
     }
 
     #[test]
