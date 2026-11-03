@@ -1327,6 +1327,7 @@
 |---|---|---|
 | ze-type | 纯代数类型层 | `TypeSpec` / `Layout` / `unify` / `ReflectError` / 单态化上界（no_std） |
 | ze-property | kernel 级属性模型 | `Property` / `PropertyValue` / `DynamicObject` / `PropertyError` / `ParameterRegistry`（no egui / no glam / 无节点依赖） |
+| ze-alg | 抽象代数与纯数值算法 | `Field` / `RealField` / `ComplexField` / `Complex` / `SquareOps` / `char_poly` / `root_moduli` / `spectral_radius`（零依赖 / 零 glam） |
 | ze-reflect | 运行时反射 | `SlotTable` / `SymbolTable` / `TypeRegistry` / `Codec` / `MonoCache` |
 | ze-graph-core | 纯拓扑图算法 | `Topology` / `topo_sort` / `scc` / `reachable` / `dirty_downstream`（只认节点 id + 边） |
 | ze-notion | 数学与几何基元 | `Path2D` / `Transform` / `Vec` 运算 |
@@ -1985,7 +1986,7 @@
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`；`animation/` 本批 ~4.9k 行 < 6k ⇒ **不触发**。处方仍是方案③（给 `ze-comb` 窄数学接口，只暴露 `[f64; N]` 仿射运算、不引 glam），它动 C1 约定 ⇒ 须单独立批。触发条件：`animation/` > 6k，或出现第二个同类落点需求。 |
+| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`。**CB 已给纯算法正当去处**：`ze-alg`（kernel 级、零 glam）承接矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径 / 仿射递推，`animation/` 由 5356 降到 5192 行（< 6k）。**处方修正**（CB §11.1）：原「给 `ze-comb` 窄数学接口」不成立 —— `ze-notion` 只是 glam 再导出，没有复数 / 谱半径 / 任意 k×k / f64。触发条件不变：`animation/` > 6k，或出现第二个同类落点需求。 |
 | BZ-02 | 仿射 `State` 的稳定性无门禁（错参数静默拿到 inf/NaN） | 内核 / 场景 | **已关闭** | `AffineMap::spectral_radius`（1/2 阶解析式；3/4 阶 Faddeev–LeVerrier + Durand–Kerner，固定初值 ⇒ 确定性）；`plan_from_expr` 在 `\|λ\|max ≥ 1`（或非有限）时显式 `AffineError::Unstable`，错误含谱半径与稳定条件提示（1 阶 `\|a\| < 1`、2 阶 `damp + stiff < 1`，边缘稳定同样拒绝）。现有 `spring_state`（0.97 / 0.02 ⇒ `sqrt(0.99)`）不受影响；用例 `unstable_affine_state_is_rejected` / `marginal_affine_state_is_rejected` / `stable_spring_is_accepted` / `unstable_state_is_rejected_at_assembly`。 |
 | BZ-03 | `Recorder::capture` 生产零调用（AI-08：输入流能放不能录） | 回放 / GUI | **已关闭** | GUI：`SceneFrame::with_input_recording`（`ZELA_RECORD_INPUT=<path>`）在推进前捕获本帧 `InputEvents`，`Drop` 时 `finish()` 落盘；headless：`zela-render --record-input` 每帧捕获、收尾写盘。`disabled()` 仍是零 no-op（关闭时连资源读取都跳过）。往返判据 `recorded_stream_replays_the_same_trajectory`：录到的流与输入流逐字节相同，且回放得到同一条轨迹。 |
 | BZ-04 | 依赖边未提取、事件 predicate 不存在 | 内核 / 场景 | **已关闭** | `StatePlan::dependencies`（`BTreeSet` 升序，`namespace::name` 键）+ `SceneRecipe::state_dependencies`（side table，不进 payload）。事件 predicate：`event` 通道 = 本帧 `InputEvents` 非空（HostState ⇒ 只可能进 CPU 求值）；计划标记 `event_gated`，`SeekKind::EventReplay`（**L2**：只重放事件帧，帧间 identity），运行期由 `StateEventLog` 记升序匹配帧、`value_at_event` 用 `partition_point` 计数。无事件依赖的 State 档位不变（`OLogN` / `OPerInterval`）。自引用仍显式失败（`PredicateRefsState`）。用例 `event_predicate_uses_sparse_matched_frames` / `event_gated_state_advances_only_on_event_frames` / `event_gated_state_records_dependency_and_seek_kind`。 |
@@ -2014,11 +2015,28 @@
 
 ---
 
+## CB. ze-alg 代数层与数学归位（2026-11-03）
+
+> 计划《CB 批次执行计划：ze-alg 代数层与数学归位》。用抽象代数 trait 描述
+> 「数学对象如何计算」，只抽纯算法；`affine.rs` 的手写数学搬入 kernel，
+> 删除手写 `Complex`。**不动** `ze-comb` 的 C1 约定，也不给 `ze-notion` 加零消费者依赖。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CB-01 | 纯算法没有正当去处 ⇒ `affine.rs` 手写 `Complex`（注释写"不引依赖"） | 内核 | **已关闭** | 新建 `crates/kernel/ze-alg`（零依赖 / 零 glam / 零 `ze-notion`）：`Field` / `RealField` / `ComplexField` / `Complex<F>` / `SquareOps<[[F;N];N]>` / `char_poly`（Faddeev–LeVerrier）/ `root_moduli`（Durand–Kerner，固定初值 + 固定 500 次 / `1e-14`）/ `spectral_radius`；唯一 `Field` 实现为 `f64`。`[F; N+1]` 未稳定 ⇒ `char_poly` 用 `[F; MAX_DIM + 1]` 字面上界；同时提供 `identity_slice` / `mat_mul_slice` / `mat_pow_slice` / `char_poly_slice` / `spectral_radius_slice` 运行期入口。`crates/kernel/ze-alg/src` 已加入 `NO_HASHMAP_PATHS`。用例 `complex_arithmetic_matches_hand_computation` / `square_ops_pow_matches_repeated_multiplication` / `characteristic_polynomial_of_spring_matrix` / `root_moduli_finds_cubic_roots` / `spectral_radius_covers_all_widths` / `affine_recurrence_closed_form_and_replay_agree`。 |
+| CB-02 | `affine.rs` 手写 `Complex` / `mat_mul` / 特征多项式 / 求根 | 场景 / 内核 | **已关闭** | `affine.rs` 的 `struct Complex` / `polynomial_at` / `polynomial_root_moduli` / `identity` / `mat_mul` / `characteristic_coefficients` 已删除；`AffineMap::{apply, apply_many, replay, replay_within, spectral_radius}` 全部改为 `ze_alg::*_slice` 委托；`AFFINE_MAX_WIDTH = ze_alg::MAX_DIM`（一处定义）。求和顺序保持下标升序 ⇒ 现有谱半径 / 快速幂 / `spring_state` / `spring_array` 用例逐位不变。实测 `affine.rs` 1410 → 1246 行，`animation/` 5356 → 5192 行。 |
+| CB-03 | `AU-04`：标量 f64、向量 f32 口径不统一 | 场景 / 内核 | **已关闭** | 口径写进 `ze-alg` 与 `affine.rs` 模块文档：`State` 内部一律 f64；标量直接输出 f64；**向量**（Vec2/3/4）向 f32 的降级只在构造 `EvalValue` 的边界发生**一次**，不得在中间步骤反复降级。用例 `state_demotes_to_f32_only_at_the_eval_boundary` 先证明"每步降级"与"边界一次降级"结果不同（有区分力），再断言 `value_at` 等于 f64 结果的一次 `as f32`。 |
+| CB-04 | 计划判据「`animation/` 下降 ≥ 300 行」未达到 | 场景 / 内核 | **记账** | 实测下降 164 行（5356 → 5192），其中 `affine.rs` 生产代码 1104 → 881（−223）。剩余纯数学候选只有 `AffineMap` / `StatePlan` 等方法，但计划 §5.2 明确保留（读取 `Expr` / 场景语义），且 §3.2 规定 `ze-alg` 只有 `Complex` 一个 struct ⇒ 不再外抽。触发条件：`animation/` 再次逼近 6k，或出现第二个消费者需要这些递推算法时重新评估。 |
+
+**CB 段小计**：已关闭 3（CB-01 / CB-02 / CB-03）· 部分关闭 0 · 记账 1（CB-04）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CA**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CA 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CB**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CB 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

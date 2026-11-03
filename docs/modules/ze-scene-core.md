@@ -9,15 +9,15 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/ze-scene-core`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
+- 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：44 个 · 12573 行
+- 源文件：44 个 · 12409 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/affine.rs` | 1410 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
+| `src/animation/affine.rs` | 1246 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
 | `src/animation/binding.rs` | 401 | — |
 | `src/animation/mod.rs` | 33 | — |
 | `src/animation/params.rs` | 633 | params.rs — 参数注册表 side table（CA-b）与参数地址回写（CA-c）。 |

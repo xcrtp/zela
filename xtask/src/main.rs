@@ -1874,6 +1874,8 @@ fn check_no_hashmap_in_graph_paths(root: &Path) -> Result<(), String> {
         "crates/kernel/ze-comb/src",
         // CA-a：属性顺序会被参数面板继承 ⇒ 注册表必须升序、确定性。
         "crates/kernel/ze-property/src",
+        // CB-a：纯数值算法（矩阵 / 特征多项式 / 求根）不得引入哈希容器。
+        "crates/kernel/ze-alg/src",
         "crates/kernel/ze-func/src/simplify.rs",
         "crates/scene/ze-scene-core/src/scene_script.rs",
         // CA-b：参数地址 → 控件顺序必须确定（注册表本身升序）。
@@ -1966,7 +1968,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.", "## BB.",
         "## BC.", "## BD.", "## BE.", "## BF.", "## BG.", "## BH.", "## BI.", "## BJ.",
         "## BK.", "## BL.", "## BM.", "## BN.", "## BO.", "## BP.", "## BQ.", "## BR.", "## BS.",
-        "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.", "## BZ.", "## CA.",
+        "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.", "## BZ.", "## CA.", "## CB.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -2051,7 +2053,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("BX-")
                     || id.starts_with("BY-")
                     || id.starts_with("BZ-")
-                    || id.starts_with("CA-"));
+                    || id.starts_with("CA-")
+                    || id.starts_with("CB-"));
             if !is_item {
                 continue;
             }
