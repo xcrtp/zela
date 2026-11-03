@@ -969,7 +969,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 以下各项是**有意保留的"已就绪未接线"**：用途明确、机制已就位，但当前不接线。
 按本项目原则「有明确用途而非凭空设计 → 不是问题，但不能忘记」，集中记账于此。
-（其中节点编辑器与其余各项性质不同：它**已排期**，只是触发条件未到 —— 见下表。）
+（其中节点编辑器与其余各项性质不同：它曾是**已排期冻结项**，CF-e 已解冻并接上消费方 —— 见下表。）
 
 > **S5 已把 `Parent` 移出本表**：`TransformHierarchySystem` 每帧产出 `WorldTransforms`，
 > `SceneRecordSystem` / `RevealRecordSystem` 已消费（详见
@@ -982,8 +982,8 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 |---|---|---|---|
 | `ObjectId` generation 失效检测 | 契约层 `ze_scene_contract::ObjectId::is_stale` | 有单元测试；**无生产消费方** | 引入对象销毁-重建流程时 |
 | `Path3D` | 理念层 `ze-notion` | 已建、**零消费方**；与 `Path2D` **不同构**（不是同一类型的 3D 版本） | 需要真 3D 曲线时；因不同构，届时是**破坏性变更**，需单独立项 |
-| `ze-notion`「全仓唯一数学元语出口」 | 全仓 | **2026-10-19 已定案**：`zela-render-backends` / `zela-app` / `zela-scene` / `zela-render` / `ze-time` / `zela-egui` / `zela-playback` 已改经 `ze-notion` 并删除 glam 依赖，CI 加门禁。剩余直接引用共 **25 次**（`*.rs` 出现次数口径）：`ze-notion` 定义侧 6 处、节点图组 17 处（`GAPS.md` R-19）、`zela-scene` 2 行说明性注释 | 节点图组在合成图（ComposerGraph）接入场景前统一；其余不再新增 |
-| 节点编辑器（`zela-node-editor` / `zela-node-egui` / `zela-node-egui-ui`） | `crates/ui/*` + `crates/ze/graph/*` | **已排期（当前冻结）**：类型/算法/UI 齐备但**零生产消费方**（graph 6364 行 + UI 4502 行 ≈ 10866 行）。用户决策：**肯定要做，但要等 UI 接口与交互层稳定之后**，且**后期可能引入破坏性变更** | UI 接口与交互层稳定后单独立项 |
+| `ze-notion`「全仓唯一数学元语出口」 | 全仓 | **2026-10-19 已定案**：`zela-render-backends` / `zela-app` / `zela-scene` / `zela-render` / `ze-time` / `zela-egui` / `zela-playback` 已改经 `ze-notion` 并删除 glam 依赖，CI 加门禁。**2026-11-03 复核**：直接引用剩 **11 次 / 8 文件**（`*.rs` 含注释口径）：`ze-notion` 定义侧 6 处、其余为注释说明；节点图组已零代码引用（CF-a，见 `GAPS.md` R-19） | 不再新增直接引用 |
+| 节点编辑器（`zela-node-editor` / `zela-node-egui` / `zela-node-egui-ui`） | `crates/ui/*` + `crates/ze/graph/*` | **CF-e 已解冻（2026-11-03）**：`ze-interact` 的命中与路由稳定后解冻，编辑器改用它（半开矩形 + `LinearHitIndex` + `Router`）；生产消费方是节点图 lowering（`ze-node-lower`）与 CE-e 的场景内面板，端到端判据见 `zela-authored/tests/node_spring_e2e.rs`（`GAPS.md` R-08 / CF-05 / CF-06） | 已接（本期定案） |
 | 2D / 3D 录制 System 仍是两个 | `zela-render::record_systems`（`SceneRecordSystem` / `SceneRecord3DSystem`） | 两者已同住渲染层（A6），但仍是两个 System / 两个队列；是否合并取决于真实 3D 动画的录制结构 | 有真实 3D 动画时 |
 | `formula.rs` 归位（632 行，约一半测试） | `crates/app/zela-app/src/formula.rs` | 承载"空心字"这一**既定视觉**；归位目标 crate 亦有争议（`ze-content` / `zela-render` / 新桥接层） | 真实动画确定它的形态之后 |
 | `tessellate` 下沉 | `crates/render/zela-render/src/tessellate.rs` | 纯 CPU 三角化适配层，目前与 2D 后端同层 | 需要非 wgpu 三角化消费方时 |
