@@ -4,9 +4,9 @@
 // 1. `build_scene_view` — 场景 → UI：把场景状态声明为纯数据 [`SceneView`]；
 // 2. `collect_events`   — UI → 场景：把 egui 原生输入翻译为 [`SceneEvent`]，
 //    视口坐标已换算为场景坐标（经由 `Camera2D::screen_to_world`）；
-// 3. 面板 chrome — 控制面板 / 时间控制 / 参数面板：纯 UI 绘制，控件交互以
-//    [`SceneEvent`]（按 `WidgetId` 标识）写入 [`InputEvents`]，由场景侧
-//    System（CameraInput / TimeControl / ParamPanel）消费；
+// 3. **CG-f**：控件不再由 host 绘制 —— 它们是场景图元（`Rect` / `Circle` / `Path`），
+//    交互走 `HudSystem`（消费同一批 [`SceneEvent`]）。host 只保留一层纯数据同步：
+//    `UiConfig` → `PostFilterChain`（渲染层的派生 Resource）。
 // 4. `update_view_rect` — 面板布局完成后写入中央视口矩形（布局信息本就属 UI，
 //    由 host 承担原 ViewRectUpdateSystem 的职责）；
 // 5. `present` — 把 `DrawQueue`(2D) 与 `DrawQueue3D` 的录制内容提交到
@@ -22,20 +22,14 @@
 
 use std::sync::Arc;
 
-use egui::Panel;
-
 use ze_notion::Rect2D;
 use zela_render::ViewRect;
 use zela_render_backends::SceneCompositorCallback;
-use zela_scene_ecs::animation::params;
 use zela_scene_ecs::contract::WorldView;
-use zela_scene_ecs::director_state::DirectorState;
 use zela_scene_ecs::domain::{
-    CameraCommand, InputEvents, LayerKind, SceneEvent, SceneView, ids,
+    CameraCommand, InputEvents, LayerKind, SceneEvent, SceneView,
 };
-use zela_scene_ecs::TimeState;
 use zela_schedule::resource::Resources;
-use ze_property::{ParameterRegistry, Property};
 
 use crate::resources::{UiConfig, ViewportCamera};
 
@@ -45,8 +39,9 @@ impl EguiSceneHost {
     // ─── 帧编排 ────────────────────────────────────────────────────────────
 
     /// 帧首调用（在 `Scheduler::run_frame` 之前）：
-    /// 1. **先**绘制面板 chrome（左右侧栏会占用布局空间），控件事件进同一队列；
-    /// 2. 面板布局完成后更新 [`ViewRect`]（只覆盖**中央视口**）；
+    /// 1. **CG-f**：控件已全部是场景图元（`Hud` / `panels`），host 不再画面板 chrome；
+    ///    这里只把 `UiConfig` 派生成渲染层的 `PostFilterChain`（纯数据同步）；
+    /// 2. 更新 [`ViewRect`]（只覆盖**中央视口**）；
     /// 3. 收集视口原始输入 → 场景事件（用刚算出的视口矩形做"是否在视口内"判据）；
     /// 4. 整帧替换写入 [`InputEvents`]（自动清空上一帧的事件）。
     ///
@@ -62,12 +57,11 @@ impl EguiSceneHost {
             .get::<UiConfig>()
             .map(|c| c.viewport_camera)
             .unwrap_or_default();
-        let mut events = Self::draw_control_panel(ui, view, res);
-        events.extend(Self::draw_time_panel(ui, res));
-        events.extend(Self::draw_param_panel(ui, res));
-        // 面板占位完成后，剩下的才是中央视口（本帧输入换算直接用它）。
+        // CG-f：控件由场景侧 `HudSystem` 写 `UiConfig`（帧末）⇒ 这里只把它翻译成滤镜链。
+        let ui_config = res.get::<UiConfig>().cloned().unwrap_or_default();
+        res.insert(crate::resources::post_filters(&ui_config));
         let viewport = Self::update_view_rect(ui, res);
-        events.extend(Self::collect_events(ui, view, target, viewport));
+        let events = Self::collect_events(ui, view, target, viewport);
         res.insert(InputEvents::from_events(events));
     }
 
@@ -327,220 +321,6 @@ impl EguiSceneHost {
                 }
             }
         });
-        events
-    }
-
-    // ─── 面板 chrome（控件事件由场景侧 System 消费） ───────────────────────
-
-    /// 控制面板（原 ControlPanelSystem 的 UI chrome，移出 ECS）。
-    ///
-    /// `UiConfig` 是纯 UI 状态（显示开关），由 chrome 直接修改；
-    /// Camera 读数只展示 —— 值取自**本帧视图声明**（相机已在场景对象里，
-    /// P1-1 后 UI 不再持有相机状态）。返回空事件集（预留未来 Toggle 事件）。
-    fn draw_control_panel(
-        ui: &mut egui::Ui,
-        view: &SceneView,
-        res: &mut Resources,
-    ) -> Vec<SceneEvent> {
-        let time = res.get::<TimeState>().map(|t| t.elapsed).unwrap_or(0.0);
-        let camera = view.layers.iter().find_map(|l| match &l.kind {
-            LayerKind::Viewport2D { camera } => Some(*camera),
-            _ => None,
-        });
-        let mut ui_config = res.get::<UiConfig>().cloned().unwrap_or_default();
-
-        Panel::left("controls")
-            .resizable(true)
-            .default_size(200.0)
-            .show(ui, |ui| {
-                ui.heading("数学可视化");
-                ui.label(format!("t = {:.3}", time));
-                ui.separator();
-
-                ui.checkbox(&mut ui_config.show_grid, "显示网格");
-                ui.checkbox(&mut ui_config.show_field, "显示向量场");
-
-                ui.separator();
-                // 图层开关（= 关掉对应的相机）：`build_scene_view` 不再声明该图层。
-                ui.checkbox(&mut ui_config.show_2d, "2D 相机（网格/曲线/公式）");
-                ui.checkbox(&mut ui_config.show_3d, "3D 相机（立方体/曲面）");
-
-                ui.separator();
-                // 视口操作目标（K3）：2D / 3D 同屏 ⇒ 由本开关决定拖拽/滚轮操作谁。
-                ui.label("视口操作");
-                ui.radio_value(
-                    &mut ui_config.viewport_camera,
-                    ViewportCamera::TwoD,
-                    "2D 相机（平移/缩放）",
-                );
-                ui.radio_value(
-                    &mut ui_config.viewport_camera,
-                    ViewportCamera::ThreeDOrbit,
-                    "3D 轨道（拖拽/滚轮）",
-                );
-                ui.radio_value(
-                    &mut ui_config.viewport_camera,
-                    ViewportCamera::ThreeDFps,
-                    "3D 第一人称（拖拽 + WASD/QE）",
-                );
-                // 2D 相机的驱动方式：分镜（动画推动）还是自由（用户平移缩放）。
-                // 「自由」会把分镜的 2D 相机绑定移出绑定表 —— 否则它每帧无条件重写
-                // center/scale，用户操作同帧就被抹掉（见 `CameraDriveSystem`）。
-                ui.checkbox(
-                    &mut ui_config.free_2d_camera,
-                    "2D 相机自由（关闭=分镜驱动）",
-                );
-
-                ui.separator();
-                // S3-2 验收开关：翻转图层叠放顺序（见 `UiConfig::flip_layer_order`）。
-                ui.checkbox(&mut ui_config.flip_layer_order, "翻转图层顺序");
-
-                ui.separator();
-                // C 线：合成后滤镜（post-composite）。全关 ⇒ 空链 ⇒ 渲染层走直通路径
-                // （不建中间纹理、不多一次全屏 pass ⇒ 画面逐位不变）。
-                ui.label("合成后滤镜");
-                ui.checkbox(&mut ui_config.filter_gain, "亮度（点运算）");
-                ui.checkbox(&mut ui_config.filter_distortion, "桶形畸变（几何重映射）");
-                ui.checkbox(&mut ui_config.filter_blur, "模糊 3×3（邻域）");
-                ui.add(
-                    egui::Slider::new(&mut ui_config.filter_param, 0.0..=1.0)
-                        .text("滤镜强度")
-                        .fixed_decimals(2),
-                );
-
-                ui.separator();
-                ui.label("Camera");
-                match camera {
-                    Some(c) => {
-                        ui.label(format!("center: ({:.2}, {:.2})", c.center.x, c.center.y));
-                        ui.label(format!("scale: {:.1}", c.scale));
-                    }
-                    None => {
-                        ui.label("(无 2D 相机对象)");
-                    }
-                }
-            });
-
-        if let Some(cfg) = res.get_mut::<UiConfig>() {
-            *cfg = ui_config.clone();
-        }
-        // C 线：面板开关 → **合成后滤镜链**（Resource）。全关 ⇒ 空链 ⇒ 渲染层直通。
-        res.insert(crate::resources::post_filters(&ui_config));
-        Vec::new()
-    }
-
-    /// 时间控制面板（原 TimeControlSystem 的 UI chrome）。
-    ///
-    /// 只负责绘制与采集控件事件（播放/暂停、速度、seek），
-    /// DirectorState 的实际变更由场景侧 `TimeControlSystem` 消费事件完成。
-    fn draw_time_panel(ui: &mut egui::Ui, res: &mut Resources) -> Vec<SceneEvent> {
-        let time = res.get::<TimeState>().map(|t| t.elapsed).unwrap_or(0.0);
-        let director = res.get::<DirectorState>().cloned().unwrap_or_default();
-
-        let mut events = Vec::new();
-        Panel::left("time_control")
-            .resizable(true)
-            .default_size(200.0)
-            .show(ui, |ui| {
-                ui.heading("时间控制");
-                ui.label(format!("t = {:.3}", time));
-                ui.separator();
-
-                // 播放/暂停切换
-                let label = if director.director.playing {
-                    "⏸ 暂停"
-                } else {
-                    "▶ 播放"
-                };
-                if ui.button(label).clicked() {
-                    events.push(SceneEvent::Button {
-                        id: ids::PLAY_PAUSE,
-                    });
-                }
-
-                // 重新播放：把时间拨回 0 并恢复播放（分镜从头重放）。
-                // 同一行并排放，便于"暂停后回看"与"重播"的对比操作。
-                if ui
-                    .button("⟲ 重新播放")
-                    .on_hover_text("把时间拨回 0 并开始播放")
-                    .clicked()
-                {
-                    events.push(SceneEvent::Button { id: ids::REPLAY });
-                }
-
-                // 速度滑块
-                ui.separator();
-                ui.label("速度");
-                let mut speed_f = director.director.speed as f32;
-                if ui
-                    .add(egui::Slider::new(&mut speed_f, -3.0..=3.0))
-                    .changed()
-                {
-                    events.push(SceneEvent::Slider {
-                        id: ids::SPEED,
-                        value: speed_f,
-                    });
-                }
-
-                // 时间轴拖动条（seek）——只在用户真的拖完才发事件，
-                // 场景侧 step_by 会把 global_t 对齐到 0.1 网格，速度慢时 knob 卡 0。
-                ui.separator();
-                ui.label("时间轴（seek）");
-                let mut t_f = director.director.global_t as f32;
-                let resp = ui.add(egui::Slider::new(&mut t_f, -10.0..=30.0).text("t"));
-                if resp.drag_stopped() {
-                    events.push(SceneEvent::Slider {
-                        id: ids::SEEK,
-                        value: t_f,
-                    });
-                }
-            });
-        events
-    }
-
-    /// 参数面板（**CA-d：由参数注册表自动生成**）。
-    ///
-    /// 不再按曲线类型 `match`，也不再手写 `WidgetId`：注册表（装配期 side table）
-    /// 按地址升序列出每个可调参数（含 `State` 的 `stiff` / `damp`），本函数只把
-    /// `Property::Scalar` 映射成滑块。交互仍以 `Slider { id }` 事件上报，
-    /// `id = params::widget_id(index)`，由场景侧 `ParamPanelSystem` 按地址回写。
-    ///
-    /// 新增参数只需改注册表（绑定侧），**不用改本文件**。
-    fn draw_param_panel(ui: &mut egui::Ui, res: &mut Resources) -> Vec<SceneEvent> {
-        let registry = res.get::<ParameterRegistry>().cloned().unwrap_or_default();
-
-        let mut events = Vec::new();
-        Panel::right("params")
-            .resizable(true)
-            .default_size(200.0)
-            .show(ui, |ui| {
-                ui.heading("动画参数");
-                ui.separator();
-                if registry.is_empty() {
-                    ui.label("（本场景没有可调参数）");
-                    return;
-                }
-                for (index, entry) in registry.iter().enumerate() {
-                    let Property::Scalar(config) = entry.property else {
-                        continue;
-                    };
-                    let mut value = config.value;
-                    let step = f64::from(config.step.unwrap_or(0.01));
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut value, config.min..=config.max)
-                                .text(&config.label)
-                                .step_by(step),
-                        )
-                        .changed()
-                    {
-                        events.push(SceneEvent::Slider {
-                            id: params::widget_id(index),
-                            value,
-                        });
-                    }
-                }
-            });
         events
     }
 

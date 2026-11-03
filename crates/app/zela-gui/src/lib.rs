@@ -74,7 +74,8 @@ pub fn initial_from(args: &[String], demo_env: bool) -> Initial {
     if by_arg || demo_env {
         Initial::Choice(SceneChoice::CapabilityDemo)
     } else {
-        Initial::First
+        // **CG-f**：默认启动自研 HUD —— 控件是场景图元，宿主不再画 egui 面板。
+        Initial::Choice(SceneChoice::Hud)
     }
 }
 
@@ -760,6 +761,10 @@ fn entries() -> Vec<Entry> {
         source: EntrySource::Choice(SceneChoice::CapabilityDemo),
     });
     entries.push(Entry {
+        title: "内置 · 自研 HUD（场景图元控件）".to_string(),
+        source: EntrySource::Choice(SceneChoice::Hud),
+    });
+    entries.push(Entry {
         title: "内置 · 参数面板（两个 View）".to_string(),
         source: EntrySource::Choice(SceneChoice::Panels),
     });
@@ -984,9 +989,13 @@ mod launch_defaults {
         raw.iter().map(|value| value.to_string()).collect()
     }
 
+    /// **CG-f**：无参数启动自研 HUD（控件是场景图元，宿主不再画 egui 面板）。
     #[test]
-    fn no_arguments_starts_with_the_first_builtin() {
-        assert!(matches!(initial_from(&[], false), Initial::First));
+    fn no_arguments_starts_with_the_hud_scene() {
+        assert!(matches!(
+            initial_from(&[], false),
+            Initial::Choice(SceneChoice::Hud)
+        ));
     }
 
     #[test]

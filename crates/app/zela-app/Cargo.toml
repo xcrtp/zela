@@ -40,7 +40,7 @@ ze-macro = { path = "../../kernel/ze-macro" }
 # 约定：zela-render 只能依赖轻的 ze-content，不得依赖 ze-prerender——
 # 这里是 app 层，可以直连两者。
 ze-content = { path = "../../kernel/ze-content" }
-ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }
+ze-prerender = { path = "../../kernel/ze-prerender", default-features = false, features = ["metrics"] }
 # 几何原语：S1 形变 demo 需要直接构造 Path2D（MorphShape 的 from/to）。
 ze-notion = { path = "../../kernel/ze-notion" }
 # B10：矢量后端的能力自述（`Capabilities` / `MeshForm`）与渲染参数默认值。
@@ -49,6 +49,8 @@ ze-render-ir = { path = "../../kernel/ze-render-ir" }
 zela-render-vector = { path = "../../render/zela-render-vector" }
 # 场景对象层：图元 newtype 与摆放组件（Circle / Path / Line / Rect / Transform）。
 ze-scene-core = { path = "../../scene/ze-scene-core" }
+# CG-f：参数注册表的条目（`Property::Scalar` 的范围 / 当前值）用于生成 HUD 滑块。
+ze-property = { path = "../../kernel/ze-property" }
 
 wgpu.workspace = true
 hecs.workspace = true
@@ -61,8 +63,6 @@ png.workspace = true
 [dev-dependencies]
 # 像素一致性用例直接驱动 egui-wgpu 的回调路径（不是生产依赖）。
 egui-wgpu.workspace = true
-# CA-b/d：断言弹簧作品的 State 系数被枚举成可调参数。
-ze-property = { path = "../../kernel/ze-property" }
 
 [features]
 # typst 默认开：否则看不见真公式，demo 无意义。
