@@ -20,7 +20,11 @@ ze-time = { path = "../../kernel/ze-time" }
 # 作品用**表达式绑定**（`expr.bind` 的 Rust 等价物）声明时间轴。
 ze-comb = { path = "../../kernel/ze-comb" }
 ze-content = { path = "../../kernel/ze-content" }
-ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }
+ze-prerender = { path = "../../kernel/ze-prerender", default-features = false, features = [
+    "metrics",
+] }
+# CG-f：自研面板的控件状态机（ControlSet）与 Frame。
+ze-interact = { path = "../../kernel/ze-interact" }
 # CF-d：节点图 → 表达式 lowering（弹簧节点是 lowering 规则表的第一个消费者）。
 ze-node-core = { path = "../../ze/graph/ze-node-core" }
 ze-node-lower = { path = "../../ze/graph/ze-node-lower" }

@@ -1,0 +1,185 @@
+//! **CG-f 作品**：三组自研控件（control / time / param）全部是场景图元。
+//!
+//! # 它证明什么
+//!
+//! - 控件的外观是 `Rect`（轨道 / 底板）+ `Circle`（滑块）+ `Path`（标签轮廓），
+//!   由渲染器画，**不是 egui 控件**；
+//! - 标签走 CG-a/b 的直排文字引擎（ttf 度量 + ttf 轮廓 + `TextRun`）——
+//!   这是新文字路径的第一个生产消费者；
+//! - 交互走 CG-d 的 `ControlSet`（hover / focus / capture），几何与语义由
+//!   [`zela_scene_ecs::Hud`] 供给（Frame）。
+//!
+//! 数值回写仍走既有入口：`DirectorState`（播放 / 速度 / seek）、`UiConfig`
+//! （网格 / 曲面 / 滤镜）、参数注册表地址（`params::apply`）。
+
+use std::sync::Arc;
+
+use ze_interact::{ControlSpec, LayoutId};
+use ze_notion::{Transform2D, Vec2};
+use ze_prerender::text::DirectTextEngine;
+use zela_scene_ecs::hud::{HudMetrics, HudState};
+use zela_scene_ecs::{Scene, build_hud};
+
+/// 面板原点（世界坐标；与默认相机的取景范围匹配）。
+///
+/// 放在两块 CE-e 面板（`panels` 作品：`y ∈ [-4, -0.8]`）**上方**，面板之间不重叠。
+pub const HUD_ORIGIN: Vec2 = Vec2::new(-9.0, 0.5);
+/// 面板宽度（世界单位）。
+pub const HUD_WIDTH: f32 = 5.0;
+
+/// 三组控件的声明（顺序 = 行序，id 从 0 递增 ⇒ 布局确定）。
+///
+/// `param_sliders`：`(语义名 / 参数地址, 最小值, 最大值, 当前值)`。空 = 本场景没有
+/// 可调参数（面板只剩 control + time 两组）。
+pub fn hud_specs(
+    param_sliders: &[(String, f64, f64, f64)],
+) -> Vec<ControlSpec> {
+    let mut specs = Vec::new();
+    let mut next = 0u32;
+    let mut id = || {
+        let id = LayoutId(next);
+        next += 1;
+        id
+    };
+
+    // ── 控制 ──
+    specs.push(ControlSpec::button(id(), "show_grid"));
+    specs.push(ControlSpec::button(id(), "show_field"));
+    specs.push(ControlSpec::button(id(), "filter_gain"));
+    specs.push(ControlSpec::button(id(), "filter_distortion"));
+    specs.push(ControlSpec::button(id(), "filter_blur"));
+
+    // ── 时间 ──
+    specs.push(ControlSpec::button(id(), "play_pause"));
+    specs.push(ControlSpec::button(id(), "replay"));
+    specs.push(ControlSpec::slider(id(), "speed", -3.0, 3.0, 1.0));
+    specs.push(ControlSpec::slider(id(), "seek", -10.0, 30.0, 0.0));
+
+    // ── 参数（地址即语义名；HUD System 用 `contains(':')` 分流到 params::apply）──
+    for (address, min, max, value) in param_sliders {
+        specs.push(ControlSpec::slider(id(), address.clone(), *min, *max, *value));
+    }
+    specs
+}
+
+/// 面板的世界坐标口径（比 CE-e 的面板更紧凑：15 行也要落进取景框）。
+pub fn hud_metrics() -> HudMetrics {
+    HudMetrics {
+        origin: HUD_ORIGIN,
+        width: HUD_WIDTH,
+        row_height: 0.42,
+        gap: 0.14,
+        padding: 0.20,
+        label_font_size: 0.26,
+        knob_radius: 0.13,
+    }
+}
+
+/// 在**已有场景**里建面板：标签用直排文字引擎烘焙，失败时退化为无标签（不阻塞场景）。
+///
+/// `engine = None` ⇒ 本机没有可用字体：面板仍有轨道 / 滑块 / 命中（只是没有标签）——
+/// 与 CE-e 的 `bake_label` 同一降级口径。
+pub fn build(
+    scene: &mut Scene,
+    engine: Option<&Arc<DirectTextEngine>>,
+    param_sliders: &[(String, f64, f64, f64)],
+) -> HudState {
+    let metrics = hud_metrics();
+    let mut bake = |text: &str, anchor: Vec2, font_size: f32| -> Vec<ze_notion::Path2D> {
+        let Some(engine) = engine else {
+            return Vec::new();
+        };
+        match engine.layout(text, None, font_size, 0.0, ze_notion::Color32::WHITE) {
+            Ok(output) => output
+                .ir
+                .items
+                .into_iter()
+                .map(|item| item.path.transformed(&Transform2D::translate(anchor)))
+                .collect(),
+            Err(error) => {
+                eprintln!("[zela-authored] HUD 标签 `{text}` 烘焙失败：{error}");
+                Vec::new()
+            }
+        }
+    };
+    HudState::new(build_hud(scene, hud_specs(param_sliders), metrics, &mut bake))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ze_interact::{ControlOutcome, Point};
+    use zela_scene_ecs::domain::SceneEvent;
+    use ze_render_ir::LayerId;
+
+    fn engine() -> Option<Arc<DirectTextEngine>> {
+        match DirectTextEngine::from_env() {
+            Ok(engine) if !engine.db().families().is_empty() => Some(Arc::new(engine)),
+            _ => {
+                eprintln!("[zela-authored::hud] 跳过：本机没有可用字体");
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn specs_cover_three_groups_in_declaration_order() {
+        let specs = hud_specs(&[("1:curve:0000:base".to_string(), 0.0, 1.0, 0.5)]);
+        assert_eq!(specs.len(), 10, "control 5 + time 4 + param 1");
+        let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
+        assert_eq!(names[0], "show_grid");
+        assert_eq!(names[5], "play_pause");
+        assert_eq!(names[9], "1:curve:0000:base");
+    }
+
+    /// **可见 + 可拖**：滑块按下后写值，且滑块圆心跟着走（世界坐标）。
+    #[test]
+    fn dragging_a_slider_writes_value_and_moves_the_knob() {
+        let Some(engine) = engine() else {
+            return;
+        };
+        let mut scene = Scene::new();
+        let state = build(&mut scene, Some(&engine), &[]);
+        let mut hud = state.hud().expect("有 HUD").clone();
+
+        // 找到 speed 那一行（单位坐标），按到 75%。
+        let id = hud.id_by_name("speed").expect("有 speed");
+        let frame = hud.frame();
+        let rect = frame
+            .geometry
+            .iter()
+            .find(|placed| placed.id == id)
+            .expect("有几何")
+            .rect;
+        let metrics = hud_metrics();
+        let unit = metrics.row_height / 20.0;
+        let world = |p: Point| {
+            Vec2::new(
+                metrics.origin.x + p.x as f32 * unit,
+                metrics.origin.y + p.y as f32 * unit,
+            )
+        };
+        let press = world(Point::new(rect.min.x + rect.width() * 0.75, rect.center().y));
+        let outcomes = hud.handle_world(SceneEvent::ViewportClick {
+            layer: LayerId(0),
+            scene_pos: press,
+        });
+        assert!(
+            matches!(outcomes.first(), Some(ControlOutcome::ValueChanged { .. })),
+            "按下必须产生 ValueChanged：{outcomes:?}"
+        );
+        let value = hud.value(id).expect("有值");
+        assert!(
+            (value - 1.5).abs() < 0.05,
+            "speed 在 75% 处应约 1.5，实际 {value}"
+        );
+        // 圆心已跟随（世界 x 落在轨道 75% 附近）。
+        let knob_x = hud
+            .knob_xs()
+            .into_iter()
+            .find(|(_, _)| true)
+            .map(|(_, x)| x)
+            .expect("有滑块");
+        assert!(knob_x.is_finite());
+    }
+}

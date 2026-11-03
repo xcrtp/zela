@@ -10,6 +10,8 @@
 
 pub mod capability_demo;
 pub mod demo3d;
+/// CG-f：三组自研控件（场景图元 + ControlSet + 直排文字标签）。
+pub mod hud;
 /// CE-e：两个 View + 两个参数面板（场景对象；`ze-interact` 的真消费者）。
 pub mod panels;
 /// CF-d：节点状态 → 场景 `State` 的映射与校验（弹簧走 BZ-a 门禁）。

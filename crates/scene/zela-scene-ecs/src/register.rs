@@ -68,6 +68,12 @@ pub fn register_systems(
     scheduler.add_system(Phase::LogicUpdate, TimeControlSystem);
     // S0 + **CE-e**：参数回写（egui 控件 id 与场景内面板共用一条路径）。
     scheduler.add_system(Phase::LogicUpdate, ParamPanelSystem);
+    // **CG-f**：自研面板的控件状态机（视口事件 → ControlSet → 资源回写）。
+    //
+    // 放在 `FrameEnd`：它与 `ParamPanelSystem` 写同一对资源（BindingTable /
+    // ParameterRegistry），同相位会触发静态冲突检查；帧末写回的延迟只有一帧，
+    // 交互上不可察觉（本帧渲染已提交）。
+    scheduler.add_system(Phase::FrameEnd, crate::hud::HudSystem);
     // S5：父子变换累乘（BindingApply 写入 local 之后、录制之前）。
     scheduler.add_system(Phase::Prepare, TransformHierarchySystem);
     // S0：场景几何刷新（从 zela-egui 归位；几何算法在对象层）。

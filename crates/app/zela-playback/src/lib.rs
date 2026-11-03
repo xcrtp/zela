@@ -116,6 +116,8 @@ pub struct SceneAssembly {
     pub pairing: Option<Pairing>,
     /// **CE-e**：场景内参数面板的命中表（装配期生成；`None` = 场景没有 View）。
     pub interact: Option<zela_scene_ecs::InteractSet>,
+    /// **CG-f**：自研面板（场景图元 + `ControlSet`；`None` = 本场景没有自研面板）。
+    pub hud: Option<zela_scene_ecs::hud::HudState>,
 }
 
 /// **回放端能解释什么**：payload 是已烘焙的纯数据 ⇒ 只需要 scene 能力与 scene Pod。
@@ -269,6 +271,8 @@ pub fn build_bundle_runtime_with(
             content_textures,
             pairing: Pairing::for_bundle(bundle).ok(),
             interact,
+            // bundle 回放没有 CG-f 的全部声明（面板是**装配期**产物，不进 payload）。
+            hud: None,
         },
     );
     runtime.content_mode = content_mode;
@@ -310,6 +314,7 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
         content_textures,
         pairing,
         interact,
+        hud,
     } = assembly;
 
     // 2D 相机取景绑定（`center` + `scale`）交给 `CameraDriveSystem` 托管。
@@ -403,6 +408,10 @@ pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> R
     if let Some(interact) = interact {
         resources.insert(interact);
         resources.insert(zela_scene_ecs::InteractState::default());
+    }
+    // **CG-f**：自研面板（装配期放在场景里；运行时只改滑块圆心）。
+    if let Some(hud) = hud {
+        resources.insert(hud);
     }
 
     let mut scheduler = Scheduler::new(world, resources);

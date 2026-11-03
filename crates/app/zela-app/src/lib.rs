@@ -80,6 +80,8 @@ pub enum SceneChoice {
     PythonStoryboard,
     /// **CE-e**：两个 View + 两个参数面板（场景对象；拖动互不干扰）。
     Panels,
+    /// **CG-f**：自研面板（三组控件全部是场景图元；`host.rs` 不再画控件）。
+    Hud,
 }
 
 /// 一次装配的产物：**GUI 与 headless 共用**（定义在回放运行时 crate）。
@@ -443,8 +445,16 @@ fn build_runtime(
     // ── 2D 场景：脚本 / 能力 demo（启动参数切换，见 `SceneChoice`）──────────
     // 两条来源产出**同形的三样东西**：时钟树 + 绑定表 + 主 2D 相机句柄；
     // demo 额外产出一个"待插入的组级开关"（N2 的组控制）。
-    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint, pairing, interact) =
-        build_scene_source(&mut scene, &engine, &source)?;
+    let (
+        forest2d,
+        bindings2d,
+        camera2d_handle,
+        group_visibility,
+        record_hint,
+        pairing,
+        interact,
+        hud,
+    ) = build_scene_source(&mut scene, &engine, &source)?;
 
     // S3-3 内容纹理：由场景中的 `Surface(Renderer2D)` 生成（唯一装配入口）。
     // B3 Step 4c-4：demo3d 已改走 Surface；不再有硬编码尺寸 / 相机。
@@ -464,6 +474,7 @@ fn build_runtime(
         content_textures,
         pairing,
         interact,
+        hud,
     };
     let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
     install_native_clock(&runtime);
@@ -488,6 +499,8 @@ fn build_scene_source(
     Option<zela_scene_bundle::Pairing>,
     // **CE-e**：场景内参数面板的命中表（有 View 才有）。
     Option<zela_scene_ecs::InteractSet>,
+    // **CG-f**：自研面板（三组控件的场景图元 + 状态机）。
+    Option<zela_scene_ecs::hud::HudState>,
 )> {
     // ── 任意脚本（headless）──
     if let SceneSource::Script { source, language } = source {
@@ -529,6 +542,7 @@ fn build_scene_source(
             record_hint,
             pairing,
             None,
+            None,
         ));
     }
 
@@ -565,6 +579,7 @@ fn build_scene_source(
                 None,
                 None,
                 None,
+                None,
             ))
         }
         SceneChoice::Panels => {
@@ -598,6 +613,45 @@ fn build_scene_source(
                 None,
                 None,
                 (!set.is_empty()).then_some(set),
+                None,
+            ))
+        }
+        SceneChoice::Hud => {
+            // **CG-f**：CE-e 的两块面板（动画内容 + 两个作用域）**加一块自研面板**。
+            //
+            // 控件的轨道 / 滑块 / 标签都是场景图元 ⇒ 画面里看到的就是渲染结果，
+            // 不是 egui 覆盖层；`ControlSet` 的命中与 `Frame` 语义在场景侧。
+            eprintln!("[zela-app] 场景 = 自研 HUD（控件 = Rect / Circle / Path，文字 = 直排引擎）");
+            let p = zela_authored::panels::build(scene);
+            // 参数滑块 ≡ 参数注册表（地址升序；与 CE-e 的自动面板同一来源）。
+            let registry = zela_scene_ecs::animation::params::build_registry(&p.bindings);
+            let sliders: Vec<(String, f64, f64, f64)> = registry
+                .iter()
+                .filter_map(|entry| match entry.property {
+                    ze_property::Property::Scalar(config) => Some((
+                        entry.address.to_string(),
+                        f64::from(config.min),
+                        f64::from(config.max),
+                        f64::from(config.value),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            // 直排文字引擎只在**装配期**用一次（运行期零字体库）。
+            let text_engine = ze_prerender::text::DirectTextEngine::from_env()
+                .map_err(|error| eprintln!("[zela-app] HUD 标签引擎不可用（无标签）：{error}"))
+                .ok()
+                .map(Arc::new);
+            let hud = zela_authored::hud::build(scene, text_engine.as_ref(), &sliders);
+            Ok((
+                p.forest,
+                p.bindings,
+                Some(p.camera),
+                GroupVisibility::default(),
+                None,
+                None,
+                None,
+                Some(hud),
             ))
         }
         SceneChoice::PythonStoryboard => {
@@ -865,7 +919,7 @@ instance("panel_b", 1.0, 0.01)
 
         let engine = Arc::new(placeholder_engine());
         let mut scene_default = Scene::new();
-        let (_forest_a, bindings_a, camera_a, _, duration_a, _, _) = build_scene_source(
+        let (_forest_a, bindings_a, camera_a, _, duration_a, _, _, _) = build_scene_source(
             &mut scene_default,
             &engine,
             &SceneSource::Choice(SceneChoice::Storyboard),
@@ -873,7 +927,7 @@ instance("panel_b", 1.0, 0.01)
         .expect("默认场景装配成功");
 
         let mut scene_script = Scene::new();
-        let (_forest_b, bindings_b, camera_b, _, duration_b, _, _) = build_scene_source(
+        let (_forest_b, bindings_b, camera_b, _, duration_b, _, _, _) = build_scene_source(
             &mut scene_script,
             &engine,
             &SceneSource::Choice(SceneChoice::ScriptStoryboard),

@@ -7004,6 +7004,7 @@ dependencies = [
  "ze-content",
  "ze-graph-algo",
  "ze-graph-eval",
+ "ze-interact",
  "ze-node-core",
  "ze-node-lower",
  "ze-node-schema",
