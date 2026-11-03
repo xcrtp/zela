@@ -2094,11 +2094,32 @@
 
 ---
 
+## CF. 节点栈归位与端到端打通（2026-11-03）
+
+> 计划《CF 批次执行计划：节点栈归位与端到端打通》。本期的定案批：
+> 让节点栈自包含，把节点图 lowering 成 `Expr` + 场景 `State`，解冻节点编辑器并接
+> `ze-interact`，最后用「编辑器里连一个弹簧 → 动画 → 面板可拖 → 可回放」定案。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CF-01 | 节点栈是自包含的孤岛：`glam::Vec2` 承载卡片坐标（10 + 6 + 1 处），`NodeSizeMap` 是 `HashMap` | 节点栈 | **已关闭** | `zela_node_editor::NodePos`（专用类型 + 最小运算集：加减 / 数乘 / 点积 / 长度 / 插值 / min·max）取代 `glam::Vec2`；`NodeSizeMap = BTreeMap<NodeId, NodePos>`（布局顺序确定）；`Editor::selection` 改 `BTreeSet`（多选删除的先后进入 undo）。三个 crate 删除 `glam` 依赖，`JQ_GLAM` 白名单只剩 `ze-notion`。用例 `node_pos_arithmetic_and_roundtrip` / `node_size_map_iterates_in_node_id_order` / `rect_contains_is_half_open`，既有像素基线不变。 |
+| CF-02 | lowering 若按 `Graph::all_nodes()` 遍历，产物顺序未指定（同一张图两次可能不同） | 节点栈 / 表达式 | **已关闭** | 新建 `crates/ze/graph/ze-node-lower`：`Lowering::lower` 用 `KahnSorter` 拓扑序（`ze-graph-core` 的就绪集合是 `BTreeSet` ⇒ tiebreak 为 `NodeId` 升序），全程不读 `all_nodes`；上游集合先排序、多连接显式报错。用例 `lowering_twice_is_bitwise_identical` / `lowering_is_independent_of_all_nodes_order`（只读视图把 `all_nodes` 逆序，产物逐位不变）。该 crate 的 `src` 已加入 `NO_HASHMAP_PATHS`。 |
+| CF-03 | 节点图不接表达式层 ⇒ 第二套 IR + 第二套求值 | 节点栈 / 表达式 | **已关闭** | `ze_node_lower::{Lowering, Lowered, LowerError, RuleError}`：规则按 `meta().type_name` 登记（数据键，不是 Rust 类型名），输出「每个输出插槽一个 `Expr`」。`tests/pure_equivalence.rs` 用 f64 / Vec2 纯函数图对拍 `LazyPullEval` 与 `CompiledExpr`（加法 / 乘法 / 共享中间结果**逐位相同**），并显式报错三类失败（无规则 / 缺连接 / 输出数量不符）。 |
+| CF-04 | 节点状态无法进入场景 `State`：弹簧拿不到仿射识别与谱半径门禁 | 节点栈 / 场景 | **已关闭** | `zela_authored::node_state`：`type_name → StateShape` 四档映射（表外类型显式报错 `Unmapped`）、`verify_states` 把有状态节点的输出根 `State` 交给 `plan_from_expr`（顺带执行 BZ-a 谱半径门禁）。`zela_authored::spring`：`SpringNode`（Vec2 状态，半隐式欧拉）+ `SpringExecutor` + lowering 规则。用例 `spring_lowers_to_a_vec2_scene_state` / `unstable_spring_is_rejected_by_the_scene_gate`（`d + k = 1.1 ⇒ Unstable`）/ `folding_matches_the_scene_state_oracle`（60 帧，口径同 BY-02 的容差对拍）/ `unmapped_state_type_is_an_explicit_error`。 |
+| CF-05 | R-08：节点编辑器冻结（零生产消费方，等 UI 接口稳定） | 节点栈 / UI | **已关闭** | 冻结条件成立：`ze-interact` 的命中与路由已稳定，编辑器改用半开矩形 + `LinearHitIndex` + `Router`；生产消费方是 lowering 与 CE-e 的场景内面板。用例 `pointer_routing_keeps_capture_outside_the_card` / `overlapping_cards_pick_the_newest` / `adjacent_cards_do_not_double_hit_at_the_shared_edge` / `rect_contains_is_half_open`。详见 C 段 R-08。 |
+| CF-06 | 端到端判据缺失（编辑器 → 动画 → 面板 → 回放从未串起来） | 装配 / 门禁 | **已关闭** | `crates/app/zela-authored/tests/node_spring_e2e.rs`：`Editor::AddNode(SpringNode)` → `lowering` → `verify_states` → `SceneEncoder::bind_expr("Transform.position")` → `Scheduler + BindingApplySystem` 逐帧与闭式定义对拍，同一帧从零重跑的位移**逐位相同**；同一装配路径上的 CE-e 面板仍可拖动（只改被拖的作用域，另一块不动）。 |
+| CF-07 | `Graph::all_nodes()` 的顺序仍未规范（6 处消费者 / 5 个文件） | 节点栈 | **记账** | lowering 已与其解耦（CF-02），但命中 / 编辑器 / 画布 / 拓扑展示仍按各自需要排序。触发条件：需要"图的规范遍历序"再统一（届时先定口径：`NodeId` 升序 or 插入序），本批不动。 |
+| CF-08 | 状态形状只映射四档，且要求状态位于节点输出的根 | 节点栈 / 场景 | **记账** | 表外类型与"状态不在输出根"都显式报错（不静默降级）。触发条件：出现更高维 / 自定义状态，或规则需要"状态再加工"（届时用 `Expr::with_id` + `Ref` 表达共享，而不是放宽形状表）。 |
+
+**CF 段小计**：已关闭 6（CF-01 / CF-02 / CF-03 / CF-04 / CF-05 / CF-06）· 部分关闭 0 · 记账 2（CF-07 / CF-08）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CE**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CE 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CF**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CF 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
