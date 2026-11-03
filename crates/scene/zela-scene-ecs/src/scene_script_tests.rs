@@ -929,4 +929,46 @@ mod tests {
             "颠倒时钟顺序必须被装配期拒绝：{err}"
         );
     }
+
+    /// **CE-d**：View 可嵌套（沿 `Parent` 链），且命名空间复用 CC 的作用域。
+    #[test]
+    fn views_nest_and_reuse_the_cc_scope() {
+        use ze_notion::{Rect2D, Vec2};
+        use ze_scene_core::{View, ViewMapping};
+
+        let mut enc = SceneEncoder::new();
+        let token = enc.begin_scope("panel_a", ze_time::ClockProgram::new());
+        let outer = enc.spawn(vec![Box::new(View::screen(Rect2D::from_min_size(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(200.0, 100.0),
+        )))]);
+        let inner = enc.spawn(vec![
+            Box::new(View::new(
+                Rect2D::from_min_size(Vec2::new(10.0, 10.0), Vec2::new(80.0, 20.0)),
+                ViewMapping::World,
+            )),
+            Box::new(ze_scene_contract::Parent(handle_ref(outer))),
+        ]);
+        enc.end_scope(token);
+
+        let script = enc.finish();
+        assert_eq!(
+            script.object_scope(inner).map(|scope| scope.path.as_str()),
+            Some("panel_a"),
+            "嵌套 View 与父 View 同处一个作用域"
+        );
+
+        let mut scene = SceneStruct::new();
+        let recipe = script.commit(&mut scene).expect("commit");
+        let outer_id = recipe.id(outer).expect("父 View 已提交");
+        let inner_id = recipe.id(inner).expect("子 View 已提交");
+        let parent = scene
+            .with::<ze_scene_contract::Parent, _>(inner_id, |parent| parent.0)
+            .expect("子 View 必须有父");
+        assert_eq!(parent, outer_id);
+        assert_eq!(
+            scene.with::<View, _>(inner_id, |view| view.mapping),
+            Some(ViewMapping::World)
+        );
+    }
 }

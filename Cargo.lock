@@ -6621,6 +6621,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-interact"
+version = "0.1.1"
+
+[[package]]
 name = "ze-macro"
 version = "0.1.1"
 dependencies = [

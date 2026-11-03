@@ -809,6 +809,13 @@ impl SceneScript {
         self.creates.is_empty()
     }
 
+    /// **CE-d**：某对象的作用域声明（根作用域 / 不存在 ⇒ `None`）。
+    ///
+    /// View 的命名空间**复用**这里（不新建第二套作用域来源）。
+    pub fn object_scope(&self, handle: Handle) -> Option<&ScopeSpec> {
+        self.object_scopes.get(handle.0).and_then(Option::as_ref)
+    }
+
     /// **CD-b**：payload 里记录的**内容源**（`ContentOrigin` 组件）。
     ///
     /// `restore` 不读它（用烘焙轮廓）；`rebuild` 用它 + 本地能力重算。

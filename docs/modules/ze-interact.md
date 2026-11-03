@@ -48,7 +48,7 @@
 | `src/layout.rs` | `pub struct FlowLayout` |
 | `src/layout.rs` | `pub fn apply_layout(` |
 | `src/route.rs` | `pub struct RouteKey` |
-| `src/route.rs` | `pub enum Phase` |
+| `src/route.rs` | `pub enum RoutePhase` |
 | `src/route.rs` | `pub struct Router` |
 <!-- AUTO:END -->
 
