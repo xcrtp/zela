@@ -1671,6 +1671,10 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("Gradient", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("Group", "scene-api 的 Pod 侧包装 vs scene-contract 的契约类型"),
     ("Handle", "pod-core 的资源句柄 vs scene-core 的脚本局部句柄"),
+    (
+        "HitTarget",
+        "zela-node-editor 的语义命中枚举（Node/Socket/Edge）vs ze-interact 的几何命中目标（区域 + z）",
+    ),
     ("Light", "scene-api / scene-core 的组件 vs render-vector 的 GPU 光照"),
     ("LightKind", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("LineStyle", "scene-api 的组件视图 vs playback 的矢量线样式"),
@@ -1876,6 +1880,8 @@ fn check_no_hashmap_in_graph_paths(root: &Path) -> Result<(), String> {
         "crates/kernel/ze-property/src",
         // CB-a：纯数值算法（矩阵 / 特征多项式 / 求根）不得引入哈希容器。
         "crates/kernel/ze-alg/src",
+        // CE-a：命中 / 布局 / 路由的输出顺序会被交互层继承 ⇒ 不得用哈希容器。
+        "crates/kernel/ze-interact/src",
         "crates/kernel/ze-func/src/simplify.rs",
         "crates/scene/ze-scene-core/src/scene_script.rs",
         // CA-b：参数地址 → 控件顺序必须确定（注册表本身升序）。
