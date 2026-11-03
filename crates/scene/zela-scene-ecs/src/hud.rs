@@ -351,72 +351,73 @@ impl System for HudSystem {
         for event in &events {
             outcomes.extend(hud.handle_world(event.clone()));
         }
-        if outcomes.is_empty() {
-            return;
-        }
+        // **不能**按 `outcomes.is_empty()` 提前返回：`Released` / `Hover` 只改**路由状态**
+        // （capture / focus），不产生 outcome。`hud` 是每帧从 `HudState` 克隆出来的，
+        // 不写回就等于回滚 —— 松手后的捕获永远清不掉，滑块会一直跟随指针。
+        if !outcomes.is_empty() {
+            let mut director = ctx.get::<crate::DirectorState>().cloned().unwrap_or_default();
+            let mut ui = ctx.get::<crate::domain::UiConfig>().cloned().unwrap_or_default();
+            let mut table = ctx
+                .get::<crate::animation::BindingTable>()
+                .cloned()
+                .unwrap_or_default();
 
-        let mut director = ctx.get::<crate::DirectorState>().cloned().unwrap_or_default();
-        let mut ui = ctx.get::<crate::domain::UiConfig>().cloned().unwrap_or_default();
-        let mut table = ctx
-            .get::<crate::animation::BindingTable>()
-            .cloned()
-            .unwrap_or_default();
-
-        for outcome in outcomes {
-            let id = match outcome {
-                ControlOutcome::ValueChanged { id, .. } | ControlOutcome::Activated { id } => id,
-            };
-            let Some(name) = hud
-                .set()
-                .specs()
-                .iter()
-                .find(|spec| spec.id == id)
-                .map(|spec| spec.name.clone())
-            else {
-                continue;
-            };
-            match outcome {
-                ControlOutcome::ValueChanged { value, .. } => {
-                    if name.contains(':') {
-                        // 参数地址（CA 的注册表口径）：与 CE-e 同一条回写路径。
-                        if let Err(error) =
-                            crate::animation::params::apply(&mut table, &name, value as f32)
-                        {
-                            eprintln!("[zela] HUD 参数 `{name}` 写入被拒绝：{error}");
-                        }
-                    } else {
-                        match name.as_str() {
-                            "speed" => director.director.set_speed(value),
-                            "seek" => director.director.seek(value),
-                            other => eprintln!("[zela] HUD 未知滑块 `{other}`"),
+            for outcome in outcomes {
+                let id = match outcome {
+                    ControlOutcome::ValueChanged { id, .. } | ControlOutcome::Activated { id } => id,
+                };
+                let Some(name) = hud
+                    .set()
+                    .specs()
+                    .iter()
+                    .find(|spec| spec.id == id)
+                    .map(|spec| spec.name.clone())
+                else {
+                    continue;
+                };
+                match outcome {
+                    ControlOutcome::ValueChanged { value, .. } => {
+                        if name.contains(':') {
+                            // 参数地址（CA 的注册表口径）：与 CE-e 同一条回写路径。
+                            if let Err(error) =
+                                crate::animation::params::apply(&mut table, &name, value as f32)
+                            {
+                                eprintln!("[zela] HUD 参数 `{name}` 写入被拒绝：{error}");
+                            }
+                        } else {
+                            match name.as_str() {
+                                "speed" => director.director.set_speed(value),
+                                "seek" => director.director.seek(value),
+                                other => eprintln!("[zela] HUD 未知滑块 `{other}`"),
+                            }
                         }
                     }
+                    ControlOutcome::Activated { .. } => match name.as_str() {
+                        "play_pause" => director.director.toggle(),
+                        "replay" => {
+                            director.director.seek(0.0);
+                            director.director.set_speed(1.0);
+                        }
+                        "show_grid" => ui.show_grid = !ui.show_grid,
+                        "show_field" => ui.show_field = !ui.show_field,
+                        "filter_gain" => ui.filter_gain = !ui.filter_gain,
+                        "filter_distortion" => ui.filter_distortion = !ui.filter_distortion,
+                        "filter_blur" => ui.filter_blur = !ui.filter_blur,
+                        other => eprintln!("[zela] HUD 未知按钮 `{other}`"),
+                    },
                 }
-                ControlOutcome::Activated { .. } => match name.as_str() {
-                    "play_pause" => director.director.toggle(),
-                    "replay" => {
-                        director.director.seek(0.0);
-                        director.director.set_speed(1.0);
-                    }
-                    "show_grid" => ui.show_grid = !ui.show_grid,
-                    "show_field" => ui.show_field = !ui.show_field,
-                    "filter_gain" => ui.filter_gain = !ui.filter_gain,
-                    "filter_distortion" => ui.filter_distortion = !ui.filter_distortion,
-                    "filter_blur" => ui.filter_blur = !ui.filter_blur,
-                    other => eprintln!("[zela] HUD 未知按钮 `{other}`"),
-                },
             }
-        }
 
-        // 写回资源。
-        if let Some(slot) = ctx.get_mut::<crate::DirectorState>() {
-            *slot = director;
-        }
-        if let Some(slot) = ctx.get_mut::<crate::domain::UiConfig>() {
-            *slot = ui;
-        }
-        if let Some(slot) = ctx.get_mut::<crate::animation::BindingTable>() {
-            *slot = table;
+            // 写回资源。
+            if let Some(slot) = ctx.get_mut::<crate::DirectorState>() {
+                *slot = director;
+            }
+            if let Some(slot) = ctx.get_mut::<crate::domain::UiConfig>() {
+                *slot = ui;
+            }
+            if let Some(slot) = ctx.get_mut::<crate::animation::BindingTable>() {
+                *slot = table;
+            }
         }
 
         // 滑块圆心跟随取值（世界坐标写回）。
@@ -430,5 +431,89 @@ impl System for HudSystem {
         if let Some(slot) = ctx.get_mut::<HudState>() {
             slot.0 = Some(hud);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{InputEvents, LayerId};
+    use crate::{DirectorState, Scene};
+    use zela_schedule::resource::Resources;
+    use zela_schedule::scheduler::{Phase, Scheduler};
+
+    fn run_frame(scheduler: &mut Scheduler, events: Vec<SceneEvent>) {
+        scheduler
+            .resources_mut()
+            .insert(InputEvents::from_events(events));
+        scheduler.run_frame(0.0);
+    }
+
+    fn value_of(scheduler: &Scheduler, id: LayoutId) -> f64 {
+        scheduler
+            .resources()
+            .get::<HudState>()
+            .and_then(HudState::hud)
+            .and_then(|hud| hud.value(id))
+            .expect("有滑块值")
+    }
+
+    /// **回归**：松手（`Released`）不产生 outcome，但必须清掉 capture —— 否则
+    /// 之后的 hover 仍然被当作拖拽，滑块会一直跟随指针。
+    #[test]
+    fn release_stops_the_knob_from_following_the_pointer() {
+        let mut scene = Scene::new();
+        let metrics = HudMetrics {
+            origin: Vec2::new(-5.0, -2.0),
+            width: 4.0,
+            ..HudMetrics::default_metrics()
+        };
+        let specs = vec![ControlSpec::slider(LayoutId(0), "speed", 0.0, 2.0, 1.0)];
+        let hud = build(&mut scene, specs, metrics, |_, _, _| Vec::new());
+        let id = LayoutId(0);
+        let rect = hud.world_rect(id).expect("有控件矩形");
+        let at = |t: f32| Vec2::new(rect.min.x + rect.size().x * t, rect.center().y);
+
+        let mut resources = Resources::new();
+        resources.insert(HudState::new(hud));
+        resources.insert(InputEvents::default());
+        resources.insert(DirectorState::new());
+        resources.insert(crate::domain::UiConfig::default());
+        resources.insert(crate::animation::BindingTable::default());
+        let mut scheduler = Scheduler::new(scene.into_world(), resources);
+        scheduler.add_system(Phase::FrameEnd, HudSystem);
+
+        // 1) 按下 25%：值 = 0.5。
+        run_frame(
+            &mut scheduler,
+            vec![SceneEvent::ViewportClick {
+                layer: LayerId(0),
+                scene_pos: at(0.25),
+            }],
+        );
+        assert!((value_of(&scheduler, id) - 0.5).abs() < 1e-6);
+
+        // 2) 松手：不产生 outcome，但要清掉 capture 并写回状态机。
+        run_frame(
+            &mut scheduler,
+            vec![SceneEvent::ViewportRelease {
+                layer: LayerId(0),
+                scene_pos: at(0.25),
+            }],
+        );
+
+        // 3) 松手后仅悬停到 90%：值不得再变。
+        run_frame(
+            &mut scheduler,
+            vec![SceneEvent::ViewportHover {
+                layer: LayerId(0),
+                scene_pos: at(0.9),
+            }],
+        );
+        assert!(
+            (value_of(&scheduler, id) - 0.5).abs() < 1e-6,
+            "松手后滑块仍在跟随指针：{}",
+            value_of(&scheduler, id)
+        );
     }
 }
