@@ -28,6 +28,15 @@
 //! 矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径已抽到 [`ze_alg`]（kernel 级、
 //! 零 glam）。本文件只保留**读 `Expr` 的识别逻辑**与场景侧的 `AffineMap` /
 //! `StatePlan` / `StateShape`。
+//!
+//! # 精度口径（CB-c）
+//!
+//! `State` 的内部运算**一律 f64**（`ze-alg` 的当前唯一实现）。
+//! 标量状态直接以 f64 输出；**向量**状态（Vec2/3/4）向 `f32` 的降级只发生在
+//! **一次**：构造 [`EvalValue`] 的边界（[`StateShape::value`]）。不得在中间步骤
+//! 反复降级 —— 否则舍入会随步数累积，且同一状态在「seek 到第 n 帧」与
+//! 「逐帧播放」下会得到不同的 f32 值。
+//! 用例 `state_demotes_to_f32_only_at_the_eval_boundary` 钉住这条口径。
 
 use std::collections::BTreeSet;
 
@@ -1204,5 +1213,34 @@ mod tests {
         let map = recognize(&step, 3).unwrap();
         let radius = map.spectral_radius();
         assert!((radius - 0.75).abs() < 1e-9, "谱半径 {radius}");
+    }
+
+    /// **CB-c**：`State` 内部一律 f64；向量状态向 f32 只在构造 `EvalValue` 时降级**一次**。
+    #[test]
+    fn state_demotes_to_f32_only_at_the_eval_boundary() {
+        let init = Expr::call(
+            ze_comb::OpRef::new("zela.math", "vec2"),
+            [pure(1.0), pure(2.0)],
+        );
+        let step = vec2(scale(0.9999, variable(0)), scale(0.9998, variable(1)));
+        let plan = plan_from_expr(&init, &step, None).unwrap();
+        let steps = 100u64;
+
+        // 定义路径：f64 快速幂 → 边界处一次 `as f32`。
+        let exact = plan.map().apply(&[1.0, 2.0], steps);
+        let once = [exact[0] as f32, exact[1] as f32];
+
+        // 反例：每一步都降级到 f32（错误实现）——本用例必须能区分两者。
+        let a = plan.map().a()[0][0];
+        let mut stepped = 1.0f32;
+        for _ in 0..steps {
+            stepped = (f64::from(stepped) * a) as f32;
+        }
+        assert_ne!(
+            once[0], stepped,
+            "用例必须有区分力：中间反复降级与边界一次降级结果不同"
+        );
+
+        assert_eq!(plan.value_at(steps as i64), EvalValue::vec2(once));
     }
 }
