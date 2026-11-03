@@ -759,6 +759,10 @@ fn entries() -> Vec<Entry> {
         title: "内置 · 能力 demo（N 线）".to_string(),
         source: EntrySource::Choice(SceneChoice::CapabilityDemo),
     });
+    entries.push(Entry {
+        title: "内置 · 参数面板（两个 View）".to_string(),
+        source: EntrySource::Choice(SceneChoice::Panels),
+    });
     #[cfg(feature = "python")]
     entries.push(Entry {
         title: "内置 · Python 分镜".to_string(),

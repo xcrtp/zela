@@ -21,6 +21,8 @@ pub mod fingerprint;
 mod expr_binding_tests;
 pub mod geometry;
 pub mod input;
+/// CE-e：参数面板进场景（命中的真消费者）。
+pub mod interact;
 pub mod lifetime;
 pub mod register;
 pub mod scene;
@@ -59,6 +61,9 @@ pub use fingerprint::{
 };
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 pub use input::{ParamPanelSystem, TimeControlSystem};
+pub use interact::{
+    InteractSet, InteractState, InteractSystem, PanelEntry, PanelSpec, SliderSpec, build_panel,
+};
 pub use lifetime::{
     LifetimeEvent, LifetimeEventKind, LifetimeEvents, LifetimeFlushSystem, LifetimeTracker,
 };
