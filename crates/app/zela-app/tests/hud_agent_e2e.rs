@@ -157,6 +157,78 @@ fn window_input_reaches_the_same_value_as_scene_events() {
     );
 }
 
+/// **CH-b 判据**：一个带 tag 的注入 ⇒ 回执含派生事件 / outcomes / Frame diff /
+/// diagnostics；同一串事件两次逐位相同（纯值、可序列化）。
+#[test]
+fn trace_reports_derived_outcomes_diff_and_diagnostics() {
+    use ze_scene_core::domain::{Injected, PointerState, WindowInput};
+    use zela_app::debug::OutcomeKind;
+
+    let play = || {
+        let scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+        let before = scene.frame().expect("有 Frame");
+        let name = param_scopes(&before)
+            .values()
+            .next()
+            .and_then(|params| params.first())
+            .cloned()
+            .expect("有参数滑块");
+        let (wx, wy) = scene.slider_point(&name, 0.8).expect("世界坐标");
+        let camera = scene
+            .input_context()
+            .expect("有输入上下文")
+            .layer2d
+            .expect("有 2D 图层")
+            .1;
+        let screen = camera.world_to_screen(ze_notion::Vec2::new(wx, wy));
+        let input = WindowInput {
+            pointer: PointerState {
+                position: Some(screen),
+                hovering: true,
+                primary_pressed: true,
+                ..PointerState::default()
+            },
+            viewport: camera.rect,
+            window_size: ze_notion::Vec2::new(camera.rect.max.x, camera.rect.max.y),
+            ..WindowInput::default()
+        };
+        let injected = Injected::window(1, 0, input).with_label("click slider");
+        let report = scene.trace(&injected, 8).expect("回执必须成功");
+        assert_eq!(report.tag.0, 1);
+        assert_eq!(report.injected_frame, 0);
+        assert_eq!(report.active.tag.0, 1);
+        let first = &report.frames[0];
+        assert!(!first.derived.is_empty(), "派生事件必须有 hover / click");
+        assert!(
+            first
+                .outcomes
+                .iter()
+                .any(|outcome| outcome.name == name
+                    && matches!(outcome.kind, OutcomeKind::ValueChanged { .. })),
+            "状态机意图必须出现在回执里：{:?}",
+            first.outcomes
+        );
+        assert!(
+            first.frame_diff.changed.iter().any(|c| c.name == name),
+            "Frame diff 必须指出变的那个控件：{:?}",
+            first.frame_diff
+        );
+        assert_eq!(first.diagnostics.routed.as_deref(), Some(name.as_str()));
+        // 注入帧 + 一帧"没有变化"⇒ 提前收敛，报告不被截断。
+        assert_eq!(report.frames.len(), 2, "第二帧应当已经安静");
+        assert!(!report.truncated, "提前收敛不算截断");
+        assert!(report.frames[1].outcomes.is_empty());
+        assert!(report.frames[1].frame_diff.is_empty());
+        report
+    };
+
+    let first = play();
+    // 纯值：可序列化，且同串事件两次逐位相同。
+    let json = serde_json::to_string(&first).expect("回执可序列化");
+    assert!(json.contains("\"tag\":1"));
+    assert_eq!(json, serde_json::to_string(&play()).expect("可序列化"));
+}
+
 /// **确定性**：同一场景、同一事件流 ⇒ 两帧 JSON 逐字节相同。
 #[test]
 fn same_events_give_bitwise_identical_frames() {

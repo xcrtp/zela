@@ -115,6 +115,28 @@ pub struct Hud {
     set: ControlSet,
     metrics: HudMetrics,
     rows: Vec<Row>,
+    /// 本帧状态机产出的外部意图（**镜像**，供 debug 回执读取）。
+    ///
+    /// 为什么不给 `ze-interact::ControlOutcome` 加 serde：kernel 保持默认零依赖，
+    /// debug 协议不该污染它（R8）。这里只做形状镜像，不含任何协议逻辑。
+    last_outcomes: Vec<HudOutcome>,
+}
+
+/// HUD 一次交互的外部意图（镜像 `ControlOutcome`，**不派生 serde**）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct HudOutcome {
+    /// 控件声明下标（与 `Frame::geometry` 同一口径）。
+    pub control: LayoutId,
+    /// 语义名（诊断可读）。
+    pub name: String,
+    pub kind: HudOutcomeKind,
+}
+
+/// 意图类型。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HudOutcomeKind {
+    ValueChanged(f64),
+    Activated,
 }
 
 impl Hud {
@@ -200,6 +222,41 @@ impl Hud {
     pub fn world_rect(&self, id: LayoutId) -> Option<Rect2D> {
         let row = self.rows.iter().find(|row| row.id == id)?;
         Some(self.metrics.to_world(row.rect))
+    }
+
+    /// 本帧状态机产出的意图（debug 回执读取；空 = 本帧没命中任何控件）。
+    pub fn outcomes(&self) -> &[HudOutcome] {
+        &self.last_outcomes
+    }
+
+    /// 清空意图（每帧开头调用；状态机本身只返回 `Vec`）。
+    pub fn clear_outcomes(&mut self) {
+        self.last_outcomes.clear();
+    }
+
+    /// 当前投递目标（capture > focus > hover）的**语义名**：诊断里「命中谁」。
+    pub fn routed_name(&self) -> Option<&str> {
+        let id = self.set.routed()?;
+        self.set
+            .specs()
+            .iter()
+            .find(|spec| spec.id == id)
+            .map(|spec| spec.name.as_str())
+    }
+
+    fn record(&mut self, control: LayoutId, kind: HudOutcomeKind) {
+        let name = self
+            .set
+            .specs()
+            .iter()
+            .find(|spec| spec.id == control)
+            .map(|spec| spec.name.clone())
+            .unwrap_or_default();
+        self.last_outcomes.push(HudOutcome {
+            control,
+            name,
+            kind,
+        });
     }
 }
 
@@ -300,6 +357,7 @@ pub fn build(
         set,
         metrics,
         rows,
+        last_outcomes: Vec::new(),
     }
 }
 
@@ -352,6 +410,13 @@ impl System for HudSystem {
             None => return,
         };
         if events.is_empty() {
+            // 没有输入也要清掉上一帧的意图镜像：否则 debug 回执会把旧 outcome
+            // 当成这一帧的（差分本来就没有变化，回执却"一直有变化"）。
+            if let Some(hud) = ctx.get_mut::<HudState>().and_then(HudState::hud_mut) {
+                if !hud.outcomes().is_empty() {
+                    hud.clear_outcomes();
+                }
+            }
             return;
         }
         let Some(mut hud) = ctx.get_mut::<HudState>().and_then(HudState::hud_mut).cloned() else {
@@ -359,6 +424,8 @@ impl System for HudSystem {
         };
 
         let mut outcomes = Vec::new();
+        // 每帧重置镜像：`hud` 是从 `HudState` 克隆出来的，上一帧的意图不能留到这一帧。
+        hud.clear_outcomes();
         for event in &events {
             outcomes.extend(hud.handle_world(event.clone()));
         }
@@ -374,8 +441,11 @@ impl System for HudSystem {
                 .unwrap_or_default();
 
             for outcome in outcomes {
-                let id = match outcome {
-                    ControlOutcome::ValueChanged { id, .. } | ControlOutcome::Activated { id } => id,
+                let (id, kind) = match outcome {
+                    ControlOutcome::ValueChanged { id, value } => {
+                        (id, HudOutcomeKind::ValueChanged(value))
+                    }
+                    ControlOutcome::Activated { id } => (id, HudOutcomeKind::Activated),
                 };
                 let Some(name) = hud
                     .set()
@@ -386,8 +456,8 @@ impl System for HudSystem {
                 else {
                     continue;
                 };
-                match outcome {
-                    ControlOutcome::ValueChanged { value, .. } => {
+                match kind {
+                    HudOutcomeKind::ValueChanged(value) => {
                         if name.contains(':') {
                             // 参数地址（CA 的注册表口径）：与 CE-e 同一条回写路径。
                             if let Err(error) =
@@ -403,7 +473,7 @@ impl System for HudSystem {
                             }
                         }
                     }
-                    ControlOutcome::Activated { .. } => match name.as_str() {
+                    HudOutcomeKind::Activated => match name.as_str() {
                         "play_pause" => director.director.toggle(),
                         "replay" => {
                             director.director.seek(0.0);
@@ -417,6 +487,8 @@ impl System for HudSystem {
                         other => eprintln!("[zela] HUD 未知按钮 `{other}`"),
                     },
                 }
+                // 回执镜像：状态机的返回值原样落一份（零 System 传播 tag）。
+                hud.record(id, kind);
             }
 
             // 写回资源。

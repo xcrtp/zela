@@ -55,6 +55,9 @@ ze-property = { path = "../../kernel/ze-property" }
 ze-interact = { path = "../../kernel/ze-interact", features = ["serde"] }
 
 serde_json.workspace = true
+# CH-b：debug 回执（TraceReport / FrameDiff）是纯值，需要 serde 与显式错误。
+serde.workspace = true
+thiserror.workspace = true
 
 wgpu.workspace = true
 hecs.workspace = true
