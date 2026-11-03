@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：27 个 · 10546 行
+- 源文件：27 个 · 10545 行
 
 ### 文件清单
 
@@ -35,11 +35,11 @@
 | `src/expr_mono.rs` | 672 | 表达式求值的**宿主单子 `M`**（S3）。 |
 | `src/fingerprint.rs` | 376 | — |
 | `src/geometry.rs` | 258 | — |
-| `src/input.rs` | 384 | — |
-| `src/interact.rs` | 605 | 参数面板进场景（CE-e）：**真消费者**。 |
-| `src/lib.rs` | 107 | — |
+| `src/input.rs` | 411 | — |
+| `src/interact.rs` | 579 | 参数面板进场景（CE-e）：**真消费者**。 |
+| `src/lib.rs` | 108 | — |
 | `src/lifetime.rs` | 403 | — |
-| `src/register.rs` | 79 | — |
+| `src/register.rs` | 76 | — |
 | `src/scene.rs` | 234 | — |
 | `src/scene_script_tests.rs` | 974 | — |
 | `src/transform_hierarchy.rs` | 740 | — |
@@ -102,7 +102,6 @@ graph LR
     f21 --> f8
     f21 --> f9
     f21 --> f12
-    f21 --> f19
     f21 --> f20
     f21 --> f22
     f14 --> f6
@@ -153,7 +152,7 @@ graph LR
 | `src/interact.rs` | `pub struct SliderSpec` |
 | `src/interact.rs` | `pub struct InteractSet` |
 | `src/interact.rs` | `pub struct InteractState` |
-| `src/interact.rs` | `pub struct InteractSystem` |
+| `src/interact.rs` | `pub fn apply_viewport_events(` |
 | `src/interact.rs` | `pub fn build_panel(` |
 | `src/interact.rs` | `pub fn default_panel_metrics() -> PanelSpec` |
 | `src/interact.rs` | `pub fn build_panels_for_views(` |
@@ -179,6 +178,7 @@ graph LR
 ### 内部文件怎么分工
 
 - **容器与契约适配**：`src/scene.rs` 是装配期的场景容器（world / resources / deferred）；`src/contract.rs` 是 hecs 与契约层的唯一接触面，负责 `ObjectId` ↔ `Entity` 互转，并用一张 `known_component_table!` 登记表实现类型擦除的动态创建（未登记类型返回 `None`，不会无提示地丢组件）。
+- **交互与场景内参数面板**：`src/interact.rs` 在装配期把参数注册表的标量项摆成场景对象（轨道 `Rect` + 滑块 `Circle` + 调用方烘焙的标签 `Path`），并建好 `LinearHitIndex`；运行期由 `ParamPanelSystem` 消费视口事件，按 hover / focus / capture 路由（路由键 = CC 作用域 + 命中目标），再走 `params::apply` 回写。它与 egui 控件 id 的滑块分支共用同一个 System 与同一对资源，不出现两条抢写的旁路。
 - **时间与输入（系统类）**：`src/director_state.rs` 的 `DirectorAdvanceSystem` 是**唯一推进时间**的地方，每帧 `advance(dt)` 后把 `Director` 的全局时间与帧号同步进 `TimeState`；`src/input.rs` 消费 UI 发来的纯数据事件（播放/暂停、seek、参数面板）；`src/camera_input.rs` 把相机语义命令写进**场景里的相机对象**组件。
 - **动画（系统类）**：`src/animation/system.rs` 的 `BindingApplySystem` 遍历绑定表，用时钟树采样曲线并把结果写进组件字段（System 本身不认识任何具体目标）；`src/animation/camera_drive.rs` 只做「谁驱动哪台相机」——通过把绑定移出 / 放回 `BindingTable` 显式让位，因此必须与 `CameraInputSystem` 同相位且排在其前；`src/animation/morph.rs` 是形变的 CPU 回退路径（App 走 GPU 插值，不注册它）。
 - **表达式**：`src/expr_mono.rs` 是表达式求值的宿主单子 `M`，把 `TimeState`（time / frame）、`SceneRead`（组件字段读端）与 `zela.math` 算子拼在一起；缺失通道显式返回错误，不给 0。

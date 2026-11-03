@@ -14,6 +14,7 @@ use crate::animation::BindingTable;
 use crate::animation::params::{self, widget_index};
 use crate::director_state::DirectorState;
 use crate::domain::{InputEvents, SceneEvent, WidgetId, ids};
+use crate::interact::{InteractSet, InteractState};
 use ze_property::{ParameterRegistry, PropertyValue};
 
 // ─── TimeControlSystem（播放/暂停、速度、seek）────────────────────────────
@@ -72,29 +73,44 @@ impl System for TimeControlSystem {
 /// 写回只靠 `WidgetId`（面板里每个控件互不重复）；旧分支的语义与 CA 前一致。
 pub struct ParamPanelSystem;
 impl System for ParamPanelSystem {
-    type Reads = (InputEvents, ParameterRegistry);
-    type Writes = (BindingTable, ParameterRegistry);
+    type Reads = (InputEvents, ParameterRegistry, InteractSet);
+    type Writes = (BindingTable, ParameterRegistry, InteractState);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         let events: Vec<SceneEvent> = match ctx.get::<InputEvents>() {
             Some(e) => e.iter().copied().collect(),
             None => return,
         };
-        // 只关心 Slider 事件。
-        let sliders: Vec<(WidgetId, f32)> = events
-            .into_iter()
-            .filter_map(|e| match e {
-                SceneEvent::Slider { id, value } => Some((id, value)),
-                _ => None,
-            })
-            .collect();
-        if sliders.is_empty() {
+        if events.is_empty() {
             return;
         }
 
-        // 克隆出 BindingTable / 注册表修改，避免同时持有 &mut ctx 与资源借用。
+        // 克隆出 BindingTable / 注册表 / 路由状态修改，避免同时持有 &mut ctx 与资源借用。
         let mut table = ctx.get::<BindingTable>().cloned().unwrap_or_default();
         let mut registry = ctx.get::<ParameterRegistry>().cloned().unwrap_or_default();
+        let mut state = ctx.get::<InteractState>().cloned().unwrap_or_default();
+
+        // **CE-e**：场景内参数面板（命中 → 路由 → 回写）。与下面的控件 id 分支
+        // 共用同一对 `(BindingTable, ParameterRegistry)` —— 同一 System 内不会互相抢写。
+        let knob_moves = match ctx.get::<InteractSet>() {
+            Some(set) if !set.is_empty() => crate::interact::apply_viewport_events(
+                &events,
+                set,
+                &mut state,
+                &mut table,
+                &mut registry,
+            ),
+            _ => Vec::new(),
+        };
+
+        // 只关心 Slider 事件。
+        let sliders: Vec<(WidgetId, f32)> = events
+            .iter()
+            .filter_map(|e| match e {
+                SceneEvent::Slider { id, value } => Some((*id, *value)),
+                _ => None,
+            })
+            .collect();
 
         // 旧分支：手写 id（阶段 1 保留，场景侧代码不必立刻改）。
         for binding in table.bindings.iter_mut() {
@@ -145,6 +161,17 @@ impl System for ParamPanelSystem {
         }
         if let Some(r) = ctx.get_mut::<ParameterRegistry>() {
             *r = registry;
+        }
+        if let Some(s) = ctx.get_mut::<InteractState>() {
+            *s = state;
+        }
+        // 滑块圆心跟随取值（世界写回放在最后，避免与上面的资源借用交叉）。
+        for (knob, x) in knob_moves {
+            if let Some(entity) = crate::contract::entity_of(knob) {
+                if let Ok(mut circle) = ctx.world.get::<&mut ze_scene_core::Circle>(entity) {
+                    circle.0.center.x = x;
+                }
+            }
         }
     }
 }
