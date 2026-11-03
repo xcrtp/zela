@@ -60,12 +60,35 @@ pub const CONTAINER_VERSION: u16 = 4;
 pub const PAYLOAD_FORMAT: &str = "zsb.script/1";
 const HEADER_LEN: usize = 24;
 
+/// **CD-a**：能力在回放端的**角色**。
+///
+/// 一条判据即可归位：**回放端要执行的是「结果」、「源」还是「逻辑」？**
+/// - 结果 ⇒ [`Baked`](Self::Baked)：不校验（payload 里已有烘焙数据）；
+/// - 源 ⇒ [`Source`](Self::Source)：有同名能力可**重建**，无则用烘焙数据（不失败）；
+/// - 逻辑 ⇒ [`Runtime`](Self::Runtime)：必须有且版本相等（既有行为）。
+///
+/// `#[serde(default)]` + `Runtime` 默认值 ⇒ 老 ZSB（没有 role 字段）按**严格**处理，
+/// 行为与 CD 之前完全一致。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CapabilityRole {
+    /// 只带结果：回放端不需要该能力。
+    Baked,
+    /// 带源：有同名能力时可重建；没有则直接用烘焙数据。
+    Source,
+    /// 回放端必须执行的逻辑。
+    #[default]
+    Runtime,
+}
+
 /// 一条能力版本声明。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capability {
     pub name: String,
     /// `None` = 该能力的实现没有声明版本（仍要求名字存在）。
     pub version: Option<String>,
+    /// **CD-a**：回放端角色（缺省 = [`CapabilityRole::Runtime`]，与旧 ZSB 兼容）。
+    #[serde(default)]
+    pub role: CapabilityRole,
 }
 
 impl Capability {
@@ -73,7 +96,14 @@ impl Capability {
         Self {
             name: name.into(),
             version: version.map(str::to_string),
+            role: CapabilityRole::Runtime,
         }
+    }
+
+    /// **CD**：显式声明角色（链式，构造点就近表达）。
+    pub fn with_role(mut self, role: CapabilityRole) -> Self {
+        self.role = role;
+        self
     }
 }
 
@@ -101,6 +131,13 @@ pub struct Downgrade {
 }
 
 /// Meta 段（不进内容 hash）。
+/// # restore 与 rebuild 是两个操作（CD）
+///
+/// - **restore（恢复）**：直接用 payload 里的烘焙数据 ⇒ 逐位一致，可哈希校验；
+/// - **rebuild（重建）**：用 payload 里的**源**（如 `ContentSource`）+ 本地能力
+///   重新烘焙 ⇒ 可复现，但**不保证**与原产物逐位相同。
+///
+/// `Source` 能力的版本差异因此是**可解释的差异**，不是错误。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Meta {
     /// 容器版本（冗余写入，便于诊断；读取以 Header 为准）。
@@ -169,6 +206,16 @@ impl Available {
             capabilities,
             pods,
         }
+    }
+
+    /// **CD-a 协商查询**：本地是否有能**重建**该能力产物的同名实现。
+    ///
+    /// 判据只看名字：`Source` 的语义是"有同名能力就能从源重算"，
+    /// 版本差异由重建方在自己的诊断里报告（§3.2：rebuild 不保证逐位相同）。
+    pub fn can_rebuild(&self, capability: &Capability) -> bool {
+        self.capabilities
+            .iter()
+            .any(|available| available.name == capability.name)
     }
 }
 
@@ -412,18 +459,27 @@ impl Bundle {
         let mut missing = Vec::new();
 
         for required in &self.meta.required_capabilities {
-            match available
-                .capabilities
-                .iter()
-                .find(|c| c.name == required.name)
-            {
-                None => missing.push(format!("缺少能力 `{}`", required.name)),
-                Some(found) => {
-                    if required.version.is_some() && found.version != required.version {
-                        missing.push(format!(
-                            "能力 `{}` 版本不匹配（产物要求 {:?}，当前 {:?}）",
-                            required.name, required.version, found.version
-                        ));
+            match required.role {
+                // 结果：payload 已有烘焙数据，回放端不需要执行它。
+                CapabilityRole::Baked => {}
+                // 源：能重建更好，不能就用烘焙数据 —— 两种情况都**不失败**。
+                CapabilityRole::Source => {}
+                // 逻辑：既有行为（名字 + 版本严格相等）。
+                CapabilityRole::Runtime => {
+                    match available
+                        .capabilities
+                        .iter()
+                        .find(|c| c.name == required.name)
+                    {
+                        None => missing.push(format!("缺少能力 `{}`", required.name)),
+                        Some(found) => {
+                            if required.version.is_some() && found.version != required.version {
+                                missing.push(format!(
+                                    "能力 `{}` 版本不匹配（产物要求 {:?}，当前 {:?}）",
+                                    required.name, required.version, found.version
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -624,6 +680,60 @@ mod tests {
         );
         let error = bundle.check_restorable(&available).expect_err("版本不匹配");
         assert!(error.missing[0].contains("版本不匹配"));
+    }
+
+    // ─── CD-a：role 协商 ────────────────────────────────────────────────
+
+    /// 老 ZSB 的 capacity JSON 没有 `role` ⇒ 读成 `Runtime`（严格），行为不变。
+    #[test]
+    fn legacy_capability_json_defaults_to_runtime() {
+        let capability: Capability =
+            serde_json::from_str(r#"{"name":"scene","version":"4"}"#).expect("旧格式可读");
+        assert_eq!(capability.role, CapabilityRole::Runtime);
+    }
+
+    /// `Source` / `Baked` 缺失 ⇒ 不失败；`Runtime` 缺失仍失败。
+    #[test]
+    fn role_decides_whether_missing_capability_fails() {
+        let script = tiny_script();
+        let bundle = Bundle::encode(
+            &script,
+            MetaInput {
+                capabilities: Vec::new(),
+                required_capabilities: vec![
+                    Capability::new("scene", Some("4")),
+                    Capability::new("content", Some("1")).with_role(CapabilityRole::Source),
+                    Capability::new("fonts", Some("2")).with_role(CapabilityRole::Baked),
+                ],
+                pods: Vec::new(),
+                required_pods: Vec::new(),
+                downgrades: Vec::new(),
+                source_sha256: None,
+                render_params: RenderParams::default(),
+            },
+        )
+        .expect("encode");
+
+        // 只具备 scene：Source/Baked 缺失都不算失败。
+        let only_scene = Available::new(vec![Capability::new("scene", Some("4"))], Vec::new());
+        bundle
+            .check_restorable(&only_scene)
+            .expect("Source/Baked 缺失不得失败");
+
+        // Runtime 缺失 ⇒ 仍失败（既有行为）。
+        let nothing = Available::new(Vec::new(), Vec::new());
+        let error = bundle.check_restorable(&nothing).expect_err("Runtime 必须存在");
+        assert!(error.missing.iter().any(|m| m.contains("scene")));
+    }
+
+    #[test]
+    fn can_rebuild_is_a_name_query() {
+        let available = Available::new(
+            vec![Capability::new("content", Some("9"))],
+            Vec::new(),
+        );
+        assert!(available.can_rebuild(&Capability::new("content", Some("1"))));
+        assert!(!available.can_rebuild(&Capability::new("fonts", Some("1"))));
     }
 
     #[test]
