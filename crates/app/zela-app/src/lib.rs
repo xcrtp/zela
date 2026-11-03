@@ -183,9 +183,6 @@ pub fn compile_script(source: &str, language: ScriptLanguage) -> Result<Compiled
 /// 编译线程的栈大小（见 [`compile_script`] 的说明）。
 const COMPILE_STACK_BYTES: usize = 64 * 1024 * 1024;
 
-/// **CE-e**：场景内参数面板标签的标称字号（世界单位；装配期烘焙一次）。
-pub const PANEL_LABEL_FONT_SIZE: f32 = 0.9;
-
 fn compile_script_on_this_thread(
     source: &str,
     language: ScriptLanguage,
@@ -351,14 +348,14 @@ pub fn build_bundle_runtime(
             .get(origin.path_index)
             .map(|outline| outline.path.clone())
     };
-    let bake_label = |text: &str, anchor: ze_notion::Vec2| -> Vec<ze_notion::Path2D> {
+    let bake_label = |text: &str, anchor: ze_notion::Vec2, font_size: f32| -> Vec<ze_notion::Path2D> {
         let Some(engine) = engine.as_ref() else {
             return Vec::new();
         };
         ze_scene_core::content::compile(
             engine,
             &ze_content::text_literal_source(text),
-            crate::PANEL_LABEL_FONT_SIZE,
+            font_size,
             anchor,
             false,
         )
@@ -580,11 +577,11 @@ fn build_scene_source(
                 &p.views,
                 p.bindings.scopes(),
                 zela_scene_ecs::interact::default_panel_metrics(),
-                |text, anchor| {
+                |text, anchor, font_size| {
                     ze_scene_core::content::compile(
                         engine.as_ref(),
                         &ze_content::text_literal_source(text),
-                        PANEL_LABEL_FONT_SIZE,
+                        font_size,
                         anchor,
                         false,
                     )
