@@ -27,7 +27,7 @@ impl System for TimeControlSystem {
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         let events: Vec<SceneEvent> = match ctx.get::<InputEvents>() {
-            Some(e) => e.iter().copied().collect(),
+            Some(e) => e.iter().cloned().collect(),
             None => return,
         };
         if events.is_empty() {
@@ -78,7 +78,7 @@ impl System for ParamPanelSystem {
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
         let events: Vec<SceneEvent> = match ctx.get::<InputEvents>() {
-            Some(e) => e.iter().copied().collect(),
+            Some(e) => e.iter().cloned().collect(),
             None => return,
         };
         if events.is_empty() {
