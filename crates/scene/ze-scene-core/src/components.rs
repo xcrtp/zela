@@ -98,6 +98,22 @@ impl MorphShape {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ContentTextureItem;
 
+/// **CD-b**：内容源的声明式记录（与烘焙轮廓**同时**进 payload）。
+///
+/// 烘焙轮廓负责 `restore`（逐位一致）；本组件负责 `rebuild`（用本地能力从
+/// `text` 重算）。`path_index` 是该文本编译出的第几条描边（一次文本可出多条路径，
+/// 每条挂一个对象）。既有不含本组件的 payload 仍可读（`restore` 路径不依赖它）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ContentSource {
+    /// 原始文本（`content.text` 的 `source`，不是 Typst 字面量包装后的串）。
+    pub text: String,
+    pub font_size: f32,
+    pub x: f32,
+    pub y: f32,
+    /// 该文本编译出的第几条描边（从 0 起）。
+    pub path_index: usize,
+}
+
 /// **书写动画（reveal）对象**：持有一条描边路径 + 可见区间 `[start, end]`（归一化弧长）。
 ///
 /// 与 [`MorphShape`] 同级、同一设计口径（几何静态、变量走 uniform）：

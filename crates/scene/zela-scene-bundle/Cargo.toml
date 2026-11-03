@@ -9,6 +9,9 @@ description = "ZSB 场景装配产物：格式 + 读写 + 内容 hash + 可还�
 # 装配产物 = `SceneScript`（声明式创建 + 时间线）。本 crate **不依赖任何语言适配器**：
 # 浏览器侧只引这一个轻 crate 即可回放。
 zela-scene-ecs = { path = "../zela-scene-ecs" }
+# CD-b：`Bundle::text_sources` 返回内部内容源组件（`restore` / `rebuild` 双轨的源侧）。
+# 该 crate 层级低于本层（契约 / 核心），不引入语言适配器或 GPU 依赖。
+ze-scene-core = { path = "../ze-scene-core" }
 # B4 Step 2：Meta 承载渲染参数（纯数据，kernel 层，不引入 GPU 依赖）。
 ze-render-ir = { path = "../../kernel/ze-render-ir" }
 serde.workspace = true
@@ -20,7 +23,5 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
-# 测试构造一个最小装配产物（Circle 组件）。
-ze-scene-core = { path = "../../scene/ze-scene-core" }
 # 输入流用例构造带函子库身份的表达式绑定。
 ze-comb = { path = "../../kernel/ze-comb" }

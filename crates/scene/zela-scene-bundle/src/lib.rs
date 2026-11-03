@@ -434,6 +434,18 @@ impl Bundle {
         &self.payload
     }
 
+    /// **CD-b**：payload 里记录的内容源（`rebuild` 的输入；`restore` 不需要）。
+    ///
+    /// 没有内容源的产物（纯几何 / 老 ZSB）返回空表 —— 不失败。
+    pub fn text_sources(&self) -> Result<Vec<ze_scene_core::components::ContentSource>, BundleError> {
+        Ok(self
+            .script()?
+            .content_sources()
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
     pub fn meta(&self) -> &Meta {
         &self.meta
     }
@@ -734,6 +746,43 @@ mod tests {
         );
         assert!(available.can_rebuild(&Capability::new("content", Some("1"))));
         assert!(!available.can_rebuild(&Capability::new("fonts", Some("1"))));
+    }
+
+    // ─── CD-b：源与烘焙同时进产物 ──────────────────────────────────────
+
+    fn text_script(text: &str) -> SceneScript {
+        let mut enc = SceneEncoder::new();
+        enc.spawn(vec![Box::new(ze_scene_core::components::ContentSource {
+            text: text.to_string(),
+            font_size: 24.0,
+            x: 10.0,
+            y: 20.0,
+            path_index: 0,
+        })]);
+        enc.finish()
+    }
+
+    /// payload 里能取回源文本（`rebuild` 的输入），且经字节往返仍一致。
+    #[test]
+    fn payload_keeps_content_source_for_rebuild() {
+        let bundle = Bundle::encode(&text_script("Hi"), meta_input()).expect("encode");
+        let read = Bundle::from_bytes(&bundle.to_bytes()).expect("decode");
+
+        let sources = read.text_sources().expect("内容源可读");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].text, "Hi");
+        assert_eq!(sources[0].path_index, 0);
+        // 源进 payload ⇒ 内容 hash 覆盖它；meta 变化不影响。
+        assert_eq!(read.payload_hash(), bundle.payload_hash());
+    }
+
+    /// 不含内容源的产物（纯几何 / 老 ZSB）仍可读，源表为空而不是失败。
+    #[test]
+    fn payload_without_content_source_still_decodes() {
+        let bundle = Bundle::encode(&tiny_script(), meta_input()).expect("encode");
+        let read = Bundle::from_bytes(&bundle.to_bytes()).expect("decode");
+        assert!(read.text_sources().expect("源表可为空").is_empty());
+        assert_eq!(read.script().expect("script").len(), 1);
     }
 
     #[test]

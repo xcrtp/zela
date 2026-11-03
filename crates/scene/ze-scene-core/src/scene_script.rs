@@ -809,6 +809,22 @@ impl SceneScript {
         self.creates.is_empty()
     }
 
+    /// **CD-b**：payload 里记录的**内容源**（`ContentSource` 组件）。
+    ///
+    /// `restore` 不读它（用烘焙轮廓）；`rebuild` 用它 + 本地能力重算。
+    /// 顺序 = 对象声明顺序，可复现。
+    pub fn content_sources(&self) -> Vec<&crate::components::ContentSource> {
+        self.creates
+            .iter()
+            .flat_map(|components| components.iter())
+            .filter_map(|component| {
+                component
+                    .as_any()
+                    .downcast_ref::<crate::components::ContentSource>()
+            })
+            .collect()
+    }
+
     /// **静止时刻**（秒；`None` = 不可推导，见 [`Timeline::still_time`]）。
     ///
     /// 它**不是**"作品时长"：录多长由 `ExportSpec { fps, frames }` 决定。
