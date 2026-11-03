@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：28 个 · 11069 行
+- 源文件：28 个 · 11154 行
 
 ### 文件清单
 
@@ -35,7 +35,7 @@
 | `src/expr_mono.rs` | 672 | 表达式求值的**宿主单子 `M`**（S3）。 |
 | `src/fingerprint.rs` | 376 | — |
 | `src/geometry.rs` | 258 | — |
-| `src/hud.rs` | 434 | **CG-f**：自研 UI 的第一块可见面板 —— 三组控件全部是**场景图元**。 |
+| `src/hud.rs` | 519 | **CG-f**：自研 UI 的第一块可见面板 —— 三组控件全部是**场景图元**。 |
 | `src/input.rs` | 411 | — |
 | `src/interact.rs` | 660 | 参数面板进场景（CE-e）：**真消费者**。 |
 | `src/lib.rs` | 111 | — |
