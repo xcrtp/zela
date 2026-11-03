@@ -2131,9 +2131,32 @@
 | CG-06 | GUI 的 control / time / param 三块是 egui 覆盖层（不进场景、不可 headless） | GUI / 场景 | **已关闭** | `zela_scene_ecs::hud`：`Hud`（`ControlSet` + 世界坐标口径）+ `HudSystem`（视口事件 → 状态机 → `DirectorState` / `UiConfig` / `params::apply` 回写 + 滑块圆心跟随），注册在 `Phase::FrameEnd`（与 `ParamPanelSystem` 同资源、避免同相位冲突）；`zela_authored::hud` 声明 control（网格 / 场 / 三个滤镜开关）+ time（播放 / 重播 / 速度 / seek）+ param（注册表地址）三组，标签用直排文字引擎烘焙成 `Path`；`SceneChoice::Hud` 装配，GUI 默认启动它。`zela_egui::host` 删除三块面板，`begin_frame` 只保留 `UiConfig → PostFilterChain` 同步 + 视口事件收集。判据 `host.rs` 不再出现 `egui::Slider` / `Button` / `Label`；`cargo verify` 全绿。 |
 | CG-07 | 三层（布局 / 排版 / 控件）没有零窗口 / 零 GPU / 零 egui 的出口 | 装配 / 门禁 | **已关闭** | `zela_playback` 拆出 `assemble_scheduler`（资源 + 系统图，GPU 无关）与 `assemble_runtime`（附加渲染上下文）；`zela_app::headless`：`inject_json`（tagged JSON 事件流）→ `advance` → `frame_json`（一帧 `Frame` 的 JSON）→ `slider_point`（按名字找控件并转世界坐标）。`tests/hud_agent_e2e.rs`：拖 A 的参数只改 A（断言读 `Frame::value_of("slider", 地址)`，不是像素 hash、不是 Rust 内部字段）；同声明同事件 ⇒ 帧 JSON 逐字节相同。 |
 | CG-08 | 自研面板只迁了 control 三块开关与 time / param；图层与相机开关仍在宿主侧 | GUI / 场景 | **记账** | `show_2d` / `show_3d` / `viewport_camera`（单选三态）/ `free_2d_camera` / `flip_layer_order` 尚无对应控件形状（需要单选组 / 枚举控件，`ControlKind` 本批只做三种）。触发条件：控件层加入单选 / 下拉形状，或改为启动参数。 |
-| CG-09 | 标签烘焙依赖本机字体（无字体 ⇒ 无标签，缺字 ⇒ 回退或计入 `missing`） | 内容 / 装配 | **记账** | `MetricsDb` 已记录 `fallback_families` / `missing`，`zela_authored::hud` 在无可用字体时退化为"有轨道 / 滑块、无标签"。触发条件：需要跨机器逐位一致的标签（打包字体子集 + 固定 face），届时把 face 清单写进装配产物。 |
+| CG-09 | 标签烘焙依赖本机字体（无字体 ⇒ 无标签，缺字 ⇒ 回退或计入 `missing`） | 内容 / 装配 | **已关闭（CH-07）** | 准确的名字是**装配环境未显式化**：字体、DPI、窗口尺寸三样一起收。`zela_app::fonts` 是唯一清单来源，GUI 装配前 `ensure_font_dir()`；face 清单 / 版本 / 缺失清单进 `Diagnostics.environment`（`Baked` 角色，不进 `required_capabilities`）。`MetricsDb` 仍记 `fallback_families` / `missing`，`zela_authored::hud` 在无字体时退化为"有轨道 / 滑块、无标签"，且**如实报告**而不是静默回退。 |
 
-**CG 段小计**：已关闭 7（CG-01 / CG-02 / CG-03 / CG-04 / CG-05 / CG-06 / CG-07）· 部分关闭 0 · 记账 2（CG-08 / CG-09）· 未执行 0 · 已记录 0。
+**CG 段小计**：已关闭 8（CG-01 / CG-02 / CG-03 / CG-04 / CG-05 / CG-06 / CG-07 / CG-09）· 部分关闭 0 · 记账 1（CG-08）· 未执行 0 · 已记录 0。
+
+---
+
+## CH. 事件标记与可观测窗口（2026-11-04）
+
+> 计划《CH 批次执行计划：事件标记与可观测窗口》。二期第二批：把入口从**场景事件**
+> 上推到**窗口事件**，并给每次注入打标记 —— 离线文件、RPC、真人在窗口点，三者回执
+> 逐位相同。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CH-01 | 真人与机器走的不是同一条入口：换算整段吃 `egui::Ui` / `InputState`，不可注入 | 场景 / GUI | **已关闭** | `ze_scene_core::domain::input_window`：`WindowInput`（指针 / 键 / 文本 / `window_size` / `scale_factor` / `viewport`）+ `collect_events` 纯函数（视口闭区间判定、2D 图层选择、`screen_delta_to_world` 取负、FPS 按秒位移、typing 让位），零 egui 类型；`zela-egui::host` 只剩 `WindowInput` 适配。判据 `window_input_reaches_the_same_value_as_scene_events`（窗口坐标与场景事件落到同一个控件值）。 |
+| CH-02 | 事件本体没有身份，改 `SceneEvent` 又会改掉所有既有输入流的字节 | 场景 / 协议 | **已关闭** | 标记在**外层**：`Injected { tag, frame, source, payload }`（`payload` 是 tagged `kind`），`SceneEvent` 一个字节不动；`InjectError` 对 External 未实现 / 来源与载荷不匹配显式失败。用例见 `inject.rs` 的四条（含 `SourceMismatch` 的字段命名单列）。 |
+| CH-03 | 因果没有回执：谁引起哪一帧的变化无法查询 | 调试 / 场景 | **已关闭** | `zela_app::debug`：`ActiveTags`（一帧一个）、`TraceReport { derived, outcomes, frame_diff, diagnostics, truncated }`、`FrameDiff` 按 `(role, name)` 对齐；`trace_on` = 注入 → 逐帧 `advance` + 清空 → 差分，`quiet` 提前收敛。诚实限制写进模块文档：差分给的是「这一帧**所有**变化」，不是严格因果证明。判据 `trace_reports_derived_outcomes_diff_and_diagnostics`（含两次逐位相同）。 |
+| CH-04 | 跑着的 GUI 不可被机器读写（离线文件是唯一通道） | 宿主 / 调试 | **已关闭** | `zela_app::rpc`：NDJSON over TCP，**默认关**、只绑 `127.0.0.1`（`ZELA_DEBUG_RPC=<port>`）；命令只有 `get_frame` / `get_diagnostics` / `inject` / `probe` / `trace` / `screenshot`；`inject` 绝不推进帧，`probe = 注入 + 读 TraceReport`。GUI 用 mpsc bridge 把请求转主线程（`DriverPod` 内部 `RefCell` ⇒ 非 Send）。判据 `rpc_and_offline_produce_the_same_trace_report`（离线 ≡ RPC 逐位相同）、`probe_over_rpc_matches_the_offline_trace`。 |
+| CH-05 | GUI 上 `inject` / `probe` 会静默失效：`begin_frame` 整帧覆盖 `InputEvents` | GUI / 调试 | **已关闭（CH-f 修正）** | headless 没有窗口输入 ⇒ 只有 GUI 暴露：RPC 注入的事件在同一次 `ui()` 里被窗口事件覆盖。现在保留已投递事件、再追加窗口事件（顺序稳定：注入在前）。这是 CH-c 的缺陷，由 CH-f 的"录 tag"需求逼出来 —— 顺带说明「机制已备、出口未开」的检查要覆盖宿主分叉。 |
+| CH-06 | 调试快照不写环境：同一个 `(x, y)` 在 2× DPI 上落到不同控件 | 调试 / 复现 | **已关闭** | `Diagnostics.environment`（`window_size` / `scale_factor` / `viewport` / 字体 `FontEnvironment`）；来源是唯一的 `WindowInput` 资源（GUI 与 headless 注入同一处写入）。判据 `diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit`（1× / 2× 帧 JSON 逐位相同）。 |
+| CH-07 | 字体清单只在 CLI 侧解析，GUI 装配拿不到同一套 face（CG-09 的准确名字是**装配环境未显式化**） | 装配 / 内容 | **已关闭** | 清单解析下沉 `zela_app::fonts`（`manifest` / `detect` / `ensure_font_dir` / `environment`），GUI 装配前 `ensure_font_dir()`，`zela-commands` 只保留下载。face 清单按 CD 的 `role` 归位为 **`Baked`**（回放端不执行、不进 `required_capabilities`），版本差异是可解释的差异；缺 face 如实列出（`missing`），不静默回退。 |
+| CH-08 | 录制接点在换算**之后**：录到的场景事件绑定当次场景上下文 | 回放 / 产物 | **已关闭** | `zela.window/1`（`WindowStream` / `WindowRecorder`）：录窗口坐标 + 窗口尺寸 + DPI + 视口 + tag，回放端用同一条 `collect_events` 重算；稀疏规则「与上一帧只差 `stable_dt` 不写」。`zela.input/1` 读取与 `zela-render --record-input` 既有行为不变。判据 `recorded_window_stream_replays_the_same_trajectory`（换 DPI 仍是同一条轨迹）。 |
+| CH-09 | Wgpu 后端的截图没有出口（只有 Vector 的中间纹理可回读） | 渲染 / 调试 | **记账** | `Command::Screenshot` 在 headless / Wgpu 上**显式报错**（不静默返回空图）；GUI 只对 `vector_target` 生效。触发条件：需要 Wgpu 帧的视觉证据时，为 `wgpu` 后端加同一条按需回读（读的是 egui 合成后的目标纹理，不是矢量中间纹理）。 |
+| CH-10 | `External` 事件类别只有形状（第三方传感器 / IMU / 网络事件进不来） | 输入 / 协议 | **记账** | `InjectedPayload::External { name }` + `InjectError::ExternalUnsupported` 显式拒绝。触发条件：出现真实的外部事件源（且需要先定"外部事件如何映射到窗口 / 场景"的口径，否则会把不可复现的输入引进确定性链）。 |
+
+**CH 段小计**：已关闭 8（CH-01 / CH-02 / CH-03 / CH-04 / CH-05 / CH-06 / CH-07 / CH-08）· 部分关闭 0 · 记账 2（CH-09 / CH-10）· 未执行 0 · 已记录 0。
 
 ---
 
