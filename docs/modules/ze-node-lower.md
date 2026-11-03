@@ -10,7 +10,7 @@
 - 层：`graph`（`crates/ze/graph`）
 - 路径：`crates/ze/graph/ze-node-lower`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-graph-algo`、`ze-node-core`
-- 被依赖（下游）：（无）
+- 被依赖（下游）：`zela-authored`
 - 源文件：3 个 · 700 行
 
 ### 文件清单

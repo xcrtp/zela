@@ -6991,8 +6991,14 @@ dependencies = [
 name = "zela-authored"
 version = "0.1.1"
 dependencies = [
+ "thiserror 2.0.20",
  "ze-comb",
  "ze-content",
+ "ze-graph-algo",
+ "ze-graph-eval",
+ "ze-node-core",
+ "ze-node-lower",
+ "ze-node-schema",
  "ze-notion",
  "ze-prerender",
  "ze-render-ir",

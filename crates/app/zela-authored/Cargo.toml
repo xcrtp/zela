@@ -21,3 +21,13 @@ ze-time = { path = "../../kernel/ze-time" }
 ze-comb = { path = "../../kernel/ze-comb" }
 ze-content = { path = "../../kernel/ze-content" }
 ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }
+# CF-d：节点图 → 表达式 lowering（弹簧节点是 lowering 规则表的第一个消费者）。
+ze-node-core = { path = "../../ze/graph/ze-node-core" }
+ze-node-lower = { path = "../../ze/graph/ze-node-lower" }
+ze-node-schema = { path = "../../ze/graph/ze-node-schema" }
+thiserror.workspace = true
+
+[dev-dependencies]
+# CF-d 对拍：节点侧求值策略（逐帧折叠）与拓扑排序。
+ze-graph-algo = { path = "../../ze/graph/ze-graph-algo" }
+ze-graph-eval = { path = "../../ze/graph/ze-graph-eval" }
