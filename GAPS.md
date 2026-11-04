@@ -2130,10 +2130,10 @@
 | CG-05 | 布局若每帧重解，就是浏览器那条"reflow"老路 | 交互 / 性能 | **已关闭** | `ConstraintSet`（`BTreeMap` 稳定序 + 自然高度）与 `layout_for_constraints`；`LayoutCache { revision, cached, solves }` 只在结构变化时重解。用例 `constraint_set_is_order_independent` / `layout_cache_solves_only_when_structure_changes`（60 帧只 1 次求解）。未引入 kasuari（约束求解留给后续批次）。 |
 | CG-06 | GUI 的 control / time / param 三块是 egui 覆盖层（不进场景、不可 headless） | GUI / 场景 | **已关闭** | `zela_scene_ecs::hud`：`Hud`（`ControlSet` + 世界坐标口径）+ `HudSystem`（视口事件 → 状态机 → `DirectorState` / `UiConfig` / `params::apply` 回写 + 滑块圆心跟随），注册在 `Phase::FrameEnd`（与 `ParamPanelSystem` 同资源、避免同相位冲突）；`zela_authored::hud` 声明 control（网格 / 场 / 三个滤镜开关）+ time（播放 / 重播 / 速度 / seek）+ param（注册表地址）三组，标签用直排文字引擎烘焙成 `Path`；`SceneChoice::Hud` 装配，GUI 默认启动它。`zela_egui::host` 删除三块面板，`begin_frame` 只保留 `UiConfig → PostFilterChain` 同步 + 视口事件收集。判据 `host.rs` 不再出现 `egui::Slider` / `Button` / `Label`；`cargo verify` 全绿。 |
 | CG-07 | 三层（布局 / 排版 / 控件）没有零窗口 / 零 GPU / 零 egui 的出口 | 装配 / 门禁 | **已关闭** | `zela_playback` 拆出 `assemble_scheduler`（资源 + 系统图，GPU 无关）与 `assemble_runtime`（附加渲染上下文）；`zela_app::headless`：`inject_json`（tagged JSON 事件流）→ `advance` → `frame_json`（一帧 `Frame` 的 JSON）→ `slider_point`（按名字找控件并转世界坐标）。`tests/hud_agent_e2e.rs`：拖 A 的参数只改 A（断言读 `Frame::value_of("slider", 地址)`，不是像素 hash、不是 Rust 内部字段）；同声明同事件 ⇒ 帧 JSON 逐字节相同。 |
-| CG-08 | 自研面板只迁了 control 三块开关与 time / param；图层与相机开关仍在宿主侧 | GUI / 场景 | **记账** | `show_2d` / `show_3d` / `viewport_camera`（单选三态）/ `free_2d_camera` / `flip_layer_order` 尚无对应控件形状（需要单选组 / 枚举控件，`ControlKind` 本批只做三种）。触发条件：控件层加入单选 / 下拉形状，或改为启动参数。 |
+| CG-08 | 自研面板只迁了 control 三块开关与 time / param；图层与相机开关仍在宿主侧 | GUI / 场景 | **已关闭（CI-b）** | `ze-interact::ControlKind::RadioGroup`（值 = 选项下标，`ControlSpec::radio_group`）+ `zela_authored::hud::hud_specs` 的五个单选组（`show_2d` / `show_3d` / `viewport_camera` / `free_2d_camera` / `flip_layer_order`）；`HudSystem` 把值写回 `UiConfig`，GUI 工具条删掉相机下拉。判据 `radio_group_selects_the_segment_under_the_pointer` / `layer_and_camera_switches_are_radio_group_scene_controls`。语义锚点仍是五个，不扩。 |
 | CG-09 | 标签烘焙依赖本机字体（无字体 ⇒ 无标签，缺字 ⇒ 回退或计入 `missing`） | 内容 / 装配 | **已关闭（CH-07）** | 准确的名字是**装配环境未显式化**：字体、DPI、窗口尺寸三样一起收。`zela_app::fonts` 是唯一清单来源，GUI 装配前 `ensure_font_dir()`；face 清单 / 版本 / 缺失清单进 `Diagnostics.environment`（`Baked` 角色，不进 `required_capabilities`）。`MetricsDb` 仍记 `fallback_families` / `missing`，`zela_authored::hud` 在无字体时退化为"有轨道 / 滑块、无标签"，且**如实报告**而不是静默回退。 |
 
-**CG 段小计**：已关闭 8（CG-01 / CG-02 / CG-03 / CG-04 / CG-05 / CG-06 / CG-07 / CG-09）· 部分关闭 0 · 记账 1（CG-08）· 未执行 0 · 已记录 0。
+**CG 段小计**：已关闭 9（CG-01 / CG-02 / CG-03 / CG-04 / CG-05 / CG-06 / CG-07 / CG-08 / CG-09）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 0。
 
 ---
 
@@ -2148,7 +2148,7 @@
 | CH-01 | 真人与机器走的不是同一条入口：换算整段吃 `egui::Ui` / `InputState`，不可注入 | 场景 / GUI | **已关闭** | `ze_scene_core::domain::input_window`：`WindowInput`（指针 / 键 / 文本 / `window_size` / `scale_factor` / `viewport`）+ `collect_events` 纯函数（视口闭区间判定、2D 图层选择、`screen_delta_to_world` 取负、FPS 按秒位移、typing 让位），零 egui 类型；`zela-egui::host` 只剩 `WindowInput` 适配。判据 `window_input_reaches_the_same_value_as_scene_events`（窗口坐标与场景事件落到同一个控件值）。 |
 | CH-02 | 事件本体没有身份，改 `SceneEvent` 又会改掉所有既有输入流的字节 | 场景 / 协议 | **已关闭** | 标记在**外层**：`Injected { tag, frame, source, payload }`（`payload` 是 tagged `kind`），`SceneEvent` 一个字节不动；`InjectError` 对 External 未实现 / 来源与载荷不匹配显式失败。用例见 `inject.rs` 的四条（含 `SourceMismatch` 的字段命名单列）。 |
 | CH-03 | 因果没有回执：谁引起哪一帧的变化无法查询 | 调试 / 场景 | **已关闭** | `zela_app::debug`：`ActiveTags`（一帧一个）、`TraceReport { derived, outcomes, frame_diff, diagnostics, truncated }`、`FrameDiff` 按 `(role, name)` 对齐；`trace_on` = 注入 → 逐帧 `advance` + 清空 → 差分，`quiet` 提前收敛。诚实限制写进模块文档：差分给的是「这一帧**所有**变化」，不是严格因果证明。判据 `trace_reports_derived_outcomes_diff_and_diagnostics`（含两次逐位相同）。 |
-| CH-04 | 跑着的 GUI 不可被机器读写（离线文件是唯一通道） | 宿主 / 调试 | **已关闭** | `zela_app::rpc`：NDJSON over TCP，**默认关**、只绑 `127.0.0.1`（`ZELA_DEBUG_RPC=<port>`）；命令只有 `get_frame` / `get_diagnostics` / `inject` / `probe` / `trace` / `screenshot`；`inject` 绝不推进帧，`probe = 注入 + 读 TraceReport`。GUI 用 mpsc bridge 把请求转主线程（`DriverPod` 内部 `RefCell` ⇒ 非 Send）。判据 `rpc_and_offline_produce_the_same_trace_report`（离线 ≡ RPC 逐位相同）、`probe_over_rpc_matches_the_offline_trace`。 |
+| CH-04 | 跑着的 GUI 不可被机器读写（离线文件是唯一通道） | 宿主 / 调试 | **已关闭（CI-a 补第三支）** | `zela_app::rpc`：NDJSON over TCP，**默认关**、只绑 `127.0.0.1`（`ZELA_DEBUG_RPC=<port>`）；命令只有 `get_frame` / `get_diagnostics` / `inject` / `probe` / `trace` / `screenshot`；`inject` 绝不推进帧，`probe = 注入 + 读 TraceReport`。GUI 用 mpsc bridge 把请求转主线程（`DriverPod` 内部 `RefCell` ⇒ 非 Send）。判据 `rpc_and_offline_produce_the_same_trace_report`（离线 ≡ RPC 逐位相同）、`probe_over_rpc_matches_the_offline_trace`；**CI-a** 补上真人窗口流：`debug::trace_window_stream` 按 `zela.window/1` 的 tag 还原注入，判据 `window_stream_trace_matches_offline_and_rpc`（离线 / RPC / 窗口流三份 `TraceReport` 逐字节相同）。 |
 | CH-05 | GUI 上 `inject` / `probe` 会静默失效：`begin_frame` 整帧覆盖 `InputEvents` | GUI / 调试 | **已关闭（CH-f 修正）** | headless 没有窗口输入 ⇒ 只有 GUI 暴露：RPC 注入的事件在同一次 `ui()` 里被窗口事件覆盖。现在保留已投递事件、再追加窗口事件（顺序稳定：注入在前）。这是 CH-c 的缺陷，由 CH-f 的"录 tag"需求逼出来 —— 顺带说明「机制已备、出口未开」的检查要覆盖宿主分叉。 |
 | CH-06 | 调试快照不写环境：同一个 `(x, y)` 在 2× DPI 上落到不同控件 | 调试 / 复现 | **已关闭** | `Diagnostics.environment`（`window_size` / `scale_factor` / `viewport` / 字体 `FontEnvironment`）；来源是唯一的 `WindowInput` 资源（GUI 与 headless 注入同一处写入）。判据 `diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit`（1× / 2× 帧 JSON 逐位相同）。 |
 | CH-07 | 字体清单只在 CLI 侧解析，GUI 装配拿不到同一套 face（CG-09 的准确名字是**装配环境未显式化**） | 装配 / 内容 | **已关闭** | 清单解析下沉 `zela_app::fonts`（`manifest` / `detect` / `ensure_font_dir` / `environment`），GUI 装配前 `ensure_font_dir()`，`zela-commands` 只保留下载。face 清单按 CD 的 `role` 归位为 **`Baked`**（回放端不执行、不进 `required_capabilities`），版本差异是可解释的差异；缺 face 如实列出（`missing`），不静默回退。 |
@@ -2157,6 +2157,30 @@
 | CH-10 | `External` 事件类别只有形状（第三方传感器 / IMU / 网络事件进不来） | 输入 / 协议 | **记账** | `InjectedPayload::External { name }` + `InjectError::ExternalUnsupported` 显式拒绝。触发条件：出现真实的外部事件源（且需要先定"外部事件如何映射到窗口 / 场景"的口径，否则会把不可复现的输入引进确定性链）。 |
 
 **CH 段小计**：已关闭 8（CH-01 / CH-02 / CH-03 / CH-04 / CH-05 / CH-06 / CH-07 / CH-08）· 部分关闭 0 · 记账 2（CH-09 / CH-10）· 未执行 0 · 已记录 0。
+
+---
+
+## CI. 文字路径归一与未来口子（2026-11-04）
+
+> 计划《CI 批次执行计划：文字路径归一与未来口子》。二期第三批：把文本与公式两条路径
+> 收成「两条路径、一个出口」，公式隔离为 `role = Source` 的源种类，做装配期矢量字形
+> 缓存，并把 shaping / bidi / 数学布局 / 富文本 / 字形库 / IME 锚点所需的**形状**一次留对
+> （只留形状不实现）。裁决依据见 `docs/principles.md` 的两条元规则。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CI-01 | 两套文字实现表示不统一（文本 / 公式各塞各的） | 内容 / 装配 | **已关闭** | 两条路径都产出同一种 `ContentIR`（`items` / `runs` / `source`）；`ContentOrigin` 增加 `kind`（`Text` / `Formula`），公式源与文本源一起进 payload。公式仍由 Typst 排版（§0.1：它的主场景是公式，不移除）。判据 `formula_source_is_recorded_with_formula_kind`。 |
+| CI-02 | 公式与文本共用「唯一入口」，源一旦不只是 Typst 就不知道调谁 | 内容 / 回放 | **已关闭** | 公式降为 `role = Source` 的源种类：`content.formula` 同时写入烘焙轮廓与 `ContentOrigin { kind: Formula }`；回放端 `Bundle::content_mode` 按**每个源自己的** `capability_name()` 询问能力，重建闭包按 `kind` 分派（文本 = 字面量包装，公式 = 原始 Typst 源码 + 阅读序）。判据 `content_origin_kind_round_trips_and_selects_the_capability`。 |
+| CI-03 | 同字形重复解析：每字形一份完整 `Path2D`，大文档重复解析 | 内容 / 性能 | **已关闭** | `DirectTextEngine` 增加 `(face 版本, glyph_id, 字号位模式)` → 已缩放轮廓的缓存（`BTreeMap` + `Mutex`，跨 clone 共享）；每个出现点只做一次 translate。判据 `repeated_glyphs_parse_once_and_cache_does_not_change_the_ir`（同字形只解析一次；缓存前后 `ContentIR` 逐位相同）。产物形状不变。 |
+| CI-04 | 未来文字能力的形状没有预留（shaping / bidi / 数学 / 富文本 / 字形库 / IME） | 内容 / 输入 / 调试 | **已关闭** | 六个口子：① `ContentOriginKind`；② `TextRun.markers`（范围 + 不透明 payload，空集不序列化）；③ `PathSource` / `GlyphKey` 形状（`StyledPath::source()` 恒为 `Inline`）；④ `MetricsProvider` / `LineBreaker` / `Shaping` / `Bidi` / `MathLayout`（Identity 直通 + Typst 默认实现）；⑤ `TextInput::Anchor` + `TextAnchorRef`（引用文本，不存 offset）；⑥ `Diagnostics.content`（后端 / face 版本，可空）。默认路径逐位不变，未引入新依赖 / 运行期分支。 |
+| CI-05 | CH 主判据第三支未补硬（真人窗口侧只有结构性等价） | 调试 / 回放 | **已关闭（CI-a）** | `debug::trace_window_stream` 按 `zela.window/1` 的 tag 还原注入；判据 `window_stream_trace_matches_offline_and_rpc`（离线 / RPC / 真人窗口三份 `TraceReport` 逐字节相同）。真人侧 tag 由录制流提供，不是运行期自动打点。 |
+| CI-06 | CG-08：图层与相机开关仍在宿主侧 | GUI / 场景 | **已关闭（CI-b）** | `ControlKind::RadioGroup` + 五个单选组（`show_2d` / `show_3d` / `viewport_camera` / `free_2d_camera` / `flip_layer_order`），`HudSystem` 写回 `UiConfig`；GUI 工具条删除相机下拉。判据 `layer_and_camera_switches_are_radio_group_scene_controls`。详见 CG-08。 |
+| CI-07 | 全局 legacy 兼容分支清理（`#[default] Runtime` 之外的散落处） | 全仓 | **记账** | 本批只清文字路径内的：`Capability.role` 改必填（缺失解码期报错，判据 `capability_role_is_required_at_decode_time`）。触发条件：下一次契约变更时顺手清其余散落处。 |
+| CI-08 | 轻量数学后端 / Typst 重依赖处置 | 内容 / 依赖 | **记账** | 触发条件：Typst 重依赖成为实际负担；届时独立成批并建立独立像素对拍面（不与文字路径归一混做）。 |
+
+**CI 段小计**：已关闭 6（CI-01 / CI-02 / CI-03 / CI-04 / CI-05 / CI-06）· 部分关闭 0 · 记账 2（CI-07 / CI-08）· 未执行 0 · 已记录 0。
+
+**基线与措辞**：含 `content.text` / `content.formula` 的作品因 `ContentOrigin.kind` 与公式源入产物而**重录** `demo/manifest.txt` 的 payload hash（fourier / storyboard / surface_matrix / surface_matrix_js / atlas / vector_paths / cap_text_group）；重录后逐位可复现。这是**一致性判据**，不是兼容性承诺（`docs/principles.md` 元规则 B）。
 
 ---
 

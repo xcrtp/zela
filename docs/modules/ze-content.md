@@ -11,20 +11,21 @@
 - 路径：`crates/kernel/ze-content`
 - 生产依赖（上游，dev-deps 不计）：`ze-interact`、`ze-notion`
 - 被依赖（下游）：`ze-prerender`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-render`、`zela-scene-ecs`
-- 源文件：8 个 · 1629 行
+- 源文件：9 个 · 1815 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/ir.rs` | 250 | — |
-| `src/lib.rs` | 21 | — |
+| `src/ir.rs` | 293 | — |
+| `src/lib.rs` | 26 | — |
 | `src/normalize.rs` | 109 | — |
 | `src/pair.rs` | 204 | — |
 | `src/placeholder.rs` | 169 | — |
 | `src/stroke.rs` | 297 | — |
 | `src/svg.rs` | 267 | — |
 | `src/text_metrics.rs` | 312 | 字体度量表（装配期烘焙的**纯值**）。 |
+| `src/text_ops.rs` | 138 | **CI-d 口子④**：文字能力的策略形状。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -41,6 +42,8 @@ graph LR
 |---|---|
 | `src/ir.rs` | `pub struct ContentSource` |
 | `src/ir.rs` | `pub struct Span` |
+| `src/ir.rs` | `pub struct GlyphKey` |
+| `src/ir.rs` | `pub enum PathSource` |
 | `src/ir.rs` | `pub struct StyledPath` |
 | `src/ir.rs` | `pub struct ContentIR` |
 | `src/normalize.rs` | `pub fn normalize_source(raw: &str) -> String` |
@@ -60,6 +63,14 @@ graph LR
 | `src/text_metrics.rs` | `pub struct TextMetrics` |
 | `src/text_metrics.rs` | `pub struct TextLine` |
 | `src/text_metrics.rs` | `pub fn is_cjk(ch: char) -> bool` |
+| `src/text_ops.rs` | `pub trait MetricsProvider` |
+| `src/text_ops.rs` | `pub trait LineBreaker` |
+| `src/text_ops.rs` | `pub struct ShapedGlyph` |
+| `src/text_ops.rs` | `pub trait Shaping` |
+| `src/text_ops.rs` | `pub struct IdentityShaping` |
+| `src/text_ops.rs` | `pub trait Bidi` |
+| `src/text_ops.rs` | `pub struct IdentityBidi` |
+| `src/text_ops.rs` | `pub trait MathLayout` |
 <!-- AUTO:END -->
 
 ## 职责
