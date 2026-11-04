@@ -2185,11 +2185,32 @@
 
 ---
 
+## CJ. 全仓大扫除与可观测性体检（2026-11-04）
+
+> 计划《186 CJ 批次执行计划：全仓大扫除与可观测性体检》。三个面共享一个出口：
+> **下一批计划执行时读到的是当前事实**。叙述层只改叙述、不改形状；代码层七条候选
+> 逐条判定（成立 ⇒ 修 + 用例；不成立 ⇒ 证据 + 记账）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CJ-01 | 叙述性过时（跨端逐位一致 / 命令只有 5 个 / 引擎只实现 `O1` / 项目所在层 L1 / `egui` 控件作现行状态） | 文档 / 全仓 | **已关闭** | 淘汰词表全仓扫描后逐处改写：`README.md`、`rpc.rs`（6 个命令）、`event.rs`（格式版本显式、旧格式不留分支）、`debug.rs`（tag 不进 `SceneEvent` 的理由改成"调试派生态"）、`binding.rs` / `scene_script.rs` / `scene_script_tests.rs`（四档 `SeekKind`）、`register.rs`（参数回写不再写 `egui` 控件）、`ze-comb` / `ze-pod-func`（"一个字节不动"改一致性与版本口径）。历史区加可见标注：`ARCHITECTURE.md` 头部「历史记录 + 现行口径指针」、`WASM_PORT_SURVEY.md` 既有快照声明、`docs/README.md` 标注 `research/` 为探测快照。双向对照表落在 `docs/README.md`「规范性陈述 ↔ 代码断言」。 |
+| CJ-02 | README 首段承诺跨端逐位一致；命令清单只列 8 步 | 文档 | **已关闭** | 首段改三层口径（同目标可复现 ✅ / 跨端结构一致 ✅ / 跨端逐位相同 ❌ 不承诺）并指向 `determinism.md`；命令清单补 `coverage` / `bench` / `fixtures`（`Step::ALL` 共 11 步）；末尾加 `https://ifdian.net/a/xcrtp`。 |
+| CJ-03 | 确定性口径把项目固定在 L1；`Replay` 的理由写成"没接"；六处注释声称引擎只实现 `O1` | 文档 / 场景 | **已关闭** | `determinism.md` 改为 **L1 + L2 并存**（`State` / `EventReplay` / 弹簧各自落在 L2），`Replay` 改写为 **AI-07 装配期红线**（不是能力缺口）；「三种口径」表标为全仓唯一定义，`GAPS.md` 头部改引用；`O1` 叙述改为 `O1 / OPerInterval / OLogN / EventReplay`；`principles.md` 补两条错误模式（JSON 浮点 1 ULP、输入事件生命周期）。 |
+| CJ-04 | GAPS 证据列与代码不一致（CD-01 的 `serde(default)` / 已删用例；CI-02 的能力名；CG-04 / CD-02 / CH-02 / CH-08 的兼容措辞） | GAPS | **已关闭** | F1–F6 逐条改：CD-01 改为 `role` 必填 + `capability_role_is_required_at_decode_time`；CI-02 如实写 `Text` / `Formula` 共用 `zela.content`；四条兼容措辞改为一致性口径（缺失显式、重录后逐位可复现）；GAPS 头部日期与「最近一次全仓叙述体检：CJ」；模块文档自动区由 `docs-gen` 刷新。185 §9 的 `CI-09` 同步为「未执行 / 记账」。 |
+| CJ-05 | §3.3 七条代码层可疑点 | 全仓 | **已关闭** | **B1 成立**：`FrameDiff` 扩展为三条平行结构（语义值 / 范围 / `focusable`、几何落点、文本），用例 `diff_covers_geometry_text_and_bounds`。**B2 成立**：`SceneEventRecord` 为 `Pointer` / `Key` / `Text` / `Command` 与控件事件补结构化变体，删除 `Debug` 字符串兜底，用例 `scene_event_records_keep_structure_and_serialize_stably`。**B3 成立**：`FrameTag` 清理并入 `EguiSceneHost::clear_input`，用例 `clear_input_also_clears_the_frame_tag`。**B4 成立**：RPC 编码兜底改走 `serde_json`，用例 `error_messages_with_quotes_and_newlines_stay_valid_json`。**B5 成立**：xtask 耗时汇总移入 `Timings` 的 `Drop`（失败早退也打印），用例 `timing_summary_is_sorted_and_complete`。**B6 成立**：`unpad_rows` 返回 `Result` 并校验长度 / 行宽，用例 `unpadding_rejects_short_buffers_and_narrow_rows`。**B7 成立**：新增走 `SceneFrame::begin` 的集成判据 `scene_frame_begin_consumes_input_exactly_once`（移除帧末清理即第二帧重复施加）。 |
+| CJ-06 | 可观测性链路两批未整体复核 | 调试 / 回放 | **已关闭** | 逐位判据复跑绿：`hud_agent_e2e`（`same_events_give_bitwise_identical_frames` / `trace_reports_derived_outcomes_diff_and_diagnostics` / `diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit`）、`debug_rpc`（离线 / RPC / 窗口流三份 `TraceReport` 逐字节相同；`inject` 不推进帧；`probe ≡ trace`）、`formula_source_is_recorded_with_formula_kind`。截图：headless 显式报错（`screenshot_is_explicitly_unsupported_on_headless`），PNG 不进逐位基线。诊断层：`Diagnostics.environment` / `Diagnostics.content` 只进回执，不进 `required_capabilities`（`fonts.rs` 的 `Baked` 角色）。计时 / 落盘：`ZELA_FRAME_REPORT` / `ZELA_OBSERVE` / `[timing]` / `HealthOverlay` / `zela-schedule::telemetry` 入口存在；失败路径由 B5 补齐。触发条件复核：`CH-09`（Wgpu 截图）/ `CH-10`（External）/ `CF-07`（`all_nodes` 顺序）/ `CF-08`（状态四档）/ `CI-07`（全局 legacy）/ `CI-08`（Typst 重依赖）仍准确，本批未兑现。归因链护栏：外部事件注入的结构化回执由 B2 覆盖。**未重录任何逐位基线**（`FrameDiff` 新字段空集不序列化，既有判据逐字节保持）。 |
+| CJ-07 | `CI-09` verify 分级调度 | xtask | **记账** | 185 第一版快照未执行（§0.8 是第二版才合入）；仓库 GAPS 原无此条。分级调度是 `xtask` 行为改动，与叙述审查不同性质 ⇒ 独立成批，本批**不实现**。触发条件：verify 全量耗时成为实际负担时单独论证。 |
+| CJ-08 | 计划版本绑定 | 流程 / 文档 | **已关闭** | 计划头部固定「适用起点（代码 HEAD + plans HEAD）+ 本文版本」；`CONTRIBUTING.md` 批次收尾检查表新增第 6 条（交付说明第一行回显）；184 / 185 的路线图同步 `CJ = 全仓大扫除`、`CK = kasuari`。 |
+
+**CJ 段小计**：已关闭 7（CJ-01 / CJ-02 / CJ-03 / CJ-04 / CJ-05 / CJ-06 / CJ-08）· 部分关闭 0 · 记账 1（CJ-07）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CG**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CG 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG / CH / CI / CJ 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CJ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CJ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

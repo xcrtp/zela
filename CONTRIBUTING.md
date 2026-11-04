@@ -77,6 +77,9 @@ cargo clippy --workspace --all-targets
 6. **计划版本绑定**（CJ 新增）：每份执行计划头部固定写「适用起点（代码 HEAD + plans HEAD）+
    本文版本」；执行方交付说明第一行回显这两个值。头部的版本是执行输入的一部分——
    执行方拿到旧快照就会漏做后合入的段落（185 §0.8 的教训）。
+7. **叙述体检**（CJ 新增）：收尾时按淘汰词表（定义与处置记录见 GAPS `CJ-01`）扫一遍
+   生产注释 / 导航文档 / GAPS 状态列，并核对 `docs/README.md` 的双向对照表仍有落点。
+   历史记录区（`ARCHITECTURE.md` / `docs/research/` / `WASM_PORT_SURVEY.md`）必须带**可见**标注。
 
 > 已知四次漏账（三条隐式默认值、B18 批次二、锚点作用域、Render Attachment）
 > 都至少能被其中一项抓住一次。见 GAPS PA-04。

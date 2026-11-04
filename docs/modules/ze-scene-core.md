@@ -11,14 +11,14 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：49 个 · 14110 行
+- 源文件：49 个 · 14115 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/animation/affine.rs` | 1246 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
-| `src/animation/binding.rs` | 479 | — |
+| `src/animation/binding.rs` | 480 | — |
 | `src/animation/mod.rs` | 37 | — |
 | `src/animation/params.rs` | 700 | params.rs — 参数注册表 side table（CA-b）与参数地址回写（CA-c）。 |
 | `src/animation/predicate.rs` | 893 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
@@ -34,7 +34,7 @@
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
 | `src/domain/config.rs` | 76 | — |
-| `src/domain/event.rs` | 342 | — |
+| `src/domain/event.rs` | 344 | — |
 | `src/domain/inject.rs` | 223 | **CH-a**：`Injected` envelope —— 给每一次注入打标记。 |
 | `src/domain/input_window.rs` | 393 | **CH-a**：窗口输入 —— `collect_events` 的纯函数形态。 |
 | `src/domain/mod.rs` | 30 | — |
@@ -57,7 +57,7 @@
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
 | `src/registry.rs` | 225 | — |
-| `src/scene_script.rs` | 1222 | — |
+| `src/scene_script.rs` | 1224 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |

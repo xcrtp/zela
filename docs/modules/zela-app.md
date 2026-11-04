@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-app`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-core`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`、`zela-commands`、`zela-gui`
-- 源文件：13 个 · 9213 行
+- 源文件：13 个 · 9621 行
 
 ### 文件清单
 
@@ -20,7 +20,7 @@
 | `src/assembly.rs` | 1006 | — |
 | `src/bin/zela-parity.rs` | 788 | `zela-parity`：**作品级**双后端对拍（B13 Step 1/2）。 |
 | `src/bin/zela-render.rs` | 739 | `zela-render`：headless 薄壳 —— 脚本直接渲到视频。 |
-| `src/debug.rs` | 644 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
+| `src/debug.rs` | 1028 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
 | `src/demos.rs` | 155 | 内置作品清单（GUI 的"作品"下拉；默认加载**全部** demo）。 |
 | `src/export.rs` | 467 | — |
 | `src/fonts.rs` | 165 | **CH-e**：确定性字体的环境解析（`tools/typst-fonts.txt` 清单 + 本地校验）。 |
@@ -29,7 +29,7 @@
 | `src/headless.rs` | 188 | **CG-g**：Headless 出口 —— 零窗口 / 零 GPU / 零 egui 也能跑一帧结构化 UI。 |
 | `src/lib.rs` | 3186 | — |
 | `src/python_env.rs` | 141 | 内嵌 Python 的**前置探测**（`feature = "python"`）。 |
-| `src/rpc.rs` | 410 | **CH-c**：debug RPC —— 把 [`crate::headless`] 的命令/响应形状套上 socket 传输。 |
+| `src/rpc.rs` | 434 | **CH-c**：debug RPC —— 把 [`crate::headless`] 的命令/响应形状套上 socket 传输。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -52,10 +52,14 @@ graph LR
 | `src/debug.rs` | `pub struct TraceReport` |
 | `src/debug.rs` | `pub struct FrameTrace` |
 | `src/debug.rs` | `pub enum SceneEventRecord` |
+| `src/debug.rs` | `pub struct ModifierRecord` |
 | `src/debug.rs` | `pub struct OutcomeRecord` |
 | `src/debug.rs` | `pub enum OutcomeKind` |
 | `src/debug.rs` | `pub struct FrameDiff` |
 | `src/debug.rs` | `pub struct SemanticChange` |
+| `src/debug.rs` | `pub struct BoundsChange` |
+| `src/debug.rs` | `pub struct GeometryChange` |
+| `src/debug.rs` | `pub struct TextChange` |
 | `src/debug.rs` | `pub struct Diagnostics` |
 | `src/debug.rs` | `pub struct ContentDiagnostics` |
 | `src/debug.rs` | `pub struct Environment` |
