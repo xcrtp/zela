@@ -1,5 +1,11 @@
 # Architecture
 
+> **历史记录 + 现行口径指针（CJ 标注）**：本文件是各批次的**决策记录**，正文保留当时的
+> 叙述（含已过时的措辞，如「旧 payload 逐字节不变」）。**现行口径以代码与
+> [`docs/guides/determinism.md`](docs/guides/determinism.md) 为准**；缺口与未接线项见
+> [`GAPS.md`](GAPS.md)。事实冲突时按 `docs/principles.md` 元规则 B（正确性 / 一致性优先于兼容性）
+> 裁决，不回改本文件的历史叙述。
+>
 > **本文件的『依赖图 / 分层 / 合规校验』由 `cargo-workspace-analyzer` 自动生成。**
 > 修改 `Cargo.toml` 后重新运行 `cargo-workspace-analyzer -d .` 即可刷新。
 > **不要手动编辑下方自动生成部分**——手写内容（设计原则、待决问题）请放在末尾『## 设计说明』。

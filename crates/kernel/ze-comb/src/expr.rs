@@ -10,7 +10,7 @@
 //!
 //! `registry.rs` 的 `stringify!` 对泛型产出 `Map<Sin,Pure<f32>>` —— 改实现就变。
 //! 这里把算子身份写成**数据**：`{ "namespace": "zela.math", "name": "sin" }`。
-//! 加一个新算子只是多一条数据，老 payload 的解码路径一个字节不动。
+//! 加一个新算子只是多一条数据，不改变既有节点的编码形态。
 
 use std::collections::BTreeMap;
 use std::fmt;

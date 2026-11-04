@@ -2,8 +2,8 @@
 //!
 //! # 原则
 //!
-//! - **不另写一套协议**：离线文件与 RPC 是同一份数据的两种通道；命令只有
-//!   `get_frame` / `get_diagnostics` / `inject` / `probe` / `trace`。
+//! - **不另写一套协议**：离线文件与 RPC 是同一份数据的两种通道；命令共 6 个：
+//!   `get_frame` / `get_diagnostics` / `inject` / `probe` / `trace` / `screenshot`。
 //! - **只投递，不驱动**：`inject` 带显式帧号进队列；**绝不因为 RPC 请求多跑一帧**。
 //!   `trace` / `probe` 是显式窗口（`max_frames`），它按契约推进并在回执里写明是否截断。
 //! - **只读 + 注入**：不开「改场景对象 / 设属性 / 热重载」——那会绕过装配期与

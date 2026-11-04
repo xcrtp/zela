@@ -640,7 +640,8 @@ pub struct SceneScript {
     /// **CC-a**：与 `creates` 平行的作用域归属（`None` = 根作用域）。
     ///
     /// 只含声明式路径 + 作用域时钟；序号在编译期按首次出现重新分配 ⇒
-    /// 产物里没有运行期分配的 id。空列表不序列化（既有 payload 逐字节不变）。
+    /// 产物里没有运行期分配的 id。无作用域时空列表不序列化（产物不含该字段）；
+    /// 有作用域时按声明序写入 `path` + `clock`。
     object_scopes: Vec<Option<ScopeSpec>>,
 }
 

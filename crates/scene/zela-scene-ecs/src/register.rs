@@ -66,7 +66,7 @@ pub fn register_systems(
 
     // S0：UI 输入的**场景侧**消费者（从 zela-egui 归位；面板 chrome 仍在 UI 层）。
     scheduler.add_system(Phase::LogicUpdate, TimeControlSystem);
-    // S0 + **CE-e**：参数回写（egui 控件 id 与场景内面板共用一条路径）。
+    // S0 + **CE-e**：参数回写（场景内面板与历史 `WidgetId` 分支共用一条 `params::apply` 路径）。
     scheduler.add_system(Phase::LogicUpdate, ParamPanelSystem);
     // **CG-f**：自研面板的控件状态机（视口事件 → ControlSet → 资源回写）。
     //
