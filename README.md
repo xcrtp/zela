@@ -164,4 +164,4 @@ MIT OR Apache-2.0；全文见 [LICENSE-MIT](LICENSE-MIT) 与 [LICENSE-APACHE](LI
 
 ## 支持
 
-<https://ifdian.net/a/xcrtp>
+[爱发电](https://ifdian.net/a/xcrtp)
