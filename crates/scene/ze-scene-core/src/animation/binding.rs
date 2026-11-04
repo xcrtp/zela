@@ -58,11 +58,11 @@ pub enum SeekKind {
     Replay,
 }
 
-/// 装配期拒绝：`SeekKind::Replay` 绑定尚无重放路径（AI-07）。
+/// 装配期拒绝：`SeekKind::Replay` 是 AI-07 红线（不向作者开放任意历史重放）。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
     "绑定 `{target}` 需要历史重放（SeekKind::Replay：历史 payload 的 predicate + Hold，\
-     或含 NatRec 的离散层），而引擎只实现了 O1 —— seek 到中间帧会无提示拿到错值，\
+     或含 NatRec 的离散层）；引擎不提供 `Replay`（AI-07 红线），seek 到中间帧会拿到错值，\
      故在装配期显式拒绝"
 )]
 pub struct ReplayUnsupported {
@@ -219,7 +219,7 @@ impl BindingTable {
     }
 
     /// 用**类型擦除的目标**添加一条曲线绑定，`seek_kind` 取 [`SeekKind::O1`]
-    /// （当前所有绑定都是纯函数 O1）。Timeline 的编译产物在此落地。
+    /// （曲线绑定是纯函数）。Timeline 的编译产物在此落地。
     pub fn bind_arc(&mut self, clock: ClockId, curve: Curve, target: Arc<dyn Target>) {
         self.add(Binding {
             clock,
@@ -336,8 +336,9 @@ impl BindingTable {
         self.bindings.is_empty()
     }
 
-    /// **装配期门禁（AI-07）**：引擎只实现了 `O1`，带 `SeekKind::Replay` 的绑定
-    /// seek 到中间帧会无提示拿到错值 ⇒ 在绑定表交付前显式拒绝。
+    /// **装配期门禁（AI-07）**：`Replay` 是显式红线（引擎实现的是
+    /// `O1 / OPerInterval / OLogN / EventReplay`）。带 `SeekKind::Replay` 的绑定
+    /// seek 到中间帧会拿到错值 ⇒ 在绑定表交付前显式拒绝。
     ///
     /// 现状零生产 `Replay`（可分析的 Hold 是纯函数，脚本侧不可分析的 Hold 已在
     /// [`crate::scene_script::ExprBindError::UnanalyzableHold`] 拒绝），因此这道

@@ -42,7 +42,7 @@ cargo run -p zela-gui -- --demo    # N 线能力测试 demo（capability_demo）
    **`翻转图层顺序` 复选框**（S3-2 验收开关：验证叠放顺序确实由 `SceneView::layers`
    的声明序决定，默认关），
    左二时间控制面板：播放/暂停、**`⟲ 重新播放`**（拨回 `t = 0` 并开始播放，
-   用于重看分镜；全部绑定是 O1 纯函数 ⇒ 回到 0 即回到初始画面）、速度、时间轴 seek，
+   用于重看分镜；绑定要么无记忆、要么可从 0 向前重算 ⇒ 回到 0 即回到初始画面）、速度、时间轴 seek，
    右侧动画参数
    （圆半径 / 曲线相位 / 3D 轨道相机 slider → `ParamPanelSystem` 写回 `BindingTable`）
 3. **右上角 Health Overlay（F1 切换）**：FPS、tick、实体数、绘制调用数

@@ -567,7 +567,8 @@ mod tests {
     }
 
     /// **B5 / AI-07**：含 `NatRec` 的绑定 `seek_kind` 是 `Replay`（离散层有记忆），
-    /// 而引擎只有 `O1` ⇒ **装配期显式失败**，不允许 seek 到中间帧静默拿错值。
+    /// 而 `Replay` 是 AI-07 红线（引擎实现 `O1 / OPerInterval / OLogN / EventReplay`）
+    /// ⇒ **装配期显式失败**，不允许 seek 到中间帧静默拿错值。
     #[test]
     fn nat_rec_binding_is_rejected_at_assembly() {
         use ze_scene_core::animation::{LibraryRef, ResetBehavior};

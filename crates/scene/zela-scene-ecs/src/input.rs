@@ -39,8 +39,9 @@ impl System for TimeControlSystem {
         for event in events {
             match event {
                 SceneEvent::Button { id } if id == ids::PLAY_PAUSE => dir.director.toggle(),
-                // 重新播放：拨回 0 并恢复播放。全部绑定是 O1（纯函数、无记忆）
-                // ⇒ 场景状态由 t 唯一决定，回到 0 即回到初始画面（无需重建场景）。
+                // 重新播放：拨回 0 并恢复播放。重播语义是**从 0 向前重算**，
+                // 不依赖反向 seek：L1 绑定由 t 唯一决定，L2 的有记忆演化从初始态
+                // 重放前缀 ⇒ 回到 0 即回到初始画面（无需重建场景）。
                 SceneEvent::Button { id } if id == ids::REPLAY => {
                     // 重播 = 回到起点：帧号与 t 一起归零（帧号是一等通道）。
                     dir.director.rewind();
