@@ -195,6 +195,21 @@ pub struct Diagnostics {
     /// **CH-e**：本帧的装配环境（窗口尺寸 / DPI / 视口 / 字体 face 清单）。
     #[serde(default)]
     pub environment: Environment,
+    /// **CI-d 口子⑥**：内容重建后端 / face 版本（可扩展；不进
+    /// `required_capabilities` —— 版本差异仍是"可解释的差异"）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<ContentDiagnostics>,
+}
+
+/// **CI-d 口子⑥**：内容路径的诊断（只报事实，不参与可还原性校验）。
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ContentDiagnostics {
+    /// 这次重建用的是哪个后端（例如 `typst` / `direct-text`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    /// 实际使用的 face 版本（字体数据指纹）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_version: Option<u64>,
 }
 
 /// **CH-e**：装配环境 —— 让同一个 `(x, y)` 在不同机器上的落点**可解释**。
@@ -324,11 +339,13 @@ pub fn diagnostics_of(driver: &DriverPod) -> Diagnostics {
             routed: None,
             note: Some("本场景没有结构化帧（无自研面板），只有事件层回执".into()),
             environment,
+            content: None,
         },
         Some(hud) => Diagnostics {
             routed: hud.routed_name().map(str::to_string),
             note: None,
             environment,
+            content: None,
         },
     }
 }

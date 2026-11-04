@@ -22,11 +22,15 @@
 //! `baseline` 是基线在该坐标系里的 y。字符盒用同一坐标系。
 
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
-use ze_content::ir::{ContentIR, ContentSource, Span, StyledPath};
+use ze_content::ir::{ContentIR, ContentSource, GlyphKey, Span, StyledPath};
 use ze_interact::{CharBox, Point as IxPoint, Rect as IxRect, TextRun};
 use ze_notion::{Color32, Path2D, Rect2D, Transform2D, Vec2};
 
 use crate::metrics::{MetricsDb, MetricsError};
+
+use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 
 /// 一次「文本 → 图元 + 字符盒」的产物。
 #[derive(Debug, Clone)]
@@ -37,15 +41,35 @@ pub struct TextOutput {
     pub missing_outlines: usize,
 }
 
+/// **CI-d**：装配期矢量字形缓存。
+///
+/// 键 = `(face 版本, glyph_id, 字号位模式)`。缓存的是**已缩放、未平移**的轮廓；
+/// 每个出现点只做一次 translate ⇒ 同字形在大文本里只解析一次。
+#[derive(Debug, Default)]
+struct GlyphCache {
+    outlines: BTreeMap<GlyphKey, Path2D>,
+    face_versions: BTreeMap<(String, u32), u64>,
+}
+
 /// 直排文字引擎：度量与轮廓走**同一份**字体数据（`MetricsDb` 的面）。
 #[derive(Debug, Clone)]
 pub struct DirectTextEngine {
     db: MetricsDb,
+    /// 字形缓存跨 clone 共享（同一引擎实例的所有消费者受益）。
+    cache: Arc<Mutex<GlyphCache>>,
+    /// 仅测试：真实解析轮廓的次数（缓存命中不计）。
+    #[cfg(test)]
+    outline_builds: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl DirectTextEngine {
     pub fn new(db: MetricsDb) -> Self {
-        Self { db }
+        Self {
+            db,
+            cache: Arc::new(Mutex::new(GlyphCache::default())),
+            #[cfg(test)]
+            outline_builds: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
     }
 
     /// `ZELA_TYPST_FONT_DIR` 优先，否则系统字体（与 typst 世界同一条发现规则）。
@@ -55,6 +79,66 @@ impl DirectTextEngine {
 
     pub fn db(&self) -> &MetricsDb {
         &self.db
+    }
+
+    /// **CI-d**：真实解析轮廓的次数（测试断言"同字形只解析一次"）。
+    #[cfg(test)]
+    pub fn outline_builds(&self) -> usize {
+        self.outline_builds
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// face 版本：字体数据 + face index 的指纹（同一次装配内稳定）。
+    fn face_version(
+        cache: &mut GlyphCache,
+        family: &str,
+        index: u32,
+        data: &[u8],
+    ) -> u64 {
+        let key = (family.to_string(), index);
+        if let Some(version) = cache.face_versions.get(&key) {
+            return *version;
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        data.hash(&mut hasher);
+        index.hash(&mut hasher);
+        let version = hasher.finish();
+        cache.face_versions.insert(key, version);
+        version
+    }
+
+    /// 取（或解析并缓存）**已缩放**的字形轮廓（未平移）。
+    fn scaled_outline(
+        &self,
+        face: &Face<'_>,
+        face_version: u64,
+        ch: char,
+        scale: f32,
+        font_size: f32,
+    ) -> Option<Path2D> {
+        let glyph = face.glyph_index(ch)?;
+        let key = GlyphKey {
+            face_version,
+            glyph_id: glyph.0,
+            size_bits: font_size.to_bits(),
+        };
+        if let Some(path) = self
+            .cache
+            .lock()
+            .expect("字形缓存锁中毒")
+            .outlines
+            .get(&key)
+        {
+            return Some(path.clone());
+        }
+        let scaled = outline(face, ch)?
+            .transformed(&Transform2D::scale(Vec2::splat(scale)));
+        #[cfg(test)]
+        self.outline_builds
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut cache = self.cache.lock().expect("字形缓存锁中毒");
+        cache.outlines.insert(key, scaled.clone());
+        Some(scaled)
     }
 
     /// 排版一段纯文本。
@@ -82,6 +166,15 @@ impl DirectTextEngine {
         let ascent = f32::from(face.ascender()) * scale;
         let descent = -f32::from(face.descender()) * scale;
         let line_height = metrics.line_height;
+        let face_version = {
+            let mut cache = self.cache.lock().expect("字形缓存锁中毒");
+            Self::face_version(
+                &mut cache,
+                family.unwrap_or_default(),
+                index,
+                data.as_slice(),
+            )
+        };
 
         let chars: Vec<(usize, char)> = text.char_indices().collect();
         let lines = metrics.wrap(wrap_width);
@@ -108,12 +201,10 @@ impl DirectTextEngine {
                 });
 
                 if !ch.is_whitespace() {
-                    match outline(&face, ch) {
+                    match self.scaled_outline(&face, face_version, ch, scale, font_size) {
                         Some(path) => {
-                            let placed = path.transformed(
-                                &Transform2D::scale(Vec2::splat(scale))
-                                    .compose(Transform2D::translate(Vec2::new(pen, baseline))),
-                            );
+                            let placed = path
+                                .transformed(&Transform2D::translate(Vec2::new(pen, baseline)));
                             items.push(
                                 StyledPath::filled(placed, fill).with_anchor(Span::new(
                                     byte_start,
@@ -299,6 +390,31 @@ mod tests {
             .expect("可排版");
         assert_eq!(a.ir, b.ir);
         assert_eq!(a.run, b.run);
+    }
+
+    /// **CI-d 判据**：同字形只解析一次；缓存前后 `ContentIR` 逐位相同。
+    #[test]
+    fn repeated_glyphs_parse_once_and_cache_does_not_change_the_ir() {
+        let Some(engine) = engine_or_skip() else {
+            return;
+        };
+        let cold = engine
+            .layout("aaaa", None, 24.0, 0.0, Color32::BLACK)
+            .expect("可排版");
+        let builds = engine.outline_builds();
+        assert_eq!(builds, 1, "同字形同字号只解析一次，实际 {builds}");
+
+        let warm = engine
+            .layout("aaaa", None, 24.0, 0.0, Color32::BLACK)
+            .expect("可排版");
+        assert_eq!(engine.outline_builds(), builds, "第二次全部命中缓存");
+        assert_eq!(cold.ir, warm.ir, "缓存前后 ContentIR 必须逐位相同");
+
+        // 字号变化 ⇒ 新键（size 是缓存键的一部分）。
+        engine
+            .layout("aaaa", None, 25.0, 0.0, Color32::BLACK)
+            .expect("可排版");
+        assert_eq!(engine.outline_builds(), builds + 1);
     }
 
     #[test]

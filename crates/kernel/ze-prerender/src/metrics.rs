@@ -204,6 +204,19 @@ impl MetricsDb {
     }
 }
 
+impl ze_content::text_ops::MetricsProvider for MetricsDb {
+    type Error = MetricsError;
+
+    fn measure(
+        &self,
+        text: &str,
+        family: Option<&str>,
+        font_size: f32,
+    ) -> Result<TextMetrics, MetricsError> {
+        MetricsDb::measure(self, text, family, font_size)
+    }
+}
+
 fn parse_face(face: &Face) -> Result<ttf_parser::Face<'_>, MetricsError> {
     ttf_parser::Face::parse(&face.data, face.index).map_err(|_| MetricsError::UnparsableFont {
         family: face.family.clone(),

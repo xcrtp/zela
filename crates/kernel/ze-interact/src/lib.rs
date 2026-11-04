@@ -53,4 +53,4 @@ pub use layout::{
     LayoutItem, PlacedRect, Size, layout_for_constraints,
 };
 pub use route::{RouteKey, RoutePhase, Router};
-pub use text::{CharBox, TextRun};
+pub use text::{CharBox, TextRun, TextRunMarker};

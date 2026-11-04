@@ -77,6 +77,40 @@ impl Span {
     }
 }
 
+/// **CI-d 口子③**：字形缓存键（`face 版本 + glyph_id + 字号位模式`）。
+///
+/// 形状先定死：将来「字形库 + 实例表」用它做引用；当前只实现
+/// [`PathSource::Inline`]，键不会被写进产物。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GlyphKey {
+    /// face 版本（字体数据的内容指纹；同一次装配内稳定）。
+    pub face_version: u64,
+    pub glyph_id: u16,
+    /// 字号（`f32::to_bits`；位模式保证可比较、可哈希）。
+    pub size_bits: u32,
+}
+
+/// **CI-d 口子③**：一条路径是内联轮廓还是对字形库的引用。
+///
+/// 默认 [`Inline`](Self::Inline)（今天的产物）；[`Ref`](Self::Ref) 只是形状，
+/// 本批不实现 —— 大文档的窗口化 / 字形库留二期。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum PathSource {
+    /// 轮廓直接在 [`StyledPath::path`] 里（当前唯一实现）。
+    Inline,
+    /// 引用字形库中的一份缓存轮廓（形状预留）。
+    Ref(GlyphKey),
+}
+
+impl Default for PathSource {
+    fn default() -> Self {
+        Self::Inline
+    }
+}
+
 /// 一条带样式与锚点的路径。
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +122,15 @@ pub struct StyledPath {
 }
 
 impl StyledPath {
+    /// **CI-d 口子③**：本路径的来源。默认路径恒为 [`PathSource::Inline`]。
+    ///
+    /// 为什么是方法而不是字段：字段会给**每一条**路径加序列化字节（产物变化）；
+    /// 当前唯一的真实值是 `Inline`，方法让"形状"零成本存在，等字形库落地时
+    /// 再把它变成字段（届时才需要改产物格式）。
+    pub fn source(&self) -> PathSource {
+        PathSource::Inline
+    }
+
     pub fn filled(path: Path2D, fill: Color32) -> Self {
         Self {
             path,
