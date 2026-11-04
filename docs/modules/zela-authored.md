@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-authored`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-interact`、`ze-node-core`、`ze-node-lower`、`ze-node-schema`、`ze-notion`、`ze-prerender`、`ze-render-ir`、`ze-scene-core`、`ze-time`、`zela-scene-ecs`
 - 被依赖（下游）：`zela-app`
-- 源文件：8 个 · 2043 行
+- 源文件：8 个 · 2065 行
 
 ### 文件清单
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | `src/capability_demo.rs` | 247 | — |
 | `src/demo3d.rs` | 135 | — |
-| `src/hud.rs` | 216 | **CG-f 作品**：三组自研控件（control / time / param）全部是场景图元。 |
+| `src/hud.rs` | 238 | **CG-f 作品**：三组自研控件（control / time / param）全部是场景图元。 |
 | `src/lib.rs` | 21 | — |
 | `src/node_state.rs` | 464 | **CF-d**：节点状态 → 场景 `State` 的映射与校验（D1 / D4 的兑现点）。 |
 | `src/panels.rs` | 199 | **CE-e 作品**：两个 View + 两个参数面板（场景对象）。 |

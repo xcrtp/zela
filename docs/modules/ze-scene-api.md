@@ -11,14 +11,14 @@
 - 路径：`crates/scene/ze-scene-api`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-pod-core`、`ze-pod-macro`、`ze-prerender`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`zela-scene-ecs`
-- 源文件：5 个 · 2237 行
+- 源文件：5 个 · 2249 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/api.rs` | 245 | — |
-| `src/content_service.rs` | 268 | — |
+| `src/content_service.rs` | 280 | — |
 | `src/lib.rs` | 97 | 脚本 Pod 的 **domain 侧**：能力定义 + `scene` / `content` 两个 Service。 |
 | `src/scene_service.rs` | 1061 | — |
 | `src/types.rs` | 566 | — |

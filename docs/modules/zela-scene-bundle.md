@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-bundle`
 - 生产依赖（上游，dev-deps 不计）：`ze-render-ir`、`ze-scene-core`、`zela-scene-ecs`
 - 被依赖（下游）：`zela-app`、`zela-cli`、`zela-commands`、`zela-egui`、`zela-playback`、`zela-web`
-- 源文件：4 个 · 1947 行
+- 源文件：4 个 · 1989 行
 
 ### 文件清单
 
@@ -19,7 +19,7 @@
 |---|---|---|
 | `src/frame_hash.rs` | 144 | — |
 | `src/input_stream.rs` | 610 | **输入流**（D 批）：与 ZSB 分离的独立产物。 |
-| `src/lib.rs` | 1020 | — |
+| `src/lib.rs` | 1062 | — |
 | `src/sha256.rs` | 173 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

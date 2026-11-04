@@ -11,19 +11,19 @@
 - 路径：`crates/kernel/ze-interact`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-content`、`ze-prerender`、`zela-app`、`zela-authored`、`zela-node-editor`、`zela-scene-ecs`
-- 源文件：7 个 · 1655 行
+- 源文件：7 个 · 1784 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/control.rs` | 423 | **CG-d**：控件层 —— 从「画控件」变成「描述控件」。 |
+| `src/control.rs` | 502 | **CG-d**：控件层 —— 从「画控件」变成「描述控件」。 |
 | `src/frame.rs` | 188 | **CG-c**：结构化帧（`Frame`）—— UI 的一次**快照**。 |
 | `src/hit.rs` | 241 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
 | `src/layout.rs` | 438 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
 | `src/lib.rs` | 56 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
 | `src/route.rs` | 205 | 路由（CE-c）：hover / focus / capture 三档。 |
-| `src/text.rs` | 104 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
+| `src/text.rs` | 154 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -74,6 +74,7 @@ graph LR
 | `src/route.rs` | `pub enum RoutePhase` |
 | `src/route.rs` | `pub struct Router` |
 | `src/text.rs` | `pub struct CharBox` |
+| `src/text.rs` | `pub struct TextRunMarker` |
 | `src/text.rs` | `pub struct TextRun` |
 <!-- AUTO:END -->
 

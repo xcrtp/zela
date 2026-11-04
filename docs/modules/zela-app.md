@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-app`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-core`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`、`zela-commands`、`zela-gui`
-- 源文件：13 个 · 9109 行
+- 源文件：13 个 · 9213 行
 
 ### 文件清单
 
@@ -20,14 +20,14 @@
 | `src/assembly.rs` | 1006 | — |
 | `src/bin/zela-parity.rs` | 788 | `zela-parity`：**作品级**双后端对拍（B13 Step 1/2）。 |
 | `src/bin/zela-render.rs` | 739 | `zela-render`：headless 薄壳 —— 脚本直接渲到视频。 |
-| `src/debug.rs` | 575 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
+| `src/debug.rs` | 644 | **CH-b**：`ActiveTags` + `TraceReport` —— 注入前后的**差分回执**。 |
 | `src/demos.rs` | 155 | 内置作品清单（GUI 的"作品"下拉；默认加载**全部** demo）。 |
 | `src/export.rs` | 467 | — |
 | `src/fonts.rs` | 165 | **CH-e**：确定性字体的环境解析（`tools/typst-fonts.txt` 清单 + 本地校验）。 |
 | `src/formula.rs` | 585 | — |
 | `src/frame_loop.rs` | 739 | 帧循环（B9 Step 3）：`zela-render` 与 `zela-verify` 共用的**唯一**渲染循环。 |
 | `src/headless.rs` | 188 | **CG-g**：Headless 出口 —— 零窗口 / 零 GPU / 零 egui 也能跑一帧结构化 UI。 |
-| `src/lib.rs` | 3151 | — |
+| `src/lib.rs` | 3186 | — |
 | `src/python_env.rs` | 141 | 内嵌 Python 的**前置探测**（`feature = "python"`）。 |
 | `src/rpc.rs` | 410 | **CH-c**：debug RPC —— 把 [`crate::headless`] 的命令/响应形状套上 socket 传输。 |
 
@@ -57,6 +57,7 @@ graph LR
 | `src/debug.rs` | `pub struct FrameDiff` |
 | `src/debug.rs` | `pub struct SemanticChange` |
 | `src/debug.rs` | `pub struct Diagnostics` |
+| `src/debug.rs` | `pub struct ContentDiagnostics` |
 | `src/debug.rs` | `pub struct Environment` |
 | `src/debug.rs` | `pub fn diff_frames(before: Option<&Frame>, after: Option<&Frame>) -> FrameDiff` |
 | `src/debug.rs` | `pub enum TraceError` |
@@ -70,6 +71,7 @@ graph LR
 | `src/debug.rs` | `pub fn inject_injected(driver: &DriverPod, injected: &Injected) -> Result<usize, String>` |
 | `src/debug.rs` | `pub fn trace_on(` |
 | `src/debug.rs` | `pub fn replay_window_stream(` |
+| `src/debug.rs` | `pub fn trace_window_stream(` |
 | `src/debug.rs` | `pub fn trace_error_text(error: &TraceError) -> String` |
 | `src/demos.rs` | `pub struct Demo` |
 | `src/demos.rs` | `pub fn demo(id: &str) -> Option<&'static Demo>` |
