@@ -403,6 +403,60 @@ fn recorded_window_stream_replays_the_same_trajectory() {
     assert_eq!(sparse.frames.len(), 1, "dt 不是窗口轨迹的一部分");
 }
 
+/// **CI-b / CG-08 判据**：图层与相机开关全部由 `ControlSpec` 描述（单选组），
+/// 点哪段选哪项 —— 宿主侧不再有遗留开关控件。
+#[test]
+fn layer_and_camera_switches_are_radio_group_scene_controls() {
+    let switches = [
+        "show_2d",
+        "show_3d",
+        "viewport_camera",
+        "free_2d_camera",
+        "flip_layer_order",
+    ];
+    let scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+    let before = scene.frame().expect("有 Frame");
+    for name in switches {
+        let node = before
+            .semantics
+            .iter()
+            .find(|node| node.role == "radio" && node.name == name)
+            .unwrap_or_else(|| panic!("缺少单选组 `{name}`：{:?}", before.semantics));
+        assert_eq!(node.value.as_deref(), Some("0"), "默认选第一项：{name}");
+        assert!(node.focusable);
+        assert!(node.bounds.width() > 0.0 && node.bounds.height() > 0.0);
+    }
+
+    // 点 `viewport_camera` 的第二段（3 个选项 ⇒ t = 0.55 落在第 1 项）。
+    let (x, y) = scene.slider_point("viewport_camera", 0.55).expect("世界坐标");
+    inject(
+        &scene,
+        vec![
+            SceneEvent::ViewportClick {
+                layer: LayerId(0),
+                scene_pos: ze_notion::Vec2::new(x, y),
+            },
+            SceneEvent::ViewportRelease {
+                layer: LayerId(0),
+                scene_pos: ze_notion::Vec2::new(x, y),
+            },
+        ],
+    );
+    scene.advance(2, 1.0 / 60.0);
+    scene.clear_events();
+
+    let after = scene.frame().expect("拖拽后仍有一帧 Frame");
+    assert_eq!(
+        after.value_of("radio", "viewport_camera"),
+        Some("1"),
+        "单选组必须写回选中下标"
+    );
+    assert_eq!(
+        scene.diagnostics_snapshot().routed.as_deref(),
+        Some("viewport_camera")
+    );
+}
+
 /// **确定性**：同一场景、同一事件流 ⇒ 两帧 JSON 逐字节相同。
 #[test]
 fn same_events_give_bitwise_identical_frames() {

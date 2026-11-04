@@ -27,7 +27,13 @@ pub const HUD_ORIGIN: Vec2 = Vec2::new(-9.0, -0.2);
 /// 面板宽度（世界单位）。
 pub const HUD_WIDTH: f32 = 5.0;
 
-/// 三组控件的声明（顺序 = 行序，id 从 0 递增 ⇒ 布局确定）。
+/// **CI-b**：单选组的静态选项（`ControlKind` 保持 `Copy`）。
+const ON_OFF: &[&str] = &["显示", "隐藏"];
+const CAMERA_MODES: &[&str] = &["2D", "3D 轨道", "3D 第一人称"];
+const CAMERA_DRIVE: &[&str] = &["分镜", "自由"];
+const LAYER_ORDER: &[&str] = &["正常", "翻转"];
+
+/// 四组控件的声明（顺序 = 行序，id 从 0 递增 ⇒ 布局确定）。
 ///
 /// `param_sliders`：`(语义名 / 参数地址, 最小值, 最大值, 当前值)`。空 = 本场景没有
 /// 可调参数（面板只剩 control + time 两组）。
@@ -48,6 +54,12 @@ pub fn hud_specs(
     specs.push(ControlSpec::button(id(), "filter_gain"));
     specs.push(ControlSpec::button(id(), "filter_distortion"));
     specs.push(ControlSpec::button(id(), "filter_blur"));
+    // **CI-b / CG-08**：图层与相机开关从宿主侧搬进场景图元（单选组描述）。
+    specs.push(ControlSpec::radio_group(id(), "show_2d", ON_OFF, 0));
+    specs.push(ControlSpec::radio_group(id(), "show_3d", ON_OFF, 0));
+    specs.push(ControlSpec::radio_group(id(), "viewport_camera", CAMERA_MODES, 0));
+    specs.push(ControlSpec::radio_group(id(), "free_2d_camera", CAMERA_DRIVE, 0));
+    specs.push(ControlSpec::radio_group(id(), "flip_layer_order", LAYER_ORDER, 0));
 
     // ── 时间 ──
     specs.push(ControlSpec::button(id(), "play_pause"));
@@ -126,13 +138,15 @@ mod tests {
     }
 
     #[test]
-    fn specs_cover_three_groups_in_declaration_order() {
+    fn specs_cover_four_groups_in_declaration_order() {
         let specs = hud_specs(&[("1:curve:0000:base".to_string(), 0.0, 1.0, 0.5)]);
-        assert_eq!(specs.len(), 10, "control 5 + time 4 + param 1");
+        assert_eq!(specs.len(), 15, "control 5 + radio 5 + time 4 + param 1");
         let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
         assert_eq!(names[0], "show_grid");
-        assert_eq!(names[5], "play_pause");
-        assert_eq!(names[9], "1:curve:0000:base");
+        assert_eq!(names[5], "show_2d");
+        assert_eq!(names[9], "flip_layer_order");
+        assert_eq!(names[10], "play_pause");
+        assert_eq!(names[14], "1:curve:0000:base");
     }
 
     /// **真实口径**：面板的 `row_height` / `gap` / 字号必须容得下标签（标签画在行距里）。

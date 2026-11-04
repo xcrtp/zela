@@ -181,19 +181,25 @@ impl Hud {
         }
     }
 
-    /// 值变化后滑块的圆心 x（世界坐标）。
+    /// 值变化后滑块 / 单选组的指示圆 x（世界坐标）。
     fn knob_world_x(&self, id: LayoutId) -> Option<(ObjectId, f32)> {
         let row = self.rows.iter().find(|row| row.id == id)?;
         let knob = row.knob?;
-        let (min, max) = match row.kind {
-            ControlKind::Slider { min, max } => (min, max),
-            _ => return None,
-        };
         let value = self.set.value(id)?;
-        let t = if (max - min).abs() < f64::EPSILON {
-            0.0
-        } else {
-            ((value - min) / (max - min)).clamp(0.0, 1.0)
+        let t = match row.kind {
+            ControlKind::Slider { min, max } => {
+                if (max - min).abs() < f64::EPSILON {
+                    0.0
+                } else {
+                    ((value - min) / (max - min)).clamp(0.0, 1.0)
+                }
+            }
+            // 单选组：指示圆落在选中段中心。
+            ControlKind::RadioGroup { options } => {
+                let count = options.len().max(1) as f64;
+                ((value + 0.5) / count).clamp(0.0, 1.0)
+            }
+            _ => return None,
         };
         let world = self.metrics.to_world(row.rect);
         Some((knob, world.min.x + world.size().x * t as f32))
@@ -330,20 +336,28 @@ pub fn build(
                 } else {
                     ((value - min) / (max - min)).clamp(0.0, 1.0) as f32
                 };
-                let knob = scene
-                    .spawn_dyn(vec![
-                        Box::new(Circle::new(
-                            Vec2::new(world.min.x + world.size().x * t, world.center().y),
-                            metrics.knob_radius,
-                        )),
-                        Box::new(FillSolid::new(Color32::new(228, 232, 244, 255))),
-                        Box::new(ZOrder::new(HUD_KNOB_Z)),
-                    ])
-                    .expect("HUD：Circle / FillSolid 已登记");
-                Some(knob)
+                Some(t)
+            }
+            // 单选组：指示圆落在选中段中心。
+            ControlKind::RadioGroup { options } => {
+                let count = options.len().max(1) as f64;
+                let value = set.value(placed.id).unwrap_or(0.0);
+                Some((((value + 0.5) / count).clamp(0.0, 1.0)) as f32)
             }
             _ => None,
         };
+        let knob = knob.map(|t| {
+            scene
+                .spawn_dyn(vec![
+                    Box::new(Circle::new(
+                        Vec2::new(world.min.x + world.size().x * t, world.center().y),
+                        metrics.knob_radius,
+                    )),
+                    Box::new(FillSolid::new(Color32::new(228, 232, 244, 255))),
+                    Box::new(ZOrder::new(HUD_KNOB_Z)),
+                ])
+                .expect("HUD：Circle / FillSolid 已登记")
+        });
 
         rows.push(Row {
             id: placed.id,
@@ -469,7 +483,19 @@ impl System for HudSystem {
                             match name.as_str() {
                                 "speed" => director.director.set_speed(value),
                                 "seek" => director.director.seek(value),
-                                other => eprintln!("[zela] HUD 未知滑块 `{other}`"),
+                                // **CI-b / CG-08**：图层与相机开关（单选组，值 = 选项下标）。
+                                "show_2d" => ui.show_2d = value < 0.5,
+                                "show_3d" => ui.show_3d = value < 0.5,
+                                "viewport_camera" => {
+                                    ui.viewport_camera = match value.round() as i32 {
+                                        1 => crate::domain::ViewportCamera::ThreeDOrbit,
+                                        2 => crate::domain::ViewportCamera::ThreeDFps,
+                                        _ => crate::domain::ViewportCamera::TwoD,
+                                    }
+                                }
+                                "free_2d_camera" => ui.free_2d_camera = value >= 0.5,
+                                "flip_layer_order" => ui.flip_layer_order = value >= 0.5,
+                                other => eprintln!("[zela] HUD 未知数值控件 `{other}`"),
                             }
                         }
                     }
