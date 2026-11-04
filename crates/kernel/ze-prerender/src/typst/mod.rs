@@ -90,6 +90,36 @@ fn format_diags(errs: &ecow::EcoVec<typst::diag::SourceDiagnostic>) -> String {
     s
 }
 
+/// **CI-d 口子④**：公式排版的默认实现（Typst capability）。
+///
+/// 这是"把已经存在的能力收在 trait 后面"：内部仍走同一条
+/// `request → take`，不改变任何计算。
+impl ze_content::text_ops::MathLayout for InMemoryEngine {
+    type Error = ContentError;
+
+    fn layout_math(
+        &self,
+        source: &str,
+        font_size: f32,
+        fill: ze_notion::Color32,
+    ) -> Result<ze_content::ContentIR, ContentError> {
+        use crate::ContentEngine as _;
+        let cfg = ContentConfig {
+            font_size,
+            fill,
+            scale_factor: 1.0,
+        };
+        let handle = self.request(source, &cfg);
+        match self.take(handle) {
+            Some(Ok(ir)) => Ok(ir),
+            Some(Err(error)) => Err(error),
+            None => Err(ContentError::CompileFailed(
+                "公式排版未就绪（句柄已被取走）".into(),
+            )),
+        }
+    }
+}
+
 /// 构造 Typst 引擎实例。字体与 Library 会随引擎长期持有以复用。
 ///
 /// 注：同一引擎实例内多次编译共享同一个 TypstWorld，

@@ -9,8 +9,9 @@ pub mod placeholder;
 pub mod stroke;
 pub mod svg;
 pub mod text_metrics;
+pub mod text_ops;
 
-pub use ir::{ContentIR, ContentSource, Span, StyledPath};
+pub use ir::{ContentIR, ContentSource, GlyphKey, PathSource, Span, StyledPath};
 pub use normalize::{hash_source, normalize_source};
 pub use pair::{degenerate_at, pair_by_anchor};
 pub use stroke::{
@@ -19,3 +20,7 @@ pub use stroke::{
 };
 pub use svg::{SvgOptions, to_svg};
 pub use text_metrics::{GlyphMetrics, TextLine, TextMetrics, is_cjk};
+pub use text_ops::{
+    Bidi, IdentityBidi, IdentityShaping, LineBreaker, MathLayout, MetricsProvider, ShapedGlyph,
+    Shaping,
+};

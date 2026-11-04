@@ -164,7 +164,26 @@ pub enum KeyInput {
     },
 }
 
-/// **CG-d**：文本输入（形状）。输入法组合单独一支（组合期不能当提交）。
+/// **CI-d 口子⑤**：输入法锚点的**引用**（不存字符 offset）。
+///
+/// 锚点只引用「哪段文本 + 哪一端」；真正的屏幕 / 场景坐标由布局在消费端现算。
+/// 这样文本重排后候选窗跟着走，不会因为录制时存了旧 offset 而漂移。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextAnchorRef {
+    /// 被引用的文本对象的**语义名**（不是运行期 id）。
+    pub target: String,
+    pub edge: TextAnchorEdge,
+}
+
+/// 锚点端（当前只有两端；预留中间插入点由布局反查）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAnchorEdge {
+    Start,
+    End,
+}
+
+/// **CG-d / CI-d**：文本输入（形状）。输入法组合单独一支（组合期不能当提交）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TextInput {
@@ -172,6 +191,8 @@ pub enum TextInput {
     Commit { text: String },
     /// 输入法组合中的临时文本（`composing = false` 表示组合结束）。
     Compose { text: String, composing: bool },
+    /// **CI-d**：输入法候选窗锚点（引用文本，不存 offset）。
+    Anchor { anchor: TextAnchorRef },
 }
 
 /// **CG-d**：语义命令（形状）。Agent 与快捷键共用一条通道。
@@ -287,6 +308,14 @@ mod tests {
             SceneEvent::Text {
                 input: TextInput::Commit {
                     text: "你好".to_string(),
+                },
+            },
+            SceneEvent::Text {
+                input: TextInput::Anchor {
+                    anchor: TextAnchorRef {
+                        target: "editor".to_string(),
+                        edge: TextAnchorEdge::End,
+                    },
                 },
             },
             SceneEvent::Command {

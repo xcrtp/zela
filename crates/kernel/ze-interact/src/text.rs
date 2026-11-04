@@ -18,6 +18,21 @@ pub struct CharBox {
     pub rect: Rect,
 }
 
+/// **CI-d 口子②**：一段范围上的**不透明**标注。
+///
+/// 范围用字符**标量下标**（与 [`CharBox::index`] 同口径、半开区间）。
+/// `payload` 不定义任何样式语义 —— 富文本 span / 诊断波浪线 / 读屏标注
+/// 都只是"在这段范围上挂一份数据"，解释权在消费者。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TextRunMarker {
+    pub start: usize,
+    pub end: usize,
+    /// 不透明载荷（调用方自行编码；内核不解释）。
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub payload: Vec<u8>,
+}
+
 /// 文本的逐字符盒。
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -26,6 +41,14 @@ pub struct TextRun {
     pub chars: Vec<CharBox>,
     /// 行高（换行后的行距也用它）。
     pub line_height: f64,
+    /// **CI-d 口子②**：范围标注（默认空集）。
+    ///
+    /// 空时不进序列化 ⇒ 默认路径的 `ContentIR` 字节不变（零产物风险）。
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub markers: Vec<TextRunMarker>,
 }
 
 impl TextRun {
@@ -33,6 +56,7 @@ impl TextRun {
         Self {
             chars: Vec::new(),
             line_height,
+            markers: Vec::new(),
         }
     }
 
@@ -62,6 +86,15 @@ impl TextRun {
 
     pub fn is_empty(&self) -> bool {
         self.chars.is_empty()
+    }
+
+    /// **CI-d 口子②**：追加一条范围标注（不解释 payload）。
+    pub fn mark(&mut self, start: usize, end: usize, payload: Vec<u8>) {
+        self.markers.push(TextRunMarker {
+            start,
+            end,
+            payload,
+        });
     }
 }
 
@@ -100,5 +133,22 @@ mod tests {
         let run = TextRun::new(10.0);
         assert!(run.is_empty());
         assert_eq!(run.char_at(Point::new(0.0, 0.0)), None);
+    }
+
+    /// **CI-d 口子②**：默认空集不进序列化 ⇒ 默认路径字节不变。
+    #[cfg(feature = "serde")]
+    #[test]
+    fn empty_markers_are_omitted_from_json_and_payload_round_trips() {
+        let mut run = run();
+        let json = serde_json::to_string(&run).expect("可序列化");
+        assert!(
+            !json.contains("markers"),
+            "空标注不得出现在默认产物里：{json}"
+        );
+        run.mark(0, 2, b"diag".to_vec());
+        let json = serde_json::to_string(&run).expect("可序列化");
+        let back: TextRun = serde_json::from_str(&json).expect("可反序列化");
+        assert_eq!(run, back);
+        assert_eq!(back.markers[0].payload, b"diag");
     }
 }
