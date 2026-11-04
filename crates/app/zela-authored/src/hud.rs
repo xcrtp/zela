@@ -74,7 +74,15 @@ pub fn hud_specs(
     specs
 }
 
-/// 面板的世界坐标口径（比 CE-e 的面板更紧凑：15 行也要落进取景框）。
+/// 面板的世界坐标口径（比 CE-e 的面板更紧凑：20 行也要落进取景框）。
+///
+/// # 为什么这么小（**CI-b** 的硬约束）
+///
+/// 观测口径是 `Framing2D::new(Vec2::ZERO, 34.0)` + 默认 `ViewRect`（800×600）：
+/// 可见世界范围只有 `y ∈ [-8.82, 8.82]`。面板从 [`HUD_ORIGIN`] 向上排，
+/// 20 行（5 按钮 + 5 单选 + 4 时间 + 6 参数）的总高度
+/// `padding + 21.4·row_height + 19·gap` 必须 ≤ 8.8 —— 否则参数滑块落到视口外，
+/// 窗口输入（`collect_events` 的视口判定）就再也点不到它们了。
 ///
 /// `gap` 必须容得下标签文字（约 `label_font_size * 1.3`）：标签画在两行之间，
 /// 行距不够就会压到上一行的轨道。
@@ -82,11 +90,11 @@ pub fn hud_metrics() -> HudMetrics {
     HudMetrics {
         origin: HUD_ORIGIN,
         width: HUD_WIDTH,
-        row_height: 0.36,
-        gap: 0.29,
-        padding: 0.14,
-        label_font_size: 0.20,
-        knob_radius: 0.11,
+        row_height: 0.22,
+        gap: 0.195,
+        padding: 0.10,
+        label_font_size: 0.14,
+        knob_radius: 0.09,
     }
 }
 
