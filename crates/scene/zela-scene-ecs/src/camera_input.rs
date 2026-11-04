@@ -388,6 +388,34 @@ mod tests {
         assert_eq!(camera.target, Vec3::ZERO);
     }
 
+    /// **回归（CJ 后实测）**：放大到最近距离后，反向 Dolly 必须能把相机拉回来。
+    ///
+    /// 旧实现在 `|eye − target| <= 1e-2` 时直接返回（连负向 Dolly 也丢掉）
+    /// ⇒ 轨道相机滚到最近后再也推不回去。
+    #[test]
+    fn dolly_can_zoom_back_out_after_reaching_the_near_limit() {
+        let mut camera = Camera3D::new(
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::ZERO,
+            Vec3::Y,
+            Projection::perspective(1.0, 1.0, 0.1, 100.0),
+        );
+        for _ in 0..1000 {
+            apply_orbit(&mut camera, CameraCommand::Dolly { delta: 0.02 });
+        }
+        let near = (camera.eye - camera.target).length();
+        assert!(near < 1e-2, "应已推到近端极限，实际 {near}");
+
+        for _ in 0..50 {
+            apply_orbit(&mut camera, CameraCommand::Dolly { delta: -0.02 });
+        }
+        let far = (camera.eye - camera.target).length();
+        assert!(
+            far > near + 0.5,
+            "负向 Dolly 必须能拉回：{near} → {far}"
+        );
+    }
+
     /// 3D 视口命令经 System 落到场景对象上（Orbit 模式）。
     #[test]
     fn orbit_mode_camera_consumes_orbit_dolly() {

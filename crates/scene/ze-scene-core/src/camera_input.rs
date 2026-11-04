@@ -86,12 +86,20 @@ pub fn apply_orbit(camera: &mut Camera3D, command: CameraCommand) {
         CameraCommand::Dolly { delta } => {
             let to_target = camera.target - camera.eye;
             let len = to_target.length();
-            if len <= 1e-2 {
-                return; // 退化/贴身：无推拉空间（也避免 clamp 边界反转）
+            if len <= f32::EPSILON {
+                return; // eye 与 target 重合：方向退化
             }
-            // 正值朝目标靠近；夹住步长，避免越过 target（穿到背面）。
-            let step = delta.clamp(-len + 1e-3, len - 1e-3);
-            camera.eye += to_target / len * step;
+            let dir = to_target / len;
+            if delta >= 0.0 {
+                // 靠近：夹住步长，避免越过 target（穿到背面）。
+                let step = delta.min((len - 1e-3).max(0.0));
+                camera.eye += dir * step;
+            } else {
+                // 远离：没有"穿过去"的风险，**不受近端保护阻挡**。
+                // 旧实现把 `len <= 1e-2` 当成退化直接返回，连负向 Dolly 也吃掉
+                // ⇒ 放大到最近距离后再也拉不回来（本次 bug）。
+                camera.eye += dir * delta;
+            }
         }
         _ => {}
     }
