@@ -15,8 +15,8 @@ use zela_app::rpc::{self, Command, Request, Response};
 use zela_app::SceneChoice;
 use ze_scene_core::domain::{Injected, PointerState, WindowInput};
 
-/// 构造"点滑块 80%"的窗口输入注入（帧号 0）。
-fn injected_click(scene: &headless::HeadlessScene) -> Injected {
+/// 构造"点滑块 80%"的窗口输入（帧号 0）。
+fn click_input(scene: &headless::HeadlessScene) -> WindowInput {
     let frame = scene.frame().expect("有 Frame");
     let name = frame
         .semantics
@@ -32,7 +32,7 @@ fn injected_click(scene: &headless::HeadlessScene) -> Injected {
         .expect("有 2D 图层")
         .1;
     let screen = camera.world_to_screen(ze_notion::Vec2::new(wx, wy));
-    let input = WindowInput {
+    WindowInput {
         pointer: PointerState {
             position: Some(screen),
             hovering: true,
@@ -42,8 +42,12 @@ fn injected_click(scene: &headless::HeadlessScene) -> Injected {
         viewport: camera.rect,
         window_size: ze_notion::Vec2::new(camera.rect.max.x, camera.rect.max.y),
         ..WindowInput::default()
-    };
-    Injected::window(1, 0, input).with_label("rpc click")
+    }
+}
+
+/// 构造"点滑块 80%"的窗口输入注入（帧号 0）。
+fn injected_click(scene: &headless::HeadlessScene) -> Injected {
+    Injected::window(1, 0, click_input(scene)).with_label("rpc click")
 }
 
 /// 客户端线程：连上后依次发请求、读完响应再关连接（让 `serve_once` 返回）。
@@ -181,4 +185,57 @@ fn probe_over_rpc_matches_the_offline_trace() {
     let probe: TraceReport =
         serde_json::from_value(responses[0].result.clone().expect("有结果")).expect("回执可反序列化");
     assert_eq!(probe, offline, "probe 与 trace 是同一个机制");
+}
+
+/// **CI-a 判据**：离线 / RPC / 真人窗口流三份 `TraceReport` 逐位相同。
+///
+/// 窗口流只录**换算之前**的窗口输入 + tag（`zela.window/1`）；回放端用同一个
+/// `collect_events` 重算，再走同一个 `trace_on` —— 三条路因此不可能分叉。
+#[test]
+fn window_stream_trace_matches_offline_and_rpc() {
+    use zela_app::debug::trace_window_stream;
+    use zela_scene_bundle::{Pairing, WindowStream};
+
+    // 离线基准（无 label：流里不存 label，三者用同一形状比较）。
+    let offline_scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+    let input = click_input(&offline_scene);
+    let injected = Injected::window(1, 0, input.clone());
+    let offline = offline_scene.trace(&injected, 8).expect("离线回执");
+
+    // RPC 基准。
+    let rpc_scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("本地端口");
+    let addr = listener.local_addr().expect("地址");
+    let responses = client(
+        addr,
+        vec![Request {
+            id: 31,
+            command: Command::Trace {
+                injected,
+                max_frames: Some(8),
+            },
+        }],
+    );
+    rpc::serve_once(&listener, &rpc_scene).expect("服务一个连接");
+    let responses = responses.join().expect("客户端线程");
+    assert!(responses[0].ok, "{:?}", responses[0]);
+    let via_rpc: TraceReport =
+        serde_json::from_value(responses[0].result.clone().expect("有结果")).expect("回执可反序列化");
+
+    // 真人窗口流：同一帧的窗口输入 + tag，回放端重算。
+    let live_scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+    let mut stream = WindowStream::new(Pairing {
+        zsb_payload_hash: "live-window".to_string(),
+        libraries: Vec::new(),
+    });
+    stream.record(0, &input, Some(1));
+    let via_window = trace_window_stream(&live_scene.driver(), &stream, 8).expect("窗口流回执");
+
+    assert_eq!(via_rpc, offline, "离线与 RPC 必须逐位相同");
+    assert_eq!(via_window, offline, "真人窗口流与离线必须逐位相同");
+    assert_eq!(
+        serde_json::to_string(&via_window).expect("可序列化"),
+        serde_json::to_string(&offline).expect("可序列化"),
+        "序列化后逐字节相同"
+    );
 }
