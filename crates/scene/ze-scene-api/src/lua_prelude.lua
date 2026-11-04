@@ -65,6 +65,7 @@ function scene.text(source, opts)
         y = text_y,
     })
     for i = 1, #glyphs do
+        -- 字形路径宽度为 0 ⇒ `PathShape` 自动按颜色填充（不描边）。
         local components = { PathShape { path = glyphs[i] } }
         if opts.style ~= nil then
             for j = 1, #opts.style do

@@ -108,7 +108,8 @@ pub struct SceneApi<'a> {
     /// 由内容路径构造书写对象（`Reveal` + `StrokeSolid` 组件组）。
     pub reveal_path: fn(&'a dyn Pod, shape: RevealPath) -> Handle,
 
-    /// 由内容路径构造静态对象（`Path` + `StrokeSolid` 组件组）。
+    /// 由内容路径构造静态对象（`width > 0` → `Path` + `StrokeSolid`；`width = 0` →
+    /// `Path` + `FillSolid`，文本字形走填充）。
     pub path_shape: fn(&'a dyn Pod, shape: PathShape) -> Handle,
 
     /// 构造路径跟随组件（动画层阶段 2）：`PathFollow.t` 每帧写 `t`，

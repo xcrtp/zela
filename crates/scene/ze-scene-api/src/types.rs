@@ -451,7 +451,8 @@ pub struct RevealPath {
     pub path: Path,
 }
 
-/// 静态路径组件组：`Path` + `StrokeSolid`。
+/// 静态路径组件组：`Path` + 样式（`width > 0` → `StrokeSolid`；`width = 0` → `FillSolid`，
+/// 文本字形走填充分支）。
 #[derive(Clone, Copy, Debug, PartialEq, PodType, SceneComponent)]
 #[pod_type(name = "zela.PathShape")]
 pub struct PathShape {

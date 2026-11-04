@@ -253,6 +253,13 @@ fn store_paths(
     outlines: Vec<StrokeOutline>,
     origin: Option<ContentOrigin>,
 ) -> Vec<Path> {
+    // **文本是填充字形**：`stroke_style` 的默认细线宽是给"书写动画"（公式 / RevealPath）
+    // 用的；若文本也带上它，`PathShape` 会在填充之外再描一圈 1pt 的边 ⇒ 字腔被填窄、
+    // 开口闭合（实测 "s" / "a" 变成两个小孔的 8 字）。文本路径因此显式取 0 宽度，
+    // 只走填充；仍要描边的调用方自己加 `Stroke` 组件覆盖。
+    let fill_only = origin
+        .as_ref()
+        .is_some_and(|origin| origin.kind == ContentOriginKind::Text);
     outlines
         .into_iter()
         .enumerate()
@@ -265,7 +272,7 @@ fn store_paths(
                 }),
             ),
             color: to_color(outline.color),
-            width: outline.width,
+            width: if fill_only { 0.0 } else { outline.width },
         })
         .collect()
 }
@@ -276,5 +283,54 @@ fn to_color(color: NotionColor) -> Color {
         g: color.g(),
         b: color.b(),
         a: color.a(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn outline(width: f32) -> StrokeOutline {
+        StrokeOutline {
+            path: Path2D::new(),
+            color: NotionColor::WHITE,
+            width,
+        }
+    }
+
+    /// **回归（字腔闭合）**：文本路径必须是纯填充（宽度 0）；公式路径保留描边宽度
+    /// （书写动画靠它可见）。
+    #[test]
+    fn text_paths_are_fill_only_while_formula_paths_keep_their_width() {
+        let store = PathStore::new();
+        let text = store_paths(
+            &store,
+            vec![outline(0.045)],
+            Some(content_origin_meta(
+                ContentOriginKind::Text,
+                "a",
+                1.0,
+                0.0,
+                0.0,
+            )),
+        );
+        assert_eq!(text[0].width, 0.0, "文本不得带默认描边宽度");
+
+        let formula = store_paths(
+            &store,
+            vec![outline(0.045)],
+            Some(content_origin_meta(
+                ContentOriginKind::Formula,
+                "a",
+                1.0,
+                0.0,
+                0.0,
+            )),
+        );
+        assert!(
+            (formula[0].width - 0.045).abs() < 1e-6,
+            "公式路径的描边宽度必须保留：{}",
+            formula[0].width
+        );
     }
 }

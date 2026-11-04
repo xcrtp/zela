@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：28 个 · 11306 行
+- 源文件：28 个 · 11334 行
 
 ### 文件清单
 
@@ -24,7 +24,7 @@
 | `src/animation/path_follow.rs` | 131 | — |
 | `src/animation/system.rs` | 974 | — |
 | `src/animation/target_tests.rs` | 397 | — |
-| `src/camera_input.rs` | 667 | — |
+| `src/camera_input.rs` | 695 | — |
 | `src/composer.rs` | 306 | — |
 | `src/contract.rs` | 810 | — |
 | `src/deferred.rs` | 434 | — |

@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-authored`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-interact`、`ze-node-core`、`ze-node-lower`、`ze-node-schema`、`ze-notion`、`ze-prerender`、`ze-render-ir`、`ze-scene-core`、`ze-time`、`zela-scene-ecs`
 - 被依赖（下游）：`zela-app`
-- 源文件：8 个 · 2065 行
+- 源文件：8 个 · 2068 行
 
 ### 文件清单
 
@@ -24,7 +24,7 @@
 | `src/node_state.rs` | 464 | **CF-d**：节点状态 → 场景 `State` 的映射与校验（D1 / D4 的兑现点）。 |
 | `src/panels.rs` | 199 | **CE-e 作品**：两个 View + 两个参数面板（场景对象）。 |
 | `src/spring.rs` | 240 | **CF-d 作品**：节点编辑器里的弹簧（Vec2 状态）→ 场景 `State`。 |
-| `src/storyboard.rs` | 521 | — |
+| `src/storyboard.rs` | 524 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

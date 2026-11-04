@@ -324,11 +324,14 @@ fn spawn_text_label(enc: &mut SceneEncoder, engine: &InMemoryEngine) {
     for outline in ze_content::stroke_outlines(&ir, TEXT_FONT_SIZE, ze_notion::Vec2::ZERO, false) {
         enc.spawn(vec![
             Box::new(Path::new(outline.path)),
-            Box::new(StrokeSolid::new_in(
-                outline.width,
-                outline.color,
-                MeasureSpace::World,
-            )),
+            // **静态文字是填充字形**：描边宽度是给书写动画（`spawn_formula_reveal`）的；
+            // 文本若描边会在填充外再扩一圈 ⇒ 字腔变窄、开口闭合。
+            Box::new(FillSolid::new((
+                outline.color.r(),
+                outline.color.g(),
+                outline.color.b(),
+                outline.color.a(),
+            ))),
             Box::new(Transform {
                 position: TEXT_POS,
                 ..Default::default()

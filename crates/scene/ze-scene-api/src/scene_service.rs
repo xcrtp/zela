@@ -944,10 +944,16 @@ fn scene_path_shape(pod: &dyn Pod, shape: PathShape) -> Handle {
     let mut rec = this.rec.borrow_mut();
     match this.paths.get(&shape.path.path) {
         Ok(path) => {
-            let mut components: Vec<Box<dyn ze_scene_contract::Component>> = vec![
-                Box::new(NativePath::new(path)),
-                Box::new(world_stroke(shape.path)),
-            ];
+            let mut components: Vec<Box<dyn ze_scene_contract::Component>> =
+                vec![Box::new(NativePath::new(path))];
+            // **宽度 0 = 纯填充**：文本字形没有描边语义。挂 0 宽 `StrokeSolid` 会让
+            // 后端走描边分支（fill 被忽略，只剩发丝线），因此这里显式换成填充，
+            // 颜色取内容路径自己的 `color`（脚本仍可用 `Fill` 覆盖）。
+            if shape.path.width > 0.0 {
+                components.push(Box::new(world_stroke(shape.path)));
+            } else {
+                components.push(Box::new(FillSolid::new(color32(shape.path.color))));
+            }
             if let Some(origin) = this.paths.origin(&shape.path.path) {
                 components.push(Box::new(origin));
             }

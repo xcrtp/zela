@@ -65,9 +65,16 @@ scene.spawn({
     belong,
 })
 
--- Path × Stroke：文本编译出的描边路径（每字形一条对象）。
+-- Path × Stroke：文本编译出的填充路径 + 显式描边（每字形一条对象）。
 -- 排版糖：`parent = surf` ⇒ 字形直接挂到内容层对象下（与 `belong` 同一个 `Parent`）。
-scene.text("AB", { size = 3.0, x = 3.0, y = -0.5, parent = surf })
+-- 文本本身是填充字形（宽度 0）；描边由这里显式给，仍覆盖 Path × Stroke 组合。
+scene.text("AB", {
+    size = 3.0,
+    x = 3.0,
+    y = -0.5,
+    parent = surf,
+    style = { stroke_cool },
+})
 
 -- Path × Fill：同一份字形轮廓走填充（另一种样式组合，空间上不重叠）。
 scene.text("CD", {
