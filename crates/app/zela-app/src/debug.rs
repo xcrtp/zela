@@ -516,6 +516,58 @@ pub fn replay_window_stream(
     Ok(played)
 }
 
+/// **CI-a**：窗口层流 → `TraceReport`（与离线 / RPC 同一个 [`trace_on`]）。
+///
+/// 窗口流里带 `tag` 的那一帧就是「注入帧」：
+/// 1. 先按帧号重放它之前的窗口输入（同一个 `collect_events`，不存换算结果）；
+/// 2. 到注入帧后调用 [`trace_on`] —— 与 GUI / RPC 完全同一条实现。
+///
+/// 只有一条流、一个 tag：多 tag 的流仍应分帧录制（一帧一个 active tag 的口径）。
+pub fn trace_window_stream(
+    driver: &DriverPod,
+    stream: &zela_scene_bundle::WindowStream,
+    max_frames: u32,
+) -> Result<TraceReport, TraceError> {
+    let Some(entry) = stream.frames.iter().find(|entry| entry.tag.is_some()) else {
+        return Err(TraceError::Input(
+            "窗口流没有带标记的帧（tag = None）".into(),
+        ));
+    };
+    let tag = entry.tag.expect("已判 Some");
+
+    for frame in 0..entry.frame {
+        let events: Vec<SceneEvent> = match stream.input_at(frame) {
+            Some(input) => {
+                let context = input_context_of(driver)
+                    .ok_or_else(|| TraceError::Input("场景没有可操作的图层".into()))?;
+                let events = ze_scene_core::domain::collect_events(input, &context);
+                store_window_input(driver, input);
+                events
+            }
+            None => Vec::new(),
+        };
+        driver.with_scheduler_mut(|scheduler| {
+            scheduler
+                .resources_mut()
+                .insert(InputEvents::from_events(events));
+        });
+        driver.submit(DriverCommand::Batch {
+            frames: 1,
+            dt: 1.0 / 60.0,
+        });
+    }
+
+    let current = driver.frame();
+    if current != entry.frame {
+        return Err(TraceError::FrameMismatch {
+            requested: entry.frame,
+            current,
+        });
+    }
+    let injected = Injected::window(tag, entry.frame, entry.input.clone());
+    trace_on(driver, &injected, max_frames)
+}
+
 /// 把 `TraceError` 变成 RPC 错误文本（保持类型在 app 层）。
 pub fn trace_error_text(error: &TraceError) -> String {
     error.to_string()
