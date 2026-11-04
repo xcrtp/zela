@@ -105,5 +105,5 @@ pub use walk::ExprVisitor;
 /// 受影响的作品只有 `expr_demo`（唯一使用表达式层的作品）。
 ///
 /// 阶段 1 / 3 的新增（`i64` 字面量、`bytes` 值、`nat_rec` / `rec_prev` / `rec_index`
-/// 节点）都是**追加**：老 payload 不含这些标签，解码路径一个字节不动 ⇒ 不递增。
+/// 节点）都是**追加**：新标签只扩展新节点的编码，既有节点的编码形态不变 ⇒ 不递增。
 pub const SCHEMA_VERSION: u32 = 2;
