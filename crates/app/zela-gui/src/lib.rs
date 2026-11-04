@@ -35,7 +35,7 @@ use zela_render_backends::registry::{AdapterFacts, BackendKind};
 use zela_render_backends::routing::{self, LoopBackend};
 use zela_render_backends::{RenderContext, RoutingDecision, install_standard_backends};
 use zela_scene_ecs::DriverPod;
-use zela_scene_ecs::domain::{UiConfig, ViewportCamera};
+use zela_scene_ecs::domain::ViewportCamera;
 use zela_scene_ecs::Result;
 use zela_scene_ecs::errors::Error;
 
@@ -424,37 +424,9 @@ impl App {
                 self.picker = Some(ScriptPicker::new());
             }
 
-            // 视口操作目标（与左侧控制面板里的单选是**同一份** `UiConfig`）：
-            // 放一份在工具条上，面板收起 / 找不到时也能切到 3D 第一人称。
-            ui.separator();
-            ui.label("相机");
-            let mut camera = self.runtime.driver.with_scheduler(|scheduler| {
-                scheduler
-                    .resources()
-                    .get::<UiConfig>()
-                    .map(|config| config.viewport_camera)
-                    .unwrap_or_default()
-            });
-            let before = camera;
-            gui::ComboBox::from_id_salt("zela-camera")
-                .selected_text(camera_label(camera))
-                .show_ui(ui, |ui| {
-                    for (mode, label) in [
-                        (ViewportCamera::TwoD, "2D（平移/缩放）"),
-                        (ViewportCamera::ThreeDOrbit, "3D 轨道"),
-                        (ViewportCamera::ThreeDFps, "3D 第一人称"),
-                    ] {
-                        ui.selectable_value(&mut camera, mode, label);
-                    }
-                });
-            if camera != before {
-                self.runtime.driver.with_scheduler_mut(|scheduler| {
-                    if let Some(config) = scheduler.resources_mut().get_mut::<UiConfig>() {
-                        config.viewport_camera = camera;
-                    }
-                });
-                self.status = format!("视口操作：{}", camera_label(camera));
-            }
+            // **CI-b / CG-08**：图层与相机开关已全部搬进场景图元（`zela_authored::hud`），
+            // 宿主不再保留任何 `UiConfig` 开关控件。工具条只留作品 / 后端两个
+            // **应用级**选择器（它们不属于 `UiConfig`，改的是装配入口）。
 
             ui.separator();
             if self.status.is_empty() {
@@ -815,7 +787,7 @@ fn backend_label(backend: LoopBackend) -> &'static str {
     }
 }
 
-/// 视口操作目标的显示名（工具条与左侧控制面板共用同一份 `UiConfig`）。
+/// 视口操作目标的显示名（日志与场景内单选组共用同一份口径）。
 fn camera_label(camera: ViewportCamera) -> &'static str {
     match camera {
         ViewportCamera::TwoD => "2D（平移/缩放）",

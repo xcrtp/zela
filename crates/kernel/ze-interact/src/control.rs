@@ -25,7 +25,7 @@ use crate::hit::{HitId, Point, Rect};
 use crate::layout::{BoxLayout, Constraints, Layout, LayoutId, LayoutItem, PlacedRect};
 use crate::route::{RouteKey, Router};
 
-/// 控件类型（本批三种：滑块 / 按钮 / 标签）。
+/// 控件类型（本批四种：滑块 / 按钮 / 标签 / 单选组）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ControlKind {
     /// 水平滑块：`[min, max]` 的连续值。
@@ -34,6 +34,11 @@ pub enum ControlKind {
     Button,
     /// 纯标签：不可交互。
     Label,
+    /// **CI-b**：单选组 —— 值 = 选项下标（`0..options.len()`）。
+    ///
+    /// 形状只为「图层 / 相机开关」这类枚举常量；选项文本是**静态**的
+    /// （`&'static [&'static str]`），因此 `ControlKind` 仍是 `Copy`。
+    RadioGroup { options: &'static [&'static str] },
 }
 
 impl ControlKind {
@@ -43,6 +48,7 @@ impl ControlKind {
             ControlKind::Slider { .. } => 20.0,
             ControlKind::Button => 24.0,
             ControlKind::Label => 16.0,
+            ControlKind::RadioGroup { .. } => 20.0,
         }
     }
 
@@ -87,6 +93,22 @@ impl ControlSpec {
             name: name.into(),
             kind: ControlKind::Label,
             value: None,
+        }
+    }
+
+    /// **CI-b**：单选组（`selected` 超出范围 ⇒ clamp 到最后一个）。
+    pub fn radio_group(
+        id: LayoutId,
+        name: impl Into<String>,
+        options: &'static [&'static str],
+        selected: usize,
+    ) -> Self {
+        let last = options.len().saturating_sub(1);
+        Self {
+            id,
+            name: name.into(),
+            kind: ControlKind::RadioGroup { options },
+            value: Some(selected.min(last) as f64),
         }
     }
 }
@@ -224,6 +246,12 @@ impl ControlSet {
                         self.pressed_buttons.insert(spec.id);
                     }
                     ControlKind::Label => {}
+                    ControlKind::RadioGroup { options } => {
+                        let value = radio_index(self.rects[index], point, options.len());
+                        if self.set_value(index, value) {
+                            outcomes.push(ControlOutcome::ValueChanged { id: spec.id, value });
+                        }
+                    }
                 }
             }
             ControlEvent::Released(point) => {
@@ -280,7 +308,21 @@ fn role_of(kind: ControlKind) -> &'static str {
         ControlKind::Slider { .. } => "slider",
         ControlKind::Button => "button",
         ControlKind::Label => "label",
+        ControlKind::RadioGroup { .. } => "radio",
     }
+}
+
+/// 单选组的点 → 选项下标（等分轨道；右边界归最后一个）。
+fn radio_index(rect: Rect, point: Point, count: usize) -> f64 {
+    if count == 0 {
+        return 0.0;
+    }
+    let width = rect.width();
+    if width <= 0.0 {
+        return 0.0;
+    }
+    let t = ((point.x - rect.min.x) / width).clamp(0.0, 1.0);
+    ((t * count as f64).floor() as usize).min(count - 1) as f64
 }
 
 /// 轨道上的 x → 值（线性；超出轨道按端点 clamp）。
@@ -419,5 +461,42 @@ mod tests {
         let constraints = constraints_for(&specs, 200.0);
         assert_eq!(constraints.max.width, 200.0);
         assert_eq!(constraints.max.height, 16.0 + 20.0 + 24.0);
+    }
+
+    /// **CI-b**：单选组的值 = 选项下标；点哪段选哪项，越界 clamp。
+    #[test]
+    fn radio_group_selects_the_segment_under_the_pointer() {
+        static OPTIONS: [&str; 3] = ["2D", "轨道", "第一人称"];
+        let mut set = ControlSet::new(vec![ControlSpec::radio_group(
+            LayoutId(0),
+            "viewport_camera",
+            &OPTIONS,
+            0,
+        )]);
+        let frame = set.frame(Constraints::new(300.0, 400.0));
+        assert_eq!(frame.semantics[0].role, "radio");
+        assert_eq!(frame.semantics[0].value.as_deref(), Some("0"));
+        assert!(frame.semantics[0].focusable);
+        let rect = frame.geometry[0].rect;
+
+        let at = |t: f64| Point::new(rect.min.x + rect.width() * t, rect.center().y);
+        assert_eq!(
+            set.handle(ControlEvent::Pressed(at(0.55))),
+            vec![ControlOutcome::ValueChanged {
+                id: LayoutId(0),
+                value: 1.0
+            }]
+        );
+        assert_eq!(
+            set.handle(ControlEvent::Pressed(at(0.999))),
+            vec![ControlOutcome::ValueChanged {
+                id: LayoutId(0),
+                value: 2.0
+            }],
+            "右端归最后一个选项"
+        );
+        set.handle(ControlEvent::Released(at(0.999)));
+        assert_eq!(set.value(LayoutId(0)), Some(2.0));
+        assert_eq!(set.frame(Constraints::new(300.0, 400.0)).semantics[0].value.as_deref(), Some("2"));
     }
 }
