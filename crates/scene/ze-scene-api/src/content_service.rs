@@ -25,7 +25,7 @@ use ze_content::StrokeOutline;
 use ze_notion::{Color32 as NotionColor, Path2D, Vec2 as NotionVec2};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 use ze_prerender::InMemoryEngine;
-use ze_scene_core::components::ContentOrigin;
+use ze_scene_core::components::{ContentOrigin, ContentOriginKind};
 
 use crate::types::{Color, Formula, Path, PathList, Text};
 
@@ -178,13 +178,23 @@ fn service(pod: &dyn Pod) -> &ContentServicePod {
 // ─── typed 函数实现 ─────────────────────────────────────────────────────
 
 fn content_formula(pod: &dyn Pod, spec: Formula) -> PathList {
-    compile(pod, &spec.source, spec.font_size, spec.x, spec.y, true, None)
+    // **CI-c**：公式也是一个 `role = Source` 的内容源（kind = Formula）。
+    // 源 = 作者写的 Typst 源码（不含自动 `$ $` 包装）；重建端按 kind 走数学路径。
+    let origin = content_origin_meta(
+        ContentOriginKind::Formula,
+        &spec.source,
+        spec.font_size,
+        spec.x,
+        spec.y,
+    );
+    compile(pod, &spec.source, spec.font_size, spec.x, spec.y, true, Some(origin))
 }
 
 fn content_text(pod: &dyn Pod, spec: Text) -> PathList {
     let source = ze_content::text_literal_source(&spec.source);
     // **CD-b**：烘焙轮廓 + 原始文本**同时**进产物（后者供 rebuild）。
-    let origin = content_origin_meta(&spec.source, spec.font_size, spec.x, spec.y);
+    let origin =
+        content_origin_meta(ContentOriginKind::Text, &spec.source, spec.font_size, spec.x, spec.y);
     compile(
         pod,
         &source,
@@ -198,12 +208,14 @@ fn content_text(pod: &dyn Pod, spec: Text) -> PathList {
 
 /// 内容源的公共部分（`path_index` 在 `store_paths` 里按顺序补上）。
 fn content_origin_meta(
+    kind: ContentOriginKind,
     text: &str,
     font_size: f32,
     x: f32,
     y: f32,
 ) -> ContentOrigin {
     ContentOrigin {
+        kind,
         text: text.to_string(),
         font_size,
         x,

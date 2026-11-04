@@ -763,6 +763,7 @@ mod tests {
         enc.spawn(vec![
             Box::new(ze_scene_core::Path(baked())),
             Box::new(ContentOrigin {
+                kind: ze_scene_core::components::ContentOriginKind::Text,
                 text: "Hi".to_string(),
                 font_size: 32.0,
                 x: 1.0,
@@ -779,11 +780,11 @@ mod tests {
             MetaInput {
                 capabilities: vec![
                     Capability::new("scene", Some("1")),
-                    Capability::new("content", Some("1")).with_role(CapabilityRole::Source),
+                    Capability::new("zela.content", Some("1")).with_role(CapabilityRole::Source),
                 ],
                 required_capabilities: vec![
                     Capability::new("scene", Some("1")),
-                    Capability::new("content", Some("1")).with_role(CapabilityRole::Source),
+                    Capability::new("zela.content", Some("1")).with_role(CapabilityRole::Source),
                 ],
                 pods: vec![Pod::new("scene", "0.1.0")],
                 required_pods: vec![Pod::new("scene", "0.1.0")],
@@ -799,7 +800,7 @@ mod tests {
         Available::new(
             vec![
                 Capability::new("scene", Some("1")),
-                Capability::new("content", Some("1")),
+                Capability::new("zela.content", Some("1")),
             ],
             vec![Pod::new("scene", "0.1.0")],
         )

@@ -347,12 +347,22 @@ pub fn build_bundle_runtime(
     let engine = (has_sources || has_views).then(formula::build_engine);
     let rebuild = |origin: &ze_scene_core::components::ContentOrigin| {
         let engine = engine.as_ref()?;
+        // **CI-c**：按源种类选后端 / 走对应语义。
+        // - 文本源：与 `content.text` 同一条（字面量包装 + 不按阅读序排序）；
+        // - 公式源：与 `content.formula` 同一条（原始 Typst 源码 + 阅读序排序）。
+        let (source, sort_reading_order) =
+            match origin.kind {
+                ze_scene_core::components::ContentOriginKind::Text => {
+                    (ze_content::text_literal_source(&origin.text), false)
+                }
+                ze_scene_core::components::ContentOriginKind::Formula => (origin.text.clone(), true),
+            };
         let outlines = ze_scene_core::content::compile(
             engine,
-            &ze_content::text_literal_source(&origin.text),
+            &source,
             origin.font_size,
             ze_notion::Vec2::new(origin.x, origin.y),
-            false,
+            sort_reading_order,
         );
         outlines
             .get(origin.path_index)
@@ -2279,6 +2289,31 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         assert_eq!(restored.len(), rebuilt.len(), "路径数必须一致");
         for ((index, path), outline) in restored.iter().zip(rebuilt.iter()) {
             assert_eq!(*path, outline.path, "path_index {index} 的轮廓必须逐位相同");
+        }
+    }
+
+    /// **CI-c**：公式源以 `kind = Formula` 进产物（与文本源同一出口、不同种类）。
+    ///
+    /// 这修掉旧口径的隐含假设「源一定是文本 / 一定由 Typst 字面量包装重建」：
+    /// 公式源的 `text` 必须是作者原文，重建端按 kind 走数学路径。
+    #[test]
+    fn formula_source_is_recorded_with_formula_kind() {
+        use ze_scene_core::components::ContentOriginKind;
+
+        let compiled = compile_script(
+            r#"
+            local f = content.formula(Formula { source = "x^2 + 1", font_size = 20.0, x = 0.0, y = 0.0 })
+            for i = 1, #f do scene.spawn({ RevealPath { path = f[i] } }) end
+            "#,
+            ScriptLanguage::Lua,
+        )
+        .expect("编译公式脚本");
+        let origins = compiled.script.content_origins();
+        assert!(!origins.is_empty(), "公式必须留下内容源");
+        for origin in origins {
+            assert_eq!(origin.kind, ContentOriginKind::Formula);
+            assert_eq!(origin.text, "x^2 + 1", "源是作者原文，不含 `$ $` 包装");
+            assert_eq!(origin.capability_name(), "zela.content");
         }
     }
 
