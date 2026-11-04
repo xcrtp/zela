@@ -126,8 +126,16 @@ pub fn handle(target: &dyn DebugTarget, line: &str) -> String {
         }
     };
     let response = target.execute(&request);
-    serde_json::to_string(&response)
-        .unwrap_or_else(|error| format!("{{\"id\":{},\"ok\":false,\"error\":\"编码失败：{error}\"}}", request.id))
+    match serde_json::to_string(&response) {
+        Ok(line) => line,
+        // 兜底也必须走序列化器：手工拼 `format!` 不转义引号 / 换行 ⇒ 回执会变成非法 JSON。
+        Err(error) => serde_json::to_string(&serde_json::json!({
+            "id": request.id,
+            "ok": false,
+            "error": format!("编码失败：{error}"),
+        }))
+        .unwrap_or_else(|_| "{\"id\":0,\"ok\":false}".to_string()),
+    }
 }
 
 /// **服务一个连接**（阻塞；连接关闭即返回）。测试与单线程宿主用它。
@@ -406,5 +414,21 @@ mod tests {
         )
         .expect("probe 可反序列化");
         assert!(matches!(probe.command, Command::Probe { .. }));
+    }
+
+    /// **CJ-05（B4）**：错误消息含引号 / 换行时，回执仍是合法 JSON。
+    #[test]
+    fn error_messages_with_quotes_and_newlines_stay_valid_json() {
+        struct Failing;
+        impl DebugTarget for Failing {
+            fn execute(&self, request: &Request) -> Response {
+                Response::error(request.id, "坏的 \"引号\"\n第二行")
+            }
+        }
+        let reply = handle(&Failing, r#"{"id":9,"command":"get_frame"}"#);
+        let response: Response = serde_json::from_str(&reply).expect("回执必须是合法 JSON");
+        assert!(!response.ok);
+        assert_eq!(response.id, 9);
+        assert!(response.error.expect("有错误说明").contains("第二行"));
     }
 }

@@ -293,42 +293,71 @@ fn run(options: &Options) -> Result<(), String> {
             .join(" → ")
     );
 
-    let mut timings: Vec<(&'static str, f64)> = Vec::with_capacity(steps.len());
+    let mut timings = Timings::new(steps.len());
     for step in steps {
         println!("\n[xtask] ===== {} =====", step.name());
         let started = Instant::now();
-        match step {
-            Step::Check => step_check(&root, &plan)?,
-            Step::Test => step_test(&root, &plan, options.full)?,
-            Step::Wasm => step_wasm(&root)?,
-            Step::Structure => step_structure(&root)?,
-            Step::Docs => step_docs(&root)?,
-            Step::Coverage => step_coverage(&root)?,
-            Step::Demo => step_demo(&root)?,
-            Step::Smoke => step_smoke(&root, options.skip_baseline)?,
-            Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent)?,
-            Step::Bench => step_bench(&root)?,
-            Step::Fixtures => step_fixtures(&root)?,
-        }
+        let outcome = match step {
+            Step::Check => step_check(&root, &plan),
+            Step::Test => step_test(&root, &plan, options.full),
+            Step::Wasm => step_wasm(&root),
+            Step::Structure => step_structure(&root),
+            Step::Docs => step_docs(&root),
+            Step::Coverage => step_coverage(&root),
+            Step::Demo => step_demo(&root),
+            Step::Smoke => step_smoke(&root, options.skip_baseline),
+            Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent),
+            Step::Bench => step_bench(&root),
+            Step::Fixtures => step_fixtures(&root),
+        };
         let elapsed = started.elapsed().as_secs_f64();
         // 每步计时（阶段 0）：让"哪一步最贵"可度量，而不是靠人工推。
         println!("[xtask] step {}: {elapsed:.1}s", step.name());
-        timings.push((step.name(), elapsed));
-    }
-
-    // 汇总（总耗时 + 各步降序），一行一条 —— 便于直接贴进计划 / 复盘。
-    if timings.len() > 1 {
-        let total: f64 = timings.iter().map(|(_, seconds)| seconds).sum();
-        println!("\n[xtask] 耗时汇总：{total:.1}s");
-        let mut sorted = timings.clone();
-        sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
-        for (name, seconds) in sorted {
-            println!("[xtask]   {name}: {seconds:.1}s");
-        }
+        timings.record(step.name(), elapsed);
+        // **CJ-05（B5）**：失败也要拿到已跑步骤的耗时（汇总在 `Timings::drop`，
+        // 早退（`?`）同样会走）。这正是最需要计时的路径。
+        outcome?;
     }
 
     println!("\n[xtask] 全部通过");
     Ok(())
+}
+
+/// 步骤计时汇总；**在 `Drop` 里打印**，保证失败早退时也能看到已跑步骤的耗时。
+struct Timings(Vec<(&'static str, f64)>);
+
+impl Timings {
+    fn new(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+
+    fn record(&mut self, name: &'static str, seconds: f64) {
+        self.0.push((name, seconds));
+    }
+
+    fn summary(&self) -> String {
+        if self.0.len() <= 1 {
+            return String::new();
+        }
+        let total: f64 = self.0.iter().map(|(_, seconds)| seconds).sum();
+        let mut sorted = self.0.clone();
+        sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let mut out = format!("\n[xtask] 耗时汇总：{total:.1}s\n");
+        for (name, seconds) in sorted {
+            out.push_str(&format!("[xtask]   {name}: {seconds:.1}s\n"));
+        }
+        out
+    }
+}
+
+impl Drop for Timings {
+    fn drop(&mut self) {
+        let summary = self.summary();
+        if !summary.is_empty() {
+            print!("{summary}");
+            let _ = std::io::stdout().flush();
+        }
+    }
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -3865,6 +3894,33 @@ fn parse_frame_hash(text: &str) -> Option<String> {
 }
 
 /// `baselines.txt` 的解析与重录改写已迁至 `lib.rs`（门禁级代码，`tests/` 配用例）。
+
+#[cfg(test)]
+mod tests {
+    use super::Timings;
+
+    /// **CJ-05（B5）**：汇总按耗时降序，且包含所有已跑步骤（失败路径靠 `Drop` 打印）。
+    #[test]
+    fn timing_summary_is_sorted_and_complete() {
+        let mut timings = Timings::new(3);
+        timings.record("check", 1.0);
+        timings.record("test", 3.0);
+        timings.record("docs", 2.0);
+        let summary = timings.summary();
+        assert!(summary.contains("耗时汇总：6.0s"), "{summary}");
+        let test_at = summary.find("test: 3.0s").expect("含 test");
+        let docs_at = summary.find("docs: 2.0s").expect("含 docs");
+        let check_at = summary.find("check: 1.0s").expect("含 check");
+        assert!(test_at < docs_at && docs_at < check_at, "{summary}");
+    }
+
+    #[test]
+    fn single_step_does_not_print_a_summary() {
+        let mut timings = Timings::new(1);
+        timings.record("check", 1.0);
+        assert!(timings.summary().is_empty());
+    }
+}
 
 // ─── 进程工具 ───────────────────────────────────────────────────────────────
 

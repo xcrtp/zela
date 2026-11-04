@@ -14,14 +14,37 @@
 
 /// 去掉 `copy_texture_to_buffer` 的行对齐填充（GPU 要求 `bytes_per_row` 是
 /// 256 的倍数，PNG 要紧凑行）。
-pub fn unpad_rows(padded: &[u8], width: u32, height: u32, padded_row: u32) -> Vec<u8> {
-    let unpadded = (width * 4) as usize;
+///
+/// **CJ-05（B6）**：公开面带长度校验 —— 短缓冲返回显式错误，不 panic。
+pub fn unpad_rows(
+    padded: &[u8],
+    width: u32,
+    height: u32,
+    padded_row: u32,
+) -> Result<Vec<u8>, String> {
+    let unpadded = (width as usize)
+        .checked_mul(4)
+        .ok_or_else(|| format!("行宽溢出：width = {width}"))?;
+    if (padded_row as usize) < unpadded {
+        return Err(format!(
+            "行对齐填充 {padded_row} 小于紧凑行宽 {unpadded}（width = {width}）"
+        ));
+    }
+    let needed = (height as usize)
+        .checked_mul(padded_row as usize)
+        .ok_or_else(|| format!("缓冲长度溢出：height = {height}, padded_row = {padded_row}"))?;
+    if padded.len() < needed {
+        return Err(format!(
+            "缓冲太短：需要 {needed} 字节（height × padded_row），实际 {}",
+            padded.len()
+        ));
+    }
     let mut out = Vec::with_capacity(unpadded * height as usize);
     for row in 0..height as usize {
         let start = row * padded_row as usize;
         out.extend_from_slice(&padded[start..start + unpadded]);
     }
-    out
+    Ok(out)
 }
 
 /// **debug-only 回读**：RGBA8 纹理 → 紧凑像素（不带行填充）。
@@ -75,7 +98,7 @@ pub fn read_texture_rgba(
         .poll(wgpu::PollType::wait_indefinitely())
         .map_err(|error| error.to_string())?;
     let mapped = slice.get_mapped_range().map_err(|error| error.to_string())?;
-    let rgba = unpad_rows(&mapped, width, height, padded_row);
+    let rgba = unpad_rows(&mapped, width, height, padded_row)?;
     drop(mapped);
     buffer.unmap();
     Ok(rgba)
@@ -91,7 +114,15 @@ mod tests {
         let mut padded = vec![0u8; 256 * 2];
         padded[0..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         padded[256..264].copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
-        let rgba = unpad_rows(&padded, 2, 2, 256);
+        let rgba = unpad_rows(&padded, 2, 2, 256).expect("缓冲足够");
         assert_eq!(rgba, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    }
+
+    /// **CJ-05（B6）**：短缓冲 / 非法行宽返回显式错误，不 panic。
+    #[test]
+    fn unpadding_rejects_short_buffers_and_narrow_rows() {
+        let short = vec![0u8; 8];
+        assert!(unpad_rows(&short, 2, 2, 256).is_err(), "短缓冲必须报错");
+        assert!(unpad_rows(&[0u8; 256], 2, 1, 4).is_err(), "行宽小于紧凑行宽必须报错");
     }
 }
