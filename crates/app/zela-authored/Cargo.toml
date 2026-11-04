@@ -20,4 +20,21 @@ ze-time = { path = "../../kernel/ze-time" }
 # 作品用**表达式绑定**（`expr.bind` 的 Rust 等价物）声明时间轴。
 ze-comb = { path = "../../kernel/ze-comb" }
 ze-content = { path = "../../kernel/ze-content" }
-ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }
+ze-prerender = { path = "../../kernel/ze-prerender", default-features = false, features = [
+    "metrics",
+] }
+# CG-f：自研面板的控件状态机（ControlSet）与 Frame。
+ze-interact = { path = "../../kernel/ze-interact" }
+# CF-d：节点图 → 表达式 lowering（弹簧节点是 lowering 规则表的第一个消费者）。
+ze-node-core = { path = "../../ze/graph/ze-node-core" }
+ze-node-lower = { path = "../../ze/graph/ze-node-lower" }
+ze-node-schema = { path = "../../ze/graph/ze-node-schema" }
+thiserror.workspace = true
+
+[dev-dependencies]
+# CF-d 对拍：节点侧求值策略（逐帧折叠）与拓扑排序。
+ze-graph-algo = { path = "../../ze/graph/ze-graph-algo" }
+ze-graph-eval = { path = "../../ze/graph/ze-graph-eval" }
+# CF-f 端到端：节点编辑器状态机 + 帧调度（动画 / 面板 / 回放）。
+zela-node-editor = { path = "../../ui/zela-node-editor" }
+zela-schedule = { path = "../../schedule/zela-schedule" }

@@ -5,7 +5,7 @@
 
 use egui::epaint::{CubicBezierShape, PathShape};
 use egui::{Color32, Pos2, Shape, Stroke};
-use zela_node_editor::{EdgePath, Vec2};
+use zela_node_editor::{EdgePath, NodePos};
 
 /// Line treatment for an edge.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,7 +66,7 @@ pub trait EdgeRenderer: Send + Sync + 'static {
     fn draw(&self, painter: &egui::Painter, path: &EdgePath, style: &EdgeStyle);
 }
 
-fn to_pos2(p: Vec2) -> Pos2 {
+fn to_pos2(p: NodePos) -> Pos2 {
     Pos2::new(p.x, p.y)
 }
 
@@ -143,7 +143,7 @@ impl EdgeRenderer for OrthogonalRenderer {
                 if matches!(style.stroke, StrokeKind::Solid) {
                     painter.add(PathShape::line(screen, stroke));
                 } else {
-                    let graph: Vec<Vec2> = beveled;
+                    let graph: Vec<NodePos> = beveled;
                     stroke_samples(painter, &graph, stroke, style);
                 }
             }
@@ -157,7 +157,7 @@ impl EdgeRenderer for OrthogonalRenderer {
 
 /// Cut each interior corner by `radius` along both adjacent segments,
 /// producing beveled corners instead of sharp 90° turns.
-fn bevel_corners(points: &[Vec2], radius: f32) -> Vec<Vec2> {
+fn bevel_corners(points: &[NodePos], radius: f32) -> Vec<NodePos> {
     if points.len() < 3 || radius <= 0.0 {
         return points.to_vec();
     }
@@ -184,7 +184,7 @@ fn bevel_corners(points: &[Vec2], radius: f32) -> Vec<Vec2> {
 }
 
 /// Stroke a polyline either solid or dashed (with optional animation).
-fn stroke_samples(painter: &egui::Painter, points: &[Vec2], stroke: Stroke, style: &EdgeStyle) {
+fn stroke_samples(painter: &egui::Painter, points: &[NodePos], stroke: Stroke, style: &EdgeStyle) {
     let screen: Vec<Pos2> = points.iter().copied().map(to_pos2).collect();
     match style.stroke {
         StrokeKind::Solid => {
@@ -228,9 +228,9 @@ fn draw_arrow(painter: &egui::Painter, path: &EdgePath, style: &EdgeStyle) {
             } else {
                 0.0
             };
-            let center = Vec2::lerp(w[0], w[1], t);
+            let center = NodePos::lerp(w[0], w[1], t);
             let dir = seg / len.max(1e-6);
-            let perp = Vec2::new(-dir.y, dir.x);
+            let perp = NodePos::new(-dir.y, dir.x);
             let tip = center + dir * tip_offset;
             let base = center - dir * tip_offset * 0.7;
             let points = [

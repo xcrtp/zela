@@ -35,7 +35,7 @@ use zela_render_backends::registry::{AdapterFacts, BackendKind};
 use zela_render_backends::routing::{self, LoopBackend};
 use zela_render_backends::{RenderContext, RoutingDecision, install_standard_backends};
 use zela_scene_ecs::DriverPod;
-use zela_scene_ecs::domain::{UiConfig, ViewportCamera};
+use zela_scene_ecs::domain::ViewportCamera;
 use zela_scene_ecs::Result;
 use zela_scene_ecs::errors::Error;
 
@@ -74,7 +74,8 @@ pub fn initial_from(args: &[String], demo_env: bool) -> Initial {
     if by_arg || demo_env {
         Initial::Choice(SceneChoice::CapabilityDemo)
     } else {
-        Initial::First
+        // **CG-f**：默认启动自研 HUD —— 控件是场景图元，宿主不再画 egui 面板。
+        Initial::Choice(SceneChoice::Hud)
     }
 }
 
@@ -177,6 +178,10 @@ pub struct App {
     last_vector: Option<LastVector>,
     /// `ZELA_GUI_TIMING=1` 时的帧耗时统计（默认关：不付任何代价）。
     timing: Option<GuiTiming>,
+    /// **CH-c**：debug RPC 的 GUI 端（`ZELA_DEBUG_RPC=<port>` 时启用；默认关）。
+    ///
+    /// socket 线程只投递请求，真正的执行发生在 `ui()` 里（运行时是 `!Send`）。
+    debug_bridge: Option<zela_app::rpc::GuiBridge>,
 }
 
 /// 复用上一帧所需的全部条件（快照 + 画幅 + 背景 + 走的是哪条上屏路径）。
@@ -234,6 +239,17 @@ impl App {
         }
         install_visuals(&ctx.egui_ctx);
 
+        // **CH-e**：确定性字体在**装配前**就位 —— HUD 标签是烘焙成 `Path` 的，
+        // 装配期用哪一套 face 决定了它的几何。`compile` / `check` / `render` /
+        // `doctor` 早已如此，GUI 是最后一个缺口。
+        // 缺字体不中止：HUD 退化为"有轨道 / 滑块、无标签"，诊断层会如实报告缺失清单。
+        match zela_app::fonts::ensure_font_dir() {
+            Some(dir) => eprintln!("[zela] 确定性字体：{}", dir.display()),
+            None => eprintln!(
+                "[zela] 警告：确定性字体未就绪（标签可能缺失）；先运行 `zela fonts` 下载并校验"
+            ),
+        }
+
         // 渲染环境（后端 + 合成器 + RenderContext）由 backends 侧的"标准安装"负责。
         let wgpu_state = ctx
             .wgpu_render_state
@@ -263,6 +279,12 @@ impl App {
         let progress = Arc::new(FrameProgress::new());
         attach_progress(&runtime, Arc::clone(&progress))?;
         let frame = recording_frame(SceneFrame::new(Arc::clone(&runtime.driver)), &runtime);
+        // **CH-c**：默认关；`ZELA_DEBUG_RPC=<port>` 才绑 127.0.0.1 并提供 debug RPC。
+        let debug_bridge = zela_app::rpc::listen_from_env()
+            .ok()
+            .flatten()
+            .and_then(|listener| zela_app::rpc::bridge(listener).ok())
+            .map(|(bridge, _worker)| bridge);
         Ok(Self {
             runtime,
             progress,
@@ -288,6 +310,7 @@ impl App {
                 render_ms: 0.0,
                 upload_ms: 0.0,
             }),
+            debug_bridge,
         })
     }
 
@@ -401,37 +424,9 @@ impl App {
                 self.picker = Some(ScriptPicker::new());
             }
 
-            // 视口操作目标（与左侧控制面板里的单选是**同一份** `UiConfig`）：
-            // 放一份在工具条上，面板收起 / 找不到时也能切到 3D 第一人称。
-            ui.separator();
-            ui.label("相机");
-            let mut camera = self.runtime.driver.with_scheduler(|scheduler| {
-                scheduler
-                    .resources()
-                    .get::<UiConfig>()
-                    .map(|config| config.viewport_camera)
-                    .unwrap_or_default()
-            });
-            let before = camera;
-            gui::ComboBox::from_id_salt("zela-camera")
-                .selected_text(camera_label(camera))
-                .show_ui(ui, |ui| {
-                    for (mode, label) in [
-                        (ViewportCamera::TwoD, "2D（平移/缩放）"),
-                        (ViewportCamera::ThreeDOrbit, "3D 轨道"),
-                        (ViewportCamera::ThreeDFps, "3D 第一人称"),
-                    ] {
-                        ui.selectable_value(&mut camera, mode, label);
-                    }
-                });
-            if camera != before {
-                self.runtime.driver.with_scheduler_mut(|scheduler| {
-                    if let Some(config) = scheduler.resources_mut().get_mut::<UiConfig>() {
-                        config.viewport_camera = camera;
-                    }
-                });
-                self.status = format!("视口操作：{}", camera_label(camera));
-            }
+            // **CI-b / CG-08**：图层与相机开关已全部搬进场景图元（`zela_authored::hud`），
+            // 宿主不再保留任何 `UiConfig` 开关控件。工具条只留作品 / 后端两个
+            // **应用级**选择器（它们不属于 `UiConfig`，改的是装配入口）。
 
             ui.separator();
             if self.status.is_empty() {
@@ -672,9 +667,64 @@ impl App {
     }
 }
 
+/// **CH-d**：GUI 的 debug 目标 —— 在 `DriverTarget` 之外补截图旁路（仅 Vector 后端）。
+///
+/// - 其余命令全部委托 `DriverTarget`（与 headless 同源，回执逐位相同）；
+/// - 截图读 `vector_target` 里**上一帧已呈现**的像素：RPC 在 `ui()` 顶部处理，
+///   本帧尚未重画。要拿 trace 之后的画面，先确认帧号推进再发截图；
+/// - PNG 只作视觉证据，**不进逐位基线**（像素随字体 / AA / GPU 漂移）。
+struct ScreenTarget<'a> {
+    inner: zela_app::rpc::DriverTarget,
+    vector_target: Option<&'a VectorTarget>,
+    device: &'a eframe::wgpu::Device,
+    queue: &'a eframe::wgpu::Queue,
+}
+
+impl zela_app::rpc::DebugTarget for ScreenTarget<'_> {
+    fn execute(&self, request: &zela_app::rpc::Request) -> zela_app::rpc::Response {
+        if let zela_app::rpc::Command::Screenshot { path } = &request.command {
+            return match self.screenshot(path) {
+                Ok((width, height)) => zela_app::rpc::Response::ok(
+                    request.id,
+                    serde_json::json!({ "path": path, "width": width, "height": height }),
+                ),
+                Err(error) => zela_app::rpc::Response::error(request.id, error),
+            };
+        }
+        self.inner.execute(request)
+    }
+
+    fn screenshot(&self, path: &str) -> std::result::Result<(u32, u32), String> {
+        let target = self
+            .vector_target
+            .ok_or_else(|| "当前作品没有矢量中间纹理（后端不是 Vector？）".to_string())?;
+        let (width, height) = target.size;
+        let rgba = zela_render_vector::screenshot::read_texture_rgba(
+            self.device,
+            self.queue,
+            &target.texture,
+            width,
+            height,
+        )?;
+        zela_app::export::write_png(std::path::Path::new(path), width, height, &rgba)
+            .map_err(|error| error.to_string())?;
+        Ok((width, height))
+    }
+}
+
 impl EframeApp for App {
     fn ui(&mut self, ui: &mut gui::Ui, _frame: &mut eframe::Frame) {
         let started = std::time::Instant::now();
+        // **CH-c/d**：debug RPC 的请求在主线程执行（运行时是 `!Send`）；没有请求时零开销。
+        // `ScreenTarget` 在 `DriverTarget` 之外补 Vector 截图旁路（见下）。
+        if let Some(bridge) = &self.debug_bridge {
+            bridge.poll(&ScreenTarget {
+                inner: zela_app::rpc::DriverTarget::new(self.driver()),
+                vector_target: self.vector_target.as_ref(),
+                device: &self.wgpu.device,
+                queue: &self.wgpu.queue,
+            });
+        }
         // 文件浏览器（独立窗口；选中即载入）。
         let picked = self.picker.as_mut().map(|picker| picker.show(ui.ctx()));
         if let Some((chosen, keep_open)) = picked {
@@ -737,7 +787,7 @@ fn backend_label(backend: LoopBackend) -> &'static str {
     }
 }
 
-/// 视口操作目标的显示名（工具条与左侧控制面板共用同一份 `UiConfig`）。
+/// 视口操作目标的显示名（日志与场景内单选组共用同一份口径）。
 fn camera_label(camera: ViewportCamera) -> &'static str {
     match camera {
         ViewportCamera::TwoD => "2D（平移/缩放）",
@@ -758,6 +808,14 @@ fn entries() -> Vec<Entry> {
     entries.push(Entry {
         title: "内置 · 能力 demo（N 线）".to_string(),
         source: EntrySource::Choice(SceneChoice::CapabilityDemo),
+    });
+    entries.push(Entry {
+        title: "内置 · 自研 HUD（场景图元控件）".to_string(),
+        source: EntrySource::Choice(SceneChoice::Hud),
+    });
+    entries.push(Entry {
+        title: "内置 · 参数面板（两个 View）".to_string(),
+        source: EntrySource::Choice(SceneChoice::Panels),
     });
     #[cfg(feature = "python")]
     entries.push(Entry {
@@ -980,9 +1038,13 @@ mod launch_defaults {
         raw.iter().map(|value| value.to_string()).collect()
     }
 
+    /// **CG-f**：无参数启动自研 HUD（控件是场景图元，宿主不再画 egui 面板）。
     #[test]
-    fn no_arguments_starts_with_the_first_builtin() {
-        assert!(matches!(initial_from(&[], false), Initial::First));
+    fn no_arguments_starts_with_the_hud_scene() {
+        assert!(matches!(
+            initial_from(&[], false),
+            Initial::Choice(SceneChoice::Hud)
+        ));
     }
 
     #[test]

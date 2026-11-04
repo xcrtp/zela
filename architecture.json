@@ -7,7 +7,7 @@
       "path": "crates/kernel",
       "prefix": "ze-",
       "description": "纯计算/数据，无 egui/渲染/领域依赖；ze-prerender 属例外——kernel 层唯一的重 crate，重型引擎依赖必须 feature-gated",
-      "crates": ["ze-type", "ze-property", "ze-reflect", "ze-graph-core", "ze-notion", "ze-render-ir", "ze-scene-contract", "ze-time", "ze-content", "ze-prerender", "ze-comb", "ze-func", "ze-vertex", "ze-resource", "ze-macro"]
+      "crates": ["ze-type", "ze-property", "ze-alg", "ze-interact", "ze-reflect", "ze-graph-core", "ze-notion", "ze-render-ir", "ze-scene-contract", "ze-time", "ze-content", "ze-prerender", "ze-comb", "ze-func", "ze-vertex", "ze-resource", "ze-macro"]
     },
     {
       "name": "pod",
@@ -51,11 +51,12 @@
       "name": "graph",
       "path": "crates/ze/graph",
       "prefix": "ze-",
-      "description": "图论 + 节点结构契约，禁止依赖 egui/zela-*/领域类型；ze-node 为门面（core+schema+algo+eval）",
+      "description": "图论 + 节点结构契约，禁止依赖 egui/zela-*/领域类型；ze-node 为门面（core+schema+algo+eval）；ze-node-lower 把节点图投影成表达式层（确定性拓扑序）",
       "crates": [
         "ze-node-core",
         "ze-graph-algo",
         "ze-graph-eval",
+        "ze-node-lower",
         "ze-node-schema",
         "ze-node-schema-macros",
         "ze-node"

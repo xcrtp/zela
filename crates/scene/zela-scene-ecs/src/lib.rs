@@ -20,7 +20,11 @@ pub mod fingerprint;
 #[cfg(test)]
 mod expr_binding_tests;
 pub mod geometry;
+/// CG-f：自研面板（三组控件全是场景图元）+ HUD System。
+pub mod hud;
 pub mod input;
+/// CE-e：参数面板进场景（命中的真消费者）。
+pub mod interact;
 pub mod lifetime;
 pub mod register;
 pub mod scene;
@@ -58,7 +62,14 @@ pub use fingerprint::{
     StructureFingerprint, WorldRead, fingerprint_world, sequence_digest,
 };
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
+pub use hud::{
+    Hud, HudMetrics, HudOutcome, HudOutcomeKind, HudState, HudSystem, build as build_hud,
+};
 pub use input::{ParamPanelSystem, TimeControlSystem};
+pub use interact::{
+    InteractSet, InteractState, PanelEntry, PanelSpec, SliderSpec, build_panel,
+    build_panels_for_views, default_panel_metrics,
+};
 pub use lifetime::{
     LifetimeEvent, LifetimeEventKind, LifetimeEvents, LifetimeFlushSystem, LifetimeTracker,
 };

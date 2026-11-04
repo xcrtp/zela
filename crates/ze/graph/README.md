@@ -26,5 +26,6 @@ ze-node-schema = 节点结构契约（Property / NodeSpec / DynamicObject / Node
 | `ze-node-core` | 节点图内核：Node / Graph / Socket trait、NodeMeta + NodeInteraction |
 | `ze-graph-algo` | 图算法：Kahn topo sort、Tarjan SCC、BFS 脏标记传播 |
 | `ze-graph-eval` | 惰性拉取求值：LazyPullEval + EvalContext |
+| `ze-node-lower` | 节点图 → 表达式层 lowering：拓扑序确定、规则按节点类型名登记 |
 | `ze-node-schema` | 属性模型：Property / NodeSpec / NodeRegistry / DynamicObject |
 | `ze-node-schema-macros` | `#[derive(NodeSpec)]` 过程宏 + `#[property]` / `#[node]` 属性 |

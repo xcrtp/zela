@@ -25,6 +25,7 @@ use ze_content::StrokeOutline;
 use ze_notion::{Color32 as NotionColor, Path2D, Vec2 as NotionVec2};
 use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 use ze_prerender::InMemoryEngine;
+use ze_scene_core::components::{ContentOrigin, ContentOriginKind};
 
 use crate::types::{Color, Formula, Path, PathList, Text};
 
@@ -41,9 +42,16 @@ pub const CONTENT_SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Clone)]
 pub struct PathStore(Arc<Mutex<PathStoreInner>>);
 
+/// 路径表里的一条：烘焙轮廓 + **可选**内容源（CD-b：源与烘焙同时进产物）。
+#[derive(Clone)]
+struct StoredPath {
+    path: Path2D,
+    origin: Option<ContentOrigin>,
+}
+
 struct PathStoreInner {
     owner: PodId,
-    table: HandleTable<Path2D>,
+    table: HandleTable<StoredPath>,
 }
 
 impl Default for PathStore {
@@ -61,8 +69,16 @@ impl PathStore {
         })))
     }
 
-    pub(crate) fn insert(&self, path: Path2D) -> Handle {
-        self.0.lock().expect("路径表锁中毒").table.insert(path)
+    pub(crate) fn insert(
+        &self,
+        path: Path2D,
+        origin: Option<ContentOrigin>,
+    ) -> Handle {
+        self.0
+            .lock()
+            .expect("路径表锁中毒")
+            .table
+            .insert(StoredPath { path, origin })
     }
 
     pub(crate) fn get(&self, handle: &Handle) -> Result<Path2D, PodError> {
@@ -71,7 +87,18 @@ impl PathStore {
             .expect("路径表锁中毒")
             .table
             .get(handle)
-            .cloned()
+            .map(|stored| stored.path.clone())
+    }
+
+    /// **CD-b**：取该路径记录的内容源（无源 ⇒ `None`，老产物 / 公式）。
+    pub(crate) fn origin(&self, handle: &Handle) -> Option<ContentOrigin> {
+        self.0
+            .lock()
+            .expect("路径表锁中毒")
+            .table
+            .get(handle)
+            .ok()
+            .and_then(|stored| stored.origin.clone())
     }
 
     /// 每轮脚本开始前清空（旧句柄随之失效）。
@@ -151,14 +178,53 @@ fn service(pod: &dyn Pod) -> &ContentServicePod {
 // ─── typed 函数实现 ─────────────────────────────────────────────────────
 
 fn content_formula(pod: &dyn Pod, spec: Formula) -> PathList {
-    compile(pod, &spec.source, spec.font_size, spec.x, spec.y, true)
+    // **CI-c**：公式也是一个 `role = Source` 的内容源（kind = Formula）。
+    // 源 = 作者写的 Typst 源码（不含自动 `$ $` 包装）；重建端按 kind 走数学路径。
+    let origin = content_origin_meta(
+        ContentOriginKind::Formula,
+        &spec.source,
+        spec.font_size,
+        spec.x,
+        spec.y,
+    );
+    compile(pod, &spec.source, spec.font_size, spec.x, spec.y, true, Some(origin))
 }
 
 fn content_text(pod: &dyn Pod, spec: Text) -> PathList {
     let source = ze_content::text_literal_source(&spec.source);
-    compile(pod, &source, spec.font_size, spec.x, spec.y, false)
+    // **CD-b**：烘焙轮廓 + 原始文本**同时**进产物（后者供 rebuild）。
+    let origin =
+        content_origin_meta(ContentOriginKind::Text, &spec.source, spec.font_size, spec.x, spec.y);
+    compile(
+        pod,
+        &source,
+        spec.font_size,
+        spec.x,
+        spec.y,
+        false,
+        Some(origin),
+    )
 }
 
+/// 内容源的公共部分（`path_index` 在 `store_paths` 里按顺序补上）。
+fn content_origin_meta(
+    kind: ContentOriginKind,
+    text: &str,
+    font_size: f32,
+    x: f32,
+    y: f32,
+) -> ContentOrigin {
+    ContentOrigin {
+        kind,
+        text: text.to_string(),
+        font_size,
+        x,
+        y,
+        path_index: 0,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn compile(
     pod: &dyn Pod,
     source: &str,
@@ -166,6 +232,7 @@ fn compile(
     x: f32,
     y: f32,
     sort_reading_order: bool,
+    origin: Option<ContentOrigin>,
 ) -> PathList {
     let this = service(pod);
     // 记录"内容能力被实际使用"（供 ZSB Meta 取最小 capability 集）。
@@ -177,15 +244,26 @@ fn compile(
         NotionVec2::new(x, y),
         sort_reading_order,
     );
-    PathList(store_paths(&this.paths, outlines))
+    PathList(store_paths(&this.paths, outlines, origin))
 }
 
 /// 世界坐标轮廓 → 脚本层 `Path`（句柄入表，颜色转脚本枚举）。
-fn store_paths(store: &PathStore, outlines: Vec<StrokeOutline>) -> Vec<Path> {
+fn store_paths(
+    store: &PathStore,
+    outlines: Vec<StrokeOutline>,
+    origin: Option<ContentOrigin>,
+) -> Vec<Path> {
     outlines
         .into_iter()
-        .map(|outline| Path {
-            path: store.insert(outline.path),
+        .enumerate()
+        .map(|(index, outline)| Path {
+            path: store.insert(
+                outline.path,
+                origin.clone().map(|mut origin| {
+                    origin.path_index = index;
+                    origin
+                }),
+            ),
             color: to_color(outline.color),
             width: outline.width,
         })

@@ -140,10 +140,11 @@ let result: Result<EdgeId, EditorError> = v.validate(
 
 ## Layout & SocketLayout
 
-- `LayoutStrategy::layout(&mut self, graph: &dyn Graph, sizes: &NodeSizeMap) -> HashMap<NodeId, Vec2>`
+- `LayoutStrategy::position_of / set_position / recompute(&mut self, graph, sizes)`：
+  位置表是 `NodeSizeMap`（`BTreeMap<NodeId, NodePos>`，按 `NodeId` 升序 ⇒ 确定序）。
   - `FreeLayout`：保持用户位置不动（默认）。
   - `#[feature = "auto-layout"]`（Stage 10 可选）：基于 Kahn 拓扑的分层布局。
-- `SocketLayout::input_offset / output_offset(idx, count, card_size) -> Vec2`：
+- `SocketLayout::input_offset / output_offset(idx, count, card_size) -> NodePos`：
   返回**节点卡片局部坐标**下的端口像素位置，UI 层用它绘制连线端点。
   pin 全部位于 **header 下方的专用 pin 区域**（不在 header 上），输入左缘、
   输出右缘，按索引逐行排布；UI 层在 pin 内侧绘制等宽字体的类型标签。

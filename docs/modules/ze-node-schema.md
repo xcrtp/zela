@@ -10,7 +10,7 @@
 - 层：`graph`（`crates/ze/graph`）
 - 路径：`crates/ze/graph/ze-node-schema`
 - 生产依赖（上游，dev-deps 不计）：`ze-node-core`、`ze-node-schema-macros`、`ze-property`
-- 被依赖（下游）：`ze-node`、`zela-node-egui-ui`
+- 被依赖（下游）：`ze-node`、`zela-authored`、`zela-node-egui-ui`
 - 源文件：4 个 · 623 行
 
 ### 文件清单

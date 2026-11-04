@@ -13,11 +13,15 @@ pub mod affine;
 pub mod binding;
 pub mod params;
 pub mod predicate;
+pub mod resolve;
+pub mod scope;
 pub mod target;
 pub mod timeline;
 
 pub use affine::{AffineError, AffineMap, init_width, recognize as recognize_affine};
 pub use params::{PARAM_WIDGET_BASE, ParamError, apply as apply_param, build_registry, widget_id, widget_index};
+pub use resolve::{FieldWinners, SuppressedWrite, WriteResolution, field_winners, wins_all};
+pub use scope::{ScopeId, ScopeSpec};
 pub use binding::{
     Binding, BindingDriver, BindingTable, LibraryRef, ReplayUnsupported, ResetBehavior, SeekKind,
 };

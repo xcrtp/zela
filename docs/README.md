@@ -37,6 +37,7 @@ README 的阅读导览只指向这里 —— 同一份定义，不复制第二�
 | [`guides/adding-a-component.md`](guides/adding-a-component.md) | 「加一个组件要改 9 处」的操作指南 | 手写 |
 | [`glossary.md`](glossary.md) | 术语 hub（网状入口，不是字典） | 手写（每条必带锚点） |
 | [`decisions/`](decisions/) | 决策记录（选了什么 + 为什么 + 什么情况下不成立） | 手写（状态段可校验） |
+| [`research/`](research/) | 历史探测快照（**不是现行事实**；结论以代码与 `GAPS.md` 为准） | 历史记录 |
 
 ## 未落地项 / 下一阶段去哪看
 
@@ -46,6 +47,23 @@ README 的阅读导览只指向这里 —— 同一份定义，不复制第二�
 - 架构规则与依赖图 → [`ARCHITECTURE.md`](../ARCHITECTURE.md)（自动区由 `cargo-workspace-analyzer` 生成）
 - 分层声明（机器可校验）→ [`architecture.json`](../architecture.json)
 - 验证入口 → 仓库根 `cargo verify`（`--step structure` 含文档门禁）
+
+## 规范性陈述 ↔ 代码断言（双向对照）
+
+CJ 起的纪律：**每条规范性陈述必须能指到代码断言或 GAPS 条目；每条护栏必须在导航文档里有入口。**
+下表是这张双向对照表本身——左列是文档里的说法，右列是可执行的落点（反向查找也用这一张）。
+
+| 规范性陈述 | 代码 / 测试 / GAPS 落点 |
+|---|---|
+| 确定性三层口径（同目标可复现 / 跨端结构一致 / 跨端逐位相同不承诺） | [`guides/determinism.md`](guides/determinism.md) §5；`GAPS.md` 头部 |
+| 结构指纹管「算得对不对」，像素哈希管「画得一样不一样」 | [`guides/determinism.md`](guides/determinism.md) §6；`cargo verify --step hashes`（`xtask/src/main.rs`） |
+| `Frame` 是纯值、三条平行结构、不进 payload | `ze_interact::Frame`（`GAPS` CG-03）；`crates/kernel/ze-interact` |
+| 三条反面约束（不做全链路埋点 / tag 不进 `SceneEvent` / 不靠 System 手工上报） | `zela_app::debug` 模块文档；`GAPS` CH-03 |
+| 元规则 A（零消费者只约束实现、不约束形状）与 B（正确性优先于兼容性） | [`principles.md`](principles.md) §5；`GAPS` CI-04 / CI-07 |
+| 六个未来口子的形状（源种类 / 标记 / 路径来源 / 策略 trait / 输入锚点 / 诊断内容） | `GAPS` CI-04；`docs/modules/` 对应 crate |
+| `O1 / OPerInterval / OLogN / EventReplay` 已实现；`Replay` 是 AI-07 红线 | `animation::BindingTable::reject_replay`（`crates/scene/ze-scene-core/src/animation/binding.rs`）；`GAPS` BY-04 / CH |
+| 输入事件只属于一帧（`Advance` 后清理，录制关闭也不残留） | `SceneFrame::begin`（`crates/ui/zela-egui/src/frame.rs`）；`GAPS` CH-05；提交 `dc8500d` |
+| 录制关闭 + RPC 注入时 `FrameTag` 不残留 | `SceneFrame::begin` 帧末清理（同文件）；`GAPS` CJ-05（B3） |
 
 ## 维护约定
 

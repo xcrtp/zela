@@ -6560,6 +6560,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-alg"
+version = "0.1.1"
+
+[[package]]
 name = "ze-comb"
 version = "0.1.1"
 dependencies = [
@@ -6576,6 +6580,8 @@ name = "ze-content"
 version = "0.1.1"
 dependencies = [
  "serde",
+ "serde_json",
+ "ze-interact",
  "ze-notion",
 ]
 
@@ -6617,6 +6623,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ze-interact"
+version = "0.1.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ze-macro"
 version = "0.1.1"
 dependencies = [
@@ -6644,6 +6658,18 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "ze-type",
+]
+
+[[package]]
+name = "ze-node-lower"
+version = "0.1.1"
+dependencies = [
+ "thiserror 2.0.20",
+ "ze-comb",
+ "ze-func",
+ "ze-graph-algo",
+ "ze-graph-eval",
+ "ze-node-core",
 ]
 
 [[package]]
@@ -6788,12 +6814,14 @@ dependencies = [
  "derive_more",
  "ecow",
  "fontdb 0.16.2",
+ "serde_json",
  "thiserror 2.0.20",
  "tracing",
  "ttf-parser 0.25.1",
  "typst",
  "typst-library",
  "ze-content",
+ "ze-interact",
  "ze-notion",
 ]
 
@@ -6865,6 +6893,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "ze-alg",
  "ze-comb",
  "ze-content",
  "ze-func",
@@ -6940,10 +6969,14 @@ dependencies = [
  "egui-wgpu",
  "hecs",
  "png 0.17.16",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
  "tracing",
  "wgpu",
  "ze-comb",
  "ze-content",
+ "ze-interact",
  "ze-macro",
  "ze-notion",
  "ze-pod-binding",
@@ -6970,14 +7003,23 @@ dependencies = [
 name = "zela-authored"
 version = "0.1.1"
 dependencies = [
+ "thiserror 2.0.20",
  "ze-comb",
  "ze-content",
+ "ze-graph-algo",
+ "ze-graph-eval",
+ "ze-interact",
+ "ze-node-core",
+ "ze-node-lower",
+ "ze-node-schema",
  "ze-notion",
  "ze-prerender",
  "ze-render-ir",
  "ze-scene-core",
  "ze-time",
+ "zela-node-editor",
  "zela-scene-ecs",
+ "zela-schedule",
 ]
 
 [[package]]
@@ -7044,6 +7086,7 @@ version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
+ "serde_json",
  "ze-pod-core",
  "zela-app",
  "zela-egui",
@@ -7058,9 +7101,9 @@ dependencies = [
 name = "zela-node-editor"
 version = "0.1.1"
 dependencies = [
- "glam",
  "thiserror 2.0.20",
  "ze-graph-algo",
+ "ze-interact",
  "ze-node-core",
 ]
 
@@ -7070,7 +7113,6 @@ version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
- "glam",
  "tracing",
  "ze-graph-algo",
  "ze-graph-eval",
@@ -7087,9 +7129,9 @@ version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
- "glam",
  "ze-node-core",
  "ze-node-schema",
+ "zela-node-editor",
  "zela-node-egui",
 ]
 
@@ -7212,6 +7254,7 @@ dependencies = [
  "ze-comb",
  "ze-content",
  "ze-func",
+ "ze-interact",
  "ze-macro",
  "ze-notion",
  "ze-pod-core",

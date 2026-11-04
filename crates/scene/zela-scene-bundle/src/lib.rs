@@ -38,6 +38,7 @@ pub mod sha256;
 
 pub use input_stream::{
     FrameEvents, INPUT_FORMAT, InputError, InputStream, LibraryId, Pairing, Recorder,
+    WINDOW_INPUT_FORMAT, WindowFrame, WindowRecorder, WindowStream,
 };
 
 use zela_scene_ecs::scene_script::SceneScript;
@@ -60,12 +61,33 @@ pub const CONTAINER_VERSION: u16 = 4;
 pub const PAYLOAD_FORMAT: &str = "zsb.script/1";
 const HEADER_LEN: usize = 24;
 
+/// **CD-a / CI-c**：能力在回放端的**角色**。
+///
+/// 一条判据即可归位：**回放端要执行的是「结果」、「源」还是「逻辑」？**
+/// - 结果 ⇒ [`Baked`](Self::Baked)：不校验（payload 里已有烘焙数据）；
+/// - 源 ⇒ [`Source`](Self::Source)：有同名能力可**重建**，无则用烘焙数据（不失败）；
+/// - 逻辑 ⇒ [`Runtime`](Self::Runtime)：必须有且版本相等（既有行为）。
+///
+/// **CI-c（§0.6）**：`role` 是**必填**字段 —— 缺失即解码期报错，不再用
+/// `#[serde(default)]` 给不存在的旧产物留分支。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CapabilityRole {
+    /// 只带结果：回放端不需要该能力。
+    Baked,
+    /// 带源：有同名能力时可重建；没有则直接用烘焙数据。
+    Source,
+    /// 回放端必须执行的逻辑。
+    Runtime,
+}
+
 /// 一条能力版本声明。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Capability {
     pub name: String,
     /// `None` = 该能力的实现没有声明版本（仍要求名字存在）。
     pub version: Option<String>,
+    /// **CD-a / CI-c**：回放端角色（**必填**，缺失即解码期报错）。
+    pub role: CapabilityRole,
 }
 
 impl Capability {
@@ -73,7 +95,14 @@ impl Capability {
         Self {
             name: name.into(),
             version: version.map(str::to_string),
+            role: CapabilityRole::Runtime,
         }
+    }
+
+    /// **CD**：显式声明角色（链式，构造点就近表达）。
+    pub fn with_role(mut self, role: CapabilityRole) -> Self {
+        self.role = role;
+        self
     }
 }
 
@@ -100,7 +129,28 @@ pub struct Downgrade {
     pub path: String,
 }
 
+/// **CD-c**：回放端本次消费内容的方式（诊断输出用，不写进产物）。
+///
+/// 两者**不是**同一种操作（见 [`Meta`] 文档）：
+/// - [`Restore`](Self::Restore)：用 payload 里的烘焙轮廓 ⇒ 逐位一致；
+/// - [`Rebuild`](Self::Rebuild)：用 payload 里的源 + 本地能力重算 ⇒ 可复现，
+///   但**不保证**与原产物逐位相同。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentMode {
+    /// 直接用烘焙数据。
+    Restore,
+    /// 用源重新烘焙。
+    Rebuild,
+}
+
 /// Meta 段（不进内容 hash）。
+/// # restore 与 rebuild 是两个操作（CD）
+///
+/// - **restore（恢复）**：直接用 payload 里的烘焙数据 ⇒ 逐位一致，可哈希校验；
+/// - **rebuild（重建）**：用 payload 里的**源**（如 `ContentOrigin`）+ 本地能力
+///   重新烘焙 ⇒ 可复现，但**不保证**与原产物逐位相同。
+///
+/// `Source` 能力的版本差异因此是**可解释的差异**，不是错误。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Meta {
     /// 容器版本（冗余写入，便于诊断；读取以 Header 为准）。
@@ -169,6 +219,30 @@ impl Available {
             capabilities,
             pods,
         }
+    }
+
+    /// **CD-a 协商查询**：本地是否有能**重建**该能力产物的同名实现。
+    ///
+    /// 判据只看名字：`Source` 的语义是"有同名能力就能从源重算"，
+    /// 版本差异由重建方在自己的诊断里报告（§3.2：rebuild 不保证逐位相同）。
+    pub fn can_rebuild(&self, capability: &Capability) -> bool {
+        self.capabilities
+            .iter()
+            .any(|available| available.name == capability.name)
+    }
+
+    /// **CI-c 口子①**：按**源种类**问「本地能不能重建它」。
+    ///
+    /// 种类 → 能力名的映射写在
+    /// [`ContentOrigin::capability_name`](ze_scene_core::components::ContentOrigin::capability_name)，
+    /// 不在这里再铺一份 match —— 将来拆成两个 capability 时只改那一处。
+    pub fn can_rebuild_source(
+        &self,
+        origin: &ze_scene_core::components::ContentOrigin,
+    ) -> bool {
+        self.capabilities
+            .iter()
+            .any(|available| available.name == origin.capability_name())
     }
 }
 
@@ -387,6 +461,43 @@ impl Bundle {
         &self.payload
     }
 
+    /// **CD-b**：payload 里记录的内容源（`rebuild` 的输入；`restore` 不需要）。
+    ///
+    /// 没有内容源的产物（纯几何 / 老 ZSB）返回空表 —— 不失败。
+    pub fn text_sources(&self) -> Result<Vec<ze_scene_core::components::ContentOrigin>, BundleError> {
+        Ok(self
+            .script()?
+            .content_origins()
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
+    /// **CD-c 诊断**：本次回放走 `restore` 还是 `rebuild`。
+    ///
+    /// 判据只有两条，且都从产物与本地能力推出（不猜）：
+    /// 1. Meta 里有 `role = Source` 的能力，且本地有同名实现（[`Available::can_rebuild`]）；
+    /// 2. payload 里确实有内容源（没有源就无从重建）。
+    ///
+    /// 两条都成立 ⇒ [`ContentMode::Rebuild`]；否则 （无本字库/排版引擎、或无源）
+    /// ⇒ [`ContentMode::Restore`] —— 回放端用烘焙数据，行为不变。
+    pub fn content_mode(&self, available: &Available) -> Result<ContentMode, BundleError> {
+        let sources = self.text_sources()?;
+        // **CI-c**：按**每个源自己的种类**问能力 —— 源不再隐含"一定是 Typst"。
+        let can_rebuild = sources.iter().any(|origin| {
+            self.meta.required_capabilities.iter().any(|capability| {
+                capability.role == CapabilityRole::Source
+                    && capability.name == origin.capability_name()
+                    && available.can_rebuild(capability)
+            })
+        });
+        if can_rebuild {
+            Ok(ContentMode::Rebuild)
+        } else {
+            Ok(ContentMode::Restore)
+        }
+    }
+
     pub fn meta(&self) -> &Meta {
         &self.meta
     }
@@ -412,18 +523,27 @@ impl Bundle {
         let mut missing = Vec::new();
 
         for required in &self.meta.required_capabilities {
-            match available
-                .capabilities
-                .iter()
-                .find(|c| c.name == required.name)
-            {
-                None => missing.push(format!("缺少能力 `{}`", required.name)),
-                Some(found) => {
-                    if required.version.is_some() && found.version != required.version {
-                        missing.push(format!(
-                            "能力 `{}` 版本不匹配（产物要求 {:?}，当前 {:?}）",
-                            required.name, required.version, found.version
-                        ));
+            match required.role {
+                // 结果：payload 已有烘焙数据，回放端不需要执行它。
+                CapabilityRole::Baked => {}
+                // 源：能重建更好，不能就用烘焙数据 —— 两种情况都**不失败**。
+                CapabilityRole::Source => {}
+                // 逻辑：既有行为（名字 + 版本严格相等）。
+                CapabilityRole::Runtime => {
+                    match available
+                        .capabilities
+                        .iter()
+                        .find(|c| c.name == required.name)
+                    {
+                        None => missing.push(format!("缺少能力 `{}`", required.name)),
+                        Some(found) => {
+                            if required.version.is_some() && found.version != required.version {
+                                missing.push(format!(
+                                    "能力 `{}` 版本不匹配（产物要求 {:?}，当前 {:?}）",
+                                    required.name, required.version, found.version
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -526,7 +646,7 @@ mod tests {
         MetaInput {
             capabilities: vec![
                 Capability::new("scene", Some("4")),
-                Capability::new("content", Some("1")),
+                Capability::new("zela.content", Some("1")),
             ],
             required_capabilities: vec![Capability::new("scene", Some("4"))],
             pods: vec![Pod::new("scene", "0.1.0"), Pod::new("content", "0.1.0")],
@@ -618,12 +738,185 @@ mod tests {
         let available = Available::new(
             vec![
                 Capability::new("scene", Some("3")),
-                Capability::new("content", Some("1")),
+                Capability::new("zela.content", Some("1")),
             ],
             vec![Pod::new("scene", "0.1.0"), Pod::new("content", "0.1.0")],
         );
         let error = bundle.check_restorable(&available).expect_err("版本不匹配");
         assert!(error.missing[0].contains("版本不匹配"));
+    }
+
+    // ─── CD-a：role 协商 ────────────────────────────────────────────────
+
+    /// `Source` / `Baked` 缺失 ⇒ 不失败；`Runtime` 缺失仍失败。
+    #[test]
+    fn role_decides_whether_missing_capability_fails() {
+        let script = tiny_script();
+        let bundle = Bundle::encode(
+            &script,
+            MetaInput {
+                capabilities: Vec::new(),
+                required_capabilities: vec![
+                    Capability::new("scene", Some("4")),
+                    Capability::new("zela.content", Some("1")).with_role(CapabilityRole::Source),
+                    Capability::new("fonts", Some("2")).with_role(CapabilityRole::Baked),
+                ],
+                pods: Vec::new(),
+                required_pods: Vec::new(),
+                downgrades: Vec::new(),
+                source_sha256: None,
+                render_params: RenderParams::default(),
+            },
+        )
+        .expect("encode");
+
+        // 只具备 scene：Source/Baked 缺失都不算失败。
+        let only_scene = Available::new(vec![Capability::new("scene", Some("4"))], Vec::new());
+        bundle
+            .check_restorable(&only_scene)
+            .expect("Source/Baked 缺失不得失败");
+
+        // Runtime 缺失 ⇒ 仍失败（既有行为）。
+        let nothing = Available::new(Vec::new(), Vec::new());
+        let error = bundle.check_restorable(&nothing).expect_err("Runtime 必须存在");
+        assert!(error.missing.iter().any(|m| m.contains("scene")));
+    }
+
+    #[test]
+    fn can_rebuild_is_a_name_query() {
+        let available = Available::new(
+            vec![Capability::new("zela.content", Some("9"))],
+            Vec::new(),
+        );
+        assert!(available.can_rebuild(&Capability::new("zela.content", Some("1"))));
+        assert!(!available.can_rebuild(&Capability::new("fonts", Some("1"))));
+    }
+
+    // ─── CD-b：源与烘焙同时进产物 ──────────────────────────────────────
+
+    fn text_script(text: &str) -> SceneScript {
+        let mut enc = SceneEncoder::new();
+        enc.spawn(vec![Box::new(ze_scene_core::components::ContentOrigin {
+            kind: ze_scene_core::components::ContentOriginKind::Text,
+            text: text.to_string(),
+            font_size: 24.0,
+            x: 10.0,
+            y: 20.0,
+            path_index: 0,
+        })]);
+        enc.finish()
+    }
+
+    /// payload 里能取回源文本（`rebuild` 的输入），且经字节往返仍一致。
+    #[test]
+    fn payload_keeps_content_source_for_rebuild() {
+        let bundle = Bundle::encode(&text_script("Hi"), meta_input()).expect("encode");
+        let read = Bundle::from_bytes(&bundle.to_bytes()).expect("decode");
+
+        let sources = read.text_sources().expect("内容源可读");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].text, "Hi");
+        assert_eq!(sources[0].path_index, 0);
+        // 源进 payload ⇒ 内容 hash 覆盖它；meta 变化不影响。
+        assert_eq!(read.payload_hash(), bundle.payload_hash());
+    }
+
+    /// **CI-c 口子①**：源种类随 payload 一起往返；文本 / 公式不混。
+    #[test]
+    fn content_origin_kind_round_trips_and_selects_the_capability() {
+        use ze_scene_core::components::ContentOriginKind;
+        let mut enc = SceneEncoder::new();
+        enc.spawn(vec![Box::new(ze_scene_core::components::ContentOrigin {
+            kind: ContentOriginKind::Formula,
+            text: "x^2 + 1".to_string(),
+            font_size: 18.0,
+            x: 0.0,
+            y: 0.0,
+            path_index: 2,
+        })]);
+        let bundle = Bundle::encode(&enc.finish(), meta_input()).expect("encode");
+        let read = Bundle::from_bytes(&bundle.to_bytes()).expect("decode");
+        let sources = read.text_sources().expect("内容源可读");
+        assert_eq!(sources[0].kind, ContentOriginKind::Formula);
+        assert_eq!(sources[0].capability_name(), "zela.content");
+    }
+
+    /// **CI-c / §0.6**：`role` 必填 —— 缺失即解码期显式报错（无静默默认）。
+    #[test]
+    fn capability_role_is_required_at_decode_time() {
+        let json = r#"{"name":"zela.scene","version":"4"}"#;
+        let error = serde_json::from_str::<Capability>(json).expect_err("缺 role 必须失败");
+        assert!(
+            error.to_string().contains("role"),
+            "错误必须点名缺失字段：{error}"
+        );
+    }
+
+    /// 不含内容源的产物（纯几何 / 老 ZSB）仍可读，源表为空而不是失败。
+    #[test]
+    fn payload_without_content_source_still_decodes() {
+        let bundle = Bundle::encode(&tiny_script(), meta_input()).expect("encode");
+        let read = Bundle::from_bytes(&bundle.to_bytes()).expect("decode");
+        assert!(read.text_sources().expect("源表可为空").is_empty());
+        assert_eq!(read.script().expect("script").len(), 1);
+    }
+
+    // ─── CD-c：restore / rebuild 诊断 ──────────────────────────────────
+
+    fn source_bundle() -> Bundle {
+        let mut input = meta_input();
+        // 内容能力标为 Source（CD-d 起由 zela-app 自动写入；此处显式构造）。
+        input.required_capabilities = vec![
+            Capability::new("scene", Some("4")),
+            Capability::new("zela.content", Some("1")).with_role(CapabilityRole::Source),
+        ];
+        Bundle::encode(&text_script("Hi"), input).expect("encode")
+    }
+
+    /// 本地有内容能力 + payload 有源 ⇒ rebuild；缺任一条 ⇒ restore。
+    #[test]
+    fn content_mode_reports_restore_or_rebuild() {
+        let bundle = source_bundle();
+        let with_content = Available::new(
+            vec![
+                Capability::new("scene", Some("4")),
+                Capability::new("zela.content", Some("1")),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            bundle.content_mode(&with_content).expect("诊断"),
+            ContentMode::Rebuild
+        );
+
+        // 只有 scene（例如浏览器无内容引擎）⇒ 用烘焙数据。
+        let scene_only = Available::new(vec![Capability::new("scene", Some("4"))], Vec::new());
+        assert_eq!(
+            bundle.content_mode(&scene_only).expect("诊断"),
+            ContentMode::Restore
+        );
+    }
+
+    /// 没有内容源的产物：即使本地有内容能力，也没有可重建的输入 ⇒ restore。
+    #[test]
+    fn content_mode_without_source_is_restore() {
+        let mut input = meta_input();
+        input.required_capabilities = vec![
+            Capability::new("scene", Some("4")),
+            Capability::new("zela.content", Some("1")).with_role(CapabilityRole::Source),
+        ];
+        let bundle = Bundle::encode(&tiny_script(), input).expect("encode");
+        let with_content = Available::new(
+            vec![
+                Capability::new("scene", Some("4")),
+                Capability::new("zela.content", Some("1")),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            bundle.content_mode(&with_content).expect("诊断"),
+            ContentMode::Restore
+        );
     }
 
     #[test]

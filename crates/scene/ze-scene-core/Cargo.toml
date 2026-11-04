@@ -33,6 +33,8 @@ ze-func = { path = "../../kernel/ze-func" }
 ze-reflect = { path = "../../kernel/ze-reflect" }
 # CA-b：参数注册表用 kernel 级 Property 词汇（schema + 值 + 约束）。
 ze-property = { path = "../../kernel/ze-property" }
+# CB：纯数值算法（矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径）的正当去处。
+ze-alg = { path = "../../kernel/ze-alg" }
 # 内置数学函数由 Pod 提供（math_pod）；核心层不依赖任何 zela-*。
 ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 # 内容编译的宿主侧适配（content.rs）：排版引擎 → IR → 世界坐标轮廓。

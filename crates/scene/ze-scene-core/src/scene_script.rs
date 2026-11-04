@@ -48,6 +48,7 @@ use ze_time::{ClockForest, ClockProgram};
 
 use crate::animation::affine::StateUnsupported;
 use crate::animation::binding::{BindingTable, LibraryRef, ResetBehavior};
+use crate::animation::scope::ScopeSpec;
 use crate::animation::target::target_ctor_by_name;
 use crate::animation::timeline::Timeline;
 use crate::surface::SurfaceTextureRef;
@@ -230,6 +231,7 @@ fn record_expression(
     predicate: Option<Expr>,
     reset: ResetBehavior,
     duration: f64,
+    scope: Option<ScopeSpec>,
 ) -> Result<(), ExprBindError> {
     validate_expression(&expr)?;
     if let Some(predicate) = &predicate {
@@ -269,7 +271,16 @@ fn record_expression(
     if object.0 >= object_count {
         return Err(ExprBindError::UnknownObject(object.0));
     }
-    timeline.bind_expr_pending(expr, library, clock, predicate, reset, make, object.0);
+    match scope {
+        Some(scope) => {
+            timeline.bind_expr_pending_scoped(
+                expr, library, clock, predicate, reset, make, object.0, Some(scope),
+            );
+        }
+        None => {
+            timeline.bind_expr_pending(expr, library, clock, predicate, reset, make, object.0);
+        }
+    }
     Ok(())
 }
 
@@ -380,11 +391,40 @@ pub struct SceneEncoder {
     creates: Vec<Components>,
     despawns: Vec<Handle>,
     timeline: Timeline,
+    /// **CC-a**：与 `creates` 平行的作用域归属（`None` = 根作用域）。
+    object_scopes: Vec<Option<ScopeSpec>>,
+    /// 当前的 scope 栈（`begin_scope` / `end_scope` 维护）。
+    scope_stack: Vec<ScopeSpec>,
 }
+
+/// `begin_scope` 返回的令牌：`end_scope` 用它把栈截断回进入前的深度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScopeToken(pub usize);
 
 impl SceneEncoder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// **CC-a**：进入一个作用域。
+    ///
+    /// 作用域自带时钟（`clock`；空链 = 全局时间轴），其内创建的对象在
+    /// `commit` 后拥有**独立的时间轴**；表达式绑定继承目标对象的作用域。
+    ///
+    /// 路径是**声明式**的（进产物）；序号由首次出现顺序在编译期重新分配。
+    pub fn begin_scope(&mut self, path: impl Into<String>, clock: ClockProgram) -> ScopeToken {
+        let token = ScopeToken(self.scope_stack.len());
+        self.scope_stack.push(ScopeSpec::new(path, clock));
+        token
+    }
+
+    /// 退出作用域（恢复进入前的栈深度）。
+    pub fn end_scope(&mut self, token: ScopeToken) {
+        self.scope_stack.truncate(token.0);
+    }
+
+    fn current_scope(&self) -> Option<ScopeSpec> {
+        self.scope_stack.last().cloned()
     }
 
     /// 录一条创建命令，返回**局部句柄**。
@@ -393,6 +433,7 @@ impl SceneEncoder {
     pub fn spawn(&mut self, components: Components) -> Handle {
         let h = Handle(self.creates.len());
         self.creates.push(components);
+        self.object_scopes.push(self.current_scope());
         h
     }
 
@@ -452,6 +493,13 @@ impl SceneEncoder {
         reset: ResetBehavior,
         duration: f64,
     ) -> Result<(), ExprBindError> {
+        // **CC-a**：绑定继承目标对象的作用域（对象在哪个 scope 里创建，
+        // 它的动画就属于哪条时间轴）。
+        let scope = self
+            .object_scopes
+            .get(object.0)
+            .cloned()
+            .flatten();
         record_expression(
             &mut self.timeline,
             self.creates.len(),
@@ -463,6 +511,7 @@ impl SceneEncoder {
             predicate,
             reset,
             duration,
+            scope,
         )
     }
 
@@ -472,6 +521,7 @@ impl SceneEncoder {
             creates: self.creates,
             despawns: self.despawns,
             timeline: self.timeline,
+            object_scopes: self.object_scopes,
         }
     }
 }
@@ -506,6 +556,15 @@ pub struct SceneRecipe {
     pub state_analyses: Vec<crate::animation::affine::StateAnalysis>,
 }
 
+/// **CE-f**：`rebuild_content` 的结果（诊断用，不进产物）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RebuildReport {
+    /// 用源重算并替换了几何的对象数。
+    pub rebuilt: usize,
+    /// 保留烘焙数据的对象数（闭包返回 `None`，或没有可替换的几何组件）。
+    pub kept_baked: usize,
+}
+
 impl SceneRecipe {
     /// 句柄 → `ObjectId`（越界 ⇒ `None`）。
     pub fn id(&self, h: Handle) -> Option<ObjectId> {
@@ -538,7 +597,8 @@ pub enum ScriptError {
     CreateFailed { handle: Handle },
     /// **G 批帧内定序**：装配期发现"读先于写"（见 [`ExprBindError::ReadOrderConflict`]）。
     OrderConflict(ExprBindError),
-    /// **AI-07**：绑定需要历史重放（`SeekKind::Replay`），而引擎只实现了 `O1`。
+    /// **AI-07**：绑定需要历史重放（`SeekKind::Replay`），而 `Replay` 是显式红线
+    /// （引擎实现 `O1 / OPerInterval / OLogN / EventReplay`）。
     /// 装配期显式失败，不允许 seek 到中间帧静默拿错值（见
     /// [`crate::animation::BindingTable::reject_replay`]）。
     ReplayRequiresHistory(crate::animation::ReplayUnsupported),
@@ -578,6 +638,12 @@ pub struct SceneScript {
     creates: Vec<Components>,
     despawns: Vec<Handle>,
     timeline: Timeline,
+    /// **CC-a**：与 `creates` 平行的作用域归属（`None` = 根作用域）。
+    ///
+    /// 只含声明式路径 + 作用域时钟；序号在编译期按首次出现重新分配 ⇒
+    /// 产物里没有运行期分配的 id。无作用域时空列表不序列化（产物不含该字段）；
+    /// 有作用域时按声明序写入 `path` + `clock`。
+    object_scopes: Vec<Option<ScopeSpec>>,
 }
 
 impl SceneScript {
@@ -622,6 +688,8 @@ impl serde::Serialize for SceneScript {
             creates: Vec<Vec<crate::persist::TaggedComponent>>,
             despawns: &'a [Handle],
             timeline: &'a Timeline,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            object_scopes: &'a Vec<Option<ScopeSpec>>,
         }
 
         let creates = self
@@ -636,6 +704,7 @@ impl serde::Serialize for SceneScript {
             creates,
             despawns: &self.despawns,
             timeline: &self.timeline,
+            object_scopes: &self.object_scopes,
         }
         .serialize(serializer)
     }
@@ -651,6 +720,8 @@ impl<'de> serde::Deserialize<'de> for SceneScript {
             creates: Vec<Vec<crate::persist::TaggedComponent>>,
             despawns: Vec<Handle>,
             timeline: Timeline,
+            #[serde(default)]
+            object_scopes: Vec<Option<ScopeSpec>>,
         }
 
         let repr = <Repr as serde::Deserialize>::deserialize(deserializer)?;
@@ -664,6 +735,7 @@ impl<'de> serde::Deserialize<'de> for SceneScript {
             creates,
             despawns: repr.despawns,
             timeline: repr.timeline,
+            object_scopes: repr.object_scopes,
         })
     }
 }
@@ -720,6 +792,8 @@ impl SceneScript {
         reset: ResetBehavior,
         duration: f64,
     ) -> Result<(), ExprBindError> {
+        // **CC-a**：成品脚本入口同样继承目标对象的作用域。
+        let scope = self.object_scopes.get(object.0).cloned().flatten();
         record_expression(
             &mut self.timeline,
             self.creates.len(),
@@ -731,6 +805,7 @@ impl SceneScript {
             predicate,
             reset,
             duration,
+            scope,
         )
     }
 }
@@ -743,6 +818,102 @@ impl SceneScript {
 
     pub fn is_empty(&self) -> bool {
         self.creates.is_empty()
+    }
+
+    /// **CE-d**：某对象的作用域声明（根作用域 / 不存在 ⇒ `None`）。
+    ///
+    /// View 的命名空间**复用**这里（不新建第二套作用域来源）。
+    pub fn object_scope(&self, handle: Handle) -> Option<&ScopeSpec> {
+        self.object_scopes.get(handle.0).and_then(Option::as_ref)
+    }
+
+    /// **CE-f**：用源重新烘焙内容几何（`rebuild` 路径）。
+    ///
+    /// 对每个携带 [`ContentOrigin`](crate::components::ContentOrigin) 的对象，
+    /// 用 `rebuild(origin)` 的结果替换 `Path` / `Reveal` 的几何：
+    ///
+    /// - 闭包返回 `Some(path)` ⇒ 替换（该对象走 rebuild）；
+    /// - 返回 `None` ⇒ **保留烘焙数据**（显式降级，计入 `kept_baked`）；
+    /// - 对象没有可替换的几何组件 ⇒ 同样计入 `kept_baked`。
+    ///
+    /// 返回计数供诊断：`rebuild` 与 `restore` 的差异必须是**可解释的差异**，
+    /// 不是错误（见 `zela_scene_bundle::Meta` 文档）。
+    pub fn rebuild_content(
+        &mut self,
+        mut rebuild: impl FnMut(&crate::components::ContentOrigin) -> Option<ze_notion::Path2D>,
+    ) -> RebuildReport {
+        let mut report = RebuildReport::default();
+        for components in &mut self.creates {
+            let Some(origin) = components
+                .iter()
+                .find_map(|component| {
+                    component
+                        .as_any()
+                        .downcast_ref::<crate::components::ContentOrigin>()
+                })
+                .cloned()
+            else {
+                continue;
+            };
+            let Some(path) = rebuild(&origin) else {
+                report.kept_baked += 1;
+                continue;
+            };
+            let mut replaced = false;
+            for component in components.iter_mut() {
+                if let Some(native) = component
+                    .as_any_mut()
+                    .downcast_mut::<crate::object::Path>()
+                {
+                    native.0 = path.clone();
+                    replaced = true;
+                } else if let Some(reveal) = component
+                    .as_any_mut()
+                    .downcast_mut::<crate::components::Reveal>()
+                {
+                    reveal.path = path.clone();
+                    replaced = true;
+                }
+            }
+            if replaced {
+                report.rebuilt += 1;
+            } else {
+                report.kept_baked += 1;
+            }
+        }
+        report
+    }
+
+    /// **CE-e**：按声明顺序列出携带 [`View`](crate::view::View) 的对象句柄。
+    ///
+    /// 装配期据此为每个 View 生成参数面板（View → 作用域 → 该作用域的控件）。
+    pub fn views(&self) -> Vec<Handle> {
+        self.creates
+            .iter()
+            .enumerate()
+            .filter(|(_, components)| {
+                components
+                    .iter()
+                    .any(|component| component.as_any().is::<crate::view::View>())
+            })
+            .map(|(index, _)| Handle(index))
+            .collect()
+    }
+
+    /// **CD-b**：payload 里记录的**内容源**（`ContentOrigin` 组件）。
+    ///
+    /// `restore` 不读它（用烘焙轮廓）；`rebuild` 用它 + 本地能力重算。
+    /// 顺序 = 对象声明顺序，可复现。
+    pub fn content_origins(&self) -> Vec<&crate::components::ContentOrigin> {
+        self.creates
+            .iter()
+            .flat_map(|components| components.iter())
+            .filter_map(|component| {
+                component
+                    .as_any()
+                    .downcast_ref::<crate::components::ContentOrigin>()
+            })
+            .collect()
     }
 
     /// **静止时刻**（秒；`None` = 不可推导，见 [`Timeline::still_time`]）。
@@ -780,6 +951,8 @@ impl SceneScript {
             shift_component_refs(components, base);
         }
         self.creates.append(&mut other.creates);
+        // 作用域与 creates 平行 ⇒ 直接接在后面（下标自然对齐）。
+        self.object_scopes.append(&mut other.object_scopes);
 
         // 2. 销毁命令：句柄偏移。
         for h in &mut other.despawns {
@@ -859,9 +1032,9 @@ impl SceneScript {
             &mut bindings,
         );
 
-        // **AI-07**：引擎只有 O1 求值器。需要历史重放的绑定（历史 payload 的
-        // predicate + Hold，或含 NatRec 的离散层）在装配期显式失败 ——
-        // seek 到中间帧拿错值却静默通过，是本批要消灭的那类洞。
+        // **AI-07**：引擎实现 `O1 / OPerInterval / OLogN / EventReplay`，`Replay` 是红线。
+        // 需要历史重放的绑定（历史 payload 的 predicate + Hold，或含 NatRec 的离散层）
+        // 在装配期显式失败 —— seek 到中间帧拿错值却静默通过，是本批要消灭的那类洞。
         bindings
             .reject_replay()
             .map_err(ScriptError::ReplayRequiresHistory)?;

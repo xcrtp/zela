@@ -9,34 +9,38 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/ze-scene-core`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
-- 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-ecs`
-- 源文件：44 个 · 12573 行
+- 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
+- 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
+- 源文件：49 个 · 14115 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/affine.rs` | 1410 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
-| `src/animation/binding.rs` | 401 | — |
-| `src/animation/mod.rs` | 33 | — |
-| `src/animation/params.rs` | 633 | params.rs — 参数注册表 side table（CA-b）与参数地址回写（CA-c）。 |
+| `src/animation/affine.rs` | 1246 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
+| `src/animation/binding.rs` | 480 | — |
+| `src/animation/mod.rs` | 37 | — |
+| `src/animation/params.rs` | 700 | params.rs — 参数注册表 side table（CA-b）与参数地址回写（CA-c）。 |
 | `src/animation/predicate.rs` | 893 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
-| `src/animation/target.rs` | 1354 | — |
-| `src/animation/timeline.rs` | 632 | — |
+| `src/animation/resolve.rs` | 192 | resolve.rs — **字段级**写入仲裁（CC-c）。 |
+| `src/animation/scope.rs` | 61 | 作用域（CC-a）：给绑定表与时钟一个**声明式**的归属维度。 |
+| `src/animation/target.rs` | 1380 | — |
+| `src/animation/timeline.rs` | 749 | — |
 | `src/bounds.rs` | 197 | — |
 | `src/camera_input.rs` | 160 | — |
 | `src/components/3d.rs` | 402 | — |
-| `src/components.rs` | 223 | — |
+| `src/components.rs` | 274 | — |
 | `src/composer.rs` | 146 | — |
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
 | `src/domain/config.rs` | 76 | — |
-| `src/domain/event.rs` | 167 | — |
-| `src/domain/mod.rs` | 24 | — |
+| `src/domain/event.rs` | 344 | — |
+| `src/domain/inject.rs` | 223 | **CH-a**：`Injected` envelope —— 给每一次注入打标记。 |
+| `src/domain/input_window.rs` | 393 | **CH-a**：窗口输入 —— `collect_events` 的纯函数形态。 |
+| `src/domain/mod.rs` | 30 | — |
 | `src/domain/view.rs` | 263 | — |
 | `src/domain/view_rect.rs` | 38 | — |
-| `src/lib.rs` | 75 | — |
+| `src/lib.rs` | 78 | — |
 | `src/math_pod.rs` | 107 | — |
 | `src/mesh_primitives/cube.rs` | 196 | — |
 | `src/mesh_primitives/parametric_surface.rs` | 193 | — |
@@ -52,13 +56,14 @@
 | `src/object/primitives.rs` | 475 | — |
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
-| `src/registry.rs` | 219 | — |
-| `src/scene_script.rs` | 1051 | — |
+| `src/registry.rs` | 225 | — |
+| `src/scene_script.rs` | 1224 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
 | `src/transform.rs` | 221 | — |
 | `src/types.rs` | 14 | — |
+| `src/view.rs` | 128 | View（CE-d）：给 UI 面一个**空间**与**映射**的声明。 |
 | `src/world_inherit.rs` | 84 | — |
 | `src/world_transforms.rs` | 73 | — |
 
@@ -69,80 +74,101 @@ graph LR
     f0["src/animation/affine.rs"]
     f2["src/animation/binding.rs"]
     f1["src/animation/mod.rs"]
-    f5["src/animation/params.rs"]
+    f6["src/animation/params.rs"]
     f3["src/animation/predicate.rs"]
-    f4["src/animation/target.rs"]
-    f10["src/animation/timeline.rs"]
-    f7["src/bounds.rs"]
-    f11["src/components.rs"]
-    f12["src/components/3d.rs"]
-    f28["src/composer.rs"]
-    f14["src/domain/camera.rs"]
-    f15["src/domain/event.rs"]
-    f6["src/domain/mod.rs"]
-    f16["src/domain/view.rs"]
-    f18["src/domain/view_rect.rs"]
-    f20["src/mesh_primitives.rs"]
-    f19["src/mesh_primitives/cube.rs"]
-    f21["src/mesh_primitives/parametric_surface.rs"]
-    f22["src/object/affine.rs"]
-    f23["src/object/axes.rs"]
-    f8["src/object/camera.rs"]
-    f24["src/object/graph.rs"]
-    f17["src/object/mod.rs"]
-    f25["src/object/placement.rs"]
-    f9["src/object/primitives.rs"]
-    f26["src/persist.rs"]
-    f27["src/registry.rs"]
-    f29["src/scene_script.rs"]
-    f30["src/surface.rs"]
-    f13["src/types.rs"]
-    f32["src/world_inherit.rs"]
-    f31["src/world_transforms.rs"]
+    f8["src/animation/resolve.rs"]
+    f4["src/animation/scope.rs"]
+    f5["src/animation/target.rs"]
+    f12["src/animation/timeline.rs"]
+    f9["src/bounds.rs"]
+    f13["src/components.rs"]
+    f14["src/components/3d.rs"]
+    f33["src/composer.rs"]
+    f16["src/domain/camera.rs"]
+    f21["src/domain/config.rs"]
+    f17["src/domain/event.rs"]
+    f19["src/domain/inject.rs"]
+    f20["src/domain/input_window.rs"]
+    f7["src/domain/mod.rs"]
+    f18["src/domain/view.rs"]
+    f23["src/domain/view_rect.rs"]
+    f25["src/mesh_primitives.rs"]
+    f24["src/mesh_primitives/cube.rs"]
+    f26["src/mesh_primitives/parametric_surface.rs"]
+    f27["src/object/affine.rs"]
+    f28["src/object/axes.rs"]
+    f10["src/object/camera.rs"]
+    f29["src/object/graph.rs"]
+    f22["src/object/mod.rs"]
+    f30["src/object/placement.rs"]
+    f11["src/object/primitives.rs"]
+    f31["src/persist.rs"]
+    f32["src/registry.rs"]
+    f35["src/scene_script.rs"]
+    f36["src/surface.rs"]
+    f15["src/types.rs"]
+    f34["src/view.rs"]
+    f38["src/world_inherit.rs"]
+    f37["src/world_transforms.rs"]
     f0 --> f1
     f2 --> f1
     f2 --> f3
     f2 --> f4
-    f5 --> f0
-    f5 --> f1
-    f5 --> f4
-    f5 --> f6
+    f2 --> f5
+    f6 --> f0
+    f6 --> f1
+    f6 --> f4
+    f6 --> f5
+    f6 --> f7
     f3 --> f1
-    f4 --> f1
-    f4 --> f7
-    f4 --> f8
-    f4 --> f9
-    f10 --> f1
-    f10 --> f4
-    f7 --> f11
-    f12 --> f11
-    f12 --> f13
-    f14 --> f6
-    f15 --> f6
-    f15 --> f16
-    f16 --> f6
-    f16 --> f17
-    f16 --> f13
-    f18 --> f6
+    f8 --> f1
+    f5 --> f1
+    f5 --> f9
+    f5 --> f10
+    f5 --> f11
+    f12 --> f1
+    f12 --> f4
+    f12 --> f5
+    f9 --> f13
+    f14 --> f13
+    f14 --> f15
+    f16 --> f7
+    f17 --> f7
+    f17 --> f18
+    f19 --> f17
     f19 --> f20
-    f21 --> f20
-    f22 --> f17
-    f23 --> f17
-    f8 --> f17
-    f24 --> f17
-    f25 --> f17
-    f9 --> f17
-    f26 --> f17
-    f27 --> f28
-    f27 --> f6
-    f29 --> f0
-    f29 --> f2
-    f29 --> f4
-    f29 --> f10
-    f29 --> f30
-    f30 --> f11
-    f30 --> f17
-    f31 --> f32
+    f19 --> f7
+    f20 --> f16
+    f20 --> f21
+    f20 --> f17
+    f20 --> f7
+    f20 --> f10
+    f18 --> f7
+    f18 --> f22
+    f18 --> f15
+    f23 --> f7
+    f24 --> f25
+    f26 --> f25
+    f27 --> f22
+    f28 --> f22
+    f10 --> f22
+    f29 --> f22
+    f30 --> f22
+    f11 --> f22
+    f31 --> f22
+    f32 --> f33
+    f32 --> f7
+    f32 --> f34
+    f35 --> f0
+    f35 --> f2
+    f35 --> f4
+    f35 --> f5
+    f35 --> f12
+    f35 --> f36
+    f36 --> f13
+    f36 --> f22
+    f34 --> f35
+    f37 --> f38
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -177,6 +203,12 @@ graph LR
 | `src/animation/predicate.rs` | `pub struct MultiIntervalSet` |
 | `src/animation/predicate.rs` | `pub fn analyze(expr: &Expr) -> Option<MultiIntervalSet>` |
 | `src/animation/predicate.rs` | `pub fn register_passes(registry: &mut ze_comb::PassRegistry)` |
+| `src/animation/resolve.rs` | `pub struct SuppressedWrite` |
+| `src/animation/resolve.rs` | `pub struct WriteResolution` |
+| `src/animation/resolve.rs` | `pub fn field_winners(table: &BindingTable) -> FieldWinners` |
+| `src/animation/resolve.rs` | `pub fn wins_all(binding: &Binding, _index: usize, winners: &FieldWinners) -> bool` |
+| `src/animation/scope.rs` | `pub struct ScopeId(pub u32)` |
+| `src/animation/scope.rs` | `pub struct ScopeSpec` |
 | `src/animation/target.rs` | `pub enum TargetError` |
 | `src/animation/target.rs` | `pub trait Target: Send + Sync + std::fmt::Debug + 'static` |
 | `src/animation/target.rs` | `pub trait TargetCtor: Send + Sync + 'static` |
@@ -206,6 +238,8 @@ graph LR
 | `src/components.rs` | `pub struct PhaseAnim` |
 | `src/components.rs` | `pub struct MorphShape` |
 | `src/components.rs` | `pub struct ContentTextureItem` |
+| `src/components.rs` | `pub enum ContentOriginKind` |
+| `src/components.rs` | `pub struct ContentOrigin` |
 | `src/components.rs` | `pub struct Reveal` |
 | `src/components.rs` | `pub struct PathFollow` |
 | `src/composer.rs` | `pub struct Composer` |
@@ -219,7 +253,26 @@ graph LR
 | `src/domain/config.rs` | `pub struct UiConfig` |
 | `src/domain/event.rs` | `pub struct WidgetId(pub u32)` |
 | `src/domain/event.rs` | `pub enum SceneEvent` |
+| `src/domain/event.rs` | `pub enum PointerButton` |
+| `src/domain/event.rs` | `pub enum PointerInput` |
+| `src/domain/event.rs` | `pub struct KeyModifiers` |
+| `src/domain/event.rs` | `pub enum KeyInput` |
+| `src/domain/event.rs` | `pub struct TextAnchorRef` |
+| `src/domain/event.rs` | `pub enum TextAnchorEdge` |
+| `src/domain/event.rs` | `pub enum TextInput` |
+| `src/domain/event.rs` | `pub enum CommandInput` |
 | `src/domain/event.rs` | `pub struct InputEvents` |
+| `src/domain/inject.rs` | `pub struct TagId(pub u32)` |
+| `src/domain/inject.rs` | `pub enum InjectSource` |
+| `src/domain/inject.rs` | `pub struct FrameTag(pub Option<TagId>)` |
+| `src/domain/inject.rs` | `pub enum InjectedPayload` |
+| `src/domain/inject.rs` | `pub struct Injected` |
+| `src/domain/inject.rs` | `pub enum InjectError` |
+| `src/domain/input_window.rs` | `pub enum Key` |
+| `src/domain/input_window.rs` | `pub struct PointerState` |
+| `src/domain/input_window.rs` | `pub struct WindowInput` |
+| `src/domain/input_window.rs` | `pub struct SceneInputContext` |
+| `src/domain/input_window.rs` | `pub fn collect_events(input: &WindowInput, ctx: &SceneInputContext) -> Vec<SceneEvent>` |
 | `src/domain/view.rs` | `pub struct ContentHandle(u64)` |
 | `src/domain/view.rs` | `pub struct LayerDescriptor` |
 | `src/domain/view.rs` | `pub struct ContentTextureSpec` |
@@ -274,8 +327,10 @@ graph LR
 | `src/scene_script.rs` | `pub struct Handle(pub usize)` |
 | `src/scene_script.rs` | `pub fn is_handle_ref(id: ObjectId) -> bool` |
 | `src/scene_script.rs` | `pub struct SceneEncoder` |
+| `src/scene_script.rs` | `pub struct ScopeToken(pub usize)` |
 | `src/scene_script.rs` | `pub struct HandleRange` |
 | `src/scene_script.rs` | `pub struct SceneRecipe` |
+| `src/scene_script.rs` | `pub struct RebuildReport` |
 | `src/scene_script.rs` | `pub enum ScriptError` |
 | `src/scene_script.rs` | `pub struct SceneScript` |
 | `src/scene_script.rs` | `pub fn register_passes(registry: &mut ze_comb::PassRegistry)` |
@@ -295,6 +350,8 @@ graph LR
 | `src/time_state.rs` | `pub struct TimeState` |
 | `src/transform.rs` | `pub trait Transform2D` |
 | `src/transform.rs` | `pub trait Transform2DInto` |
+| `src/view.rs` | `pub enum ViewMapping` |
+| `src/view.rs` | `pub struct View` |
 | `src/world_inherit.rs` | `pub struct WorldInherit` |
 | `src/world_transforms.rs` | `pub struct WorldTransforms` |
 <!-- AUTO:END -->

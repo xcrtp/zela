@@ -9,8 +9,13 @@ license.workspace = true
 
 [dependencies]
 ze-notion = { path = "../ze-notion" }
+# CG-c：文本的逐字符盒（`TextRun`）与结构化帧一起住在 `ze-interact`（内部 f64）。
+ze-interact = { path = "../ze-interact" }
 serde = { workspace = true, optional = true }
 
 [features]
 default = []
-serde = ["dep:serde", "ze-notion/serde"]
+serde = ["dep:serde", "ze-notion/serde", "ze-interact/serde"]
+
+[dev-dependencies]
+serde_json.workspace = true

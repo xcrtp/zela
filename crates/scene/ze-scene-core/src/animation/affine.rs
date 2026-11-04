@@ -22,6 +22,21 @@
 //! 要求两个不同的浮点近似逐位相同是"巧合检测"，不是正确性判据（BY 计划 §2）。
 //!
 //! 本定义**只适用于 `State` 的闭式求值**；项目其余部分继续严守逐位相同。
+//!
+//! # 纯数值算法在 `ze-alg`（CB-b）
+//!
+//! 矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径已抽到 [`ze_alg`]（kernel 级、
+//! 零 glam）。本文件只保留**读 `Expr` 的识别逻辑**与场景侧的 `AffineMap` /
+//! `StatePlan` / `StateShape`。
+//!
+//! # 精度口径（CB-c）
+//!
+//! `State` 的内部运算**一律 f64**（`ze-alg` 的当前唯一实现）。
+//! 标量状态直接以 f64 输出；**向量**状态（Vec2/3/4）向 `f32` 的降级只发生在
+//! **一次**：构造 [`EvalValue`] 的边界（[`StateShape::value`]）。不得在中间步骤
+//! 反复降级 —— 否则舍入会随步数累积，且同一状态在「seek 到第 n 帧」与
+//! 「逐帧播放」下会得到不同的 f32 值。
+//! 用例 `state_demotes_to_f32_only_at_the_eval_boundary` 钉住这条口径。
 
 use std::collections::BTreeSet;
 
@@ -39,8 +54,8 @@ pub const EVENT_CHANNEL: &str = "event";
 /// **派生量**：装配期算出的 side table，不进 payload（纪律④）。
 pub type StateDependencies = BTreeSet<String>;
 
-/// 识别器支持的最大状态宽度（与 `SCALAR_MAX_DIM` 同口径）。
-pub const AFFINE_MAX_WIDTH: usize = 4;
+/// 识别器支持的最大状态宽度（与 [`ze_alg::MAX_DIM`] 同一处定义）。
+pub const AFFINE_MAX_WIDTH: usize = ze_alg::MAX_DIM;
 
 /// **容差 oracle**（BY-a2）：闭式定义 vs 逐次重放的回归判据。
 ///
@@ -95,14 +110,12 @@ impl AffineMap {
     /// **增广矩阵幂**：`f^n(init)`，`O(k³ log n)`。
     ///
     /// **这是定义**（BY §2.2）：`State(n) := apply(init, n)`。
-    /// 纯函数 ⇒ seek 与路径无关；只用 `+ − × ÷` ⇒ IEEE754 逐位可复现。
+    /// 纯函数 ⇒ seek 与路径无关；只用 `+ − ×` ⇒ IEEE754 逐位可复现。
     ///
-    /// 矩阵乘法的求和顺序由 [`mat_mul`] 的下标升序 `.sum()` 固定 ⇒ **不得**
-    /// 改成并行 / 树形归约（那会改变舍入）。
+    /// 数值实现在 [`ze_alg::affine_apply`]：矩阵乘法的求和顺序由下标升序固定 ⇒
+    /// **不得**改成并行 / 树形归约（那会改变舍入）。
     pub fn apply(&self, init: &[f64], n: u64) -> Vec<f64> {
-        assert_eq!(init.len(), self.width(), "init 宽度必须与仿射图一致");
-        let powered = self.powered_matrix(n);
-        self.apply_powered(&powered, init)
+        ze_alg::affine_apply(&self.a, &self.b, init, n)
     }
 
     /// **BZ-d 多实例**：N 个实例共享同一组 `(A, b)`、只差 `init`。
@@ -110,237 +123,31 @@ impl AffineMap {
     /// **一次**矩阵快速幂 + N 次"矩阵 × 向量"（不是 N 次快速幂）。
     /// 每个结果与 [`apply`](Self::apply) **逐位相同**（同一个 `M^n`、同一求和顺序）。
     pub fn apply_many(&self, inits: &[Vec<f64>], n: u64) -> Vec<Vec<f64>> {
-        let powered = self.powered_matrix(n);
-        inits
-            .iter()
-            .map(|init| {
-                assert_eq!(init.len(), self.width(), "init 宽度必须与仿射图一致");
-                self.apply_powered(&powered, init)
-            })
-            .collect()
-    }
-
-    /// 增广矩阵的 `n` 次幂 `[[A, b], [0, 1]]^n`（幂表：可跨实例复用）。
-    fn powered_matrix(&self, n: u64) -> Vec<Vec<f64>> {
-        // 增广 (k+1)×(k+1)：[[A, b], [0, 1]]
-        let k = self.width();
-        let mut base = vec![vec![0.0; k + 1]; k + 1];
-        for i in 0..k {
-            base[i][..k].copy_from_slice(&self.a[i]);
-            base[i][k] = self.b[i];
-        }
-        base[k][k] = 1.0;
-        let mut acc = identity(k + 1);
-        let mut exp = n;
-        let mut base = base;
-        while exp > 0 {
-            if exp & 1 == 1 {
-                acc = mat_mul(&acc, &base);
-            }
-            exp >>= 1;
-            if exp > 0 {
-                base = mat_mul(&base, &base);
-            }
-        }
-        acc
-    }
-
-    /// 用已算好的幂表把 `init` 推进一步（`O(k²)`）。
-    fn apply_powered(&self, powered: &[Vec<f64>], init: &[f64]) -> Vec<f64> {
-        let k = self.width();
-        (0..k)
-            .map(|i| (0..k).map(|j| powered[i][j] * init[j]).sum::<f64>() + powered[i][k])
-            .collect()
+        ze_alg::affine_apply_many(&self.a, &self.b, inits, n)
     }
 
     /// 逐次重放（**近似实现 / 测试 oracle**，不是定义）。
     pub fn replay(&self, init: &[f64], n: u64) -> Vec<f64> {
-        let mut state = init.to_vec();
-        for _ in 0..n {
-            state = (0..self.width())
-                .map(|i| {
-                    (0..self.width())
-                        .map(|j| self.a[i][j] * state[j])
-                        .sum::<f64>()
-                        + self.b[i]
-                })
-                .collect();
-        }
-        state
+        ze_alg::affine_replay(&self.a, &self.b, init, n)
     }
 
     /// 在 `0..=horizon` 上比对闭式定义与重放（**容差内**，不是逐位）。
     ///
     /// BY §2.2：这是回归 oracle，不是"是否启用快速幂"的开关。
     pub fn replay_within(&self, init: &[f64], horizon: u64, tolerance: f64) -> bool {
-        (0..=horizon).all(|n| {
-            self.apply(init, n)
-                .iter()
-                .zip(self.replay(init, n))
-                .all(|(a, b)| {
-                    // NaN 永不相等（不能靠 NaN 绕过判据）。
-                    !a.is_nan() && !b.is_nan() && (a - b).abs() <= tolerance
-                })
-        })
+        ze_alg::affine_replay_within(&self.a, &self.b, init, horizon, tolerance)
     }
 
     /// **谱半径** `|λ|max`（BZ-a：装配期稳定性门禁用）。
     ///
-    /// 1 / 2 阶用解析式；3 / 4 阶由特征多项式（Faddeev–LeVerrier）+
-    /// Durand–Kerner 求根（固定初值 / 固定迭代次数 ⇒ 确定性）。
+    /// 数值实现位于 [`ze_alg::spectral_radius_slice`]（CB-b）：1 / 2 阶闭式，
+    /// 3 / 4 阶走特征多项式 + Durand–Kerner（固定初值 / 固定迭代 ⇒ 确定性）。
     /// 只在装配期调用，**不在**每帧路径上。
     ///
     /// 非有限值（NaN / inf 来自非法常量）原样传播 ⇒ 调用方的 `< 1` 判定会拒绝。
     pub fn spectral_radius(&self) -> f64 {
-        let k = self.width();
-        match k {
-            1 => self.a[0][0].abs(),
-            2 => {
-                let (a, b) = (self.a[0][0], self.a[0][1]);
-                let (c, d) = (self.a[1][0], self.a[1][1]);
-                let trace = a + d;
-                let det = a * d - b * c;
-                let disc = trace * trace - 4.0 * det;
-                if disc >= 0.0 {
-                    let root = disc.sqrt();
-                    ((trace + root) / 2.0).abs().max(((trace - root) / 2.0).abs())
-                } else {
-                    // 共轭复根：模长 = sqrt(det)（此时 det > 0）。
-                    det.abs().sqrt()
-                }
-            }
-            _ => {
-                let coefficients = characteristic_coefficients(&self.a);
-                polynomial_root_moduli(&coefficients)
-                    .into_iter()
-                    .fold(0.0, f64::max)
-            }
-        }
+        ze_alg::spectral_radius_slice(&self.a)
     }
-}
-
-fn identity(n: usize) -> Vec<Vec<f64>> {
-    let mut out = vec![vec![0.0; n]; n];
-    for (i, row) in out.iter_mut().enumerate() {
-        row[i] = 1.0;
-    }
-    out
-}
-
-fn mat_mul(a: &[Vec<f64>], b: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    let n = a.len();
-    let mut out = vec![vec![0.0; n]; n];
-    for i in 0..n {
-        for j in 0..n {
-            out[i][j] = (0..n).map(|t| a[i][t] * b[t][j]).sum();
-        }
-    }
-    out
-}
-
-/// 特征多项式 `λ^n + c[1]·λ^(n-1) + … + c[n]` 的系数（`c[0] = 1`）。
-///
-/// Faddeev–LeVerrier：`c_s = −tr(A·M_s) / s`，`M_s = A·M_(s−1) + c_(s−1)·I`，
-/// `M_1 = I`。`k ≤ 4` ⇒ 常数开销。
-fn characteristic_coefficients(a: &[Vec<f64>]) -> Vec<f64> {
-    let n = a.len();
-    let mut c = vec![0.0; n + 1];
-    c[0] = 1.0;
-    let mut m = identity(n);
-    for s in 1..=n {
-        if s > 1 {
-            let mut next = mat_mul(a, &m);
-            for (i, row) in next.iter_mut().enumerate() {
-                row[i] += c[s - 1];
-            }
-            m = next;
-        }
-        let am = mat_mul(a, &m);
-        let trace: f64 = (0..n).map(|i| am[i][i]).sum();
-        c[s] = -trace / s as f64;
-    }
-    c
-}
-
-/// 极简复数（只用于求根；不引依赖）。
-#[derive(Clone, Copy)]
-struct Complex {
-    re: f64,
-    im: f64,
-}
-
-impl Complex {
-    const fn new(re: f64, im: f64) -> Self {
-        Self { re, im }
-    }
-
-    fn sub(self, other: Self) -> Self {
-        Self::new(self.re - other.re, self.im - other.im)
-    }
-
-    fn mul(self, other: Self) -> Self {
-        Self::new(
-            self.re * other.re - self.im * other.im,
-            self.re * other.im + self.im * other.re,
-        )
-    }
-
-    fn div(self, other: Self) -> Self {
-        let denom = other.re * other.re + other.im * other.im;
-        Self::new(
-            (self.re * other.re + self.im * other.im) / denom,
-            (self.im * other.re - self.re * other.im) / denom,
-        )
-    }
-
-    fn modulus(self) -> f64 {
-        self.re.hypot(self.im)
-    }
-}
-
-/// 首一多项式的值（Horner）。
-fn polynomial_at(coefficients: &[f64], z: Complex) -> Complex {
-    let mut acc = Complex::new(0.0, 0.0);
-    for &coefficient in coefficients {
-        acc = acc.mul(z);
-        acc.re += coefficient;
-    }
-    acc
-}
-
-/// Durand–Kerner 求根，返回各根的模长（首一多项式）。
-///
-/// 初值是固定的几何序列 ⇒ 同一输入永远给出同一输出（不依赖随机 / 迭代顺序）。
-fn polynomial_root_moduli(coefficients: &[f64]) -> Vec<f64> {
-    let n = coefficients.len() - 1;
-    let seed = Complex::new(0.4, 0.9);
-    let mut roots = Vec::with_capacity(n);
-    let mut current = Complex::new(1.0, 0.0);
-    for _ in 0..n {
-        roots.push(current);
-        current = current.mul(seed);
-    }
-    for _ in 0..500 {
-        let mut max_delta: f64 = 0.0;
-        for i in 0..n {
-            let mut denom = Complex::new(1.0, 0.0);
-            for (j, root) in roots.iter().enumerate() {
-                if j != i {
-                    denom = denom.mul(roots[i].sub(*root));
-                }
-            }
-            if denom.modulus() == 0.0 {
-                continue;
-            }
-            let delta = polynomial_at(coefficients, roots[i]).div(denom);
-            roots[i] = roots[i].sub(delta);
-            max_delta = max_delta.max(delta.modulus());
-        }
-        if max_delta <= 1e-14 {
-            break;
-        }
-    }
-    roots.iter().map(|root| root.modulus()).collect()
 }
 
 /// 识别失败：**显式**错误（不是"静默当作非线性跳过"）。
@@ -1406,5 +1213,34 @@ mod tests {
         let map = recognize(&step, 3).unwrap();
         let radius = map.spectral_radius();
         assert!((radius - 0.75).abs() < 1e-9, "谱半径 {radius}");
+    }
+
+    /// **CB-c**：`State` 内部一律 f64；向量状态向 f32 只在构造 `EvalValue` 时降级**一次**。
+    #[test]
+    fn state_demotes_to_f32_only_at_the_eval_boundary() {
+        let init = Expr::call(
+            ze_comb::OpRef::new("zela.math", "vec2"),
+            [pure(1.0), pure(2.0)],
+        );
+        let step = vec2(scale(0.9999, variable(0)), scale(0.9998, variable(1)));
+        let plan = plan_from_expr(&init, &step, None).unwrap();
+        let steps = 100u64;
+
+        // 定义路径：f64 快速幂 → 边界处一次 `as f32`。
+        let exact = plan.map().apply(&[1.0, 2.0], steps);
+        let once = [exact[0] as f32, exact[1] as f32];
+
+        // 反例：每一步都降级到 f32（错误实现）——本用例必须能区分两者。
+        let a = plan.map().a()[0][0];
+        let mut stepped = 1.0f32;
+        for _ in 0..steps {
+            stepped = (f64::from(stepped) * a) as f32;
+        }
+        assert_ne!(
+            once[0], stepped,
+            "用例必须有区分力：中间反复降级与边界一次降级结果不同"
+        );
+
+        assert_eq!(plan.value_at(steps as i64), EvalValue::vec2(once));
     }
 }

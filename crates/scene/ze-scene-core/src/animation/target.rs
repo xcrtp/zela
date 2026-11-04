@@ -115,6 +115,14 @@ pub trait Target: Send + Sync + std::fmt::Debug + 'static {
     /// 目标作用的**对象句柄**。
     fn target_id(&self) -> ObjectId;
 
+    /// **CC-c**：本目标可能写入的**字段地址**（字段级 resolve 的粒度）。
+    ///
+    /// 单字段目标返回自己的 `address`；复合目标（`Camera2DFraming` /
+    /// `RevealRange`）返回它可能写的全部字段 —— 一个写入者写两个字段。
+    fn write_fields(&self) -> Vec<&'static str> {
+        vec![self.address()]
+    }
+
     /// 读取当前值（`reset = Reset` 的**初值**快照；不支持的实现返回 `None`）。
     ///
     /// 默认实现返回 `None`：只有字段目标（[`FieldTarget`]）知道如何读回自己。
@@ -173,6 +181,10 @@ impl Target for FieldTarget {
 
     fn target_id(&self) -> ObjectId {
         self.id
+    }
+
+    fn write_fields(&self) -> Vec<&'static str> {
+        vec![self.spec.address]
     }
 
     fn read(&self, scene: &dyn SceneRead) -> Option<AnimValue> {
@@ -1009,6 +1021,17 @@ impl TransformChannel {
     }
 }
 
+/// 复合目标可能写的字段（与各 `FieldSpec::write` 的分支一一对应）。
+///
+/// 只登记**已知**的复合目标（`is_composite: true` 的两条）；未知地址按单字段处理。
+fn composite_write_fields(address: &'static str) -> Vec<&'static str> {
+    match address {
+        "Camera2DFraming" => vec!["Framing2D.scale", "Framing2D.center"],
+        "RevealRange" => vec!["Reveal.end", "Reveal.range"],
+        _ => vec![address],
+    }
+}
+
 /// 旧的**具体目标类型**：保留公开构造形态，实现全部委托给 [`FieldSpec`]。
 ///
 /// 这样既有手写调用（`CircleRadius { id }` / `SceneEncoder::animate::<OpacityValue>`）
@@ -1031,6 +1054,9 @@ macro_rules! delegating_target {
             }
             fn target_id(&self) -> ObjectId {
                 self.id
+            }
+            fn write_fields(&self) -> Vec<&'static str> {
+                composite_write_fields($spec.address)
             }
         }
         impl TargetCtor for $ty {

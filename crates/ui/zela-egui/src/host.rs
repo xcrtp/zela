@@ -4,9 +4,9 @@
 // 1. `build_scene_view` — 场景 → UI：把场景状态声明为纯数据 [`SceneView`]；
 // 2. `collect_events`   — UI → 场景：把 egui 原生输入翻译为 [`SceneEvent`]，
 //    视口坐标已换算为场景坐标（经由 `Camera2D::screen_to_world`）；
-// 3. 面板 chrome — 控制面板 / 时间控制 / 参数面板：纯 UI 绘制，控件交互以
-//    [`SceneEvent`]（按 `WidgetId` 标识）写入 [`InputEvents`]，由场景侧
-//    System（CameraInput / TimeControl / ParamPanel）消费；
+// 3. **CG-f**：控件不再由 host 绘制 —— 它们是场景图元（`Rect` / `Circle` / `Path`），
+//    交互走 `HudSystem`（消费同一批 [`SceneEvent`]）。host 只保留一层纯数据同步：
+//    `UiConfig` → `PostFilterChain`（渲染层的派生 Resource）。
 // 4. `update_view_rect` — 面板布局完成后写入中央视口矩形（布局信息本就属 UI，
 //    由 host 承担原 ViewRectUpdateSystem 的职责）；
 // 5. `present` — 把 `DrawQueue`(2D) 与 `DrawQueue3D` 的录制内容提交到
@@ -22,22 +22,16 @@
 
 use std::sync::Arc;
 
-use egui::Panel;
-
 use ze_notion::Rect2D;
 use zela_render::ViewRect;
 use zela_render_backends::SceneCompositorCallback;
-use zela_scene_ecs::animation::params;
 use zela_scene_ecs::contract::WorldView;
-use zela_scene_ecs::director_state::DirectorState;
-use zela_scene_ecs::domain::{
-    CameraCommand, InputEvents, LayerKind, SceneEvent, SceneView, ids,
-};
-use zela_scene_ecs::TimeState;
+use zela_scene_ecs::domain::{InputEvents, SceneView};
+#[cfg(test)]
+use zela_scene_ecs::domain::LayerKind;
 use zela_schedule::resource::Resources;
-use ze_property::{ParameterRegistry, Property};
 
-use crate::resources::{UiConfig, ViewportCamera};
+use crate::resources::UiConfig;
 
 pub struct EguiSceneHost;
 
@@ -45,8 +39,9 @@ impl EguiSceneHost {
     // ─── 帧编排 ────────────────────────────────────────────────────────────
 
     /// 帧首调用（在 `Scheduler::run_frame` 之前）：
-    /// 1. **先**绘制面板 chrome（左右侧栏会占用布局空间），控件事件进同一队列；
-    /// 2. 面板布局完成后更新 [`ViewRect`]（只覆盖**中央视口**）；
+    /// 1. **CG-f**：控件已全部是场景图元（`Hud` / `panels`），host 不再画面板 chrome；
+    ///    这里只把 `UiConfig` 派生成渲染层的 `PostFilterChain`（纯数据同步）；
+    /// 2. 更新 [`ViewRect`]（只覆盖**中央视口**）；
     /// 3. 收集视口原始输入 → 场景事件（用刚算出的视口矩形做"是否在视口内"判据）；
     /// 4. 整帧替换写入 [`InputEvents`]（自动清空上一帧的事件）。
     ///
@@ -62,13 +57,25 @@ impl EguiSceneHost {
             .get::<UiConfig>()
             .map(|c| c.viewport_camera)
             .unwrap_or_default();
-        let mut events = Self::draw_control_panel(ui, view, res);
-        events.extend(Self::draw_time_panel(ui, res));
-        events.extend(Self::draw_param_panel(ui, res));
-        // 面板占位完成后，剩下的才是中央视口（本帧输入换算直接用它）。
+        // CG-f：控件由场景侧 `HudSystem` 写 `UiConfig`（帧末）⇒ 这里只把它翻译成滤镜链。
+        let ui_config = res.get::<UiConfig>().cloned().unwrap_or_default();
+        res.insert(crate::resources::post_filters(&ui_config));
         let viewport = Self::update_view_rect(ui, res);
-        events.extend(Self::collect_events(ui, view, target, viewport));
-        res.insert(InputEvents::from_events(events));
+        let context = ze_scene_core::domain::SceneInputContext::from_view(view, target);
+        let input = Self::window_input(ui, viewport);
+        let events = ze_scene_core::domain::collect_events(&input, &context);
+        // **CH-e**：窗口输入同时落资源 —— 诊断快照从这里读窗口尺寸 / DPI / 视口，
+        // 与 headless 注入走同一个来源（不各读一份系统状态）。
+        res.insert(input);
+        // **CH-f**：本帧已经投递的事件（debug RPC 注入的那批）必须**保留** ——
+        // 覆盖会让 GUI 上的 `inject` / `probe` 静默失效（headless 没有窗口输入，
+        // 所以那一路看不出这个问题）。注入在前、窗口事件在后，顺序稳定。
+        let mut events_now: Vec<ze_scene_core::domain::SceneEvent> = res
+            .get::<InputEvents>()
+            .map(|current| current.iter().cloned().collect())
+            .unwrap_or_default();
+        events_now.extend(events);
+        res.insert(InputEvents::from_events(events_now));
     }
 
     // ─── 宿主环境（平台相关）──────────────────────────────────────────────
@@ -121,6 +128,20 @@ impl EguiSceneHost {
         zela_render::frame::end_frame(res);
     }
 
+    /// **输入只属于一帧**：推进后清空本帧事件。
+    ///
+    /// [`Self::begin_frame`] 会先**保留**「本帧已投递的事件」（debug RPC 的 `inject`
+    /// 写入的就是这个资源）再追加窗口事件；若推进后不清空，上一帧的窗口事件下一帧
+    /// 会被当成"已投递"继续保留 —— 相机缩放 / 拖拽每帧重复施加。实测症状：
+    /// 一次滚轮后画面持续放大到 `MAX_SCALE` 才停，表现为「滚两下不动，再滚一下
+    /// 要么全没了、要么爆掉」。
+    pub fn clear_input(res: &mut Resources) {
+        res.insert(InputEvents::from_events(Vec::new()));
+        // **CJ-05（B3）**：`FrameTag` 只属于本帧 —— 录制关闭 + RPC 注入时也必须清掉，
+        // 否则 tag 会残留在资源里，下一帧被误当成"注入帧"。
+        res.insert(ze_scene_core::domain::FrameTag(None));
+    }
+
     // ─── 场景 → UI：视图声明 ───────────────────────────────────────────────
 
     /// 从场景状态构建本帧视图声明（纯数据，无 egui 类型）。
@@ -139,403 +160,56 @@ impl EguiSceneHost {
 
     // ─── UI → 场景：原始输入翻译 ───────────────────────────────────────────
 
-    /// 把 egui 原生输入翻译为相机语义命令与视口拾取事件。
+    /// egui 输入 → [`WindowInput`]（纯读取，不做任何场景换算）。
     ///
-    /// 视口交互路由到 SceneView 中第一个 2D 图层（B 阶段单视口；
-    /// 多视口命中路由在 S3 统一管线中实现）。
+    /// **CH-a**：换算本身在 `ze_scene_core::domain::collect_events`（纯函数、零 egui
+    /// 类型）；本函数是**唯一**的 egui → `WindowInput` 适配点，真人与 Debug / RPC
+    /// 从此走同一条 `WindowInput → SceneEvent`。
     ///
-    /// **操作目标由 `target` 决定**（K3，见 [`ViewportCamera`]）——2D / 3D 图层同屏
-    /// 占据同一矩形，坐标无法区分：
-    /// - [`ViewportCamera::TwoD`]：滚轮 → `Zoom { factor }`（factor = 1 + scroll × 0.001），
-    ///   右键/中键拖拽 → `Pan { delta }`（屏幕位移在此换算为**世界坐标**，含 Y 翻转）；
-    /// - [`ViewportCamera::ThreeDOrbit`]：拖拽 → `Orbit { delta_yaw, delta_pitch }`、
-    ///   滚轮 → `Dolly { delta }`（3D 语义，无需世界换算）；
-    /// - [`ViewportCamera::ThreeDFps`]：拖拽 → `Look { .. }`、
-    ///   `WASD`/`QE` → `Move { delta }`（x = 右、y = 上、z = 前；**按秒**，不依赖帧率，
-    ///   也不要求指针停在视口内；文本输入时让位）。
-    ///
-    /// 悬停 / 点击（拾取类事件）与操作目标无关，两种目标下都上报。
-    pub fn collect_events(
-        ui: &egui::Ui,
-        view: &SceneView,
-        target: ViewportCamera,
-        viewport: Rect2D,
-    ) -> Vec<SceneEvent> {
-        // **纯 3D 作品没有 2D 图层**：此前这里 `let ... else { return }` 直接吞掉全部输入
-        // ⇒ 3D 相机控制"无效"（实测）。现在只要求"有可操作的图层"：优先 2D，其次 3D。
-        let layer2d = view.layers.iter().find_map(|layer| match &layer.kind {
-            LayerKind::Viewport2D { camera } => Some((layer.id, camera)),
-            _ => None,
-        });
-        let layer = match layer2d {
-            Some((id, _)) => id,
-            None => match view
-                .layers
-                .iter()
-                .find(|layer| matches!(layer.kind, LayerKind::Viewport3D { .. }))
-            {
-                Some(layer) => layer.id,
-                None => return Vec::new(),
-            },
-        };
-
-        // 指针是否落在视口矩形内：相机命令同样只认视口内的交互 ——
-        // 否则在左侧面板里滚动 / 拖滑动条也会缩放或转动相机。
-        let in_viewport = |p: egui::Pos2| {
-            p.x >= viewport.min.x
-                && p.x <= viewport.max.x
-                && p.y >= viewport.min.y
-                && p.y <= viewport.max.y
-        };
-
-        // 每帧位移/旋转换算系数（交互手感，纯数值选择）。
-        /// 3D 拖拽 → 旋转角（弧度/像素）。
-        const ORBIT_RAD_PER_PX: f32 = 0.01;
-        /// 滚轮 → Dolly 步长（世界单位/滚轮量）。
-        const DOLLY_PER_SCROLL: f32 = 0.02;
-        /// FPS 按键 → 每秒位移（世界单位/秒）。
-        ///
-        /// **按时间而不是按帧**：旧实现是 `0.08 / 帧`，60 Hz 与 144 Hz 下速度差 2.4 倍
-        /// （且掉帧时变慢）—— 这是"手感飘/忽快忽慢"的直接来源。
-        const MOVE_PER_SECOND: f32 = 4.8;
-
-        // 文本输入（参数面板 / 文件名等）时不抢 WASD/QE：否则一边改名一边相机乱飞。
-        let typing = ui.ctx().egui_wants_keyboard_input();
-
-        let mut events = Vec::new();
+    /// 坐标语义：egui 的指针位置已是**逻辑点**，与 `viewport` 同一坐标系 ⇒
+    /// `scale_factor` 只记录、不参与换算（否则 2× DPI 落点会漂）。
+    pub fn window_input(ui: &egui::Ui, viewport: Rect2D) -> ze_scene_core::domain::WindowInput {
+        let ctx = ui.ctx();
+        let typing = ctx.egui_wants_keyboard_input();
+        let scale_factor = ctx.pixels_per_point();
         ui.input(|i| {
-            let inside = i.pointer.hover_pos().is_some_and(in_viewport);
-            match target {
-                ViewportCamera::TwoD => {
-                    // 滚轮缩放（语义命令；只在视口内生效）。
-                    let scroll = i.smooth_scroll_delta.y;
-                    if inside && scroll != 0.0 {
-                        events.push(SceneEvent::Camera {
-                            layer,
-                            command: CameraCommand::Zoom {
-                                factor: 1.0 + scroll * 0.001,
-                            },
-                        });
-                    }
-
-                    // 右键/中键拖拽 → 平移（屏幕位移经对象层的
-                    // `Camera2D::screen_delta_to_world` 换算为世界位移：缩放 + Y 翻转都在那里；
-                    // 「拖拽方向 → 取景中心反向移动」取负是**控制器语义**，留在本层）。
-                    if let Some((_, camera)) = layer2d {
-                        if inside && (i.pointer.secondary_down() || i.pointer.middle_down()) {
-                            let d = i.pointer.delta();
-                            if d != egui::Vec2::ZERO {
-                                events.push(SceneEvent::Camera {
-                                    layer,
-                                    command: CameraCommand::Pan {
-                                        delta: -camera.screen_delta_to_world((d.x, d.y).into()),
-                                    },
-                                });
-                            }
-                        }
-                    }
-                }
-                ViewportCamera::ThreeDOrbit => {
-                    // 滚轮 → Dolly（向前滚 = 靠近 target）。
-                    let scroll = i.smooth_scroll_delta.y;
-                    if inside && scroll != 0.0 {
-                        events.push(SceneEvent::Camera {
-                            layer,
-                            command: CameraCommand::Dolly {
-                                delta: scroll * DOLLY_PER_SCROLL,
-                            },
-                        });
-                    }
-                    // 拖拽（左/右/中键任一）→ 绕目标公转：向右拖 = 场景向右转。
-                    if inside
-                        && (i.pointer.primary_down()
-                            || i.pointer.secondary_down()
-                            || i.pointer.middle_down())
-                    {
-                        let d = i.pointer.delta();
-                        if d != egui::Vec2::ZERO {
-                            events.push(SceneEvent::Camera {
-                                layer,
-                                command: CameraCommand::Orbit {
-                                    delta_yaw: -d.x * ORBIT_RAD_PER_PX,
-                                    delta_pitch: -d.y * ORBIT_RAD_PER_PX,
-                                },
-                            });
-                        }
-                    }
-                }
-                ViewportCamera::ThreeDFps => {
-                    // 拖拽 → 原地转头（与鼠标移动同向）。
-                    if inside
-                        && (i.pointer.primary_down()
-                            || i.pointer.secondary_down()
-                            || i.pointer.middle_down())
-                    {
-                        let d = i.pointer.delta();
-                        if d != egui::Vec2::ZERO {
-                            events.push(SceneEvent::Camera {
-                                layer,
-                                command: CameraCommand::Look {
-                                    delta_yaw: d.x * ORBIT_RAD_PER_PX,
-                                    delta_pitch: -d.y * ORBIT_RAD_PER_PX,
-                                },
-                            });
-                        }
-                    }
-                    // WASD → 前后左右；QE → 上下（沿用 3D 建模软件惯例）。
-                    //
-                    // 键盘**不要求指针悬停在视口内**：按 WASD 时手常常停在面板上
-                    // （旧实现的 `inside` 会让"移动一会儿后突然不动"）。只在文本输入
-                    // 时让位，避免抢用户的按键。
-                    let axis = |neg: egui::Key, pos: egui::Key| {
-                        (i.key_down(pos) as i32 - i.key_down(neg) as i32) as f32
-                    };
-                    let delta = ze_notion::Vec3::new(
-                        axis(egui::Key::A, egui::Key::D),
-                        axis(egui::Key::Q, egui::Key::E),
-                        axis(egui::Key::S, egui::Key::W),
-                    ) * (MOVE_PER_SECOND * i.stable_dt);
-                    if !typing && delta != ze_notion::Vec3::ZERO {
-                        events.push(SceneEvent::Camera {
-                            layer,
-                            command: CameraCommand::Move { delta },
-                        });
-                    }
+            let mut keys = std::collections::BTreeSet::new();
+            for (egui_key, key) in [
+                (egui::Key::W, ze_scene_core::domain::Key::W),
+                (egui::Key::A, ze_scene_core::domain::Key::A),
+                (egui::Key::S, ze_scene_core::domain::Key::S),
+                (egui::Key::D, ze_scene_core::domain::Key::D),
+                (egui::Key::Q, ze_scene_core::domain::Key::Q),
+                (egui::Key::E, ze_scene_core::domain::Key::E),
+            ] {
+                if i.key_down(egui_key) {
+                    keys.insert(key);
                 }
             }
-
-            // 悬停 / 点击（视口内；拾取类事件，与操作目标无关）。
-            // 只在有 2D 相机时上报：`screen_to_world` 是 2D 语义。
-            if let (Some((_, camera)), Some(pos)) = (layer2d, i.pointer.latest_pos()) {
-                if in_viewport(pos) {
-                    events.push(SceneEvent::ViewportHover {
-                        layer,
-                        scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
-                    });
-                    if i.pointer.primary_clicked() {
-                        events.push(SceneEvent::ViewportClick {
-                            layer,
-                            scene_pos: camera.screen_to_world((pos.x, pos.y).into()),
-                        });
-                    }
-                }
+            let screen_size = i.raw.screen_rect.map(|rect| rect.size()).unwrap_or_default();
+            ze_scene_core::domain::WindowInput {
+                pointer: ze_scene_core::domain::PointerState {
+                    position: i
+                        .pointer
+                        .latest_pos()
+                        .map(|p| ze_notion::Vec2::new(p.x, p.y)),
+                    hovering: i.pointer.hover_pos().is_some(),
+                    delta: ze_notion::Vec2::new(i.pointer.delta().x, i.pointer.delta().y),
+                    scroll_y: i.smooth_scroll_delta.y,
+                    primary_down: i.pointer.primary_down(),
+                    secondary_down: i.pointer.secondary_down(),
+                    middle_down: i.pointer.middle_down(),
+                    primary_pressed: i.pointer.primary_pressed(),
+                    primary_released: i.pointer.primary_released(),
+                },
+                keys,
+                typing,
+                stable_dt: i.stable_dt,
+                window_size: ze_notion::Vec2::new(screen_size.x, screen_size.y),
+                scale_factor,
+                viewport,
             }
-        });
-        events
-    }
-
-    // ─── 面板 chrome（控件事件由场景侧 System 消费） ───────────────────────
-
-    /// 控制面板（原 ControlPanelSystem 的 UI chrome，移出 ECS）。
-    ///
-    /// `UiConfig` 是纯 UI 状态（显示开关），由 chrome 直接修改；
-    /// Camera 读数只展示 —— 值取自**本帧视图声明**（相机已在场景对象里，
-    /// P1-1 后 UI 不再持有相机状态）。返回空事件集（预留未来 Toggle 事件）。
-    fn draw_control_panel(
-        ui: &mut egui::Ui,
-        view: &SceneView,
-        res: &mut Resources,
-    ) -> Vec<SceneEvent> {
-        let time = res.get::<TimeState>().map(|t| t.elapsed).unwrap_or(0.0);
-        let camera = view.layers.iter().find_map(|l| match &l.kind {
-            LayerKind::Viewport2D { camera } => Some(*camera),
-            _ => None,
-        });
-        let mut ui_config = res.get::<UiConfig>().cloned().unwrap_or_default();
-
-        Panel::left("controls")
-            .resizable(true)
-            .default_size(200.0)
-            .show(ui, |ui| {
-                ui.heading("数学可视化");
-                ui.label(format!("t = {:.3}", time));
-                ui.separator();
-
-                ui.checkbox(&mut ui_config.show_grid, "显示网格");
-                ui.checkbox(&mut ui_config.show_field, "显示向量场");
-
-                ui.separator();
-                // 图层开关（= 关掉对应的相机）：`build_scene_view` 不再声明该图层。
-                ui.checkbox(&mut ui_config.show_2d, "2D 相机（网格/曲线/公式）");
-                ui.checkbox(&mut ui_config.show_3d, "3D 相机（立方体/曲面）");
-
-                ui.separator();
-                // 视口操作目标（K3）：2D / 3D 同屏 ⇒ 由本开关决定拖拽/滚轮操作谁。
-                ui.label("视口操作");
-                ui.radio_value(
-                    &mut ui_config.viewport_camera,
-                    ViewportCamera::TwoD,
-                    "2D 相机（平移/缩放）",
-                );
-                ui.radio_value(
-                    &mut ui_config.viewport_camera,
-                    ViewportCamera::ThreeDOrbit,
-                    "3D 轨道（拖拽/滚轮）",
-                );
-                ui.radio_value(
-                    &mut ui_config.viewport_camera,
-                    ViewportCamera::ThreeDFps,
-                    "3D 第一人称（拖拽 + WASD/QE）",
-                );
-                // 2D 相机的驱动方式：分镜（动画推动）还是自由（用户平移缩放）。
-                // 「自由」会把分镜的 2D 相机绑定移出绑定表 —— 否则它每帧无条件重写
-                // center/scale，用户操作同帧就被抹掉（见 `CameraDriveSystem`）。
-                ui.checkbox(
-                    &mut ui_config.free_2d_camera,
-                    "2D 相机自由（关闭=分镜驱动）",
-                );
-
-                ui.separator();
-                // S3-2 验收开关：翻转图层叠放顺序（见 `UiConfig::flip_layer_order`）。
-                ui.checkbox(&mut ui_config.flip_layer_order, "翻转图层顺序");
-
-                ui.separator();
-                // C 线：合成后滤镜（post-composite）。全关 ⇒ 空链 ⇒ 渲染层走直通路径
-                // （不建中间纹理、不多一次全屏 pass ⇒ 画面逐位不变）。
-                ui.label("合成后滤镜");
-                ui.checkbox(&mut ui_config.filter_gain, "亮度（点运算）");
-                ui.checkbox(&mut ui_config.filter_distortion, "桶形畸变（几何重映射）");
-                ui.checkbox(&mut ui_config.filter_blur, "模糊 3×3（邻域）");
-                ui.add(
-                    egui::Slider::new(&mut ui_config.filter_param, 0.0..=1.0)
-                        .text("滤镜强度")
-                        .fixed_decimals(2),
-                );
-
-                ui.separator();
-                ui.label("Camera");
-                match camera {
-                    Some(c) => {
-                        ui.label(format!("center: ({:.2}, {:.2})", c.center.x, c.center.y));
-                        ui.label(format!("scale: {:.1}", c.scale));
-                    }
-                    None => {
-                        ui.label("(无 2D 相机对象)");
-                    }
-                }
-            });
-
-        if let Some(cfg) = res.get_mut::<UiConfig>() {
-            *cfg = ui_config.clone();
-        }
-        // C 线：面板开关 → **合成后滤镜链**（Resource）。全关 ⇒ 空链 ⇒ 渲染层直通。
-        res.insert(crate::resources::post_filters(&ui_config));
-        Vec::new()
-    }
-
-    /// 时间控制面板（原 TimeControlSystem 的 UI chrome）。
-    ///
-    /// 只负责绘制与采集控件事件（播放/暂停、速度、seek），
-    /// DirectorState 的实际变更由场景侧 `TimeControlSystem` 消费事件完成。
-    fn draw_time_panel(ui: &mut egui::Ui, res: &mut Resources) -> Vec<SceneEvent> {
-        let time = res.get::<TimeState>().map(|t| t.elapsed).unwrap_or(0.0);
-        let director = res.get::<DirectorState>().cloned().unwrap_or_default();
-
-        let mut events = Vec::new();
-        Panel::left("time_control")
-            .resizable(true)
-            .default_size(200.0)
-            .show(ui, |ui| {
-                ui.heading("时间控制");
-                ui.label(format!("t = {:.3}", time));
-                ui.separator();
-
-                // 播放/暂停切换
-                let label = if director.director.playing {
-                    "⏸ 暂停"
-                } else {
-                    "▶ 播放"
-                };
-                if ui.button(label).clicked() {
-                    events.push(SceneEvent::Button {
-                        id: ids::PLAY_PAUSE,
-                    });
-                }
-
-                // 重新播放：把时间拨回 0 并恢复播放（分镜从头重放）。
-                // 同一行并排放，便于"暂停后回看"与"重播"的对比操作。
-                if ui
-                    .button("⟲ 重新播放")
-                    .on_hover_text("把时间拨回 0 并开始播放")
-                    .clicked()
-                {
-                    events.push(SceneEvent::Button { id: ids::REPLAY });
-                }
-
-                // 速度滑块
-                ui.separator();
-                ui.label("速度");
-                let mut speed_f = director.director.speed as f32;
-                if ui
-                    .add(egui::Slider::new(&mut speed_f, -3.0..=3.0))
-                    .changed()
-                {
-                    events.push(SceneEvent::Slider {
-                        id: ids::SPEED,
-                        value: speed_f,
-                    });
-                }
-
-                // 时间轴拖动条（seek）——只在用户真的拖完才发事件，
-                // 场景侧 step_by 会把 global_t 对齐到 0.1 网格，速度慢时 knob 卡 0。
-                ui.separator();
-                ui.label("时间轴（seek）");
-                let mut t_f = director.director.global_t as f32;
-                let resp = ui.add(egui::Slider::new(&mut t_f, -10.0..=30.0).text("t"));
-                if resp.drag_stopped() {
-                    events.push(SceneEvent::Slider {
-                        id: ids::SEEK,
-                        value: t_f,
-                    });
-                }
-            });
-        events
-    }
-
-    /// 参数面板（**CA-d：由参数注册表自动生成**）。
-    ///
-    /// 不再按曲线类型 `match`，也不再手写 `WidgetId`：注册表（装配期 side table）
-    /// 按地址升序列出每个可调参数（含 `State` 的 `stiff` / `damp`），本函数只把
-    /// `Property::Scalar` 映射成滑块。交互仍以 `Slider { id }` 事件上报，
-    /// `id = params::widget_id(index)`，由场景侧 `ParamPanelSystem` 按地址回写。
-    ///
-    /// 新增参数只需改注册表（绑定侧），**不用改本文件**。
-    fn draw_param_panel(ui: &mut egui::Ui, res: &mut Resources) -> Vec<SceneEvent> {
-        let registry = res.get::<ParameterRegistry>().cloned().unwrap_or_default();
-
-        let mut events = Vec::new();
-        Panel::right("params")
-            .resizable(true)
-            .default_size(200.0)
-            .show(ui, |ui| {
-                ui.heading("动画参数");
-                ui.separator();
-                if registry.is_empty() {
-                    ui.label("（本场景没有可调参数）");
-                    return;
-                }
-                for (index, entry) in registry.iter().enumerate() {
-                    let Property::Scalar(config) = entry.property else {
-                        continue;
-                    };
-                    let mut value = config.value;
-                    let step = f64::from(config.step.unwrap_or(0.01));
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut value, config.min..=config.max)
-                                .text(&config.label)
-                                .step_by(step),
-                        )
-                        .changed()
-                    {
-                        events.push(SceneEvent::Slider {
-                            id: params::widget_id(index),
-                            value,
-                        });
-                    }
-                }
-            });
-        events
+        })
     }
 
     // ─── 布局信息 ──────────────────────────────────────────────────────────
@@ -817,6 +491,131 @@ mod tests {
             EguiSceneHost::build_scene_view(&world, &res_with(false, false))
                 .layers
                 .is_empty()
+        );
+    }
+
+    /// **CJ-05（B3）**：`clear_input` 同时清 `FrameTag` —— 录制关闭 + RPC 注入时，
+    /// tag 不得残留在资源里（否则下一帧被误标成注入）。
+    #[test]
+    fn clear_input_also_clears_the_frame_tag() {
+        use ze_scene_core::domain::{FrameTag, TagId};
+
+        let mut res = Resources::new();
+        res.insert(FrameTag(Some(TagId(7))));
+        EguiSceneHost::clear_input(&mut res);
+        assert_eq!(res.get::<FrameTag>().and_then(|tag| tag.0), None);
+    }
+
+    /// **回归（滚轮缩放漂移）**：一次滚轮命令只能被消费一帧。
+    ///
+    /// 宿主在推进后清空 `InputEvents`（[`EguiSceneHost::clear_input`]）；否则
+    /// `begin_frame` 的"保留本帧已投递事件"会让上一帧的窗口事件继续留在资源里，
+    /// `CameraInputSystem` 每帧重复施加同一个 `Zoom` ⇒ 一次滚轮就把 scale 推到
+    /// clamp（实测："滚两下不动，再滚一下要么全没了、要么爆掉"）。
+    #[test]
+    fn wheel_zoom_is_applied_exactly_once() {
+        use zela_schedule::scheduler::{Phase, Scheduler};
+        use zela_scene_ecs::domain::{CameraCommand, LayerId, SceneEvent};
+        use zela_scene_ecs::CameraInputSystem;
+
+        let mut world = hecs::World::new();
+        let handle = spawn_2d_camera(&mut world);
+        let mut res = Resources::new();
+        res.insert(handle);
+        res.insert(ViewRect::default());
+        res.insert(InputEvents::from_events(vec![SceneEvent::Camera {
+            layer: LayerId(0),
+            command: CameraCommand::Zoom { factor: 1.1 },
+        }]));
+        let mut scheduler = Scheduler::new(world, res);
+        scheduler.add_system(Phase::Input, CameraInputSystem);
+
+        let scale = |scheduler: &Scheduler| {
+            scheduler
+                .world()
+                .query::<&Framing2D>()
+                .iter()
+                .next()
+                .map(|framing| framing.scale)
+                .expect("有 2D 相机")
+        };
+
+        let base = scale(&scheduler);
+        scheduler.run_frame(0.0);
+        let after_first = scale(&scheduler);
+        assert!(
+            (after_first - base * 1.1).abs() < 1e-3,
+            "第一帧必须施加一次缩放：{base} → {after_first}"
+        );
+
+        EguiSceneHost::clear_input(scheduler.resources_mut());
+        scheduler.run_frame(0.0);
+        assert_eq!(
+            scale(&scheduler),
+            after_first,
+            "事件只属于一帧：同一批事件不得在下一帧重复施加"
+        );
+    }
+
+    /// **CJ-05（B7）**：判据从真正的帧序（[`crate::frame::SceneFrame::begin`]）走 ——
+    /// 把 `begin` 里 `Advance` 之后的清理移除 ⇒ 本用例第二帧会再次施加缩放而失败。
+    #[test]
+    fn scene_frame_begin_consumes_input_exactly_once() {
+        use std::sync::Arc;
+        use zela_schedule::scheduler::{Phase, Scheduler};
+        use zela_scene_ecs::domain::{CameraCommand, InputEvents, LayerId, SceneEvent};
+        use zela_scene_ecs::{CameraInputSystem, DriverPod};
+
+        let mut world = hecs::World::new();
+        let handle = spawn_2d_camera(&mut world);
+        let mut res = Resources::new();
+        res.insert(handle);
+        res.insert(ViewRect::default());
+        res.insert(InputEvents::from_events(vec![SceneEvent::Camera {
+            layer: LayerId(0),
+            command: CameraCommand::Zoom { factor: 1.1 },
+        }]));
+        let mut scheduler = Scheduler::new(world, res);
+        scheduler.add_system(Phase::Input, CameraInputSystem);
+
+        let driver = Arc::new(DriverPod::new(scheduler));
+        let mut frame = crate::frame::SceneFrame::new(Arc::clone(&driver));
+        let ctx = egui::Context::default();
+        let run_one = |frame: &mut crate::frame::SceneFrame| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    frame.begin(ui);
+                });
+            });
+            // 测试没有真实纹理上传；不处理 delta 时 egui 会在 Drop 里 panic。
+            output.textures_delta.clear();
+        };
+
+        let scale = || {
+            driver.with_scheduler(|scheduler| {
+                scheduler
+                    .world()
+                    .query::<&Framing2D>()
+                    .iter()
+                    .next()
+                    .map(|framing| framing.scale)
+                    .expect("有 2D 相机")
+            })
+        };
+
+        let base = scale();
+        run_one(&mut frame);
+        let after_first = scale();
+        assert!(
+            (after_first - base * 1.1).abs() < 1e-3,
+            "第一帧必须施加一次缩放：{base} → {after_first}"
+        );
+
+        run_one(&mut frame);
+        assert_eq!(
+            scale(),
+            after_first,
+            "帧序必须自己清理输入：第二帧不得重复施加"
         );
     }
 }

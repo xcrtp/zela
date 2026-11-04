@@ -2,7 +2,7 @@
 //! any registered `NodeSpec` node via [`draw_property`]. No per-node downcast.
 
 use egui::Color32;
-use glam::Vec2;
+use zela_node_editor::NodePos;
 
 use ze_node_core::Node;
 use zela_node_egui::NodeView;
@@ -63,7 +63,7 @@ impl NodeView for PropertyNodeView {
         }
     }
 
-    fn size_hint(&self, node: &dyn Node) -> Vec2 {
+    fn size_hint(&self, node: &dyn Node) -> NodePos {
         // Card height = header + pin band (one row per socket, inputs/outputs
         // share rows) + property widgets + bottom padding, matching the
         // painter's layout so sliders never overflow the card.
@@ -77,6 +77,6 @@ impl NodeView for PropertyNodeView {
             .unwrap_or(0) as f32;
         let height =
             CARD_HEADER_HEIGHT + pin_band + n_props * PROPERTY_ROW_HEIGHT + BODY_BOTTOM_PAD;
-        Vec2::new(CARD_WIDTH, height)
+        NodePos::new(CARD_WIDTH, height)
     }
 }

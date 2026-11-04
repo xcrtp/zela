@@ -118,12 +118,12 @@ const JQ_RENDER_LAYER: &str = r#"
 "#;
 
 /// 结构性判据 3：数学入口唯一（M0）—— 除豁免组外不得直接依赖 glam。
+///
+/// CF-a 起节点栈（editor / egui / egui-ui）**不再豁免**：它们的二维值改用
+/// `zela_node_editor::NodePos`（图坐标位置的专用类型），把渲染向量库挡在门外。
 const JQ_GLAM: &str = r#"
 .packages[]
-| select(.name | IN("ze-notion",
-                    "zela-node-editor",
-                    "zela-node-egui",
-                    "zela-node-egui-ui") | not)
+| select(.name | IN("ze-notion") | not)
 | .name as $n
 | .dependencies[]
 | select(.kind != "dev")
@@ -293,42 +293,71 @@ fn run(options: &Options) -> Result<(), String> {
             .join(" → ")
     );
 
-    let mut timings: Vec<(&'static str, f64)> = Vec::with_capacity(steps.len());
+    let mut timings = Timings::new(steps.len());
     for step in steps {
         println!("\n[xtask] ===== {} =====", step.name());
         let started = Instant::now();
-        match step {
-            Step::Check => step_check(&root, &plan)?,
-            Step::Test => step_test(&root, &plan, options.full)?,
-            Step::Wasm => step_wasm(&root)?,
-            Step::Structure => step_structure(&root)?,
-            Step::Docs => step_docs(&root)?,
-            Step::Coverage => step_coverage(&root)?,
-            Step::Demo => step_demo(&root)?,
-            Step::Smoke => step_smoke(&root, options.skip_baseline)?,
-            Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent)?,
-            Step::Bench => step_bench(&root)?,
-            Step::Fixtures => step_fixtures(&root)?,
-        }
+        let outcome = match step {
+            Step::Check => step_check(&root, &plan),
+            Step::Test => step_test(&root, &plan, options.full),
+            Step::Wasm => step_wasm(&root),
+            Step::Structure => step_structure(&root),
+            Step::Docs => step_docs(&root),
+            Step::Coverage => step_coverage(&root),
+            Step::Demo => step_demo(&root),
+            Step::Smoke => step_smoke(&root, options.skip_baseline),
+            Step::Hashes => step_hashes(&root, options.skip_baseline, options.independent),
+            Step::Bench => step_bench(&root),
+            Step::Fixtures => step_fixtures(&root),
+        };
         let elapsed = started.elapsed().as_secs_f64();
         // 每步计时（阶段 0）：让"哪一步最贵"可度量，而不是靠人工推。
         println!("[xtask] step {}: {elapsed:.1}s", step.name());
-        timings.push((step.name(), elapsed));
-    }
-
-    // 汇总（总耗时 + 各步降序），一行一条 —— 便于直接贴进计划 / 复盘。
-    if timings.len() > 1 {
-        let total: f64 = timings.iter().map(|(_, seconds)| seconds).sum();
-        println!("\n[xtask] 耗时汇总：{total:.1}s");
-        let mut sorted = timings.clone();
-        sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
-        for (name, seconds) in sorted {
-            println!("[xtask]   {name}: {seconds:.1}s");
-        }
+        timings.record(step.name(), elapsed);
+        // **CJ-05（B5）**：失败也要拿到已跑步骤的耗时（汇总在 `Timings::drop`，
+        // 早退（`?`）同样会走）。这正是最需要计时的路径。
+        outcome?;
     }
 
     println!("\n[xtask] 全部通过");
     Ok(())
+}
+
+/// 步骤计时汇总；**在 `Drop` 里打印**，保证失败早退时也能看到已跑步骤的耗时。
+struct Timings(Vec<(&'static str, f64)>);
+
+impl Timings {
+    fn new(capacity: usize) -> Self {
+        Self(Vec::with_capacity(capacity))
+    }
+
+    fn record(&mut self, name: &'static str, seconds: f64) {
+        self.0.push((name, seconds));
+    }
+
+    fn summary(&self) -> String {
+        if self.0.len() <= 1 {
+            return String::new();
+        }
+        let total: f64 = self.0.iter().map(|(_, seconds)| seconds).sum();
+        let mut sorted = self.0.clone();
+        sorted.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let mut out = format!("\n[xtask] 耗时汇总：{total:.1}s\n");
+        for (name, seconds) in sorted {
+            out.push_str(&format!("[xtask]   {name}: {seconds:.1}s\n"));
+        }
+        out
+    }
+}
+
+impl Drop for Timings {
+    fn drop(&mut self) {
+        let summary = self.summary();
+        if !summary.is_empty() {
+            print!("{summary}");
+            let _ = std::io::stdout().flush();
+        }
+    }
 }
 
 fn repo_root() -> Result<PathBuf, String> {
@@ -1658,6 +1687,10 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ),
     // ── 历史领域重复（本批只登记，收敛属后续领域去重批次）────────────────
     ("Arrow", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    (
+        "Command",
+        "zela-app 的 debug RPC 命令 vs zela-node-editor 的编辑命令",
+    ),
     ("Axes2D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("BackgroundStroke", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("Camera2D", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
@@ -1671,6 +1704,10 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("Gradient", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("Group", "scene-api 的 Pod 侧包装 vs scene-contract 的契约类型"),
     ("Handle", "pod-core 的资源句柄 vs scene-core 的脚本局部句柄"),
+    (
+        "HitTarget",
+        "zela-node-editor 的语义命中枚举（Node/Socket/Edge）vs ze-interact 的几何命中目标（区域 + z）",
+    ),
     ("Light", "scene-api / scene-core 的组件 vs render-vector 的 GPU 光照"),
     ("LightKind", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("LineStyle", "scene-api 的组件视图 vs playback 的矢量线样式"),
@@ -1684,6 +1721,10 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
     ("RayTrace", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
     ("Rect", "scene-core 的几何组件 vs node-editor 的编辑框"),
     ("Reveal", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
+    (
+        "Response",
+        "zela-app 的 debug RPC 回执 vs zela-commands 的 CLI 响应",
+    ),
     ("SecondPaint", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("ShaderVariant", "render-ir 的着色参数 vs scene-api 的组件视图"),
     ("Surface", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
@@ -1874,6 +1915,12 @@ fn check_no_hashmap_in_graph_paths(root: &Path) -> Result<(), String> {
         "crates/kernel/ze-comb/src",
         // CA-a：属性顺序会被参数面板继承 ⇒ 注册表必须升序、确定性。
         "crates/kernel/ze-property/src",
+        // CB-a：纯数值算法（矩阵 / 特征多项式 / 求根）不得引入哈希容器。
+        "crates/kernel/ze-alg/src",
+        // CE-a：命中 / 布局 / 路由的输出顺序会被交互层继承 ⇒ 不得用哈希容器。
+        "crates/kernel/ze-interact/src",
+        // CF-b：lowering 的顺序（拓扑序 / 输出表）是产物的一部分。
+        "crates/ze/graph/ze-node-lower/src",
         "crates/kernel/ze-func/src/simplify.rs",
         "crates/scene/ze-scene-core/src/scene_script.rs",
         // CA-b：参数地址 → 控件顺序必须确定（注册表本身升序）。
@@ -1966,7 +2013,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## AU.", "## AV.", "## AW.", "## AX.", "## AY.", "## AZ.", "## BA.", "## BB.",
         "## BC.", "## BD.", "## BE.", "## BF.", "## BG.", "## BH.", "## BI.", "## BJ.",
         "## BK.", "## BL.", "## BM.", "## BN.", "## BO.", "## BP.", "## BQ.", "## BR.", "## BS.",
-        "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.", "## BZ.", "## CA.",
+        "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.", "## BZ.", "## CA.", "## CB.",
+        "## CC.", "## CD.", "## CE.", "## CF.", "## CG.", "## CH.", "## CI.", "## CJ.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -2051,7 +2099,16 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("BX-")
                     || id.starts_with("BY-")
                     || id.starts_with("BZ-")
-                    || id.starts_with("CA-"));
+                    || id.starts_with("CA-")
+                    || id.starts_with("CB-")
+                    || id.starts_with("CC-")
+                    || id.starts_with("CD-")
+                    || id.starts_with("CE-")
+                    || id.starts_with("CF-")
+                    || id.starts_with("CG-")
+                    || id.starts_with("CH-")
+                    || id.starts_with("CI-")
+                    || id.starts_with("CJ-"));
             if !is_item {
                 continue;
             }
@@ -2689,9 +2746,9 @@ fn step_structure(root: &Path) -> Result<(), String> {
             "zela-render 的生产依赖边中出现了 zela-scene-ecs（渲染层只能依赖 ze-scene-hecs）：",
         ),
         (
-            "除 ze-notion 与节点图组豁免外无直接 glam（M0）",
+            "除 ze-notion 外无直接 glam（M0）",
             JQ_GLAM,
-            "依赖 ze-notion 的 crate 不得直接引 glam（数学入口唯一）：",
+            "除 ze-notion 外出现了直接 glam 生产依赖（M0 数学入口唯一）：",
         ),
     ];
 
@@ -3838,6 +3895,33 @@ fn parse_frame_hash(text: &str) -> Option<String> {
 }
 
 /// `baselines.txt` 的解析与重录改写已迁至 `lib.rs`（门禁级代码，`tests/` 配用例）。
+
+#[cfg(test)]
+mod tests {
+    use super::Timings;
+
+    /// **CJ-05（B5）**：汇总按耗时降序，且包含所有已跑步骤（失败路径靠 `Drop` 打印）。
+    #[test]
+    fn timing_summary_is_sorted_and_complete() {
+        let mut timings = Timings::new(3);
+        timings.record("check", 1.0);
+        timings.record("test", 3.0);
+        timings.record("docs", 2.0);
+        let summary = timings.summary();
+        assert!(summary.contains("耗时汇总：6.0s"), "{summary}");
+        let test_at = summary.find("test: 3.0s").expect("含 test");
+        let docs_at = summary.find("docs: 2.0s").expect("含 docs");
+        let check_at = summary.find("check: 1.0s").expect("含 check");
+        assert!(test_at < docs_at && docs_at < check_at, "{summary}");
+    }
+
+    #[test]
+    fn single_step_does_not_print_a_summary() {
+        let mut timings = Timings::new(1);
+        timings.record("check", 1.0);
+        assert!(timings.summary().is_empty());
+    }
+}
 
 // ─── 进程工具 ───────────────────────────────────────────────────────────────
 

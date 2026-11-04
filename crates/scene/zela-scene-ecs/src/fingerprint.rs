@@ -50,8 +50,10 @@ use crate::composer::Composer;
 use crate::contract::{entity_of, object_id_of};
 use crate::domain::CameraMode;
 use crate::scene::components::{
-    ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow, PhaseAnim, Reveal,
+    ContentOrigin, ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow,
+    PhaseAnim, Reveal,
 };
+use ze_scene_core::View;
 
 /// FNV-1a（与 `ze_pod_core::capability_fingerprint` 同一算法：跨 Rust 版本稳定）。
 #[derive(Debug, Clone, Copy)]

@@ -11,14 +11,14 @@
 - 路径：`crates/app/zela-playback`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-render-ir`、`ze-scene-core`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-web`
-- 源文件：4 个 · 2925 行
+- 源文件：4 个 · 3186 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/input_replay.rs` | 144 | **输入流重放**（D 批）：把「第 N 帧的事件」装进 `InputEvents`。 |
-| `src/lib.rs` | 599 | `zela-playback` — **回放运行时**（浏览器与 native `--bundle` 共用）。 |
+| `src/lib.rs` | 860 | `zela-playback` — **回放运行时**（浏览器与 native `--bundle` 共用）。 |
 | `src/vector3d.rs` | 826 | B10 **3D 场景 → 矢量后端**的桥：`Camera3D` → [`View3`]、`LightQueue` → 灯、 |
 | `src/vector_frame.rs` | 1356 | 一帧内容的**矢量渲染**与路由特征（B11 Step 4/5）。 |
 
@@ -36,9 +36,13 @@
 | `src/lib.rs` | `pub struct Runtime` |
 | `src/lib.rs` | `pub struct SceneAssembly` |
 | `src/lib.rs` | `pub fn available_playback_caps() -> Available` |
+| `src/lib.rs` | `pub fn rebuild_script_content(` |
 | `src/lib.rs` | `pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Result<Runtime>` |
+| `src/lib.rs` | `pub fn build_bundle_runtime_with(` |
 | `src/lib.rs` | `pub fn bundle_render_params(bundle: &Bundle) -> Result<zela_scene_bundle::RenderParams>` |
 | `src/lib.rs` | `pub fn check_render_params_supported(` |
+| `src/lib.rs` | `pub struct AssembledScene` |
+| `src/lib.rs` | `pub fn assemble_scheduler(assembly: SceneAssembly) -> AssembledScene` |
 | `src/lib.rs` | `pub fn assemble_runtime(render_ctx: RenderContext, assembly: SceneAssembly) -> Runtime` |
 | `src/lib.rs` | `pub struct ViewportControl` |
 | `src/lib.rs` | `pub fn viewport_control(runtime: &Runtime) -> ViewportControl` |
@@ -73,7 +77,7 @@
 
 ## 运行机制
 
-入口是由产物建运行时的函数：可还原性检查 → 渲染参数校验 → 还原本场景脚本 → commit 进场景 → 交给装配尾（全仓唯一一份，脚本路径也走它）。产物是运行时结构（命令驱动推进器 + 渲染上下文 + 时长），宿主随后用视口设置、单帧推进、推进并渲染、帧结束几个入口逐帧驱动。3D 桥把相机与光照、网格队列转成矢量后端的视图与路径记录，矢量帧模块负责一帧内容的渲染与路由特征，输入重放按帧号把录制的事件装回输入队列。
+入口是由产物建运行时的函数：可还原性检查 → 渲染参数校验 → 还原本场景脚本 → commit 进场景 → 交给装配尾（全仓唯一一份，脚本路径也走它）。内容按 `ContentMode` 分两条路：`Restore` 用 payload 的烘焙轮廓；`Rebuild` 由宿主注入的重建钩子（native 用现有 typst）重算几何，一条都没替换成功就如实退回 `Restore`（`Runtime.content_mode` 记录实际走的路）。场景里有 `View` 时，装配期还把该作用域的标量参数摆成场景内面板（`Rect` 轨道 + `Circle` 滑块 + 宿主烘焙的标签），并把命中表注入资源供交互 System 消费。产物是运行时结构（命令驱动推进器 + 渲染上下文 + 时长），宿主随后用视口设置、单帧推进、推进并渲染、帧结束几个入口逐帧驱动。3D 桥把相机与光照、网格队列转成矢量后端的视图与路径记录，矢量帧模块负责一帧内容的渲染与路由特征，输入重放按帧号把录制的事件装回输入队列。
 
 ## 边界与不做什么
 

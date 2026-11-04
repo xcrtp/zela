@@ -1,5 +1,11 @@
 # Architecture
 
+> **历史记录 + 现行口径指针（CJ 标注）**：本文件是各批次的**决策记录**，正文保留当时的
+> 叙述（含已过时的措辞，如「旧 payload 逐字节不变」）。**现行口径以代码与
+> [`docs/guides/determinism.md`](docs/guides/determinism.md) 为准**；缺口与未接线项见
+> [`GAPS.md`](GAPS.md)。事实冲突时按 `docs/principles.md` 元规则 B（正确性 / 一致性优先于兼容性）
+> 裁决，不回改本文件的历史叙述。
+>
 > **本文件的『依赖图 / 分层 / 合规校验』由 `cargo-workspace-analyzer` 自动生成。**
 > 修改 `Cargo.toml` 后重新运行 `cargo-workspace-analyzer -d .` 即可刷新。
 > **不要手动编辑下方自动生成部分**——手写内容（设计原则、待决问题）请放在末尾『## 设计说明』。
@@ -367,12 +373,16 @@ GUI 用墙钟算 `dt`，导出用固定 `dt = 1/fps`；场景、系统图、渲�
 ```
 Input:         DirectorAdvance · CameraDrive · CameraInput
 LogicUpdate:   TimeControl · ParamPanel
-SceneSync:     BindingApply
-Prepare:       TransformHierarchy · AxesRefresh · FunctionGraphRefresh
+SceneSync:     BindingApply · PathFollowApply
+Prepare:       Replay · Composer · TransformHierarchy · AxesRefresh · FunctionGraphRefresh
 RenderCommit:  SceneRecord (2D) · SceneRecord3D (3D) · ContentTextureRecord · MorphRecord · RevealRecord
-FrameEnd:      —（内容提交由 host.present 承担；
-                 面板 chrome 与 ViewRect 由 host.begin_frame 在 run_frame 前写入）
+FrameEnd:      DeferredApply · LifetimeFlush · Hud
+               （内容提交由 host.present 承担；ViewRect 由 host.begin_frame 在 run_frame 前写入）
 ```
+
+**CG-f 起控件是场景图元**：`Hud`（`zela-scene-ecs::hud`）消费视口事件、跑 `ControlSet`
+状态机并回写 `DirectorState` / `UiConfig` / 参数地址；host 只做 `UiConfig →
+PostFilterChain` 同步与输入收集，不再绘制任何 egui 控件。
 
 **M4 起，几何不再出现在 UI 层**：坐标轴 / 网格（相机裁剪、步长自适应、刻度线）
 归 `ze_scene_core::Axes2D`，函数采样归 `ze_scene_core::FunctionGraph`；`Prepare` 阶段的两个
@@ -969,7 +979,7 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 
 以下各项是**有意保留的"已就绪未接线"**：用途明确、机制已就位，但当前不接线。
 按本项目原则「有明确用途而非凭空设计 → 不是问题，但不能忘记」，集中记账于此。
-（其中节点编辑器与其余各项性质不同：它**已排期**，只是触发条件未到 —— 见下表。）
+（其中节点编辑器与其余各项性质不同：它曾是**已排期冻结项**，CF-e 已解冻并接上消费方 —— 见下表。）
 
 > **S5 已把 `Parent` 移出本表**：`TransformHierarchySystem` 每帧产出 `WorldTransforms`，
 > `SceneRecordSystem` / `RevealRecordSystem` 已消费（详见
@@ -982,8 +992,8 @@ render pass viewport 设为**回调自身矩形**（`set_viewport`，到下一�
 |---|---|---|---|
 | `ObjectId` generation 失效检测 | 契约层 `ze_scene_contract::ObjectId::is_stale` | 有单元测试；**无生产消费方** | 引入对象销毁-重建流程时 |
 | `Path3D` | 理念层 `ze-notion` | 已建、**零消费方**；与 `Path2D` **不同构**（不是同一类型的 3D 版本） | 需要真 3D 曲线时；因不同构，届时是**破坏性变更**，需单独立项 |
-| `ze-notion`「全仓唯一数学元语出口」 | 全仓 | **2026-10-19 已定案**：`zela-render-backends` / `zela-app` / `zela-scene` / `zela-render` / `ze-time` / `zela-egui` / `zela-playback` 已改经 `ze-notion` 并删除 glam 依赖，CI 加门禁。剩余直接引用共 **25 次**（`*.rs` 出现次数口径）：`ze-notion` 定义侧 6 处、节点图组 17 处（`GAPS.md` R-19）、`zela-scene` 2 行说明性注释 | 节点图组在合成图（ComposerGraph）接入场景前统一；其余不再新增 |
-| 节点编辑器（`zela-node-editor` / `zela-node-egui` / `zela-node-egui-ui`） | `crates/ui/*` + `crates/ze/graph/*` | **已排期（当前冻结）**：类型/算法/UI 齐备但**零生产消费方**（graph 6364 行 + UI 4502 行 ≈ 10866 行）。用户决策：**肯定要做，但要等 UI 接口与交互层稳定之后**，且**后期可能引入破坏性变更** | UI 接口与交互层稳定后单独立项 |
+| `ze-notion`「全仓唯一数学元语出口」 | 全仓 | **2026-10-19 已定案**：`zela-render-backends` / `zela-app` / `zela-scene` / `zela-render` / `ze-time` / `zela-egui` / `zela-playback` 已改经 `ze-notion` 并删除 glam 依赖，CI 加门禁。**2026-11-03 复核**：直接引用剩 **11 次 / 8 文件**（`*.rs` 含注释口径）：`ze-notion` 定义侧 6 处、其余为注释说明；节点图组已零代码引用（CF-a，见 `GAPS.md` R-19） | 不再新增直接引用 |
+| 节点编辑器（`zela-node-editor` / `zela-node-egui` / `zela-node-egui-ui`） | `crates/ui/*` + `crates/ze/graph/*` | **CF-e 已解冻（2026-11-03）**：`ze-interact` 的命中与路由稳定后解冻，编辑器改用它（半开矩形 + `LinearHitIndex` + `Router`）；生产消费方是节点图 lowering（`ze-node-lower`）与 CE-e 的场景内面板，端到端判据见 `zela-authored/tests/node_spring_e2e.rs`（`GAPS.md` R-08 / CF-05 / CF-06） | 已接（本期定案） |
 | 2D / 3D 录制 System 仍是两个 | `zela-render::record_systems`（`SceneRecordSystem` / `SceneRecord3DSystem`） | 两者已同住渲染层（A6），但仍是两个 System / 两个队列；是否合并取决于真实 3D 动画的录制结构 | 有真实 3D 动画时 |
 | `formula.rs` 归位（632 行，约一半测试） | `crates/app/zela-app/src/formula.rs` | 承载"空心字"这一**既定视觉**；归位目标 crate 亦有争议（`ze-content` / `zela-render` / 新桥接层） | 真实动画确定它的形态之后 |
 | `tessellate` 下沉 | `crates/render/zela-render/src/tessellate.rs` | 纯 CPU 三角化适配层，目前与 2D 后端同层 | 需要非 wgpu 三角化消费方时 |

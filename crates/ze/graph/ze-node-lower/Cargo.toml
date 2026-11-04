@@ -1,0 +1,20 @@
+[package]
+name = "ze-node-lower"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deterministic lowering of a node graph (ze-node-core) into expressions (ze-comb)"
+
+[dependencies]
+ze-node-core = { path = "../ze-node-core", version = "0.1.1" }
+# 稳定序：KahnSorter 的 tiebreak 是 NodeId 升序（ze-graph-core 的 ready 用 BTreeSet）。
+ze-graph-algo = { path = "../ze-graph-algo", version = "0.1.1" }
+# 产物侧：节点图投影成 Expr（不是第二套 IR）。
+ze-comb = { path = "../../../kernel/ze-comb", version = "0.1.1" }
+thiserror.workspace = true
+
+[dev-dependencies]
+# 对拍：节点侧求值策略 + 表达式侧的算子语义。
+ze-graph-eval = { path = "../ze-graph-eval", version = "0.1.1" }
+ze-func = { path = "../../../kernel/ze-func", version = "0.1.1" }

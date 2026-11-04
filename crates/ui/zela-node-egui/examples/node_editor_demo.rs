@@ -12,7 +12,7 @@
 //! `propagate_values` O(n²) chain is gone).
 
 use eframe::egui;
-use glam::Vec2;
+use zela_node_editor::NodePos;
 use ze_graph_algo::KahnSorter;
 use ze_graph_eval::LazyPullEval;
 use ze_node_core::{
@@ -197,7 +197,7 @@ fn build_registry() -> NodeRegistry {
     reg
 }
 
-fn add_node(editor: &mut Editor, node: Box<dyn Node>, at: Vec2) -> NodeId {
+fn add_node(editor: &mut Editor, node: Box<dyn Node>, at: NodePos) -> NodeId {
     editor
         .apply(Command::AddNode { node, at })
         .expect("add node");
@@ -254,17 +254,17 @@ fn build_editor(registry: &NodeRegistry) -> Editor {
     let c = add_node(
         &mut editor,
         spawn_constant(registry, 1.0),
-        Vec2::new(0.0, 0.0),
+        NodePos::new(0.0, 0.0),
     );
     let s = add_node(
         &mut editor,
         registry.spawn("demo.sin.f32").unwrap(),
-        Vec2::new(280.0, -30.0),
+        NodePos::new(280.0, -30.0),
     );
     let d = add_node(
         &mut editor,
         spawn_display(registry, "sin"),
-        Vec2::new(560.0, 10.0),
+        NodePos::new(560.0, 10.0),
     );
     connect(&mut editor, c, 0, s, 0);
     connect(&mut editor, s, 0, d, 0);
@@ -274,27 +274,27 @@ fn build_editor(registry: &NodeRegistry) -> Editor {
     let c2 = add_node(
         &mut editor,
         spawn_constant(registry, 1.5),
-        Vec2::new(0.0, 300.0),
+        NodePos::new(0.0, 300.0),
     );
     let c3 = add_node(
         &mut editor,
         spawn_constant(registry, 2.0),
-        Vec2::new(0.0, 420.0),
+        NodePos::new(0.0, 420.0),
     );
     let am = add_node(
         &mut editor,
         registry.spawn("demo.addmul.f32").unwrap(),
-        Vec2::new(300.0, 350.0),
+        NodePos::new(300.0, 350.0),
     );
     let d_sum = add_node(
         &mut editor,
         spawn_display(registry, "sum (a+b)"),
-        Vec2::new(580.0, 300.0),
+        NodePos::new(580.0, 300.0),
     );
     let d_prod = add_node(
         &mut editor,
         spawn_display(registry, "product (a*b)"),
-        Vec2::new(580.0, 420.0),
+        NodePos::new(580.0, 420.0),
     );
     // two distinct input pins ...
     connect(&mut editor, c2, 0, am, 0);
@@ -318,7 +318,7 @@ struct DemoApp {
     /// inside it stays live for the whole frame).
     exec: PropertyExecutor,
     /// Open spawn menu: (screen position, graph-local spawn position).
-    menu: Option<(egui::Pos2, Vec2)>,
+    menu: Option<(egui::Pos2, NodePos)>,
     /// Last evaluation error, if any — shown as a hint in the top panel.
     last_error: Option<String>,
 }

@@ -10,7 +10,7 @@
 - 层：`graph`（`crates/ze/graph`）
 - 路径：`crates/ze/graph/ze-graph-algo`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-node-core`
-- 被依赖（下游）：`ze-node`、`zela-node-editor`
+- 被依赖（下游）：`ze-node`、`ze-node-lower`、`zela-node-editor`
 - 源文件：5 个 · 515 行
 
 ### 文件清单

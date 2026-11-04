@@ -20,7 +20,8 @@ use ze_render_ir::{
 use ze_scene_contract::{Component, Group, LifetimeTracked, Name, Parent, ParentInherit, Visibility};
 
 use crate::components::{
-    ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow, PhaseAnim, Reveal,
+    ContentOrigin, ContentTextureItem, Light, Material3D, MeshGeometry, MorphShape, PathFollow,
+    PhaseAnim, Reveal,
 };
 use crate::composer::Composer;
 use crate::domain::CameraMode;
@@ -29,6 +30,7 @@ use crate::object::{
     Path, Projection, RayTrace, Rect, Transform, ZOrder,
 };
 use crate::surface::{Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef};
+use crate::view::View;
 
 /// **组件登记表（唯一来源）**。
 ///
@@ -50,6 +52,10 @@ macro_rules! known_component_table {
                    ShaderPaint,
                    Axes2D, AxesLine, FunctionGraph,
                    PhaseAnim, MorphShape, ContentTextureItem, Reveal, PathFollow, Parent, ParentInherit,
+                   // CD-b：内容源的声明式记录（rebuild 用；restore 不依赖）。
+                   ContentOrigin,
+                   // CE-d：UI 面的空间声明（bounds + mapping；作用域复用 CC）。
+                   View,
                    // B3 Step 3：2D/3D 融合边界（Surface 是数据组件，不含 position）。
                    Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef,
                    // B1-D：3D 装配组件（脚本层入口）。`Arc<MeshGeometry>` 是

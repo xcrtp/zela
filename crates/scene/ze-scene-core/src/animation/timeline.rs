@@ -24,6 +24,7 @@ use ze_time::{ClockForest, ClockNode, ClockProgram, PlayMode};
 
 use crate::animation::affine::{StateAnalysis, StateUnsupported};
 use crate::animation::binding::{BindingTable, ExprProgram, LibraryRef, ResetBehavior};
+use crate::animation::scope::ScopeSpec;
 use crate::animation::target::Target;
 
 /// **静止时刻报告**（阶段 2）：把"推导不出来"的**原因**显式分开。
@@ -110,6 +111,9 @@ enum Step {
         /// 该绑定的**时钟程序**（空链 = 全局时钟；不进 payload，见 `skip_serializing_if`）。
         #[serde(default, skip_serializing_if = "ClockProgram::is_global")]
         clock: ClockProgram,
+        /// **CC-a**：所属作用域（只存声明式路径 + 作用域时钟；序号由编译期重新分配）。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<ScopeSpec>,
         /// 函子库身份（namespace + version）—— 随产物走。
         library: LibraryRef,
     },
@@ -168,6 +172,22 @@ impl Timeline {
         make: fn(ObjectId) -> Arc<dyn Target>,
         handle: usize,
     ) -> &mut Self {
+        self.bind_expr_pending_scoped(expr, library, clock, predicate, reset, make, handle, None)
+    }
+
+    /// **CC-a**：带作用域的表达式绑定（`scope = None` 即根作用域）。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn bind_expr_pending_scoped(
+        &mut self,
+        expr: Expr,
+        library: LibraryRef,
+        clock: ClockProgram,
+        predicate: Option<Expr>,
+        reset: ResetBehavior,
+        make: fn(ObjectId) -> Arc<dyn Target>,
+        handle: usize,
+        scope: Option<ScopeSpec>,
+    ) -> &mut Self {
         let name = make(ObjectId::DANGLING).name();
         self.steps.push(Step::Expr {
             duration: None,
@@ -176,6 +196,7 @@ impl Timeline {
             predicate,
             reset,
             clock,
+            scope,
             library,
         });
         self
@@ -213,6 +234,9 @@ impl Timeline {
         forest: &mut ClockForest,
         bindings: &mut BindingTable,
     ) {
+        // **CC-a**：每个作用域一条独立时钟根（按首次出现分配序号）。
+        // 根作用域沿用既有语义（`parent = None`），因此无作用域脚本逐位不变。
+        let mut scope_clocks: Vec<Option<ze_time::ClockId>> = vec![None];
         for step in &self.steps {
             match step {
                 Step::Expr {
@@ -222,12 +246,46 @@ impl Timeline {
                     predicate,
                     reset,
                     clock,
+                    scope,
                     ..
                 } => {
+                    let scope_id = bindings.declare_scope(
+                        scope.as_ref().map(|spec| spec.path.as_str()).unwrap_or(""),
+                    );
+                    if scope_clocks.len() <= scope_id.0 as usize {
+                        scope_clocks.resize(scope_id.0 as usize + 1, None);
+                    }
+                    let scope_clock = if scope_id.is_root() {
+                        None
+                    } else if let Some(id) = scope_clocks[scope_id.0 as usize] {
+                        Some(id)
+                    } else {
+                        // 作用域自带时钟：先展开作用域链，再让内部绑定接在它下面。
+                        let mut parent = None;
+                        if let Some(spec) = scope {
+                            for link in &spec.clock.links {
+                                let mut node = ClockNode::new(parent);
+                                node.local_offset = link.shift;
+                                node.rate = link.rate;
+                                match forest.insert(node) {
+                                    Ok(id) => parent = Some(id),
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                        // 空链也要一个独立根节点（不共享根作用域的时间轴）。
+                        let root = match parent {
+                            Some(id) => Some(id),
+                            None => forest.insert(ClockNode::new(None)).ok(),
+                        };
+                        scope_clocks[scope_id.0 as usize] = root;
+                        root
+                    };
+
                     // **B 批**：表达式绑定的时间轴由它自己的时钟决定（空链 = 全局）。
                     // 链在编译期展开成 `ClockNode` 链 ⇒ 运行期仍是同一套 `eval_local`
                     // （与 `Curve` 路径同源，G1 由此消失）。
-                    let mut parent = None;
+                    let mut parent = scope_clock;
                     for link in &clock.links {
                         let mut node = ClockNode::new(parent);
                         node.local_offset = link.shift;
@@ -281,7 +339,7 @@ impl Timeline {
                         },
                         None => None,
                     };
-                    bindings.bind_expr_gated_with_states(
+                    bindings.bind_expr_gated_with_states_scoped(
                         id,
                         program,
                         target,
@@ -289,6 +347,7 @@ impl Timeline {
                         active,
                         *reset,
                         crate::animation::affine::plans_for_expr(expr).unwrap_or_default(),
+                        scope_id,
                     );
                 }
             }
@@ -426,8 +485,14 @@ impl Timeline {
                 predicate,
                 reset,
                 clock,
+                scope,
                 library,
             } = step;
+            // 串行合并时作用域时钟也整体后移；`time_base = 0` 即"并行"（作用域保持独立）。
+            let scope = scope.as_ref().map(|spec| ScopeSpec::new(
+                spec.path.clone(),
+                shifted_clock(&spec.clock, time_base),
+            ));
             self.steps.push(Step::Expr {
                 duration: *duration,
                 target: PendingTarget {
@@ -439,6 +504,7 @@ impl Timeline {
                 predicate: predicate.clone(),
                 reset: *reset,
                 clock: shifted_clock(clock, time_base),
+                scope,
                 library: library.clone(),
             });
         }
@@ -545,6 +611,57 @@ mod tests {
             1.0,
             "局部时间 = 全局 − 2.5"
         );
+    }
+
+    /// **CC-a 主判据**：两个作用域 ⇒ 两条独立时钟根；作用域内部的绑定接在各自根下。
+    #[test]
+    fn scopes_get_independent_clock_roots() {
+        use crate::animation::scope::ScopeSpec;
+
+        let mut tl = Timeline::new();
+        for (path, shift) in [("panel_a", 1.0), ("panel_b", 5.0)] {
+            tl.bind_expr_pending_scoped(
+                Expr::pure(1.0),
+                LibraryRef::default(),
+                ClockProgram::new(),
+                None,
+                ResetBehavior::Skip,
+                crate::animation::target::target_ctor_by_name("Circle.radius")
+                    .unwrap()
+                    .0,
+                0,
+                Some(ScopeSpec::new(path, ClockProgram::nested(&ClockProgram::new(), shift, 1.0))),
+            );
+        }
+        let mut forest = ClockForest::new();
+        let mut bindings = BindingTable::new();
+        tl.compile(&mut forest, &mut bindings);
+
+        assert_eq!(bindings.scopes(), &["".to_string(), "panel_a".to_string(), "panel_b".to_string()]);
+        assert_eq!(bindings.bindings[0].scope, crate::animation::ScopeId(1));
+        assert_eq!(bindings.bindings[1].scope, crate::animation::ScopeId(2));
+
+        let a = bindings.bindings[0].clock;
+        let b = bindings.bindings[1].clock;
+        // 两条时间轴各自求值（互不影响）。
+        assert!((forest.eval_local(a, 5.0) - 4.0).abs() < 1e-9);
+        assert!((forest.eval_local(b, 5.0) - 0.0).abs() < 1e-9);
+        // 两条时钟节点不同，且各自携带作用域的零点偏移（独立时间轴）。
+        assert_ne!(a, b);
+        assert!((forest.get(a).unwrap().local_offset - 1.0).abs() < 1e-9);
+        assert!((forest.get(b).unwrap().local_offset - 5.0).abs() < 1e-9);
+    }
+
+    /// **CC-a 回归**：无作用域脚本仍只有根作用域，时钟语义与改前一致。
+    #[test]
+    fn root_scope_keeps_global_clock() {
+        let tl = expr_timeline_with(ClockProgram::new(), None);
+        let mut forest = ClockForest::new();
+        let mut bindings = BindingTable::new();
+        tl.compile(&mut forest, &mut bindings);
+        assert_eq!(bindings.scopes(), &["".to_string()]);
+        assert_eq!(bindings.bindings[0].scope, crate::animation::ScopeId::ROOT);
+        assert_eq!(forest.eval_local(bindings.bindings[0].clock, 7.5), 7.5);
     }
 
     /// **合并**：`append_shifted` 把后一段的时钟整体后移（不再有顺序游标）。

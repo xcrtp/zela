@@ -9,7 +9,7 @@
 
 - 层：`ui`（`crates/ui`）
 - 路径：`crates/ui/zela-node-egui-ui`
-- 生产依赖（上游，dev-deps 不计）：`ze-node-core`、`ze-node-schema`、`zela-node-egui`
+- 生产依赖（上游，dev-deps 不计）：`ze-node-core`、`ze-node-schema`、`zela-node-editor`、`zela-node-egui`
 - 被依赖（下游）：（无）
 - 源文件：4 个 · 383 行
 

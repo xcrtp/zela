@@ -3,14 +3,15 @@
 > **唯一记账入口**。散落在 `FOURIER_GAPS.md`、`WASM_PORT_SURVEY.md` 与各 crate
 > README / `ARCHITECTURE.md` 的「仍缺 / 已知未接线」统一汇总到这里。
 >
-> 更新：2026-10-19（融合前盘点与收尾）；2026-10-20（S1：G-101 关闭 + R-21 记账）。
+> 更新：2026-10-19（融合前盘点与收尾）；2026-10-20（S1：G-101 关闭 + R-21 记账）；
+> **2026-11-04（CJ：全仓叙述体检）**。
+> **最近一次全仓叙述体检：CJ（2026-11-04）** —— 淘汰词表、双向对照、GAPS 证据列与代码核对。
 > `FOURIER_GAPS.md` 保留为 **fourier 作品快照**；`WASM_PORT_SURVEY.md` 保留为
 > **当时的探测证据**，两者正文都注明总账在本文件。
 >
-> **确定性口径**（详见
-> [`FRAME_HASH_BASELINES.md`](crates/app/zela-app/scripts/FRAME_HASH_BASELINES.md#L117-L128)）：
-> 同目标可复现 ✅（最硬）· 跨端结构一致 ✅ · 跨端逐位相同 ❌（已知可接受）。
-> 本文件谈「确定性」时沿用这三层，不混用。
+> **确定性口径**：唯一定义见
+> [`docs/guides/determinism.md`](docs/guides/determinism.md) §5（本文件只引用，不复制表格）。
+> 本文件谈「确定性」时沿用那一节的三层口径，不混用。
 >
 > **第四判据（S0，2026-10-26）**：确定性 = 输入相同 ⇒ 输出相同，**且无隐式可变状态**。
 > 「逐位相同」是测试夹具，不是定义本身。本判据可直接变成检查项：全局可变静态 / 墙钟 /
@@ -107,8 +108,8 @@
 | R-04 | `Shape2D` 无 `Text/Image` 变体 | `zela-render` README | 仍成立 | 内容以路径形式进入 `Path/Polyline` |
 | R-05 | `Parent` 零生产消费方 | `ze-scene-contract` README / `ARCHITECTURE.md` | **可清（文档已修）** | S5 已接线：[`transform_hierarchy.rs`](crates/scene/zela-scene-ecs/src/transform_hierarchy.rs)、[`record_systems.rs`](crates/render/zela-render/src/record_systems.rs#L86) |
 | R-06 | `Path3D` 零消费方 | `ARCHITECTURE.md` | 仍成立 | 与 `Path2D` 不同构，接入是破坏性变更 |
-| R-07 | `glam::` 未完全收敛到 `ze-notion` | `ARCHITECTURE.md` | 仍成立 | 2026-10-19 实测 **25 次**（口径：`*.rs` 中 `glam::` 出现次数，含注释、含 3 个豁免 crate；不含 `.md` 与根 `Cargo.toml`）；`zela-scene` 代码引用已归零 |
-| R-08 | 节点编辑器冻结（已排期） | `ARCHITECTURE.md` | 仍成立（排期项） | 零生产消费方；等 UI 接口稳定 |
+| R-07 | `glam::` 未完全收敛到 `ze-notion` | `ARCHITECTURE.md` | 仍成立 | 2026-11-03 实测 **11 次 / 8 文件**（口径：`*.rs` 中 `glam::` 出现次数，含注释；不含 `.md` 与根 `Cargo.toml`）。其中 6 处是 `ze-notion` 自身的再导出；节点图组只剩注释 1 处（CF-a 后无代码引用）；其余为注释里的说明。 |
+| R-08 | 节点编辑器冻结（已排期） | `ARCHITECTURE.md` | **已关闭（CF-e）** | 冻结条件（"等 UI 接口稳定"）已成立：`ze-interact` 提供命中（半开矩形 + z-order 索引）与 hover / focus / capture 路由，编辑器改用它（`Rect::contains` / `LinearHitIndex` / `Router`）；生产消费方是 lowering（`ze-node-lower`）与参数面板（CE-e 的场景内面板）。解冻后的第一批工作即迁移：`zela-node-editor` 的 `selection` 改 `BTreeSet`（多选删除的先后进入 undo，必须确定）。 |
 | R-09 | 2D / 3D 录制 System 分居 | `ARCHITECTURE.md` | 仍成立 | 现已同住 `zela-render::record_systems`，但仍是两个 System / 两个队列 |
 | R-10 | CPU 回放路径不支持真合成 | `ARCHITECTURE.md` | **可清（文档已修）** | 旧 `egui_2d` 已在 S4.1 删除（[`zela-egui` README](crates/ui/zela-egui/README.md#L140-L145)） |
 | R-11 | `formula.rs` 归位未定 | `ARCHITECTURE.md` | 仍成立 | 归位目标 crate 有争议 |
@@ -119,12 +120,12 @@
 | R-16 | `opacity × blend` 未穷举验证 | `ARCHITECTURE.md` | 仍成立 | 测试覆盖缺口 |
 | R-17 | 3D 无深度缓冲 | `ARCHITECTURE.md` | **可清（文档已修）** | [`DEPTH_FORMAT = Depth32Float`](crates/render/zela-render-backends/src/wgpu_3d.rs#L98) 且两个 pass 都挂深度附件 |
 | R-18 | `ze-pod-lua` / `ze-pod-py` wasm 未做 | 两个 README | 范围外 | 浏览器只回放 ZSB，不运行脚本；不进 wasm gate |
-| R-19 | 节点图组直接依赖 glam（数学入口第二套）：`zela-node-editor`(10) / `zela-node-egui`(6) / `zela-node-egui-ui`(1) | 节点图组 | 仍成立（不违规，记账） | 三者不依赖 `ze-notion`，按 M0 不违规；CI 已显式豁免并注明理由。**触发条件：合成图（ComposerGraph）接入场景前，必须先统一到 `ze-notion`**；此前不改代码（当前零消费方，避免为未发生的需求付代价） |
+| R-19 | 节点图组直接依赖 glam（数学入口第二套）：`zela-node-editor`(10) / `zela-node-egui`(6) / `zela-node-egui-ui`(1) | 节点图组 | **已关闭（CF-a）** | 三个 crate 的 `glam` 依赖已删除，图坐标改用 `zela_node_editor::NodePos`（专用类型，最小运算集）；`JQ_GLAM` 白名单只剩 `ze-notion`（不再豁免节点图组）。 |
 | R-20 | `Shape2D::Custom` 在结构指纹 topo 中统一输出 `"custom"`，不同 `SpecId` 的自定义图元在结构层不可区分 | 结构对拍 | 仍成立（记账，不修代码） | 现状可接受：spec 是具名字符串（非注册序号），且当前仓库**没有 Custom 的生产者**（只有测试），不影响对拍。**触发条件：Custom 出现真实生产者时，须把 spec 名写进 topo** |
 | R-21 | `Transform3D::to_affine2d` 是**投影**：`z` 平移与 xy↔z 耦合被丢弃（D4） | 理念层 `ze-notion` | 仍成立（记账，行为如此） | [`transform.rs`](crates/kernel/ze-notion/src/transform.rs#L115-L134) doc 已写明"投影，非同构"；2D 对象挂 3D 父下是 S6 的目标形态，本轮不报错也不兜底。**消亡条件：S6 之后复核**（2D 进 3D 后该投影是否还有消费方） |
 
-**C 段小计**：可清 3（含 2 条纯文档漂移 + `Parent`）· 仍成立 16 · 排期 1（计入仍成立）·
-范围外 1。
+**C 段小计**：可清 3（含 2 条纯文档漂移 + `Parent`）· 已关闭 2（R-08 / R-19，CF 批次）·
+仍成立 14 · 范围外 1。
 
 ---
 
@@ -967,12 +968,12 @@
 | AI-02 | 绑定目标通道的类型来自**宿主地址表**，不在 `zela.math.Channel` 常量里 | 绑定 / 通道常量 | **已记录（设计选择）** | 三语言绑定把 `Circle.channel.radius` 挂成 `{ namespace, name }`（[`attach_channels`](crates/ze/pod/ze-pod-lua/src/binding.rs)）；值类型留在 `Pod::channels()` 的 [`ChannelSpec.ty`](crates/ze/pod/ze-pod-core/src/pod.rs)，装配期由宿主反查 [`TARGETS`](crates/scene/ze-scene-core/src/animation/target.rs)。好处：`zela.math` 保持场景无关（分层铁律），加类型不必改脚本面 schema；代价：不在 `TARGETS` 里的第三方目标会**跳过**根/目标核对（仍由 `Target::write` 在运行期报 `TypeMismatch`）。若将来要求通道常量自带类型，需要给 `zela.math.Channel` 加可选 `ty` 字段并递增库版本 |
 | AI-03 | **区间代数 + Hold 反算已落地（C 批）** | 表达式层 / 绑定 / seek | **已关闭（C）** | [`predicate.rs`](crates/scene/ze-scene-core/src/animation/predicate.rs) 把 predicate 映射成**局部时间区间集**（`Lt/Gt/Le/Ge/Eq/Ne` + `And` 交 / `Or` 并 / `Not` 补，端点开闭规范化）；`last_active(t) = sup{x ≤ t}` 是 O(区间数) 的零状态查询。`Binding.active` 携带它：运行期生效判定不再逐帧求 predicate，`Hold` 改为纯函数 `f(last_active(t))`（AH-07），`predicate + Hold` 退回 `SeekKind::O1`（不可分析的 Hold 在脚本装配期被 `ExprBindError::UnanalyzableHold` 拒绝）。`still_time` 复用同一份区间集：有限右端按仿射时钟反解，恒生效 / `+∞` ⇒ `None`，不可分析逐条跳过（AH-05 / AH-06）。**验收**：`And{Lt{t,4},Gt{t,1}}` 可分析且静止时刻 `Some(4.0)`；单帧 seek 到窗口后得到 `f(4)`；36 条像素基线 ok 36 / DIFF 0，23 条 demo payload 逐位不变（区间集不进产物） |
 | AI-04 | **输入流产品已落地（D 批）** | 输入 / 产物 / 回放 | **已关闭（D）** | [`input_stream.rs`](crates/scene/zela-scene-bundle/src/input_stream.rs)：独立文件 `zela.input/1`，**按帧号索引**的稀疏事件（`{ frame, events }`），空帧不写；`Pairing { zsb_payload_hash, libraries }` 记录"为谁而录"，`validate` 对 payload hash / 函子库身份**显式 fail**（不让 desync 无提示地发生）。`Recorder` **默认关**（`Default` = disabled，`capture` 是 no-op），`Recorder::recording(pairing)` 才录。`to_json` 规范输出（帧升序、同帧合并）+ round-trip 逐字节检查。事件跨进程：`SceneEvent` / `CameraCommand` / `WidgetId` 加 serde，`SceneScript::libraries()` / `Timeline::libraries()` 提供配对身份。回放侧 [`apply_input_frame`](crates/app/zela-playback/src/input_replay.rs) 在 `Advance` 前整帧替换 `InputEvents`；`zela-render --bundle … --input-stream FILE` 先配对再逐帧重放。**验收**：`pairing_rejects_a_different_zsb`（ZSB 变更 ⇒ 显式 fail）、`stream_is_frame_indexed_and_byte_stable`、`recorder_is_off_by_default`、`replay_twice_is_bit_identical`、`replaying_the_same_stream_twice_is_bit_identical`（Director 状态逐位比较）；强制约束 1/2/3 全部满足 |
-| AI-05 | 宿主侧**录制入口**未接线（只有 API 级开关） | 输入 / 宿主 | **已记录（待接）** | `Recorder` 已具备"默认关 + 显式开启 + 每帧 `capture`"的完整语义，但 GUI（`zela-egui`）与 headless（`zela-render`）目前都**不调用** `capture`，也没有 `--record-input` CLI；`--input-stream` 只做回放，且只与 `--bundle` 搭配（配对需要 ZSB payload hash）。⇒ 现在能录的只有**测试 / 将来宿主**；真实交互录制需要一个 UI 侧"录制开关 + 保存流"的入口。回放侧不受影响（流格式与 `apply_input_frame` 已稳定） |
+| AI-05 | 宿主侧**录制入口**未接线（只有 API 级开关） | 输入 / 宿主 | **已关闭（BZ-03 / CH-f）** | GUI：`SceneFrame::with_input_recording`（`ZELA_RECORD_INPUT=<path>`）；headless：`zela-render --record-input FILE`。CH-f 把 GUI 接点**上游化**到窗口层（`WindowRecorder` → `zela.window/1`：窗口坐标 + 窗口尺寸 + DPI + 视口 + tag），回放走同一条 `collect_events`；headless 无窗口，继续录应用后的场景事件（`zela.input/1`，既有流仍可回放）。判据 `recorded_window_stream_replays_the_same_trajectory`（换 DPI 仍是同一条轨迹）。 |
 | AI-06 | `last_active` 遍历依赖「区间有序不相交」不变式，**无断言锁定** | 表达式层 / 区间代数 | **已关闭（BW）** | [`IntervalSet::new`](crates/scene/ze-scene-core/src/animation/predicate.rs#L108-L140) 排序 + 合并保证"有序、互不相交、已合并"，但消费方（[`last_active`](crates/scene/ze-scene-core/src/animation/predicate.rs#L221-L239) / `still_time` / `intersect`）都是**零状态遍历**，一旦上游构造出非规范区间即无提示给出错值。**已修**：新增 `IntervalSet::is_normalized`（非空区间、有序、互不相交、相接只允许两端都开），在 `IntervalSet::new` 末尾与 `last_active` 入口各加一条 `debug_assert!`。用例：`normalization_invariant_is_locked`（规范化结果 + 手工构造的乱序 / 未合并集合都被识别）、`last_active_fails_loudly_on_a_non_normalized_set`（绕过时响亮失败）。 |
 | AI-07 | 历史 payload 的 `Replay` 绑定**无消费者**：seek 中间帧 Hold 值错**且不报错** | 绑定 / seek | **已关闭（BW）** | `SeekKind::Replay` 只由[历史 payload 的 `Hold`](crates/scene/ze-scene-core/src/animation/binding.rs#L157-L171) 推导出来，引擎当时只实现 `O1`（纯函数）；任何带 `predicate + Hold` 的历史绑定 seek 到中间帧都会无提示拿到错值，无运行期 fail（AI-03 后新绑定已被 `UnanalyzableHold` 装配期拒绝，**旧产物不受保护**）。**已修（选择装配期拒绝，不是运行期 fail）**：`BindingTable::reject_replay` 在 `SceneScript::commit` 交付绑定表前显式失败（`ScriptError::ReplayRequiresHistory` / `ReplayUnsupported`），错误信息指出目标并说明"历史 payload 的 predicate + Hold / NatRec"。用例：`nat_rec_binding_is_rejected_at_assembly`、`historical_hold_payload_is_rejected_by_the_binding_table`；`--step hashes` 40 项 ok / DIFF 0（零生产 `Replay`，无作品被挂）。 |
-| AI-08 | 输入流只有半条路：**能放不能录**（GUI / headless 都不调 `capture`，无 `--record-input`） | 输入 / 宿主 | **待处理** | 与 AI-05 同源：`Recorder` 的 `capture` 无任何宿主调用点，`zela-render` 无 `--record-input` CLI（[`input_stream.rs`](crates/scene/zela-scene-bundle/src/input_stream.rs) 的 `Recorder` 默认关）；回放侧（`apply_input_frame`）已稳定。**拟修**：`zela-render` 加 `--record-input FILE`（配对 + 每帧 capture），GUI 加录制开关 |
+| AI-08 | 输入流只有半条路：**能放不能录**（GUI / headless 都不调 `capture`，无 `--record-input`） | 输入 / 宿主 | **已关闭（BZ-03）** | 与 AI-05 同源，BZ-03 已兑现：`SceneFrame::with_input_recording`（GUI，`ZELA_RECORD_INPUT`）与 `zela-render --record-input FILE`（headless）都有 `capture` 调用点；CH-f 再把 GUI 那一路换成窗口层流。往返判据 `recorded_stream_replays_the_same_trajectory`（BZ-03）与 `recorded_window_stream_replays_the_same_trajectory`（CH-f）。 |
 
-**AI 段小计**：已关闭 5（AI-01、AI-03、AI-04、AI-06、AI-07）· 已记录 2（AI-02、AI-05）· 待处理 1（AI-08）· B / C / D 三批完成。
+**AI 段小计**：已关闭 7（AI-01、AI-03、AI-04、AI-05、AI-06、AI-07、AI-08）· 已记录 1（AI-02）· 待处理 0 · B / C / D 三批完成。
 
 ---
 
@@ -993,7 +994,7 @@
 
 **AJ 段小计（E–H 四批）**：已关闭 5（AJ-01…AJ-04、AJ-06）· 记账 1（AJ-05 F 批偏差）· 待处理 0 · 36 条像素基线未重录 · `zela.scene` 指纹不变（版本仍 `@11`；`Reveal.current_pos` 是**通道**，不增函数签名）。
 > **作品级证据**：`cap_channels2d.lua`（2D 字段通道逐条驱动）、`cap_channels3d.lua`（PBR 金属度 / 粗糙度 / 光照强度）、`expr_read.lua`（读端 Vec2 / Number / Vec3 + `Select`）、`sine_trace.lua`（`Reveal.current_pos` 读端管道，小球画正弦）；能力覆盖 **73/73**，豁免清单清零。
-> AI-06 / AI-07 已在 BW 批关闭（`last_active` 不变式断言、`Replay` 装配期拒绝）；AI-08（输入流能放不能录）仍未处理。
+> AI-06 / AI-07 已在 BW 批关闭（`last_active` 不变式断言、`Replay` 装配期拒绝）；AI-08 与 AI-05 已在 BZ-03 关闭（GUI / headless 都有录制调用点），CH-f 再把 GUI 接点上移到窗口层。
 
 
 ---
@@ -1327,6 +1328,8 @@
 |---|---|---|
 | ze-type | 纯代数类型层 | `TypeSpec` / `Layout` / `unify` / `ReflectError` / 单态化上界（no_std） |
 | ze-property | kernel 级属性模型 | `Property` / `PropertyValue` / `DynamicObject` / `PropertyError` / `ParameterRegistry`（no egui / no glam / 无节点依赖） |
+| ze-alg | 抽象代数与纯数值算法 | `Field` / `RealField` / `ComplexField` / `Complex` / `SquareOps` / `char_poly` / `root_moduli` / `spectral_radius`（零依赖 / 零 glam） |
+| ze-interact | 交互骨架（命中 / 布局 / 路由） | `Point` / `Rect` / `HitIndex` / `LinearHitIndex` / `Layout` / `BoxLayout` / `FlowLayout` / `Router`（零依赖 / 零 glam / 零 HashMap；不绘制、不认 egui、不排版） |
 | ze-reflect | 运行时反射 | `SlotTable` / `SymbolTable` / `TypeRegistry` / `Codec` / `MonoCache` |
 | ze-graph-core | 纯拓扑图算法 | `Topology` / `topo_sort` / `scc` / `reachable` / `dirty_downstream`（只认节点 id + 边） |
 | ze-notion | 数学与几何基元 | `Path2D` / `Transform` / `Vec` 运算 |
@@ -1356,6 +1359,7 @@
 | ze-node-core | 节点图 trait 层 | `Graph` / `Node` / `NodeMeta` / socket |
 | ze-graph-algo | 图算法实现 | Kahn / Tarjan / BFS dirty |
 | ze-graph-eval | 图求值策略 | `LazyPullEval` |
+| ze-node-lower | 节点图 → 表达式 lowering | `Lowering` / `Lowered`（拓扑序确定；规则按类型名登记） |
 | ze-node-schema | 动态节点与属性 | `DynamicNode` / `Property` |
 | ze-node-schema-macros | 动态节点派生宏 | `#[derive(NodeSchema)]` |
 | ze-node | 节点图门面 | re-export core + schema + algo + eval |
@@ -1985,7 +1989,7 @@
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`；`animation/` 本批 ~4.9k 行 < 6k ⇒ **不触发**。处方仍是方案③（给 `ze-comb` 窄数学接口，只暴露 `[f64; N]` 仿射运算、不引 glam），它动 C1 约定 ⇒ 须单独立批。触发条件：`animation/` > 6k，或出现第二个同类落点需求。 |
+| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`。**CB 已给纯算法正当去处**：`ze-alg`（kernel 级、零 glam）承接矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径 / 仿射递推，`animation/` 由 5356 降到 5192 行（CB 后），CC 再增至 5737（仍 < 6k）。**处方修正**（CB §11.1）：原「给 `ze-comb` 窄数学接口」不成立 —— `ze-notion` 只是 glam 再导出，没有复数 / 谱半径 / 任意 k×k / f64。触发条件不变：`animation/` > 6k，或出现第二个同类落点需求。 |
 | BZ-02 | 仿射 `State` 的稳定性无门禁（错参数静默拿到 inf/NaN） | 内核 / 场景 | **已关闭** | `AffineMap::spectral_radius`（1/2 阶解析式；3/4 阶 Faddeev–LeVerrier + Durand–Kerner，固定初值 ⇒ 确定性）；`plan_from_expr` 在 `\|λ\|max ≥ 1`（或非有限）时显式 `AffineError::Unstable`，错误含谱半径与稳定条件提示（1 阶 `\|a\| < 1`、2 阶 `damp + stiff < 1`，边缘稳定同样拒绝）。现有 `spring_state`（0.97 / 0.02 ⇒ `sqrt(0.99)`）不受影响；用例 `unstable_affine_state_is_rejected` / `marginal_affine_state_is_rejected` / `stable_spring_is_accepted` / `unstable_state_is_rejected_at_assembly`。 |
 | BZ-03 | `Recorder::capture` 生产零调用（AI-08：输入流能放不能录） | 回放 / GUI | **已关闭** | GUI：`SceneFrame::with_input_recording`（`ZELA_RECORD_INPUT=<path>`）在推进前捕获本帧 `InputEvents`，`Drop` 时 `finish()` 落盘；headless：`zela-render --record-input` 每帧捕获、收尾写盘。`disabled()` 仍是零 no-op（关闭时连资源读取都跳过）。往返判据 `recorded_stream_replays_the_same_trajectory`：录到的流与输入流逐字节相同，且回放得到同一条轨迹。 |
 | BZ-04 | 依赖边未提取、事件 predicate 不存在 | 内核 / 场景 | **已关闭** | `StatePlan::dependencies`（`BTreeSet` 升序，`namespace::name` 键）+ `SceneRecipe::state_dependencies`（side table，不进 payload）。事件 predicate：`event` 通道 = 本帧 `InputEvents` 非空（HostState ⇒ 只可能进 CPU 求值）；计划标记 `event_gated`，`SeekKind::EventReplay`（**L2**：只重放事件帧，帧间 identity），运行期由 `StateEventLog` 记升序匹配帧、`value_at_event` 用 `partition_point` 计数。无事件依赖的 State 档位不变（`OLogN` / `OPerInterval`）。自引用仍显式失败（`PredicateRefsState`）。用例 `event_predicate_uses_sparse_matched_frames` / `event_gated_state_advances_only_on_event_frames` / `event_gated_state_records_dependency_and_seek_kind`。 |
@@ -2014,11 +2018,199 @@
 
 ---
 
+## CB. ze-alg 代数层与数学归位（2026-11-03）
+
+> 计划《CB 批次执行计划：ze-alg 代数层与数学归位》。用抽象代数 trait 描述
+> 「数学对象如何计算」，只抽纯算法；`affine.rs` 的手写数学搬入 kernel，
+> 删除手写 `Complex`。**不动** `ze-comb` 的 C1 约定，也不给 `ze-notion` 加零消费者依赖。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CB-01 | 纯算法没有正当去处 ⇒ `affine.rs` 手写 `Complex`（注释写"不引依赖"） | 内核 | **已关闭** | 新建 `crates/kernel/ze-alg`（零依赖 / 零 glam / 零 `ze-notion`）：`Field` / `RealField` / `ComplexField` / `Complex<F>` / `SquareOps<[[F;N];N]>` / `char_poly`（Faddeev–LeVerrier）/ `root_moduli`（Durand–Kerner，固定初值 + 固定 500 次 / `1e-14`）/ `spectral_radius`；唯一 `Field` 实现为 `f64`。`[F; N+1]` 未稳定 ⇒ `char_poly` 用 `[F; MAX_DIM + 1]` 字面上界；同时提供 `identity_slice` / `mat_mul_slice` / `mat_pow_slice` / `char_poly_slice` / `spectral_radius_slice` 运行期入口。`crates/kernel/ze-alg/src` 已加入 `NO_HASHMAP_PATHS`。用例 `complex_arithmetic_matches_hand_computation` / `square_ops_pow_matches_repeated_multiplication` / `characteristic_polynomial_of_spring_matrix` / `root_moduli_finds_cubic_roots` / `spectral_radius_covers_all_widths` / `affine_recurrence_closed_form_and_replay_agree`。 |
+| CB-02 | `affine.rs` 手写 `Complex` / `mat_mul` / 特征多项式 / 求根 | 场景 / 内核 | **已关闭** | `affine.rs` 的 `struct Complex` / `polynomial_at` / `polynomial_root_moduli` / `identity` / `mat_mul` / `characteristic_coefficients` 已删除；`AffineMap::{apply, apply_many, replay, replay_within, spectral_radius}` 全部改为 `ze_alg::*_slice` 委托；`AFFINE_MAX_WIDTH = ze_alg::MAX_DIM`（一处定义）。求和顺序保持下标升序 ⇒ 现有谱半径 / 快速幂 / `spring_state` / `spring_array` 用例逐位不变。实测 `affine.rs` 1410 → 1246 行，`animation/` 5356 → 5192 行。 |
+| CB-03 | `AU-04`：标量 f64、向量 f32 口径不统一 | 场景 / 内核 | **已关闭** | 口径写进 `ze-alg` 与 `affine.rs` 模块文档：`State` 内部一律 f64；标量直接输出 f64；**向量**（Vec2/3/4）向 f32 的降级只在构造 `EvalValue` 的边界发生**一次**，不得在中间步骤反复降级。用例 `state_demotes_to_f32_only_at_the_eval_boundary` 先证明"每步降级"与"边界一次降级"结果不同（有区分力），再断言 `value_at` 等于 f64 结果的一次 `as f32`。 |
+| CB-04 | 计划判据「`animation/` 下降 ≥ 300 行」未达到 | 场景 / 内核 | **记账** | 实测下降 164 行（5356 → 5192），其中 `affine.rs` 生产代码 1104 → 881（−223）。剩余纯数学候选只有 `AffineMap` / `StatePlan` 等方法，但计划 §5.2 明确保留（读取 `Expr` / 场景语义），且 §3.2 规定 `ze-alg` 只有 `Complex` 一个 struct ⇒ 不再外抽。触发条件：`animation/` 再次逼近 6k，或出现第二个消费者需要这些递推算法时重新评估。 |
+
+**CB 段小计**：已关闭 3（CB-01 / CB-02 / CB-03）· 部分关闭 0 · 记账 1（CB-04）· 未执行 0 · 已记录 0。
+
+---
+
+## CC. 时钟与绑定表作用域（2026-11-03）
+
+> 计划《CC 批次执行计划：时钟与绑定表作用域》。核心判据：**两个实例如果共享同一条
+> 时间轴，它们就不是两个实例** ⇒ 作用域必须同时带时钟与命名空间。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CC-01 | 绑定表平铺、时钟无作用域 ⇒ 实例化只能共享时间轴 | 场景 / 内核 | **已关闭** | `ScopeId`（内部声明序号）+ `ScopeSpec`（对外路径 + 自带时钟）；`Binding.scope` + `BindingTable::{declare_scope, scope_path}`；`SceneEncoder::{begin_scope, end_scope}` 记录对象作用域，表达式绑定**继承目标对象的作用域**；`Timeline::compile_with` 为每个作用域建独立 `ClockNode` 根（根作用域沿用既有语义）。产物只序列化 `object_scopes: [{ path, clock }]`，**不出现运行期 id**（空列表不序列化 ⇒ 既有 payload 逐字节不变）。脚本入口 `scene.scope_begin/scope_end` + 前置换块 `scene.with_scope`（`zela.scene@16`）。用例 `scopes_get_independent_clock_roots` / `root_scope_keeps_global_clock` / `scoped_parameters_get_distinct_addresses_and_labels`。 |
+| CC-02 | 一段脚本无法调用 N 次并得到 N 组独立实例 | 场景 / 脚本 | **已关闭** | 同一 Lua 函数在 `scene.with_scope(path, shift, fn)` 内调用 N 次 ⇒ N 组对象、N 条时钟根、N 组参数地址（地址最前面是作用域序号）。参数是 **Lua 实参**（装配期常量）⇒ 表达式构造时已有值；调用次序只影响声明序号，不影响数值。用例 `scoped_instances_get_independent_clocks_and_parameters`：两个实例的 `stiff` 分别为 0.02 / 0.01，`ClockId` 不同，产物只含 `path`（断言不含 `ordinal`）。 |
+| CC-03 | 写冲突无中间层（issue #9 §7） | 场景 / UI | **部分关闭** | 新增字段级仲裁 `animation::resolve`：`Target::write_fields`（单字段 = 地址；复合目标列举全部可能字段）+ `Binding.priority`（声明在绑定侧）+ `WriteResolution`（被抑制写入：对象 / 字段 / 来源 / 胜者）。规则：高优先级胜；**同优先级不抑制**（按声明顺序写入，保留既有覆盖语义）；复合目标全或无。`BindingApplySystem` 在写前仲裁并把结果写回 Resource。用例 `higher_priority_wins_the_field` / `equal_priority_never_suppresses` / `different_fields_do_not_conflict` / `composite_target_is_all_or_nothing` / `field_level_resolution_records_suppressed_write`。**残留**：用户输入（`CameraInputSystem` 直接写组件）尚未接入仲裁，`CameraDriveSystem` 仍以"移出绑定"处理相机接管；事件流确定性沿用 BZ-03 / BZ-04。 |
+| CC-04 | Composer 合成图仍内联，无命名空间（issue #3） | 场景 / 渲染 | **记账** | 作用域路径已可作为图节点的命名空间（`BindingTable::scope_path` / 参数地址前缀），但 Composer 的独立存储与图寻址**未接线**。触发条件：issue #3 进入实现；届时用作用域路径作节点键，不新建运行期 id。 |
+| CC-05 | 统一深度 / 2D-3D 互遮挡（issue #9 §6） | 渲染 | **记账** | 本批**明确不做**（计划 §8）：避免被误认为顺带解决。触发条件：单独批次论证深度模型。 |
+| CC-06 | `scene.scope_begin` / `scope_end` 暂无 manifest 作品使用 | 作品 / 门禁 | **记账** | 能力已由 `scoped_instances_get_independent_clocks_and_parameters` 用例覆盖（脚本 → 绑定表 → 注册表），但 `demo/manifest.txt` 里还没有长期使用它的作品 ⇒ `capability_exemptions.txt` 临时豁免。触发条件：出现"同一作品多实例"时补一个 demo（需同时录像素基线）。 |
+
+**CC 段小计**：已关闭 2（CC-01 / CC-02）· 部分关闭 1（CC-03）· 记账 3（CC-04 / CC-05 / CC-06）· 未执行 0 · 已记录 0。
+
+---
+
+## CD. capability 协商与「源 + 烘焙」双轨（2026-11-03）
+
+> 计划《CD 批次执行计划：capability 协商与「源 + 烘焙」双轨》。一个 ZSB 是
+> 「一系列 capability 与 version 协商」的产物：既记录能力，也记录源字符串。
+> 原样重放用预烘焙数据；换能力重放时用源重新烘焙 —— 两条路都成立。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CD-01 | 可还原性检查是一元的：版本不相等即失败，没有"有则重建 / 无则用烘焙"的中间态 | 场景 / 内核 | **已关闭** | `CapabilityRole::{Baked, Source, Runtime}`（`role` **必填**，缺失即解码期报错；CI-c 删掉了 `#[serde(default)]` 与 `legacy_capability_json_defaults_to_runtime` 用例）；`check_restorable` 按 role 分派：`Baked` 不校验、`Source` 缺失不失败、`Runtime` 仍要求名字 + 版本相等；`Available::can_rebuild` 是协商查询入口（只看名字，版本差异由重建方在诊断里报告）。用例 `capability_role_is_required_at_decode_time` / `role_decides_whether_missing_capability_fails` / `can_rebuild_is_a_name_query`。 |
+| CD-02 | `content.text` 的源字符串不在产物里 ⇒ 换字体重烘焙无法实现（F-08 的前置） | 场景 / 产物 | **已关闭** | `ze_scene_core::components::ContentOrigin`（文本 / 字号 / 位置 / 描边序号）与烘焙轮廓**同时**进 payload：`PathStore` 按路径句柄记录源，`scene.path_shape` / `scene.reveal_path` 把它挂到对象上；`SceneScript::content_origins` + `Bundle::text_sources` 提供 rebuild 的源侧输入。无源时产物不含该组件（`text_sources` 为空，不伪造源）。用例 `payload_keeps_content_source_for_rebuild` / `payload_without_content_source_still_decodes`。 |
+| CD-03 | 没有"restore 与 rebuild 是两种操作"的可观测判据与诊断 | 场景 / 产物 | **已关闭** | `Bundle::content_mode(&Available) -> ContentMode::{Restore, Rebuild}`：Meta 有 `role = Source` 的能力且本地可重建、payload 有源 ⇒ `Rebuild`；否则 `Restore`。`Meta` 文档写明两者的一致性要求不同（restore 逐位一致；rebuild 可复现但不保证逐位相同）。用例 `content_mode_reports_restore_or_rebuild` / `content_mode_without_source_is_restore`；端到端用例 `content_restore_and_rebuild_agree`（zela-app）：同一 payload 的烘焙轮廓与用 `ContentOrigin` 重算的轮廓逐位相同，开 / 关 typst 两种构建都通过。 |
+| CD-04 | 内容能力被当作回放期强制依赖的候选（CE 引入字体库时会重演误报） | 装配 / 产物 | **已关闭** | `zela-app` 的 `content_capability()` 带 `role = Source`，用到内容时写入 Meta 的 `capabilities` 与 `required_capabilities`；`zela-playback::available_playback_caps` 仍只有 scene ⇒ 无内容引擎的回放端照常通过 `check_restorable`。CE 的字体库 / 排版引擎沿用 `role = Source`（只换后端，不重新论证）。用例 `compiled_capabilities_are_the_minimal_used_set`（断言 role）。 |
+| CD-05 | `rebuild` 尚无运行时入口（本批只证明路径成立与诊断可用） | 回放 / 产物 | **已关闭（CE-07）** | `ContentMode::Rebuild` 现在有回放入口：`SceneScript::rebuild_content` 用源重算并替换 `Path` / `Reveal` 几何，`zela-playback::build_bundle_runtime_with` 按 `Bundle::content_mode` 决定是否调用，`Runtime.content_mode` 如实报告。CE 定下口径：**重建后不重录像素基线**（重建结果与原烘焙逐位相同由 `rebuild_script_content` 的用例锁定）。 |
+
+**CD 段小计**：已关闭 5（CD-01 / CD-02 / CD-03 / CD-04 / CD-05）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 0。
+
+> 本批另有一次性动作：含 `content.text` 的作品因新增 `ContentOrigin` 组件而 payload
+> 变化（纯几何作品不变），已按 `typst` 字体目录重跑批量编译，只改写
+> `crates/app/zela-app/scripts/demo/manifest.txt` 的 hash 列；像素基线不动。
+
+---
+
+## CE. ze-interact 与 View 空间面（2026-11-03）
+
+> 计划《CE 批次执行计划：ze-interact 与 View 空间面》。让 CC 的作用域拿到**真消费者**，
+> 让 R-08 的冻结条件成立，并接上 CD 的 `rebuild` 运行时入口。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CE-01 | 场景层命中测试零实现（`contains_point` / `hit_test` 全仓无） | 内核 / 场景 | **已关闭** | 新建 `crates/kernel/ze-interact`（零依赖 / 零 glam / 零 HashMap）：`Point` / `Rect`（半开区间：相邻控件不在共享边双命中）/ `HitIndex` trait / `LinearHitIndex`（z 降序、同 z 稳定）。曲线求交只留 `CurveHitTester` 接口（现有贝塞尔实现依赖 glam，不搬进来）。`crates/kernel/ze-interact/src` 已加入 `NO_HASHMAP_PATHS`。用例 `rect_normalizes_and_contains_half_open` / `adjacent_rects_do_not_double_hit_at_the_shared_edge` / `hit_index_is_z_descending_and_stable`。 |
+| CE-02 | 布局无处可放；引约束求解器会是零消费者 | 内核 / 场景 | **已关闭** | `BoxLayout`（垂直）/ `FlowLayout`（换行）均为**纯函数**；`apply_layout` 一处实现「自动布局不得覆盖用户手选位置」（`auto_layout_supported() == false` 时原样返回）。约定写进模块文档：布局只在**结构变化时**算，不在每帧。未引入 kasuari。用例 `box_layout_stacks_vertically_with_gap_and_padding` / `flow_layout_wraps_at_the_available_width` / `auto_layout_disabled_keeps_manual_positions` / `auto_layout_fills_only_unplaced_items`。 |
+| CE-03 | 路由只有 `WidgetId` 纯 ID 匹配（无 hover / focus / capture） | 场景 / UI | **已关闭** | `Router`：hover 每帧重算、focus 点击后保持、capture 按下建立 / 抬起解除；投递按 capture > focus > hover。路由键 = 作用域路径 + 命中目标（两个面板的同号控件是两个目标）。路由状态**不进产物**（类型不派生 serde），靠事件流重建。用例 `capture_wins_even_when_the_pointer_moves_out` / `focus_survives_pointer_leaving_until_the_next_press` / `scope_is_part_of_the_route_key`。 |
+| CE-04 | View 缺空间与事件两个面（CC 作用域没有消费者；R-08 冻结条件未成立） | 场景 / UI | **已关闭** | `ze_scene_core::view::{View, ViewMapping}`（bounds + Screen\|World），进入组件登记表可持久化；嵌套走既有 `Parent`；命名空间**复用** CC 的 `object_scopes`（新增 `SceneScript::object_scope` / `views`），不新建第二套来源。`Surface` 的 5 个生产消费者零改动（组合而非提升）。用例 `views_nest_and_reuse_the_cc_scope` / `view_survives_tagged_json_roundtrip`。R-08 的冻结条件由此成立：交互接口已稳定，节点编辑器迁移留 CF。 |
+| CE-05 | 参数面板只在 egui 覆盖层，无法实例化两个且不进场景 | 场景 / UI | **已关闭** | `zela-scene-ecs::interact`：`build_panel` 用场景图元生成面板（`Rect` 轨道 + `Circle` 滑块 + typst 烘焙的 `Path` 标签），`build_panels_for_views` 按 View 的作用域吸收该作用域的标量参数；`ParamPanelSystem` 消费 `ViewportHover` / `ViewportClick` / 新增的 `ViewportRelease`，经命中 → 路由 → `params::apply` 回写（与 CA 注册表同一条入口；与 egui 控件 id 分支共用同一个 System，避免两个 System 抢写同一对资源）。装配期在 `zela-playback` 与 `zela-app` 为每个 View 生成面板并注入资源；作品 `zela_authored::panels` + `SceneChoice::Panels` + GUI 入口是生产消费者。用例 `interact_system_writes_only_the_captured_panel`（按 A 的 75% 只改 A，B 保持 0.5）/ `dragging_one_panel_does_not_touch_the_other` / `panels_are_scoped_and_do_not_share_addresses`。 |
+| CE-06 | 场景内面板不在 GPU 像素基线里 | 作品 / 门禁 | **已关闭**（CG 段定案） | 触发条件由 CG-f 改写的门面满足：面板不再是宿主覆盖层 —— 控件是 `Rect` / `Circle` / `Path` 场景图元，与普通 2D 图元走**同一条录制 / 合成路径**（`HudSystem` 只改滑块圆心），因此像素覆盖由既有 2D 图元基线兜底，不再存在"宿主层没有基线"的独立面。交互面由 `tests/hud_agent_e2e.rs` 覆盖（注入 tagged JSON → 读一帧 `Frame` 的值）。**HUD 仍未单独进 `demo/manifest.txt`**（若将来要它自己的帧序列基线，按新作品登记并录基线）。 |
+| CE-07 | CD-05：`ContentMode::Rebuild` 只有用例消费，回放端仍走 restore | 回放 / 产物 | **已关闭** | `SceneScript::rebuild_content` 用源重算并替换 `Path` / `Reveal` 几何（闭包返回 `None` ⇒ 保留烘焙数据）；`zela-playback::build_bundle_runtime_with` 按 `Bundle::content_mode` 决定是否调用，`rebuild_script_content` 把判定与替换分开（可 headless 测）；`Runtime.content_mode` 如实报告。`zela-app` 用现有 typst 作重建后端，且只在 payload 带源 / 场景有 View 时初始化引擎。用例 `rebuild_replaces_geometry_and_reports_the_mode` / `failed_rebuild_falls_back_to_restore` / `without_content_capability_the_hook_is_not_called`。口径按计划定死：**重建后不重录像素基线**。 |
+| CE-08 | 统一深度 / 2D–3D 互遮挡（issue #9 §6） | 渲染 | **记账** | 本批只做「谁在前面就先命中谁」（z-order），**不解决** 2D–3D 互遮挡 —— 与 CC-05 同一件事，继续推迟。触发条件：单独批次论证深度模型。 |
+
+**CE 段小计**：已关闭 7（CE-01 / CE-02 / CE-03 / CE-04 / CE-05 / CE-06 / CE-07）· 部分关闭 0 · 记账 1（CE-08）· 未执行 0 · 已记录 0。
+
+---
+
+## CF. 节点栈归位与端到端打通（2026-11-03）
+
+> 计划《CF 批次执行计划：节点栈归位与端到端打通》。本期的定案批：
+> 让节点栈自包含，把节点图 lowering 成 `Expr` + 场景 `State`，解冻节点编辑器并接
+> `ze-interact`，最后用「编辑器里连一个弹簧 → 动画 → 面板可拖 → 可回放」定案。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CF-01 | 节点栈是自包含的孤岛：`glam::Vec2` 承载卡片坐标（10 + 6 + 1 处），`NodeSizeMap` 是 `HashMap` | 节点栈 | **已关闭** | `zela_node_editor::NodePos`（专用类型 + 最小运算集：加减 / 数乘 / 点积 / 长度 / 插值 / min·max）取代 `glam::Vec2`；`NodeSizeMap = BTreeMap<NodeId, NodePos>`（布局顺序确定）；`Editor::selection` 改 `BTreeSet`（多选删除的先后进入 undo）。三个 crate 删除 `glam` 依赖，`JQ_GLAM` 白名单只剩 `ze-notion`。用例 `node_pos_arithmetic_and_roundtrip` / `node_size_map_iterates_in_node_id_order` / `rect_contains_is_half_open`，既有像素基线不变。 |
+| CF-02 | lowering 若按 `Graph::all_nodes()` 遍历，产物顺序未指定（同一张图两次可能不同） | 节点栈 / 表达式 | **已关闭** | 新建 `crates/ze/graph/ze-node-lower`：`Lowering::lower` 用 `KahnSorter` 拓扑序（`ze-graph-core` 的就绪集合是 `BTreeSet` ⇒ tiebreak 为 `NodeId` 升序），全程不读 `all_nodes`；上游集合先排序、多连接显式报错。用例 `lowering_twice_is_bitwise_identical` / `lowering_is_independent_of_all_nodes_order`（只读视图把 `all_nodes` 逆序，产物逐位不变）。该 crate 的 `src` 已加入 `NO_HASHMAP_PATHS`。 |
+| CF-03 | 节点图不接表达式层 ⇒ 第二套 IR + 第二套求值 | 节点栈 / 表达式 | **已关闭** | `ze_node_lower::{Lowering, Lowered, LowerError, RuleError}`：规则按 `meta().type_name` 登记（数据键，不是 Rust 类型名），输出「每个输出插槽一个 `Expr`」。`tests/pure_equivalence.rs` 用 f64 / Vec2 纯函数图对拍 `LazyPullEval` 与 `CompiledExpr`（加法 / 乘法 / 共享中间结果**逐位相同**），并显式报错三类失败（无规则 / 缺连接 / 输出数量不符）。 |
+| CF-04 | 节点状态无法进入场景 `State`：弹簧拿不到仿射识别与谱半径门禁 | 节点栈 / 场景 | **已关闭** | `zela_authored::node_state`：`type_name → StateShape` 四档映射（表外类型显式报错 `Unmapped`）、`verify_states` 把有状态节点的输出根 `State` 交给 `plan_from_expr`（顺带执行 BZ-a 谱半径门禁）。`zela_authored::spring`：`SpringNode`（Vec2 状态，半隐式欧拉）+ `SpringExecutor` + lowering 规则。用例 `spring_lowers_to_a_vec2_scene_state` / `unstable_spring_is_rejected_by_the_scene_gate`（`d + k = 1.1 ⇒ Unstable`）/ `folding_matches_the_scene_state_oracle`（60 帧，口径同 BY-02 的容差对拍）/ `unmapped_state_type_is_an_explicit_error`。 |
+| CF-05 | R-08：节点编辑器冻结（零生产消费方，等 UI 接口稳定） | 节点栈 / UI | **已关闭** | 冻结条件成立：`ze-interact` 的命中与路由已稳定，编辑器改用半开矩形 + `LinearHitIndex` + `Router`；生产消费方是 lowering 与 CE-e 的场景内面板。用例 `pointer_routing_keeps_capture_outside_the_card` / `overlapping_cards_pick_the_newest` / `adjacent_cards_do_not_double_hit_at_the_shared_edge` / `rect_contains_is_half_open`。详见 C 段 R-08。 |
+| CF-06 | 端到端判据缺失（编辑器 → 动画 → 面板 → 回放从未串起来） | 装配 / 门禁 | **已关闭** | `crates/app/zela-authored/tests/node_spring_e2e.rs`：`Editor::AddNode(SpringNode)` → `lowering` → `verify_states` → `SceneEncoder::bind_expr("Transform.position")` → `Scheduler + BindingApplySystem` 逐帧与闭式定义对拍，同一帧从零重跑的位移**逐位相同**；同一装配路径上的 CE-e 面板仍可拖动（只改被拖的作用域，另一块不动）。 |
+| CF-07 | `Graph::all_nodes()` 的顺序仍未规范（6 处消费者 / 5 个文件） | 节点栈 | **记账** | lowering 已与其解耦（CF-02），但命中 / 编辑器 / 画布 / 拓扑展示仍按各自需要排序。触发条件：需要"图的规范遍历序"再统一（届时先定口径：`NodeId` 升序 or 插入序），本批不动。 |
+| CF-08 | 状态形状只映射四档，且要求状态位于节点输出的根 | 节点栈 / 场景 | **记账** | 表外类型与"状态不在输出根"都显式报错（不静默降级）。触发条件：出现更高维 / 自定义状态，或规则需要"状态再加工"（届时用 `Expr::with_id` + `Ref` 表达共享，而不是放宽形状表）。 |
+
+**CF 段小计**：已关闭 6（CF-01 / CF-02 / CF-03 / CF-04 / CF-05 / CF-06）· 部分关闭 0 · 记账 2（CF-07 / CF-08）· 未执行 0 · 已记录 0。
+
+---
+
+## CG. 字体度量与结构化帧 UI（2026-11-03）
+
+> 计划《CG 批次执行计划：字体度量与结构化帧 UI》。二期第一批：让已有的内核第一次
+> **被看见、被机器断言** —— 字体度量与直排文字、结构化帧（`Frame`）、控件状态机、
+> 布局缓存、GUI 门面换成场景图元、headless 出口跑通 Agent 判据。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CG-01 | 文字只能靠 typst：度量与轮廓都在排版引擎里，运行期无法"查表 + 摆放" | 内容 / 内核 | **已关闭** | `ze_content::text_metrics`：`GlyphMetrics` / `TextMetrics`（逐字符 advance + ascent / line_height / width）/ `TextLine`，`char_index_at` 半开、`wrap` 支持空格 / 连字符 / CJK 断点与硬断；`ze_prerender::metrics::MetricsDb` 用 `fontdb` 找面、`ttf-parser` 取 upem / 升降部 / 行距 / advance / 轮廓，面按 `(family, index)` 排序（确定性），主面缺字按排序回退并记 `fallback_families` / `missing`。用例 `width_is_the_sum_of_advances` / `char_index_is_half_open_and_bounded` / `wrap_breaks_at_spaces_and_cjk_between_chars` / `wrap_hard_breaks_a_single_wide_glyph` / `newline_forces_a_break...` + 两条 serde 用例。 |
+| CG-02 | 文字没有命中口径（点到字符无法反查） | 内容 / 交互 | **已关闭** | `ze_interact::TextRun` / `CharBox`（f64、`Point` / `Rect`、半开命中）住在交互 crate（与 `Frame` / 布局同口径，保持零 glam）；`ze_prerender::text::DirectTextEngine::layout` 装配期产出 `TextOutput { ir, run, missing_outlines }`，`ContentIR.runs` 直接引用它。用例 `text_run_maps_points_back_to_characters`。 |
+| CG-03 | 没有"一帧 UI"的纯值描述（几何 / 语义 / 文本混在宿主里） | 交互 / 内核 | **已关闭** | `ze_interact::Frame`：三条**平行**结构（`geometry: Vec<PlacedRect>` / `semantics: Vec<SemanticNode>` / `text: Vec<TextRun>`），五个语义锚点（`role` / `name` / `value` / `bounds` / `focusable`）不扩；可序列化、无运行期句柄、**不进 payload**（与路由状态那条纪律分开写进模块文档）。用例 `semantics_and_geometry_are_parallel` / `same_declaration_and_events_give_bitwise_identical_frames` / `frame_serializes_to_json_without_runtime_handles`。 |
+| CG-04 | 控件只有"画"没有"描述"：宿主画什么、事件怎么回写各写一套 | 交互 / UI | **已关闭** | `ze_interact::control`：`ControlSpec`（`Slider{min,max}` / `Button` / `Label`）→ `ControlSet`（复用 `Router` 的 hover / focus / capture）→ 几何 + 语义；滑块 capture 期间拖出仍写并 clamp，按钮"按下 + 抬起同控件"才 `Activated`，`Label` 不产结果。`SceneEvent` 顺带定下四类输入形状（`Pointer` / `Key` / `Text` / `Command`），**只定形状不实现**（`Copy` → `Clone`；新增变体是追加，解码按当前版本）。用例 `slider_drag_writes_value_and_keeps_capture` / `button_activates_only_when_released_inside` / `four_input_shapes_round_trip_through_json` / `legacy_payload_still_decodes`。 |
+| CG-05 | 布局若每帧重解，就是浏览器那条"reflow"老路 | 交互 / 性能 | **已关闭** | `ConstraintSet`（`BTreeMap` 稳定序 + 自然高度）与 `layout_for_constraints`；`LayoutCache { revision, cached, solves }` 只在结构变化时重解。用例 `constraint_set_is_order_independent` / `layout_cache_solves_only_when_structure_changes`（60 帧只 1 次求解）。未引入 kasuari（约束求解留给后续批次）。 |
+| CG-06 | GUI 的 control / time / param 三块是 egui 覆盖层（不进场景、不可 headless） | GUI / 场景 | **已关闭** | `zela_scene_ecs::hud`：`Hud`（`ControlSet` + 世界坐标口径）+ `HudSystem`（视口事件 → 状态机 → `DirectorState` / `UiConfig` / `params::apply` 回写 + 滑块圆心跟随），注册在 `Phase::FrameEnd`（与 `ParamPanelSystem` 同资源、避免同相位冲突）；`zela_authored::hud` 声明 control（网格 / 场 / 三个滤镜开关）+ time（播放 / 重播 / 速度 / seek）+ param（注册表地址）三组，标签用直排文字引擎烘焙成 `Path`；`SceneChoice::Hud` 装配，GUI 默认启动它。`zela_egui::host` 删除三块面板，`begin_frame` 只保留 `UiConfig → PostFilterChain` 同步 + 视口事件收集。判据 `host.rs` 不再出现 `egui::Slider` / `Button` / `Label`；`cargo verify` 全绿。 |
+| CG-07 | 三层（布局 / 排版 / 控件）没有零窗口 / 零 GPU / 零 egui 的出口 | 装配 / 门禁 | **已关闭** | `zela_playback` 拆出 `assemble_scheduler`（资源 + 系统图，GPU 无关）与 `assemble_runtime`（附加渲染上下文）；`zela_app::headless`：`inject_json`（tagged JSON 事件流）→ `advance` → `frame_json`（一帧 `Frame` 的 JSON）→ `slider_point`（按名字找控件并转世界坐标）。`tests/hud_agent_e2e.rs`：拖 A 的参数只改 A（断言读 `Frame::value_of("slider", 地址)`，不是像素 hash、不是 Rust 内部字段）；同声明同事件 ⇒ 帧 JSON 逐字节相同。 |
+| CG-08 | 自研面板只迁了 control 三块开关与 time / param；图层与相机开关仍在宿主侧 | GUI / 场景 | **已关闭（CI-b）** | `ze-interact::ControlKind::RadioGroup`（值 = 选项下标，`ControlSpec::radio_group`）+ `zela_authored::hud::hud_specs` 的五个单选组（`show_2d` / `show_3d` / `viewport_camera` / `free_2d_camera` / `flip_layer_order`）；`HudSystem` 把值写回 `UiConfig`，GUI 工具条删掉相机下拉。判据 `radio_group_selects_the_segment_under_the_pointer` / `layer_and_camera_switches_are_radio_group_scene_controls`。语义锚点仍是五个，不扩。 |
+| CG-09 | 标签烘焙依赖本机字体（无字体 ⇒ 无标签，缺字 ⇒ 回退或计入 `missing`） | 内容 / 装配 | **已关闭（CH-07）** | 准确的名字是**装配环境未显式化**：字体、DPI、窗口尺寸三样一起收。`zela_app::fonts` 是唯一清单来源，GUI 装配前 `ensure_font_dir()`；face 清单 / 版本 / 缺失清单进 `Diagnostics.environment`（`Baked` 角色，不进 `required_capabilities`）。`MetricsDb` 仍记 `fallback_families` / `missing`，`zela_authored::hud` 在无字体时退化为"有轨道 / 滑块、无标签"，且**如实报告**而不是静默回退。 |
+
+**CG 段小计**：已关闭 9（CG-01 / CG-02 / CG-03 / CG-04 / CG-05 / CG-06 / CG-07 / CG-08 / CG-09）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 0。
+
+---
+
+## CH. 事件标记与可观测窗口（2026-11-04）
+
+> 计划《CH 批次执行计划：事件标记与可观测窗口》。二期第二批：把入口从**场景事件**
+> 上推到**窗口事件**，并给每次注入打标记 —— 离线文件、RPC、真人在窗口点，三者回执
+> 逐位相同。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CH-01 | 真人与机器走的不是同一条入口：换算整段吃 `egui::Ui` / `InputState`，不可注入 | 场景 / GUI | **已关闭** | `ze_scene_core::domain::input_window`：`WindowInput`（指针 / 键 / 文本 / `window_size` / `scale_factor` / `viewport`）+ `collect_events` 纯函数（视口闭区间判定、2D 图层选择、`screen_delta_to_world` 取负、FPS 按秒位移、typing 让位），零 egui 类型；`zela-egui::host` 只剩 `WindowInput` 适配。判据 `window_input_reaches_the_same_value_as_scene_events`（窗口坐标与场景事件落到同一个控件值）。 |
+| CH-02 | 事件本体没有身份，改 `SceneEvent` 又会改掉所有既有输入流的字节 | 场景 / 协议 | **已关闭** | 标记在**外层**：`Injected { tag, frame, source, payload }`（`payload` 是 tagged `kind`）；标记是调试派生态、不属于作品输入，所以 `SceneEvent` 形状不变；`InjectError` 对 External 未实现 / 来源与载荷不匹配显式失败。用例见 `inject.rs` 的四条（含 `SourceMismatch` 的字段命名单列）。 |
+| CH-03 | 因果没有回执：谁引起哪一帧的变化无法查询 | 调试 / 场景 | **已关闭** | `zela_app::debug`：`ActiveTags`（一帧一个）、`TraceReport { derived, outcomes, frame_diff, diagnostics, truncated }`、`FrameDiff` 按 `(role, name)` 对齐；`trace_on` = 注入 → 逐帧 `advance` + 清空 → 差分，`quiet` 提前收敛。诚实限制写进模块文档：差分给的是「这一帧**所有**变化」，不是严格因果证明。判据 `trace_reports_derived_outcomes_diff_and_diagnostics`（含两次逐位相同）。 |
+| CH-04 | 跑着的 GUI 不可被机器读写（离线文件是唯一通道） | 宿主 / 调试 | **已关闭（CI-a 补第三支）** | `zela_app::rpc`：NDJSON over TCP，**默认关**、只绑 `127.0.0.1`（`ZELA_DEBUG_RPC=<port>`）；命令共 6 个：`get_frame` / `get_diagnostics` / `inject` / `probe` / `trace` / `screenshot`；`inject` 绝不推进帧，`probe = 注入 + 读 TraceReport`。GUI 用 mpsc bridge 把请求转主线程（`DriverPod` 内部 `RefCell` ⇒ 非 Send）。判据 `rpc_and_offline_produce_the_same_trace_report`（离线 ≡ RPC 逐位相同）、`probe_over_rpc_matches_the_offline_trace`；**CI-a** 补上真人窗口流：`debug::trace_window_stream` 按 `zela.window/1` 的 tag 还原注入，判据 `window_stream_trace_matches_offline_and_rpc`（离线 / RPC / 窗口流三份 `TraceReport` 逐字节相同）。 |
+| CH-05 | GUI 上 `inject` / `probe` 会静默失效：`begin_frame` 整帧覆盖 `InputEvents` | GUI / 调试 | **已关闭（CH-f 修正）** | headless 没有窗口输入 ⇒ 只有 GUI 暴露：RPC 注入的事件在同一次 `ui()` 里被窗口事件覆盖。现在保留已投递事件、再追加窗口事件（顺序稳定：注入在前）。这是 CH-c 的缺陷，由 CH-f 的"录 tag"需求逼出来 —— 顺带说明「机制已备、出口未开」的检查要覆盖宿主分叉。 |
+| CH-06 | 调试快照不写环境：同一个 `(x, y)` 在 2× DPI 上落到不同控件 | 调试 / 复现 | **已关闭** | `Diagnostics.environment`（`window_size` / `scale_factor` / `viewport` / 字体 `FontEnvironment`）；来源是唯一的 `WindowInput` 资源（GUI 与 headless 注入同一处写入）。判据 `diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit`（1× / 2× 帧 JSON 逐位相同）。 |
+| CH-07 | 字体清单只在 CLI 侧解析，GUI 装配拿不到同一套 face（CG-09 的准确名字是**装配环境未显式化**） | 装配 / 内容 | **已关闭** | 清单解析下沉 `zela_app::fonts`（`manifest` / `detect` / `ensure_font_dir` / `environment`），GUI 装配前 `ensure_font_dir()`，`zela-commands` 只保留下载。face 清单按 CD 的 `role` 归位为 **`Baked`**（回放端不执行、不进 `required_capabilities`），版本差异是可解释的差异；缺 face 如实列出（`missing`），不静默回退。 |
+| CH-08 | 录制接点在换算**之后**：录到的场景事件绑定当次场景上下文 | 回放 / 产物 | **已关闭** | `zela.window/1`（`WindowStream` / `WindowRecorder`）：录窗口坐标 + 窗口尺寸 + DPI + 视口 + tag，回放端用同一条 `collect_events` 重算；稀疏规则「与上一帧只差 `stable_dt` 不写」。`zela.input/1` 读取与 `zela-render --record-input` 走同一套回放语义（不新增第二套）。判据 `recorded_window_stream_replays_the_same_trajectory`（换 DPI 仍是同一条轨迹）。 |
+| CH-09 | Wgpu 后端的截图没有出口（只有 Vector 的中间纹理可回读） | 渲染 / 调试 | **记账** | `Command::Screenshot` 在 headless / Wgpu 上**显式报错**（不静默返回空图）；GUI 只对 `vector_target` 生效。触发条件：需要 Wgpu 帧的视觉证据时，为 `wgpu` 后端加同一条按需回读（读的是 egui 合成后的目标纹理，不是矢量中间纹理）。 |
+| CH-10 | `External` 事件类别只有形状（第三方传感器 / IMU / 网络事件进不来） | 输入 / 协议 | **记账** | `InjectedPayload::External { name }` + `InjectError::ExternalUnsupported` 显式拒绝。触发条件：出现真实的外部事件源（且需要先定"外部事件如何映射到窗口 / 场景"的口径，否则会把不可复现的输入引进确定性链）。 |
+
+**CH 段小计**：已关闭 8（CH-01 / CH-02 / CH-03 / CH-04 / CH-05 / CH-06 / CH-07 / CH-08）· 部分关闭 0 · 记账 2（CH-09 / CH-10）· 未执行 0 · 已记录 0。
+
+---
+
+## CI. 文字路径归一与未来口子（2026-11-04）
+
+> 计划《CI 批次执行计划：文字路径归一与未来口子》。二期第三批：把文本与公式两条路径
+> 收成「两条路径、一个出口」，公式隔离为 `role = Source` 的源种类，做装配期矢量字形
+> 缓存，并把 shaping / bidi / 数学布局 / 富文本 / 字形库 / IME 锚点所需的**形状**一次留对
+> （只留形状不实现）。裁决依据见 `docs/principles.md` 的两条元规则。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CI-01 | 两套文字实现表示不统一（文本 / 公式各塞各的） | 内容 / 装配 | **已关闭** | 两条路径都产出同一种 `ContentIR`（`items` / `runs` / `source`）；`ContentOrigin` 增加 `kind`（`Text` / `Formula`），公式源与文本源一起进 payload。公式仍由 Typst 排版（§0.1：它的主场景是公式，不移除）。判据 `formula_source_is_recorded_with_formula_kind`。 |
+| CI-02 | 公式与文本共用「唯一入口」，源一旦不只是 Typst 就不知道调谁 | 内容 / 回放 | **已关闭** | 公式降为 `role = Source` 的源种类：`content.formula` 同时写入烘焙轮廓与 `ContentOrigin { kind: Formula }`；回放端 `Bundle::content_mode` 按源的 `capability_name()` 询问能力，重建闭包按 `kind` 分派（文本 = 字面量包装，公式 = 原始 Typst 源码 + 阅读序）。当前 `Text` 与 `Formula` **共用** `zela.content`（`components.rs` 的注释写明将来拆分），映射写成显式函数，拆时只改一处。判据 `content_origin_kind_round_trips_and_selects_the_capability`。 |
+| CI-03 | 同字形重复解析：每字形一份完整 `Path2D`，大文档重复解析 | 内容 / 性能 | **已关闭** | `DirectTextEngine` 增加 `(face 版本, glyph_id, 字号位模式)` → 已缩放轮廓的缓存（`BTreeMap` + `Mutex`，跨 clone 共享）；每个出现点只做一次 translate。判据 `repeated_glyphs_parse_once_and_cache_does_not_change_the_ir`（同字形只解析一次；缓存前后 `ContentIR` 逐位相同）。产物形状不变。 |
+| CI-04 | 未来文字能力的形状没有预留（shaping / bidi / 数学 / 富文本 / 字形库 / IME） | 内容 / 输入 / 调试 | **已关闭** | 六个口子：① `ContentOriginKind`；② `TextRun.markers`（范围 + 不透明 payload，空集不序列化）；③ `PathSource` / `GlyphKey` 形状（`StyledPath::source()` 恒为 `Inline`）；④ `MetricsProvider` / `LineBreaker` / `Shaping` / `Bidi` / `MathLayout`（Identity 直通 + Typst 默认实现）；⑤ `TextInput::Anchor` + `TextAnchorRef`（引用文本，不存 offset）；⑥ `Diagnostics.content`（后端 / face 版本，可空）。默认路径逐位不变，未引入新依赖 / 运行期分支。 |
+| CI-05 | CH 主判据第三支未补硬（真人窗口侧只有结构性等价） | 调试 / 回放 | **已关闭（CI-a）** | `debug::trace_window_stream` 按 `zela.window/1` 的 tag 还原注入；判据 `window_stream_trace_matches_offline_and_rpc`（离线 / RPC / 真人窗口三份 `TraceReport` 逐字节相同）。真人侧 tag 由录制流提供，不是运行期自动打点。 |
+| CI-06 | CG-08：图层与相机开关仍在宿主侧 | GUI / 场景 | **已关闭（CI-b）** | `ControlKind::RadioGroup` + 五个单选组（`show_2d` / `show_3d` / `viewport_camera` / `free_2d_camera` / `flip_layer_order`），`HudSystem` 写回 `UiConfig`；GUI 工具条删除相机下拉。判据 `layer_and_camera_switches_are_radio_group_scene_controls`。详见 CG-08。 |
+| CI-07 | 全局 legacy 兼容分支清理（`#[default] Runtime` 之外的散落处） | 全仓 | **记账** | 本批只清文字路径内的：`Capability.role` 改必填（缺失解码期报错，判据 `capability_role_is_required_at_decode_time`）。触发条件：下一次契约变更时顺手清其余散落处。 |
+| CI-08 | 轻量数学后端 / Typst 重依赖处置 | 内容 / 依赖 | **记账** | 触发条件：Typst 重依赖成为实际负担；届时独立成批并建立独立像素对拍面（不与文字路径归一混做）。 |
+
+**CI 段小计**：已关闭 6（CI-01 / CI-02 / CI-03 / CI-04 / CI-05 / CI-06）· 部分关闭 0 · 记账 2（CI-07 / CI-08）· 未执行 0 · 已记录 0。
+
+**基线与措辞**：含 `content.text` / `content.formula` 的作品因 `ContentOrigin.kind` 与公式源入产物而**重录** `demo/manifest.txt` 的 payload hash（fourier / storyboard / surface_matrix / surface_matrix_js / atlas / vector_paths / cap_text_group）；重录后逐位可复现。这是**一致性判据**，不是兼容性承诺（`docs/principles.md` 元规则 B）。
+
+---
+
+## CJ. 全仓大扫除与可观测性体检（2026-11-04）
+
+> 计划《186 CJ 批次执行计划：全仓大扫除与可观测性体检》。三个面共享一个出口：
+> **下一批计划执行时读到的是当前事实**。叙述层只改叙述、不改形状；代码层七条候选
+> 逐条判定（成立 ⇒ 修 + 用例；不成立 ⇒ 证据 + 记账）。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CJ-01 | 叙述性过时（跨端逐位一致 / 命令只有 5 个 / 引擎只实现 `O1` / 项目所在层 L1 / `egui` 控件作现行状态） | 文档 / 全仓 | **已关闭** | 淘汰词表全仓扫描后逐处改写：`README.md`、`rpc.rs`（6 个命令）、`event.rs`（格式版本显式、旧格式不留分支）、`debug.rs`（tag 不进 `SceneEvent` 的理由改成"调试派生态"）、`binding.rs` / `scene_script.rs` / `scene_script_tests.rs`（四档 `SeekKind`）、`register.rs`（参数回写不再写 `egui` 控件）、`ze-comb` / `ze-pod-func`（"一个字节不动"改一致性与版本口径）。历史区加可见标注：`ARCHITECTURE.md` 头部「历史记录 + 现行口径指针」、`WASM_PORT_SURVEY.md` 既有快照声明、`docs/README.md` 标注 `research/` 为探测快照。双向对照表落在 `docs/README.md`「规范性陈述 ↔ 代码断言」。 |
+| CJ-02 | README 首段承诺跨端逐位一致；命令清单只列 8 步 | 文档 | **已关闭** | 首段改三层口径（同目标可复现 ✅ / 跨端结构一致 ✅ / 跨端逐位相同 ❌ 不承诺）并指向 `determinism.md`；命令清单补 `coverage` / `bench` / `fixtures`（`Step::ALL` 共 11 步）；末尾加 `https://ifdian.net/a/xcrtp`。 |
+| CJ-03 | 确定性口径把项目固定在 L1；`Replay` 的理由写成"没接"；六处注释声称引擎只实现 `O1` | 文档 / 场景 | **已关闭** | `determinism.md` 改为 **L1 + L2 并存**（`State` / `EventReplay` / 弹簧各自落在 L2），`Replay` 改写为 **AI-07 装配期红线**（不是能力缺口）；「三种口径」表标为全仓唯一定义，`GAPS.md` 头部改引用；`O1` 叙述改为 `O1 / OPerInterval / OLogN / EventReplay`；`principles.md` 补两条错误模式（JSON 浮点 1 ULP、输入事件生命周期）。 |
+| CJ-04 | GAPS 证据列与代码不一致（CD-01 的 `serde(default)` / 已删用例；CI-02 的能力名；CG-04 / CD-02 / CH-02 / CH-08 的兼容措辞） | GAPS | **已关闭** | F1–F6 逐条改：CD-01 改为 `role` 必填 + `capability_role_is_required_at_decode_time`；CI-02 如实写 `Text` / `Formula` 共用 `zela.content`；四条兼容措辞改为一致性口径（缺失显式、重录后逐位可复现）；GAPS 头部日期与「最近一次全仓叙述体检：CJ」；模块文档自动区由 `docs-gen` 刷新。185 §9 的 `CI-09` 同步为「未执行 / 记账」。 |
+| CJ-05 | §3.3 七条代码层可疑点 | 全仓 | **已关闭** | **B1 成立**：`FrameDiff` 扩展为三条平行结构（语义值 / 范围 / `focusable`、几何落点、文本），用例 `diff_covers_geometry_text_and_bounds`。**B2 成立**：`SceneEventRecord` 为 `Pointer` / `Key` / `Text` / `Command` 与控件事件补结构化变体，删除 `Debug` 字符串兜底，用例 `scene_event_records_keep_structure_and_serialize_stably`。**B3 成立**：`FrameTag` 清理并入 `EguiSceneHost::clear_input`，用例 `clear_input_also_clears_the_frame_tag`。**B4 成立**：RPC 编码兜底改走 `serde_json`，用例 `error_messages_with_quotes_and_newlines_stay_valid_json`。**B5 成立**：xtask 耗时汇总移入 `Timings` 的 `Drop`（失败早退也打印），用例 `timing_summary_is_sorted_and_complete`。**B6 成立**：`unpad_rows` 返回 `Result` 并校验长度 / 行宽，用例 `unpadding_rejects_short_buffers_and_narrow_rows`。**B7 成立**：新增走 `SceneFrame::begin` 的集成判据 `scene_frame_begin_consumes_input_exactly_once`（移除帧末清理即第二帧重复施加）。 |
+| CJ-06 | 可观测性链路两批未整体复核 | 调试 / 回放 | **已关闭** | 逐位判据复跑绿：`hud_agent_e2e`（`same_events_give_bitwise_identical_frames` / `trace_reports_derived_outcomes_diff_and_diagnostics` / `diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit`）、`debug_rpc`（离线 / RPC / 窗口流三份 `TraceReport` 逐字节相同；`inject` 不推进帧；`probe ≡ trace`）、`formula_source_is_recorded_with_formula_kind`。截图：headless 显式报错（`screenshot_is_explicitly_unsupported_on_headless`），PNG 不进逐位基线。诊断层：`Diagnostics.environment` / `Diagnostics.content` 只进回执，不进 `required_capabilities`（`fonts.rs` 的 `Baked` 角色）。计时 / 落盘：`ZELA_FRAME_REPORT` / `ZELA_OBSERVE` / `[timing]` / `HealthOverlay` / `zela-schedule::telemetry` 入口存在；失败路径由 B5 补齐。触发条件复核：`CH-09`（Wgpu 截图）/ `CH-10`（External）/ `CF-07`（`all_nodes` 顺序）/ `CF-08`（状态四档）/ `CI-07`（全局 legacy）/ `CI-08`（Typst 重依赖）仍准确，本批未兑现。归因链护栏：外部事件注入的结构化回执由 B2 覆盖。**未重录任何逐位基线**（`FrameDiff` 新字段空集不序列化，既有判据逐字节保持）。 |
+| CJ-07 | `CI-09` verify 分级调度 | xtask | **记账** | 185 第一版快照未执行（§0.8 是第二版才合入）；仓库 GAPS 原无此条。分级调度是 `xtask` 行为改动，与叙述审查不同性质 ⇒ 独立成批，本批**不实现**。触发条件：verify 全量耗时成为实际负担时单独论证。 |
+| CJ-08 | 计划版本绑定 | 流程 / 文档 | **已关闭** | 计划头部固定「适用起点（代码 HEAD + plans HEAD）+ 本文版本」；`CONTRIBUTING.md` 批次收尾检查表新增第 6 条（交付说明第一行回显）；184 / 185 的路线图同步 `CJ = 全仓大扫除`、`CK = kasuari`。 |
+
+**CJ 段小计**：已关闭 7（CJ-01 / CJ-02 / CJ-03 / CJ-04 / CJ-05 / CJ-06 / CJ-08）· 部分关闭 0 · 记账 1（CJ-07）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CA**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CA 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG / CH / CI / CJ 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CJ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CJ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

@@ -77,6 +77,40 @@ impl Span {
     }
 }
 
+/// **CI-d 口子③**：字形缓存键（`face 版本 + glyph_id + 字号位模式`）。
+///
+/// 形状先定死：将来「字形库 + 实例表」用它做引用；当前只实现
+/// [`PathSource::Inline`]，键不会被写进产物。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GlyphKey {
+    /// face 版本（字体数据的内容指纹；同一次装配内稳定）。
+    pub face_version: u64,
+    pub glyph_id: u16,
+    /// 字号（`f32::to_bits`；位模式保证可比较、可哈希）。
+    pub size_bits: u32,
+}
+
+/// **CI-d 口子③**：一条路径是内联轮廓还是对字形库的引用。
+///
+/// 默认 [`Inline`](Self::Inline)（今天的产物）；[`Ref`](Self::Ref) 只是形状，
+/// 本批不实现 —— 大文档的窗口化 / 字形库留二期。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum PathSource {
+    /// 轮廓直接在 [`StyledPath::path`] 里（当前唯一实现）。
+    Inline,
+    /// 引用字形库中的一份缓存轮廓（形状预留）。
+    Ref(GlyphKey),
+}
+
+impl Default for PathSource {
+    fn default() -> Self {
+        Self::Inline
+    }
+}
+
 /// 一条带样式与锚点的路径。
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +122,15 @@ pub struct StyledPath {
 }
 
 impl StyledPath {
+    /// **CI-d 口子③**：本路径的来源。默认路径恒为 [`PathSource::Inline`]。
+    ///
+    /// 为什么是方法而不是字段：字段会给**每一条**路径加序列化字节（产物变化）；
+    /// 当前唯一的真实值是 `Inline`，方法让"形状"零成本存在，等字形库落地时
+    /// 再把它变成字段（届时才需要改产物格式）。
+    pub fn source(&self) -> PathSource {
+        PathSource::Inline
+    }
+
     pub fn filled(path: Path2D, fill: Color32) -> Self {
         Self {
             path,
@@ -124,6 +167,12 @@ pub struct ContentIR {
     pub baseline: f32,
     /// 生成时字号（pt）。
     pub nominal_font_size: f32,
+    /// **CG-b**：逐字符盒（字符下标 ↔ 矩形）。
+    ///
+    /// 与 `items` **平行**：轮廓决定"长什么样"，字符盒决定"点在哪、念什么"。
+    /// 非文本内容（公式轮廓 / 图元）为空；旧引擎不产出它，因此空是合法状态。
+    /// 类型住在 `ze-interact`（与结构化帧同一套 f64 口径）。
+    pub runs: Vec<ze_interact::TextRun>,
 }
 
 impl ContentIR {
@@ -134,7 +183,13 @@ impl ContentIR {
             bounds: Rect2D::default(),
             baseline: 0.0,
             nominal_font_size,
+            runs: Vec::new(),
         }
+    }
+
+    /// 第一个字符盒（单行文本的便捷入口）。
+    pub fn text_run(&self) -> Option<&ze_interact::TextRun> {
+        self.runs.first()
     }
 
     /// 墨迹包围盒 = 所有 path bounds 的并集。

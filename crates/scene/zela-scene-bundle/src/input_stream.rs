@@ -25,7 +25,16 @@ use zela_scene_ecs::animation::LibraryRef;
 use zela_scene_ecs::domain::{InputEvents, SceneEvent};
 use zela_scene_ecs::scene_script::SceneScript;
 
+use ze_scene_core::domain::WindowInput;
+
 use crate::Bundle;
+
+/// **CH-f**：窗口层输入流格式标识（录**窗口坐标 + 环境参数 + tag**，
+/// 不是换算后的场景事件）。
+///
+/// 与 [`INPUT_FORMAT`] 并列而不是替换：既有 `zela.input/1` 文件仍可回放
+/// （读取端按 `format` 分派），新录的是上游那一层。
+pub const WINDOW_INPUT_FORMAT: &str = "zela.window/1";
 
 /// 输入流格式标识（进文件；改名 = 新格式）。
 pub const INPUT_FORMAT: &str = "zela.input/1";
@@ -286,11 +295,164 @@ impl Recorder {
         let Some(stream) = &mut self.stream else {
             return;
         };
-        stream.record(frame, events.iter().copied());
+        stream.record(frame, events.iter().cloned());
     }
 
     /// 收尾：关闭录制时返回 `None`（**没有流**，而不是空流）。
     pub fn finish(self) -> Option<InputStream> {
+        self.stream
+    }
+}
+
+// ─── CH-f：窗口层输入流 ────────────────────────────────────────────────────
+
+/// 某一帧的**窗口输入**（逻辑像素 + 环境参数 + 可选注入标记）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowFrame {
+    pub frame: u32,
+    pub input: WindowInput,
+    /// 本帧来自 debug 注入时的标记（真人交互为 `None`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<u32>,
+}
+
+/// **CH-f**：窗口层输入流 —— 录的是**换算之前**的东西。
+///
+/// 为什么上游化：`zela.input/1` 存的是换算后的 `SceneEvent`，回放端必须有一份
+/// **同样的场景上下文**（图层 / 相机 / ViewRect）才等价。窗口坐标 + 窗口尺寸 +
+/// DPI + 视口是**宿主事实**，回放端用同一条 `collect_events` 重算即可。
+///
+/// 稀疏规则：与上一帧相比只差 `stable_dt` 的帧不写（dt 不是窗口轨迹的一部分，
+/// 回放按固定步长）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WindowStream {
+    pub format: String,
+    pub pairing: Pairing,
+    #[serde(default)]
+    pub frames: Vec<WindowFrame>,
+}
+
+impl WindowStream {
+    pub fn new(pairing: Pairing) -> Self {
+        Self {
+            format: WINDOW_INPUT_FORMAT.to_string(),
+            pairing,
+            frames: Vec::new(),
+        }
+    }
+
+    /// 追加一帧；与上一帧只差 `stable_dt`（且 tag 相同）⇒ 不写。
+    pub fn record(&mut self, frame: u32, input: &WindowInput, tag: Option<u32>) {
+        if let Some(last) = self.frames.last() {
+            let mut probe = input.clone();
+            probe.stable_dt = last.input.stable_dt;
+            if probe == last.input && tag == last.tag {
+                return;
+            }
+        }
+        let entry = WindowFrame {
+            frame,
+            input: input.clone(),
+            tag,
+        };
+        match self.frames.binary_search_by_key(&frame, |entry| entry.frame) {
+            Ok(index) => self.frames[index] = entry,
+            Err(index) => self.frames.insert(index, entry),
+        }
+    }
+
+    /// 第 `frame` 帧的窗口输入（稀疏；没有返回 `None`）。
+    pub fn input_at(&self, frame: u32) -> Option<&WindowInput> {
+        self.frames
+            .binary_search_by_key(&frame, |entry| entry.frame)
+            .ok()
+            .map(|index| &self.frames[index].input)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// 规范 JSON（帧号升序 + round-trip 等价检查）。
+    pub fn to_json(&self) -> Result<String, InputError> {
+        let mut canonical = self.clone();
+        canonical.canonicalize();
+        let text = serde_json::to_string_pretty(&canonical).map_err(|error| InputError::Json {
+            message: error.to_string(),
+        })?;
+        let back = Self::from_json(&text)?;
+        let again = serde_json::to_string_pretty(&back).map_err(|error| InputError::Json {
+            message: error.to_string(),
+        })?;
+        if again != text {
+            return Err(InputError::NonCanonical {
+                message: "反序列化后再序列化的字节不同（含 NaN / Infinity 或非确定顺序）"
+                    .to_string(),
+            });
+        }
+        Ok(text)
+    }
+
+    /// 从 JSON 读取并规范化（同帧保留**最后一帧**的窗口状态）。
+    pub fn from_json(text: &str) -> Result<Self, InputError> {
+        let mut stream: Self = serde_json::from_str(text).map_err(|error| InputError::Json {
+            message: error.to_string(),
+        })?;
+        if stream.format != WINDOW_INPUT_FORMAT {
+            return Err(InputError::UnsupportedFormat {
+                found: stream.format,
+            });
+        }
+        stream.canonicalize();
+        Ok(stream)
+    }
+
+    fn canonicalize(&mut self) {
+        let mut frames = std::mem::take(&mut self.frames);
+        frames.sort_by_key(|entry| entry.frame);
+        // 同帧保留**最后**一条（后写覆盖前写）；`dedup_by_key` 保留哪一条依赖实现，
+        // 这里显式写清楚。
+        let mut merged: Vec<WindowFrame> = Vec::with_capacity(frames.len());
+        for entry in frames {
+            match merged.last_mut() {
+                Some(last) if last.frame == entry.frame => *last = entry,
+                _ => merged.push(entry),
+            }
+        }
+        self.frames = merged;
+    }
+}
+
+/// 窗口层录制开关（默认关；关闭时是纯 no-op）。
+#[derive(Debug, Clone, Default)]
+pub struct WindowRecorder {
+    stream: Option<WindowStream>,
+}
+
+impl WindowRecorder {
+    pub fn disabled() -> Self {
+        Self { stream: None }
+    }
+
+    pub fn recording(pairing: Pairing) -> Self {
+        Self {
+            stream: Some(WindowStream::new(pairing)),
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    /// 每帧调用：写**窗口输入**（不是换算后的场景事件）。
+    pub fn capture(&mut self, frame: u32, input: &WindowInput, tag: Option<u32>) {
+        let Some(stream) = &mut self.stream else {
+            return;
+        };
+        stream.record(frame, input, tag);
+    }
+
+    pub fn finish(self) -> Option<WindowStream> {
         self.stream
     }
 }

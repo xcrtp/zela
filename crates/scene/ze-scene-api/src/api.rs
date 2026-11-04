@@ -40,10 +40,13 @@ use ze_pod_macro::capability;
 /// `@14 → @15`（BV-5）：新增 `ray_trace`（3D 视图的光追开关组件 `RayTrace`）。
 /// 它是一个**新类型**，既有作品不引用 ⇒ payload 逐位不变（`SceneScript` 只记录
 /// 实际挂上的组件）；只有用到它的作品才在产物里多一个 `RayTrace`。
+///
+/// `@15 → @16`（CC-a）：新增 `scope_begin` / `scope_end`（作用域：独立时钟 + 命名空间）。
+/// 既有作品不调用 ⇒ 产物不变（`object_scopes` 为空时不序列化）。
 #[capability(
     namespace = "zela.scene",
-    version = "15",
-    description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画）",
+    version = "16",
+    description = "脚本可见的场景装配接口（结构化组件 / 对象 / 动画 / 作用域）",
     bindings
 )]
 pub struct SceneApi<'a> {
@@ -114,6 +117,16 @@ pub struct SceneApi<'a> {
 
     /// 创建对象：组件句柄列表（异构 ⇒ 保持 `Array<Opaque>`）。
     pub spawn: fn(&'a dyn Pod, components: Vec<Handle>) -> Handle,
+
+    /// **CC-a**：进入一个作用域（返回令牌）。
+    ///
+    /// 作用域自带时钟（`shift` / `rate`）；其内创建的对象在 `commit` 后拥有独立
+    /// 时间轴，表达式绑定继承目标对象的作用域。路径进产物（声明式），序号在
+    /// 编译期按首次出现重新分配 ⇒ **产物里没有运行期 id**。
+    pub scope_begin: fn(&'a dyn Pod, path: String, shift: f64, rate: f64) -> f64,
+
+    /// **CC-a**：退出作用域（`token` 是 `scope_begin` 的返回值）。
+    pub scope_end: fn(&'a dyn Pod, token: f64) -> (),
 
     /// 销毁对象（`commit` 时执行）。
     pub despawn: fn(&'a dyn Pod, object: Handle) -> (),
@@ -194,9 +207,9 @@ pub struct ContentApi<'a> {
 /// 指纹随 `signatures()` 一起动；**payload 不动** —— `SceneScript` 只记录实际挂上的
 /// 组件，既有作品不引用 `RayTrace` ⇒ 产物逐字节相同（与 `@13 → @14` 不同，那一版
 /// 改的是产物里出现的能力名）。
-pub const SCENE_API_VERSION: &str = "15";
+pub const SCENE_API_VERSION: &str = "16";
 /// `zela.scene` 的 `hash(signatures())` 基线。
-pub const SCENE_API_FINGERPRINT: u64 = 17_936_327_828_547_956_008;
+pub const SCENE_API_FINGERPRINT: u64 = 1_362_860_487_258_478_828;
 /// `zela.content` 的当前自述版本。
 pub const CONTENT_API_VERSION: &str = "1";
 /// `zela.content` 的 `hash(signatures())` 基线。

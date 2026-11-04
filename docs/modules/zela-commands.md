@@ -11,7 +11,7 @@
 - 路径：`crates/app/zela-commands`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`zela-app`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`
-- 源文件：18 个 · 4097 行
+- 源文件：18 个 · 4004 行
 
 ### 文件清单
 
@@ -25,7 +25,7 @@
 | `src/commands/compile.rs` | 256 | `compile`：脚本 → ZSB 装配产物（不渲染、不需要 GPU）。 |
 | `src/commands/doctor.rs` | 141 | `doctor`：环境自检（本批最值钱的发现之一）。 |
 | `src/commands/fingerprint.rs` | 458 | `fingerprint`：跨运行时对拍的指纹工具（单帧 / 结构清单 / 目录对拍）。 |
-| `src/commands/fonts.rs` | 193 | 确定字体（`fonts`）：下载 + SHA-256 校验 `tools/typst-fonts.txt` 的清单。 |
+| `src/commands/fonts.rs` | 100 | 确定字体（`fonts`）：下载 + SHA-256 校验 `tools/typst-fonts.txt` 的清单。 |
 | `src/commands/frames.rs` | 76 | `frames`：PNG 序列帧导出（`render --frames` 的一等入口）。 |
 | `src/commands/inspect.rs` | 92 | `inspect`：读取 `.zsb` 的 Meta（container 版本 / payload 格式 / 能力 / 降级 / 来源）。 |
 | `src/commands/list.rs` | 54 | `list`：内置作品清单（GUI 下拉与 CLI 共用同一份定义）。 |
@@ -94,11 +94,6 @@ graph LR
 | `src/commands/fingerprint.rs` | `pub enum Invocation` |
 | `src/commands/fingerprint.rs` | `pub fn invocation_from_args(args: &CommandArgs) -> Result<Invocation, String>` |
 | `src/commands/fingerprint.rs` | `pub fn run(host: &dyn CommandHost, invocation: &Invocation) -> Result<Response, String>` |
-| `src/commands/fonts.rs` | `pub struct FontSet` |
-| `src/commands/fonts.rs` | `pub fn manifest() -> Result<FontSet, String>` |
-| `src/commands/fonts.rs` | `pub fn verify_file(dir: &Path, name: &str, expected: &str) -> bool` |
-| `src/commands/fonts.rs` | `pub fn detect() -> Result<(FontSet, Vec<String>), String>` |
-| `src/commands/fonts.rs` | `pub fn ensure_font_dir() -> Option<PathBuf>` |
 | `src/commands/fonts.rs` | `pub fn run(host: &dyn CommandHost) -> Result<Response, String>` |
 | `src/commands/frames.rs` | `pub fn options_from_args(args: &CommandArgs) -> Result<RenderOptions, String>` |
 | `src/commands/frames.rs` | `pub fn run(` |

@@ -45,8 +45,16 @@ use zela_schedule::scheduler::Scheduler;
 mod assembly;
 // 内置作品清单（GUI 的"作品"下拉；脚本 `include_str!` 编进二进制）。
 pub mod demos;
+// **CH-b**：事件标记的差分回执（TraceReport / FrameDiff / 镜像类型）。
+pub mod debug;
 pub mod export;
 mod formula;
+// **CH-e**：确定性字体的清单解析与环境快照（GUI / headless / CLI 共用）。
+pub mod fonts;
+// **CG-g**：Headless 出口（零窗口 / 零 GPU / 零 egui；注入事件 → 读一帧 Frame）。
+pub mod headless;
+// **CH-c**：debug RPC（只读 + 注入；NDJSON over TCP，只绑 127.0.0.1）。
+pub mod rpc;
 // 内嵌 Python 的前置探测：pyo3 初始化失败是 CPython 的 Fatal（abort），
 // Rust 侧捕获不到 ⇒ 必须在第一次碰 pyo3 之前先探测（见模块文档）。
 #[cfg(feature = "python")]
@@ -78,6 +86,10 @@ pub enum SceneChoice {
     CapabilityDemo,
     ScriptStoryboard,
     PythonStoryboard,
+    /// **CE-e**：两个 View + 两个参数面板（场景对象；拖动互不干扰）。
+    Panels,
+    /// **CG-f**：自研面板（三组控件全部是场景图元；`host.rs` 不再画控件）。
+    Hud,
 }
 
 /// 一次装配的产物：**GUI 与 headless 共用**（定义在回放运行时 crate）。
@@ -199,7 +211,7 @@ fn compile_script_on_this_thread(
     Ok(CompiledScript {
         script,
         capabilities: used_capabilities(scene_used, content_used),
-        required_capabilities: required_playback_capabilities(),
+        required_capabilities: required_playback_capabilities(content_used),
         pods: runtime_pods(scene_used, content_used),
         required_pods: required_playback_pods(),
         source_sha256: zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(
@@ -223,7 +235,12 @@ fn scene_capability() -> zela_scene_bundle::Capability {
 }
 
 fn content_capability() -> zela_scene_bundle::Capability {
+    // **CD-d**：内容能力的角色是 **Source** —— payload 同时带烘焙轮廓与源文本
+    // （`ContentOrigin`）。回放端有同名能力 ⇒ 可重建；没有 ⇒ 用烘焙数据，不失败。
+    //
+    // CE 引入真字体库 / 排版引擎时**沿用同一 role**（只换后端，不重新论证）。
     capability_of::<zela_scene_ecs::pod::ContentApi<'static>>()
+        .with_role(zela_scene_bundle::CapabilityRole::Source)
 }
 
 /// 脚本**实际用到的最小 capability 集**（ZSB Meta 口径）。
@@ -264,11 +281,18 @@ fn runtime_pods(scene_used: bool, content_used: bool) -> Vec<zela_scene_bundle::
     out
 }
 
-/// **回放期实际需要的能力集**：payload 是已烘焙的纯数据 ⇒ 只需要 scene 运行时。
+/// **回放期实际需要的能力集**：payload 是已烘焙的纯数据 ⇒ 运行时只需要 scene。
 ///
-/// 装配期调用的 content 能力不写进这里（否则无内容引擎的回放端会被误拒）。
-fn required_playback_capabilities() -> Vec<zela_scene_bundle::Capability> {
-    vec![scene_capability()]
+/// **CD-d**：用到内容时把 content 能力以 `role = Source` 写进这里 ——
+/// 它表达"有同名能力可重建"，缺了**不失败**（回放端用烘焙轮廓）。
+/// 无内容引擎的浏览器因此不会被误拒，同时 `Bundle::content_mode` 能报告
+/// 该产物具备 rebuild 条件。
+fn required_playback_capabilities(content_used: bool) -> Vec<zela_scene_bundle::Capability> {
+    let mut out = vec![scene_capability()];
+    if content_used {
+        out.push(content_capability());
+    }
+    out
 }
 
 /// **回放期实际需要的 Pod 集**：payload 是已烘焙的纯数据 ⇒ 只需要 scene 运行时。
@@ -303,14 +327,70 @@ pub fn available_runtime_caps() -> zela_scene_bundle::Available {
 
 /// **headless 回放入口**：ZSB 产物 → 与脚本路径**同一条** Runtime。
 ///
-/// 实现已下沉到 [`zela_playback::build_bundle_runtime`]（浏览器共用）；
-/// 这里只补 native 的真实时钟注入。
+/// 实现已下沉到 [`zela_playback::build_bundle_runtime_with`]（浏览器共用）；
+/// 这里补两件 native 专属输入：真实时钟注入 + **内容重建钩子**（CE-f）。
 pub fn build_bundle_runtime(
     render_ctx: RenderContext,
     bundle: &zela_scene_bundle::Bundle,
 ) -> Result<Runtime> {
-    let runtime = zela_playback::build_bundle_runtime(render_ctx, bundle)
-        .map_err(|e| Error::InitializationError(e.to_string()))?;
+    // **CE-f**：用现有 typst 作为重建后端（不引入新字体库）。
+    // 编译失败 ⇒ 返回 `None` ⇒ 该对象保留烘焙数据（显式降级，不是错误）。
+    // **CE-e**：面板标签也在装配期用同一个引擎烘成轮廓。
+    let has_sources = bundle
+        .text_sources()
+        .map(|sources| !sources.is_empty())
+        .unwrap_or(false);
+    let has_views = bundle
+        .script()
+        .map(|script| !script.views().is_empty())
+        .unwrap_or(false);
+    let engine = (has_sources || has_views).then(formula::build_engine);
+    let rebuild = |origin: &ze_scene_core::components::ContentOrigin| {
+        let engine = engine.as_ref()?;
+        // **CI-c**：按源种类选后端 / 走对应语义。
+        // - 文本源：与 `content.text` 同一条（字面量包装 + 不按阅读序排序）；
+        // - 公式源：与 `content.formula` 同一条（原始 Typst 源码 + 阅读序排序）。
+        let (source, sort_reading_order) =
+            match origin.kind {
+                ze_scene_core::components::ContentOriginKind::Text => {
+                    (ze_content::text_literal_source(&origin.text), false)
+                }
+                ze_scene_core::components::ContentOriginKind::Formula => (origin.text.clone(), true),
+            };
+        let outlines = ze_scene_core::content::compile(
+            engine,
+            &source,
+            origin.font_size,
+            ze_notion::Vec2::new(origin.x, origin.y),
+            sort_reading_order,
+        );
+        outlines
+            .get(origin.path_index)
+            .map(|outline| outline.path.clone())
+    };
+    let bake_label = |text: &str, anchor: ze_notion::Vec2, font_size: f32| -> Vec<ze_notion::Path2D> {
+        let Some(engine) = engine.as_ref() else {
+            return Vec::new();
+        };
+        ze_scene_core::content::compile(
+            engine,
+            &ze_content::text_literal_source(text),
+            font_size,
+            anchor,
+            false,
+        )
+        .into_iter()
+        .map(|outline| outline.path)
+        .collect()
+    };
+    let runtime = zela_playback::build_bundle_runtime_with(
+        render_ctx,
+        bundle,
+        &available_runtime_caps(),
+        has_sources.then_some(&rebuild as &zela_playback::ContentRebuild<'_>),
+        has_views.then_some(&bake_label as &zela_playback::LabelBake<'_>),
+    )
+    .map_err(|e| Error::InitializationError(e.to_string()))?;
     install_native_clock(&runtime);
     Ok(runtime)
 }
@@ -369,6 +449,20 @@ fn build_runtime(
     source: SceneSource,
     with_demo3d: bool,
 ) -> Result<Runtime> {
+    let assembly = build_scene_assembly(source, with_demo3d)?;
+    let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
+    install_native_clock(&runtime);
+    Ok(runtime)
+}
+
+/// **装配：场景 → [`zela_playback::SceneAssembly`]**（不碰渲染上下文）。
+///
+/// GUI（[`build_runtime`]）与 headless（`crate::headless`）共用这一份：
+/// 场景、系统图、资源序列完全相同，差别只在"有没有 GPU"。
+fn build_scene_assembly(
+    source: SceneSource,
+    with_demo3d: bool,
+) -> Result<zela_playback::SceneAssembly> {
     let mut scene = Scene::new();
 
     // 排版引擎在 App 侧建一次：内容纹理、分镜脚本与内容服务共用。
@@ -383,8 +477,16 @@ fn build_runtime(
     // ── 2D 场景：脚本 / 能力 demo（启动参数切换，见 `SceneChoice`）──────────
     // 两条来源产出**同形的三样东西**：时钟树 + 绑定表 + 主 2D 相机句柄；
     // demo 额外产出一个"待插入的组级开关"（N2 的组控制）。
-    let (forest2d, bindings2d, camera2d_handle, group_visibility, record_hint, pairing) =
-        build_scene_source(&mut scene, &engine, &source)?;
+    let (
+        forest2d,
+        bindings2d,
+        camera2d_handle,
+        group_visibility,
+        record_hint,
+        pairing,
+        interact,
+        hud,
+    ) = build_scene_source(&mut scene, &engine, &source)?;
 
     // S3-3 内容纹理：由场景中的 `Surface(Renderer2D)` 生成（唯一装配入口）。
     // B3 Step 4c-4：demo3d 已改走 Surface；不再有硬编码尺寸 / 相机。
@@ -393,7 +495,7 @@ fn build_runtime(
     let content_textures = (!content_textures.is_empty()).then_some(content_textures);
 
     // **装配尾唯一实现**位于 `zela-playback`（脚本路径与 `--bundle` / 浏览器共用）。
-    let assembly = zela_playback::SceneAssembly {
+    Ok(zela_playback::SceneAssembly {
         world: scene.into_world(),
         forest: forest2d,
         bindings: bindings2d,
@@ -403,10 +505,9 @@ fn build_runtime(
         camera3d: demo3d.as_ref().map(|demo| demo.camera3d),
         content_textures,
         pairing,
-    };
-    let runtime = zela_playback::assemble_runtime(render_ctx, assembly);
-    install_native_clock(&runtime);
-    Ok(runtime)
+        interact,
+        hud,
+    })
 }
 
 /// 场景来源 → 时钟树 / 绑定表 / 2D 相机 / 组开关 / 脚本时长。
@@ -425,6 +526,10 @@ fn build_scene_source(
     Option<f64>,
     // **BZ-b**：录制输入流所需的 ZSB 配对信息（脚本路径可推导；纯内置 demo 为 `None`）。
     Option<zela_scene_bundle::Pairing>,
+    // **CE-e**：场景内参数面板的命中表（有 View 才有）。
+    Option<zela_scene_ecs::InteractSet>,
+    // **CG-f**：自研面板（三组控件的场景图元 + 状态机）。
+    Option<zela_scene_ecs::hud::HudState>,
 )> {
     // ── 任意脚本（headless）──
     if let SceneSource::Script { source, language } = source {
@@ -465,6 +570,8 @@ fn build_scene_source(
             GroupVisibility::default(),
             record_hint,
             pairing,
+            None,
+            None,
         ));
     }
 
@@ -500,6 +607,80 @@ fn build_scene_source(
                 d.group_visibility,
                 None,
                 None,
+                None,
+                None,
+            ))
+        }
+        SceneChoice::Panels => {
+            // **CE-e**：两个 View + 两个参数面板（场景对象），拖动互不干扰。
+            eprintln!("[zela-app] 场景 = 参数面板（View 空间面 + ze-interact 命中 / 路由）");
+            let p = zela_authored::panels::build(scene);
+            let set = zela_scene_ecs::interact::build_panels_for_views(
+                scene,
+                &zela_scene_ecs::animation::params::build_registry(&p.bindings),
+                &p.views,
+                p.bindings.scopes(),
+                zela_scene_ecs::interact::default_panel_metrics(),
+                |text, anchor, font_size| {
+                    ze_scene_core::content::compile(
+                        engine.as_ref(),
+                        &ze_content::text_literal_source(text),
+                        font_size,
+                        anchor,
+                        false,
+                    )
+                    .into_iter()
+                    .map(|outline| outline.path)
+                    .collect()
+                },
+            );
+            Ok((
+                p.forest,
+                p.bindings,
+                Some(p.camera),
+                GroupVisibility::default(),
+                None,
+                None,
+                (!set.is_empty()).then_some(set),
+                None,
+            ))
+        }
+        SceneChoice::Hud => {
+            // **CG-f**：CE-e 的两块面板（动画内容 + 两个作用域）**加一块自研面板**。
+            //
+            // 控件的轨道 / 滑块 / 标签都是场景图元 ⇒ 画面里看到的就是渲染结果，
+            // 不是 egui 覆盖层；`ControlSet` 的命中与 `Frame` 语义在场景侧。
+            eprintln!("[zela-app] 场景 = 自研 HUD（控件 = Rect / Circle / Path，文字 = 直排引擎）");
+            let p = zela_authored::panels::build(scene);
+            // 参数滑块 ≡ 参数注册表（地址升序；与 CE-e 的自动面板同一来源）。
+            let registry = zela_scene_ecs::animation::params::build_registry(&p.bindings);
+            let sliders: Vec<(String, f64, f64, f64)> = registry
+                .iter()
+                .filter_map(|entry| match entry.property {
+                    ze_property::Property::Scalar(config) => Some((
+                        entry.address.to_string(),
+                        f64::from(config.min),
+                        f64::from(config.max),
+                        f64::from(config.value),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            // 直排文字引擎只在**装配期**用一次（运行期零字体库）。
+            let text_engine = ze_prerender::text::DirectTextEngine::from_env()
+                .map_err(|error| eprintln!("[zela-app] HUD 标签引擎不可用（无标签）：{error}"))
+                .ok()
+                .map(Arc::new);
+            let hud = zela_authored::hud::build(scene, text_engine.as_ref(), &sliders);
+            Ok((
+                p.forest,
+                p.bindings,
+                Some(p.camera),
+                GroupVisibility::default(),
+                None,
+                None,
+                None,
+                Some(hud),
             ))
         }
         SceneChoice::PythonStoryboard => {
@@ -627,6 +808,77 @@ mod tests {
         assert!(damp.iter().all(|value| (value - 0.97).abs() < 1e-6));
     }
 
+    /// **CC-b 主判据**：同一段脚本调用 N 次（每次一个作用域）⇒ N 组对象、N 条时间轴、
+    /// 各实例参数独立；产物只含声明式路径（无运行期 id）。
+    #[test]
+    fn scoped_instances_get_independent_clocks_and_parameters() {
+        use ze_property::PropertyValue;
+
+        let source = r#"
+local function instance(name, shift, stiff)
+    scene.with_scope(name, shift, function()
+        local ball = scene.spawn({ Circle { x = 0.0, y = 0.0, r = 0.1 } })
+        local prev = expr.rec_prev()
+        local x = expr.x { v = prev }
+        local v = expr.y { v = prev }
+        local state = expr.state {
+            init = expr.vec2 { x = expr.pure(1.0), y = expr.pure(0.0) },
+            step = expr.vec2 {
+                x = Add { a = x, b = v },
+                y = Add {
+                    a = Scale { k = 0.97, of = v },
+                    b = Scale { k = -stiff, of = x },
+                },
+            },
+        }
+        expr.bind {
+            object = ball,
+            target = Circle.channel.center,
+            root = expr.vec2 {
+                x = expr.x { v = state },
+                y = expr.pure(0.0),
+            },
+            duration = 4.0,
+        }
+    end)
+end
+instance("panel_a", 0.0, 0.02)
+instance("panel_b", 1.0, 0.01)
+"#;
+        let assembly = crate::assembly::assemble(Arc::new(crate::formula::build_engine()))
+            .expect("脚本 Pod 装配成功");
+        let script = assembly.run_script(source).expect("脚本执行成功");
+        // 产物只含声明式路径，不出现运行期分配的作用域 id。
+        let json = script.to_json().expect("可序列化");
+        assert!(json.contains("\"path\":\"panel_a\""), "{json}");
+        assert!(json.contains("\"path\":\"panel_b\""), "{json}");
+        assert!(!json.contains("ordinal"), "产物不得出现运行期作用域 id：{json}");
+
+        let mut scene = Scene::new();
+        let recipe = script.commit(&mut scene).expect("commit");
+        let a = recipe.bindings.scope_path(zela_scene_ecs::animation::ScopeId(1));
+        let b = recipe.bindings.scope_path(zela_scene_ecs::animation::ScopeId(2));
+        assert_eq!((a, b), ("panel_a", "panel_b"));
+        assert_ne!(
+            recipe.bindings.bindings[0].clock,
+            recipe.bindings.bindings[1].clock,
+            "两个实例必须是两条时间轴"
+        );
+
+        let registry = zela_scene_ecs::animation::params::build_registry(&recipe.bindings);
+        let stiff: Vec<f32> = registry
+            .iter()
+            .filter(|entry| entry.address.ends_with(":stiff"))
+            .filter_map(|entry| match entry.property.value() {
+                PropertyValue::Scalar(value) => Some(value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stiff.len(), 2);
+        assert!(stiff.iter().any(|v| (v - 0.02).abs() < 1e-6), "{stiff:?}");
+        assert!(stiff.iter().any(|v| (v - 0.01).abs() < 1e-6), "{stiff:?}");
+    }
+
     /// **B3 Step 5 / 作品 A（非像素断言）**：`surface_matrix.lua` 的每种
     /// 脚本可表达组合都真的录进了内容层（Circle/Arrow 各 Fill+Stroke、Path Stroke）。
     #[test]
@@ -696,7 +948,7 @@ mod tests {
 
         let engine = Arc::new(placeholder_engine());
         let mut scene_default = Scene::new();
-        let (_forest_a, bindings_a, camera_a, _, duration_a, _) = build_scene_source(
+        let (_forest_a, bindings_a, camera_a, _, duration_a, _, _, _) = build_scene_source(
             &mut scene_default,
             &engine,
             &SceneSource::Choice(SceneChoice::Storyboard),
@@ -704,7 +956,7 @@ mod tests {
         .expect("默认场景装配成功");
 
         let mut scene_script = Scene::new();
-        let (_forest_b, bindings_b, camera_b, _, duration_b, _) = build_scene_source(
+        let (_forest_b, bindings_b, camera_b, _, duration_b, _, _, _) = build_scene_source(
             &mut scene_script,
             &engine,
             &SceneSource::Choice(SceneChoice::ScriptStoryboard),
@@ -753,6 +1005,8 @@ mod tests {
         let clock = forest.insert(ClockNode::new(None)).unwrap();
         let orbit = Binding {
             clock,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Orbit {
                 radius: 5.0,
                 axis: ze_notion::Vec3::Y,
@@ -773,6 +1027,8 @@ mod tests {
         let cam2d_clock = forest.insert(ClockNode::new(None)).unwrap();
         let cam2d_framing = Binding {
             clock: cam2d_clock,
+            scope: Default::default(),
+            priority: 0,
             driver: BindingDriver::Curve(Curve::Keyframes {
                 keys: vec![
                     (0.0, AnimValue::Scalar(40.0)),
@@ -1821,6 +2077,18 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             .collect();
         assert!(names.contains(&"zela.scene"), "names = {names:?}");
         assert!(names.contains(&"zela.content"), "names = {names:?}");
+
+        // **CD-d**：内容能力在 Meta 里带 role = Source（可重建；缺失不失败）。
+        let content = compiled
+            .capabilities
+            .iter()
+            .find(|c| c.name == "zela.content")
+            .expect("用到 content 时必须记录该能力");
+        assert_eq!(
+            content.role,
+            zela_scene_bundle::CapabilityRole::Source,
+            "CE 的字体库 / 排版引擎沿用同一 role"
+        );
     }
 
     /// **S4 验收**：`CompiledScript.pods` 与 capabilities 同口径 ——
@@ -1883,7 +2151,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             &script,
             MetaInput {
                 capabilities: available.capabilities.clone(),
-                required_capabilities: required_playback_capabilities(),
+                required_capabilities: required_playback_capabilities(
+                    !script.content_origins().is_empty(),
+                ),
                 pods: available.pods.clone(),
                 required_pods: required_playback_pods(),
                 downgrades: Vec::new(),
@@ -1930,6 +2200,123 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         );
     }
 
+    /// **CD-c 主判据**：同一 payload，`restore`（烘焙轮廓）与 `rebuild`
+    /// （源 + 本地引擎重算）得到**逐位相同**的路径；诊断能区分两条路。
+    ///
+    /// 引擎口径由 `formula::build_engine` 决定（开 typst ⇒ 真字形；关 ⇒ 占位块），
+    /// 两侧用**同一个**引擎 ⇒ 本用例在两种构建下都成立。
+    #[test]
+    fn content_restore_and_rebuild_agree() {
+        use ze_scene_core::components::ContentOrigin;
+        use ze_scene_core::Path as ObjectPath;
+        use zela_scene_bundle::{Bundle, CapabilityRole, ContentMode, MetaInput};
+        use zela_scene_ecs::contract::SceneRead;
+
+        let compiled = compile_script(
+            r#"scene.text("Hi", { size = 32.0, x = 1.0, y = 2.0 })"#,
+            ScriptLanguage::Lua,
+        )
+        .expect("编译文本脚本");
+
+        // 内容能力由 `compile_script` 以 `role = Source` 写入 Meta（CD-d）。
+        let required = compiled.required_capabilities.clone();
+        assert!(
+            required.iter().any(|c| {
+                c.name == "zela.content" && c.role == CapabilityRole::Source
+            }),
+            "内容能力必须以 Source 角色进 Meta：{required:?}"
+        );
+
+        let bundle = Bundle::encode(
+            &compiled.script,
+            MetaInput {
+                capabilities: compiled.capabilities.clone(),
+                required_capabilities: required,
+                pods: compiled.pods.clone(),
+                required_pods: compiled.required_pods.clone(),
+                downgrades: Vec::new(),
+                source_sha256: Some(compiled.source_sha256.clone()),
+                render_params: Default::default(),
+            },
+        )
+        .expect("编码 ZSB");
+        // 走真实回放路径：字节往返后再读。
+        let bundle = Bundle::from_bytes(&bundle.to_bytes()).expect("解析 ZSB");
+
+        // ── 诊断：本机有内容引擎 ⇒ rebuild；只有 scene ⇒ restore ──
+        assert_eq!(
+            bundle.content_mode(&available_runtime_caps()).expect("诊断"),
+            ContentMode::Rebuild,
+            "有内容能力且有源 ⇒ rebuild"
+        );
+        let scene_only = zela_scene_bundle::Available::new(vec![scene_capability()], Vec::new());
+        assert_eq!(
+            bundle.content_mode(&scene_only).expect("诊断"),
+            ContentMode::Restore,
+            "无内容能力 ⇒ 用烘焙数据（不失败）"
+        );
+
+        // ── restore：payload 里的烘焙轮廓（按描边序号归档）──
+        let sources = bundle.text_sources().expect("源");
+        assert!(!sources.is_empty(), "文本必须带源");
+        assert!(sources.iter().all(|s| s.text == "Hi"), "sources = {sources:?}");
+
+        let mut scene = Scene::new();
+        bundle
+            .script()
+            .expect("还原 SceneScript")
+            .commit(&mut scene)
+            .expect("commit");
+        let mut restored: Vec<(usize, ze_notion::Path2D)> = Vec::new();
+        scene.for_each::<ContentOrigin>(|id, source| {
+            if let Some(path) = scene.with::<ObjectPath, _>(id, |p| p.0.clone()) {
+                restored.push((source.path_index, path));
+            }
+        });
+        restored.sort_by_key(|(index, _)| *index);
+        assert!(!restored.is_empty(), "文本必须至少产生一条路径");
+
+        // ── rebuild：源 + 本地引擎重算（与装配期同一条管线）──
+        let engine = crate::formula::build_engine();
+        let rebuilt = ze_scene_core::content::compile(
+            &engine,
+            &ze_content::text_literal_source(&sources[0].text),
+            sources[0].font_size,
+            ze_notion::Vec2::new(sources[0].x, sources[0].y),
+            false,
+        );
+
+        assert_eq!(restored.len(), rebuilt.len(), "路径数必须一致");
+        for ((index, path), outline) in restored.iter().zip(rebuilt.iter()) {
+            assert_eq!(*path, outline.path, "path_index {index} 的轮廓必须逐位相同");
+        }
+    }
+
+    /// **CI-c**：公式源以 `kind = Formula` 进产物（与文本源同一出口、不同种类）。
+    ///
+    /// 这修掉旧口径的隐含假设「源一定是文本 / 一定由 Typst 字面量包装重建」：
+    /// 公式源的 `text` 必须是作者原文，重建端按 kind 走数学路径。
+    #[test]
+    fn formula_source_is_recorded_with_formula_kind() {
+        use ze_scene_core::components::ContentOriginKind;
+
+        let compiled = compile_script(
+            r#"
+            local f = content.formula(Formula { source = "x^2 + 1", font_size = 20.0, x = 0.0, y = 0.0 })
+            for i = 1, #f do scene.spawn({ RevealPath { path = f[i] } }) end
+            "#,
+            ScriptLanguage::Lua,
+        )
+        .expect("编译公式脚本");
+        let origins = compiled.script.content_origins();
+        assert!(!origins.is_empty(), "公式必须留下内容源");
+        for origin in origins {
+            assert_eq!(origin.kind, ContentOriginKind::Formula);
+            assert_eq!(origin.text, "x^2 + 1", "源是作者原文，不含 `$ $` 包装");
+            assert_eq!(origin.capability_name(), "zela.content");
+        }
+    }
+
     /// **B1-D 验收**：3D 场景的 ZSB 三路径同构。
     ///
     /// demo3d.lua（Camera3D / Cube / Transform3D / Material3D / Light）经
@@ -1952,7 +2339,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             &script,
             MetaInput {
                 capabilities: available.capabilities.clone(),
-                required_capabilities: required_playback_capabilities(),
+                required_capabilities: required_playback_capabilities(
+                    !script.content_origins().is_empty(),
+                ),
                 pods: available.pods.clone(),
                 required_pods: required_playback_pods(),
                 downgrades: Vec::new(),

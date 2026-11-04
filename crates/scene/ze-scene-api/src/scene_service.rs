@@ -14,8 +14,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use ze_scene_core::components::Reveal as NativeReveal;
 use ze_scene_core::components::PathFollow as NativePathFollow;
 use ze_scene_core::scene_script::{
-    Handle as ScriptHandle, SceneEncoder, SceneScript, handle_ref,
+    Handle as ScriptHandle, SceneEncoder, SceneScript, ScopeToken, handle_ref,
 };
+use ze_time::ClockProgram;
 use ze_notion::{Color32, Quat, Rect2D, Vec2 as NotionVec2, Vec3 as NotionVec3};
 use ze_scene_core::object::{
     Arrow as NativeArrow, Axes2D as NativeAxes2D, Camera3D as NativeCamera3D, Circle as NativeCircle,
@@ -186,6 +187,16 @@ impl SceneServicePod {
 
         // ── 对象 ────────────────────────────────────────────────────────
         registry.register_fn1::<Vec<Handle>, Handle>("zela.scene::spawn", scene_spawn);
+        // CC-a：作用域（时钟 + 命名空间）；令牌是栈深度，只在本轮脚本内有效。
+        registry.register_fn3_named::<String, f64, f64, f64>(
+            "zela.scene::scope_begin",
+            "String",
+            "f64",
+            "f64",
+            "f64",
+            scene_scope_begin,
+        );
+        registry.register_fn1::<f64, ()>("zela.scene::scope_end", scene_scope_end);
         registry.register_fn1::<Handle, ()>("zela.scene::despawn", scene_despawn);
 
         // ── 第 BB 批（阶段 4）：构造糖（值形态；展开成与 `Color{...}` 相同的值）──
@@ -910,10 +921,17 @@ fn scene_reveal_path(pod: &dyn Pod, shape: RevealPath) -> Handle {
     let this = service(pod);
     let mut rec = this.rec.borrow_mut();
     match this.paths.get(&shape.path.path) {
-        Ok(path) => rec.components.insert(vec![
-            Box::new(NativeReveal::new(path)),
-            Box::new(world_stroke(shape.path)),
-        ]),
+        Ok(path) => {
+            let mut components: Vec<Box<dyn ze_scene_contract::Component>> = vec![
+                Box::new(NativeReveal::new(path)),
+                Box::new(world_stroke(shape.path)),
+            ];
+            // **CD-b**：源与烘焙同时进产物（无源 ⇒ 不挂，老 payload 行为不变）。
+            if let Some(origin) = this.paths.origin(&shape.path.path) {
+                components.push(Box::new(origin));
+            }
+            rec.components.insert(components)
+        }
         Err(e) => {
             rec.fail(format!("内容路径句柄无效：{e}"));
             rec.components.insert(Vec::new())
@@ -925,10 +943,16 @@ fn scene_path_shape(pod: &dyn Pod, shape: PathShape) -> Handle {
     let this = service(pod);
     let mut rec = this.rec.borrow_mut();
     match this.paths.get(&shape.path.path) {
-        Ok(path) => rec.components.insert(vec![
-            Box::new(NativePath::new(path)),
-            Box::new(world_stroke(shape.path)),
-        ]),
+        Ok(path) => {
+            let mut components: Vec<Box<dyn ze_scene_contract::Component>> = vec![
+                Box::new(NativePath::new(path)),
+                Box::new(world_stroke(shape.path)),
+            ];
+            if let Some(origin) = this.paths.origin(&shape.path.path) {
+                components.push(Box::new(origin));
+            }
+            rec.components.insert(components)
+        }
         Err(e) => {
             rec.fail(format!("内容路径句柄无效：{e}"));
             rec.components.insert(Vec::new())
@@ -985,6 +1009,20 @@ fn scene_despawn(pod: &dyn Pod, object: Handle) {
     if let Ok(handle) = rec.objects.get(&object).copied() {
         rec.encoder.despawn(handle);
     }
+}
+
+/// **CC-a**：进入作用域。令牌 = 当前 scope 栈深度（只在本轮脚本内有效）。
+fn scene_scope_begin(pod: &dyn Pod, path: String, shift: f64, rate: f64) -> f64 {
+    let mut rec = service(pod).rec.borrow_mut();
+    let clock = ClockProgram::nested(&ClockProgram::new(), shift, rate);
+    rec.encoder.begin_scope(path, clock).0 as f64
+}
+
+/// **CC-a**：退出作用域（把栈截断回令牌深度）。
+fn scene_scope_end(pod: &dyn Pod, token: f64) {
+    let mut rec = service(pod).rec.borrow_mut();
+    rec.encoder
+        .end_scope(ScopeToken(token.max(0.0) as usize));
 }
 
 // ─── 第 BB 批（阶段 4）：构造糖 ─────────────────────────────────────────

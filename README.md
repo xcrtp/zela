@@ -1,8 +1,11 @@
 # zela
 
 **用脚本写动画，渲染成 mp4 / 序列帧，也能在浏览器里回放。**
-同一份作品在 native 与 WebGPU 浏览器两端逐帧一致 —— 不是"差不多"，
-而是以帧哈希与结构指纹为判据的逐位一致。
+
+确定性分三层口径，别混用：**同目标可复现 ✅**（同一二进制、同一设备，两次运行逐位相同）·
+**跨端结构一致 ✅**（不同设备上结构指纹相同）· **跨端逐位相同 ❌ 不承诺**
+（不同 GPU / 字体 / 编码器上的像素）。定义见
+[`docs/guides/determinism.md`](docs/guides/determinism.md)。
 
 - 写动画：Lua / Python / JS 脚本（装配期执行），产出 `.zsb` 装配产物；
 - 渲染：headless GPU（wgpu / 矢量后端），mp4 或 PNG 序列帧；
@@ -142,7 +145,7 @@ cargo run -p zela-cli --bin zela -- render hello.lua --out out/hello.mp4
 ## 开发与验证
 
 ```shell
-# 本机能跑的一切（check / test / wasm / structure / docs / demo / smoke / hashes）
+# 本机能跑的一切（check / test / wasm / structure / docs / coverage / demo / smoke / hashes / bench / fixtures）
 cargo verify
 
 # 单步：structure | docs | hashes | ...
@@ -158,3 +161,7 @@ cargo run -p zela-node-egui --example node_editor_demo    # 节点编辑器 demo
 ## 许可
 
 MIT OR Apache-2.0；全文见 [LICENSE-MIT](LICENSE-MIT) 与 [LICENSE-APACHE](LICENSE-APACHE)。
+
+## 支持
+
+[爱发电](https://ifdian.net/a/xcrtp)
