@@ -128,6 +128,17 @@ impl EguiSceneHost {
         zela_render::frame::end_frame(res);
     }
 
+    /// **输入只属于一帧**：推进后清空本帧事件。
+    ///
+    /// [`Self::begin_frame`] 会先**保留**「本帧已投递的事件」（debug RPC 的 `inject`
+    /// 写入的就是这个资源）再追加窗口事件；若推进后不清空，上一帧的窗口事件下一帧
+    /// 会被当成"已投递"继续保留 —— 相机缩放 / 拖拽每帧重复施加。实测症状：
+    /// 一次滚轮后画面持续放大到 `MAX_SCALE` 才停，表现为「滚两下不动，再滚一下
+    /// 要么全没了、要么爆掉」。
+    pub fn clear_input(res: &mut Resources) {
+        res.insert(InputEvents::from_events(Vec::new()));
+    }
+
     // ─── 场景 → UI：视图声明 ───────────────────────────────────────────────
 
     /// 从场景状态构建本帧视图声明（纯数据，无 egui 类型）。
@@ -477,6 +488,57 @@ mod tests {
             EguiSceneHost::build_scene_view(&world, &res_with(false, false))
                 .layers
                 .is_empty()
+        );
+    }
+
+    /// **回归（滚轮缩放漂移）**：一次滚轮命令只能被消费一帧。
+    ///
+    /// 宿主在推进后清空 `InputEvents`（[`EguiSceneHost::clear_input`]）；否则
+    /// `begin_frame` 的"保留本帧已投递事件"会让上一帧的窗口事件继续留在资源里，
+    /// `CameraInputSystem` 每帧重复施加同一个 `Zoom` ⇒ 一次滚轮就把 scale 推到
+    /// clamp（实测："滚两下不动，再滚一下要么全没了、要么爆掉"）。
+    #[test]
+    fn wheel_zoom_is_applied_exactly_once() {
+        use zela_schedule::scheduler::{Phase, Scheduler};
+        use zela_scene_ecs::domain::{CameraCommand, LayerId, SceneEvent};
+        use zela_scene_ecs::CameraInputSystem;
+
+        let mut world = hecs::World::new();
+        let handle = spawn_2d_camera(&mut world);
+        let mut res = Resources::new();
+        res.insert(handle);
+        res.insert(ViewRect::default());
+        res.insert(InputEvents::from_events(vec![SceneEvent::Camera {
+            layer: LayerId(0),
+            command: CameraCommand::Zoom { factor: 1.1 },
+        }]));
+        let mut scheduler = Scheduler::new(world, res);
+        scheduler.add_system(Phase::Input, CameraInputSystem);
+
+        let scale = |scheduler: &Scheduler| {
+            scheduler
+                .world()
+                .query::<&Framing2D>()
+                .iter()
+                .next()
+                .map(|framing| framing.scale)
+                .expect("有 2D 相机")
+        };
+
+        let base = scale(&scheduler);
+        scheduler.run_frame(0.0);
+        let after_first = scale(&scheduler);
+        assert!(
+            (after_first - base * 1.1).abs() < 1e-3,
+            "第一帧必须施加一次缩放：{base} → {after_first}"
+        );
+
+        EguiSceneHost::clear_input(scheduler.resources_mut());
+        scheduler.run_frame(0.0);
+        assert_eq!(
+            scale(&scheduler),
+            after_first,
+            "事件只属于一帧：同一批事件不得在下一帧重复施加"
         );
     }
 }

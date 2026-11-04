@@ -147,6 +147,12 @@ impl SceneFrame {
 
         // 3. **命令推进**：GUI 与 headless 共用同一条 `Advance(dt)` 命令。
         let _receipt = driver.submit(DriverCommand::Advance { dt });
+        // 3′. **输入只属于一帧**：本帧事件已被 System 消费 ⇒ 立刻清空。否则
+        // `begin_frame` 的"保留本帧已投递事件"会把上一帧的窗口事件继续带下去，
+        // 相机缩放 / 拖拽每帧重复施加（滚轮一次就撞上 scale clamp）。
+        driver.with_scheduler_mut(|scheduler| {
+            EguiSceneHost::clear_input(scheduler.resources_mut());
+        });
 
         FrameBegin {
             view,
