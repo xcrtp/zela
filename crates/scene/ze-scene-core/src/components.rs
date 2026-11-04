@@ -98,23 +98,55 @@ impl MorphShape {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ContentTextureItem;
 
-/// **CD-b**：内容源的声明式记录（与烘焙轮廓**同时**进 payload）。
+/// **CI-c**：内容源的**种类**（口子①）。
+///
+/// 只登记「这段源该由哪条路径解释」，**不定义新源语义**：
+/// - [`Text`](Self::Text)：今天 `content.text` 的源（文字排版 / 字形）；
+/// - [`Formula`](Self::Formula)：`content.formula` 的源（二维数学排版）。
+///
+/// 两条路径都产出同一种 `ContentIR`；重建时由宿主按 kind 选后端
+/// （文本 ⇒ 直排 / 公式 ⇒ 数学能力）。字段**必填**（§0.6：缺失即解码期报错，
+/// 不做静默默认）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentOriginKind {
+    Text,
+    Formula,
+}
+
+/// **CD-b / CI-c**：内容源的声明式记录（与烘焙轮廓**同时**进 payload）。
 ///
 /// 烘焙轮廓负责 `restore`（逐位一致）；本组件负责 `rebuild`（用本地能力从
 /// `text` 重算）。`path_index` 是该文本编译出的第几条描边（一次文本可出多条路径，
-/// 每条挂一个对象）。既有不含本组件的 payload 仍可读（`restore` 路径不依赖它）。
+/// 每条挂一个对象）。
 ///
 /// 命名与 `ze_content::ContentSource` 区分：后者是**归一化源码 + 内容哈希**，
-/// 本组件是**脚本层的内容来源声明**（作者文本 + 摆放 + 描边序号）。
+/// 本组件是**脚本层的内容来源声明**（种类 + 作者文本 + 摆放 + 描边序号）。
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ContentOrigin {
-    /// 原始文本（`content.text` 的 `source`，不是 Typst 字面量包装后的串）。
+    /// **CI-c**：源种类（文本 / 公式）；重建后端按它分派。
+    pub kind: ContentOriginKind,
+    /// 原始文本（文本源是 `content.text` 的 `source`；公式源是 `content.formula`
+    /// 的 `source`，**不含** Typst 自动包装的 `$ $`）。
     pub text: String,
     pub font_size: f32,
     pub x: f32,
     pub y: f32,
     /// 该文本编译出的第几条描边（从 0 起）。
     pub path_index: usize,
+}
+
+impl ContentOrigin {
+    /// 口子①的**形状**：源种类 → 重建能力名。
+    ///
+    /// 两条路径目前共用 `zela.content` 能力（同一个 Pod 注册 `formula` / `text`
+    /// 两个函数）；这里把映射写成显式函数，将来拆成两个 capability 时
+    /// 只改这一处，不改产物结构。
+    pub fn capability_name(&self) -> &'static str {
+        match self.kind {
+            ContentOriginKind::Text | ContentOriginKind::Formula => "zela.content",
+        }
+    }
 }
 
 /// **书写动画（reveal）对象**：持有一条描边路径 + 可见区间 `[start, end]`（归一化弧长）。
