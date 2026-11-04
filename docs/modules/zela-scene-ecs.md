@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：28 个 · 11304 行
+- 源文件：28 个 · 11306 行
 
 ### 文件清单
 
@@ -36,13 +36,13 @@
 | `src/fingerprint.rs` | 376 | — |
 | `src/geometry.rs` | 258 | — |
 | `src/hud.rs` | 667 | **CG-f**：自研 UI 的第一块可见面板 —— 三组控件全部是**场景图元**。 |
-| `src/input.rs` | 411 | — |
+| `src/input.rs` | 412 | — |
 | `src/interact.rs` | 660 | 参数面板进场景（CE-e）：**真消费者**。 |
 | `src/lib.rs` | 113 | — |
 | `src/lifetime.rs` | 403 | — |
 | `src/register.rs` | 82 | — |
 | `src/scene.rs` | 234 | — |
-| `src/scene_script_tests.rs` | 974 | — |
+| `src/scene_script_tests.rs` | 975 | — |
 | `src/transform_hierarchy.rs` | 740 | — |
 | `src/utils.rs` | 60 | — |
 

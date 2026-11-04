@@ -181,7 +181,7 @@ mod tests {
         assert!(back.validate().is_ok());
     }
 
-    /// **口径②**：envelope 在外层，`SceneEvent` 本体一个字节不动。
+    /// **口径②**：envelope 在外层，`SceneEvent` 形状不变（标记是调试派生态、不属于作品输入）。
     #[test]
     fn scene_payload_is_wrapped_without_mutating_the_event() {
         let event = SceneEvent::ViewportClick {

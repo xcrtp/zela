@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render-vector`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-notion`、`ze-render-ir`、`ze-resource`
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：14 个 · 17849 行
+- 源文件：14 个 · 17880 行
 
 ### 文件清单
 
@@ -28,7 +28,7 @@
 | `src/passes.rs` | 2204 | pass 声明化与资源槽位（BN 批）。 |
 | `src/render.rs` | 6253 | ManimGX's player: draws blends of shapes — every kind, 2D and 3D — and encodes them to MP4. |
 | `src/scene.rs` | 1071 | 场景适配：`Shape2D` + `Transform2D` + `Style2D` → 上游的填充记录。 |
-| `src/screenshot.rs` | 97 | **CH-d**：debug-only 截图旁路（仅 Vector 后端）。 |
+| `src/screenshot.rs` | 128 | **CH-d**：debug-only 截图旁路（仅 Vector 后端）。 |
 | `src/shadow.rs` | 201 | Shadows: each sun and spot of a 3D view that casts them draws what casts them (its meshes' depth, then its paths' |
 | `src/vector.rs` | 1790 | A view's paths, drawn with analytic segment coverage (see `vector.wgsl`): flattened per |
 
@@ -140,7 +140,7 @@ graph LR
 | `src/scene.rs` | `pub fn window_records(` |
 | `src/scene.rs` | `pub fn grow_records(` |
 | `src/scene.rs` | `pub fn render_scene_2d(` |
-| `src/screenshot.rs` | `pub fn unpad_rows(padded: &[u8], width: u32, height: u32, padded_row: u32) -> Vec<u8>` |
+| `src/screenshot.rs` | `pub fn unpad_rows(` |
 | `src/screenshot.rs` | `pub fn read_texture_rgba(` |
 <!-- AUTO:END -->
 

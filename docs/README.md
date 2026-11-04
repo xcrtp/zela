@@ -37,6 +37,7 @@ README 的阅读导览只指向这里 —— 同一份定义，不复制第二�
 | [`guides/adding-a-component.md`](guides/adding-a-component.md) | 「加一个组件要改 9 处」的操作指南 | 手写 |
 | [`glossary.md`](glossary.md) | 术语 hub（网状入口，不是字典） | 手写（每条必带锚点） |
 | [`decisions/`](decisions/) | 决策记录（选了什么 + 为什么 + 什么情况下不成立） | 手写（状态段可校验） |
+| [`research/`](research/) | 历史探测快照（**不是现行事实**；结论以代码与 `GAPS.md` 为准） | 历史记录 |
 
 ## 未落地项 / 下一阶段去哪看
 
