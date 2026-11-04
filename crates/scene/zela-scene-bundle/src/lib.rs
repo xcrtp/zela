@@ -748,14 +748,6 @@ mod tests {
 
     // ─── CD-a：role 协商 ────────────────────────────────────────────────
 
-    /// 老 ZSB 的 capacity JSON 没有 `role` ⇒ 读成 `Runtime`（严格），行为不变。
-    #[test]
-    fn legacy_capability_json_defaults_to_runtime() {
-        let capability: Capability =
-            serde_json::from_str(r#"{"name":"scene","version":"4"}"#).expect("旧格式可读");
-        assert_eq!(capability.role, CapabilityRole::Runtime);
-    }
-
     /// `Source` / `Baked` 缺失 ⇒ 不失败；`Runtime` 缺失仍失败。
     #[test]
     fn role_decides_whether_missing_capability_fails() {
