@@ -9,6 +9,6 @@ pub enum TimeError {
     /// 时钟树成环：`chain` 是**完整环路径**（首尾相同，例如 `[A, B, A]`）。
     #[error("clock tree contains a cycle: {chain:?}")]
     CycleDetected { chain: Vec<ClockId> },
-    #[error("reverse rate requires seek-kind replay (B类演化器不支持O1 seek)")]
+    #[error("reverse rate requires replay-kind seek: stateful animators have no O(1) reverse seek")]
     ReverseNotSeekable,
 }

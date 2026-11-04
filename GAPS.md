@@ -9,10 +9,9 @@
 > `FOURIER_GAPS.md` 保留为 **fourier 作品快照**；`WASM_PORT_SURVEY.md` 保留为
 > **当时的探测证据**，两者正文都注明总账在本文件。
 >
-> **确定性口径**（详见
-> [`FRAME_HASH_BASELINES.md`](crates/app/zela-app/scripts/FRAME_HASH_BASELINES.md#L117-L128)）：
-> 同目标可复现 ✅（最硬）· 跨端结构一致 ✅ · 跨端逐位相同 ❌（已知可接受）。
-> 本文件谈「确定性」时沿用这三层，不混用。
+> **确定性口径**：唯一定义见
+> [`docs/guides/determinism.md`](docs/guides/determinism.md) §5（本文件只引用，不复制表格）。
+> 本文件谈「确定性」时沿用那一节的三层口径，不混用。
 >
 > **第四判据（S0，2026-10-26）**：确定性 = 输入相同 ⇒ 输出相同，**且无隐式可变状态**。
 > 「逐位相同」是测试夹具，不是定义本身。本判据可直接变成检查项：全局可变静态 / 墙钟 /

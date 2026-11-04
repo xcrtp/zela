@@ -27,8 +27,9 @@ pub mod ids {
     pub const SEEK: WidgetId = WidgetId(5);
     /// 重新播放：把全局时间拨回 0 并恢复播放（分镜从第 1 条重放）。
     ///
-    /// 为什么"拨回 0"就够了：当前所有绑定都是 [`SeekKind::O1`]（纯函数、无记忆），
-    /// 场景状态由 `t` 唯一决定 ⇒ 回到 `t = 0` 即回到初始画面，不需要重建场景。
+    /// 为什么"拨回 0"就够了：绑定要么无记忆（`O1` 系列），要么有记忆但可从初始态
+    /// 向前重算（L2：`State` / `EventReplay` / 弹簧）⇒ 回到 `t = 0` 即回到初始画面，
+    /// 不需要重建场景。反向 seek 仍不支持（`ReverseNotSeekable`）。
     ///
     /// [`SeekKind::O1`]: https://docs.rs/zela-scene
     pub const REPLAY: WidgetId = WidgetId(6);
