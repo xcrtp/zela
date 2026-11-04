@@ -103,19 +103,116 @@ pub struct FrameTrace {
 }
 
 /// `SceneEvent` 的镜像（纯数据；与场景事件逐字段一致，便于断言 / 序列化）。
+///
+/// **CJ-05（B2）**：四类输入形状（`Pointer` / `Key` / `Text` / `Command`）与控件事件
+/// 都有结构化变体；不再用 `format!("{other:?}")` 兜底（`Debug` 输出不保证稳定序列化）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SceneEventRecord {
-    Hover { layer: u32, scene_pos: [f32; 2] },
-    Click { layer: u32, scene_pos: [f32; 2] },
-    Release { layer: u32, scene_pos: [f32; 2] },
-    Camera { layer: u32, command: String },
-    Other { debug: String },
+    Hover {
+        layer: u32,
+        scene_pos: [f32; 2],
+    },
+    Click {
+        layer: u32,
+        scene_pos: [f32; 2],
+    },
+    Release {
+        layer: u32,
+        scene_pos: [f32; 2],
+    },
+    Camera {
+        layer: u32,
+        command: String,
+    },
+    Toggle {
+        id: u32,
+        value: bool,
+    },
+    Slider {
+        id: u32,
+        value: f32,
+    },
+    Button {
+        id: u32,
+    },
+    PointerMoved {
+        scene_pos: [f32; 2],
+    },
+    PointerPressed {
+        scene_pos: [f32; 2],
+        button: String,
+    },
+    PointerReleased {
+        scene_pos: [f32; 2],
+        button: String,
+    },
+    PointerWheel {
+        scene_pos: [f32; 2],
+        delta: [f32; 2],
+    },
+    KeyDown {
+        key: String,
+        modifiers: ModifierRecord,
+    },
+    KeyUp {
+        key: String,
+        modifiers: ModifierRecord,
+    },
+    TextCommit {
+        text: String,
+    },
+    TextCompose {
+        text: String,
+        composing: bool,
+    },
+    TextAnchor {
+        target: String,
+        edge: String,
+    },
+    CommandInvoke {
+        name: String,
+    },
+    CommandSetValue {
+        name: String,
+        value: f64,
+    },
+}
+
+/// 修饰键的镜像。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ModifierRecord {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
+impl From<&ze_scene_core::domain::event::KeyModifiers> for ModifierRecord {
+    fn from(modifiers: &ze_scene_core::domain::event::KeyModifiers) -> Self {
+        Self {
+            shift: modifiers.shift,
+            ctrl: modifiers.ctrl,
+            alt: modifiers.alt,
+            meta: modifiers.meta,
+        }
+    }
+}
+
+fn pointer_button_name(button: ze_scene_core::domain::event::PointerButton) -> &'static str {
+    use ze_scene_core::domain::event::PointerButton;
+    match button {
+        PointerButton::Primary => "primary",
+        PointerButton::Secondary => "secondary",
+        PointerButton::Middle => "middle",
+    }
 }
 
 impl From<&ze_scene_core::domain::SceneEvent> for SceneEventRecord {
     fn from(event: &ze_scene_core::domain::SceneEvent) -> Self {
-        use ze_scene_core::domain::SceneEvent as E;
+        use ze_scene_core::domain::event::{
+            CommandInput, KeyInput, PointerInput, SceneEvent as E, TextAnchorEdge, TextInput,
+        };
         match event {
             E::ViewportHover { layer, scene_pos } => Self::Hover {
                 layer: layer.0,
@@ -133,8 +230,62 @@ impl From<&ze_scene_core::domain::SceneEvent> for SceneEventRecord {
                 layer: layer.0,
                 command: format!("{command:?}"),
             },
-            other => Self::Other {
-                debug: format!("{other:?}"),
+            E::Toggle { id, value } => Self::Toggle {
+                id: id.0,
+                value: *value,
+            },
+            E::Slider { id, value } => Self::Slider {
+                id: id.0,
+                value: *value,
+            },
+            E::Button { id } => Self::Button { id: id.0 },
+            E::Pointer { input } => match input {
+                PointerInput::Moved { scene_pos } => Self::PointerMoved {
+                    scene_pos: [scene_pos.x, scene_pos.y],
+                },
+                PointerInput::Pressed { scene_pos, button } => Self::PointerPressed {
+                    scene_pos: [scene_pos.x, scene_pos.y],
+                    button: pointer_button_name(*button).to_string(),
+                },
+                PointerInput::Released { scene_pos, button } => Self::PointerReleased {
+                    scene_pos: [scene_pos.x, scene_pos.y],
+                    button: pointer_button_name(*button).to_string(),
+                },
+                PointerInput::Wheel { scene_pos, delta } => Self::PointerWheel {
+                    scene_pos: [scene_pos.x, scene_pos.y],
+                    delta: [delta.x, delta.y],
+                },
+            },
+            E::Key { input } => match input {
+                KeyInput::Down { key, modifiers } => Self::KeyDown {
+                    key: key.clone(),
+                    modifiers: modifiers.into(),
+                },
+                KeyInput::Up { key, modifiers } => Self::KeyUp {
+                    key: key.clone(),
+                    modifiers: modifiers.into(),
+                },
+            },
+            E::Text { input } => match input {
+                TextInput::Commit { text } => Self::TextCommit { text: text.clone() },
+                TextInput::Compose { text, composing } => Self::TextCompose {
+                    text: text.clone(),
+                    composing: *composing,
+                },
+                TextInput::Anchor { anchor } => Self::TextAnchor {
+                    target: anchor.target.clone(),
+                    edge: match anchor.edge {
+                        TextAnchorEdge::Start => "start".to_string(),
+                        TextAnchorEdge::End => "end".to_string(),
+                    },
+                },
+            },
+            E::Command { input } => match input {
+                CommandInput::Invoke { name } => Self::CommandInvoke { name: name.clone() },
+                CommandInput::SetValue { name, value } => Self::CommandSetValue {
+                    name: name.clone(),
+                    value: *value,
+                },
             },
         }
     }
@@ -156,23 +307,53 @@ pub enum OutcomeKind {
     Activated,
 }
 
-/// Frame 的语义层差分（全覆盖：任何 System 的副作用最终都落在语义值上）。
+/// Frame 的差分（覆盖**三条平行结构**：语义值 / 几何布局 / 文本）。
+///
+/// **CJ-05（B1）**：`Frame` 是 `geometry` / `semantics` / `text` 三条平行结构；只比
+/// 语义值会漏掉布局重排、标签文本、命中区域的变化。这里对三条结构分别差分。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct FrameDiff {
     /// `role:name`（按 after 的声明顺序）。
     pub appeared: Vec<String>,
     /// `role:name`（按 before 的声明顺序）。
     pub disappeared: Vec<String>,
+    /// 语义值变化。
     pub changed: Vec<SemanticChange>,
+    /// `focusable` 等非值标记变化。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flags_changed: Vec<SemanticChange>,
+    /// 语义范围（命中区域）变化。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bounds_changed: Vec<BoundsChange>,
+    /// 布局中新增的控件 id。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometry_appeared: Vec<u32>,
+    /// 布局中消失的控件 id。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometry_disappeared: Vec<u32>,
+    /// 布局落点 / 尺寸变化。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometry_changed: Vec<GeometryChange>,
+    /// 文本变化（按 run 下标对齐）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_changed: Vec<TextChange>,
 }
 
 impl FrameDiff {
     pub fn is_empty(&self) -> bool {
-        self.appeared.is_empty() && self.disappeared.is_empty() && self.changed.is_empty()
+        self.appeared.is_empty()
+            && self.disappeared.is_empty()
+            && self.changed.is_empty()
+            && self.flags_changed.is_empty()
+            && self.bounds_changed.is_empty()
+            && self.geometry_appeared.is_empty()
+            && self.geometry_disappeared.is_empty()
+            && self.geometry_changed.is_empty()
+            && self.text_changed.is_empty()
     }
 }
 
-/// 单个语义锚点的值变化。
+/// 语义锚点的值变化。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SemanticChange {
     pub role: String,
@@ -181,6 +362,31 @@ pub struct SemanticChange {
     pub before: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
+}
+
+/// 语义范围变化（命中区域）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BoundsChange {
+    pub role: String,
+    pub name: String,
+    pub before: [f64; 4],
+    pub after: [f64; 4],
+}
+
+/// 布局落点 / 尺寸变化。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeometryChange {
+    pub id: u32,
+    pub before: [f64; 4],
+    pub after: [f64; 4],
+}
+
+/// 文本变化（`before` / `after` 是行高 + 逐字符盒的规范摘要）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextChange {
+    pub run: usize,
+    pub before: String,
+    pub after: String,
 }
 
 /// 派生态诊断：命中谁 / 路由去向 / 为什么落空 / **装配环境**。
@@ -234,7 +440,7 @@ pub struct Environment {
     pub fonts: Option<crate::fonts::FontEnvironment>,
 }
 
-/// **Frame 差分**：按 `(role, name)` 对齐，值不同 ⇒ `changed`。
+/// **Frame 差分**：三条平行结构分别对齐；值 / 范围 / 布局 / 文本任一变化都进回执。
 pub fn diff_frames(before: Option<&Frame>, after: Option<&Frame>) -> FrameDiff {
     let (Some(before), Some(after)) = (before, after) else {
         return FrameDiff::default();
@@ -243,13 +449,32 @@ pub fn diff_frames(before: Option<&Frame>, after: Option<&Frame>) -> FrameDiff {
     for node in &after.semantics {
         match before.semantic(&node.role, &node.name) {
             None => diff.appeared.push(format!("{}:{}", node.role, node.name)),
-            Some(old) if old.value != node.value => diff.changed.push(SemanticChange {
-                role: node.role.clone(),
-                name: node.name.clone(),
-                before: old.value.clone(),
-                after: node.value.clone(),
-            }),
-            Some(_) => {}
+            Some(old) => {
+                if old.value != node.value {
+                    diff.changed.push(SemanticChange {
+                        role: node.role.clone(),
+                        name: node.name.clone(),
+                        before: old.value.clone(),
+                        after: node.value.clone(),
+                    });
+                }
+                if old.bounds != node.bounds {
+                    diff.bounds_changed.push(BoundsChange {
+                        role: node.role.clone(),
+                        name: node.name.clone(),
+                        before: rect_arr(old.bounds),
+                        after: rect_arr(node.bounds),
+                    });
+                }
+                if old.focusable != node.focusable {
+                    diff.flags_changed.push(SemanticChange {
+                        role: node.role.clone(),
+                        name: node.name.clone(),
+                        before: Some(format!("focusable={}", old.focusable)),
+                        after: Some(format!("focusable={}", node.focusable)),
+                    });
+                }
+            }
         }
     }
     for node in &before.semantics {
@@ -257,7 +482,62 @@ pub fn diff_frames(before: Option<&Frame>, after: Option<&Frame>) -> FrameDiff {
             diff.disappeared.push(format!("{}:{}", node.role, node.name));
         }
     }
+
+    // 几何：按声明期 id 对齐（`PlacedRect::id` 是布局下标，不是运行期句柄）。
+    for placed in &after.geometry {
+        match before.geometry.iter().find(|old| old.id == placed.id) {
+            None => diff.geometry_appeared.push(placed.id.0),
+            Some(old) if old.rect != placed.rect => diff.geometry_changed.push(GeometryChange {
+                id: placed.id.0,
+                before: rect_arr(old.rect),
+                after: rect_arr(placed.rect),
+            }),
+            Some(_) => {}
+        }
+    }
+    for placed in &before.geometry {
+        if !after.geometry.iter().any(|new| new.id == placed.id) {
+            diff.geometry_disappeared.push(placed.id.0);
+        }
+    }
+
+    // 文本：按 run 下标对齐；行高或任一字符盒不同 ⇒ 记一条。
+    for (index, run) in after.text.iter().enumerate() {
+        let after_summary = text_run_summary(run);
+        let before_summary = before.text.get(index).map(text_run_summary);
+        if before_summary.as_deref() != Some(after_summary.as_str()) {
+            diff.text_changed.push(TextChange {
+                run: index,
+                before: before_summary.unwrap_or_default(),
+                after: after_summary,
+            });
+        }
+    }
+    for index in after.text.len()..before.text.len() {
+        diff.text_changed.push(TextChange {
+            run: index,
+            before: text_run_summary(&before.text[index]),
+            after: String::new(),
+        });
+    }
     diff
+}
+
+fn rect_arr(rect: ze_interact::Rect) -> [f64; 4] {
+    [rect.min.x, rect.min.y, rect.max.x, rect.max.y]
+}
+
+/// 文本 run 的规范摘要：行高 + 逐字符（字符 / 四元矩形），用稳定格式拼接。
+fn text_run_summary(run: &ze_interact::TextRun) -> String {
+    let mut out = format!("h={:.3};", run.line_height);
+    for cell in &run.chars {
+        let rect = rect_arr(cell.rect);
+        out.push_str(&format!(
+            "{}@{:.3},{:.3},{:.3},{:.3};",
+            cell.ch, rect[0], rect[1], rect[2], rect[3]
+        ));
+    }
+    out
 }
 
 /// 回执失败的原因（全部显式）。
@@ -640,5 +920,109 @@ mod tests {
         let tag = ActiveTags::new(TagId(4), 11);
         assert!(tag.covers(11));
         assert!(!tag.covers(12));
+    }
+
+    /// **CJ-05（B1）**：布局重排、标签文本变化、命中区域变化都必须进 `FrameDiff`。
+    #[test]
+    fn diff_covers_geometry_text_and_bounds() {
+        use ze_interact::{LayoutId, PlacedRect, TextRun};
+
+        let semantic = |bounds: Rect| {
+            let mut frame = Frame::new();
+            frame
+                .semantics
+                .push(SemanticNode::new("label", "status", bounds));
+            frame
+        };
+        let before_bounds = Rect::from_min_size(Point::new(0.0, 0.0), 10.0, 10.0);
+        let after_bounds = Rect::from_min_size(Point::new(0.0, 5.0), 10.0, 10.0);
+        let before = semantic(before_bounds);
+        let after = semantic(after_bounds);
+        let diff = diff_frames(Some(&before), Some(&after));
+        assert_eq!(
+            diff.bounds_changed,
+            vec![BoundsChange {
+                role: "label".into(),
+                name: "status".into(),
+                before: [0.0, 0.0, 10.0, 10.0],
+                after: [0.0, 5.0, 10.0, 15.0],
+            }]
+        );
+
+        // 几何：同一个 layout id 落点变了 ⇒ geometry_changed。
+        let mut before = Frame::new();
+        before.geometry.push(PlacedRect {
+            id: LayoutId(3),
+            rect: Rect::from_min_size(Point::new(0.0, 0.0), 10.0, 10.0),
+        });
+        before.text.push(TextRun::new(12.0));
+        let mut after = before.clone();
+        after.geometry[0].rect = Rect::from_min_size(Point::new(40.0, 0.0), 10.0, 10.0);
+        // 文本：标签内容变化 ⇒ text_changed。
+        after.text[0] = TextRun::new(12.0);
+        after.text[0].push(0, 'O', Point::new(4.0, 4.0), 6.0);
+        after.text[0].push(1, 'K', Point::new(10.0, 4.0), 6.0);
+
+        let diff = diff_frames(Some(&before), Some(&after));
+        assert_eq!(diff.geometry_changed.len(), 1);
+        assert_eq!(diff.geometry_changed[0].id, 3);
+        assert_eq!(diff.geometry_changed[0].before, [0.0, 0.0, 10.0, 10.0]);
+        assert_eq!(diff.geometry_changed[0].after, [40.0, 0.0, 50.0, 10.0]);
+        assert_eq!(diff.text_changed.len(), 1);
+        assert!(diff.text_changed[0].after.contains("O@"));
+        assert!(diff.text_changed[0].after.contains("K@"));
+        assert!(!diff.is_empty(), "三条平行结构的任一变化都不得判成空差分");
+    }
+
+    /// **CJ-05（B2）**：四类输入形状与控件事件都有结构化镜像，且序列化稳定。
+    #[test]
+    fn scene_event_records_keep_structure_and_serialize_stably() {
+        use ze_notion::Vec2;
+        use ze_scene_core::domain::event::{
+            CommandInput, KeyInput, KeyModifiers, PointerInput, TextInput,
+        };
+        use ze_scene_core::domain::SceneEvent;
+
+        let events = vec![
+            SceneEvent::Toggle {
+                id: ze_scene_core::domain::ids::PLAY_PAUSE,
+                value: true,
+            },
+            SceneEvent::Key {
+                input: KeyInput::Down {
+                    key: "Enter".into(),
+                    modifiers: KeyModifiers {
+                        ctrl: true,
+                        ..KeyModifiers::default()
+                    },
+                },
+            },
+            SceneEvent::Text {
+                input: TextInput::Commit {
+                    text: "hello".into(),
+                },
+            },
+            SceneEvent::Pointer {
+                input: PointerInput::Wheel {
+                    scene_pos: Vec2::new(1.0, 2.0),
+                    delta: Vec2::new(0.0, -3.0),
+                },
+            },
+            SceneEvent::Command {
+                input: CommandInput::Invoke {
+                    name: "panel_a".into(),
+                },
+            },
+        ];
+        let records: Vec<SceneEventRecord> = events.iter().map(SceneEventRecord::from).collect();
+        let first = serde_json::to_string(&records).expect("可序列化");
+        let second = serde_json::to_string(&records).expect("可序列化");
+        assert_eq!(first, second, "两次序列化必须逐字节相同");
+        for kind in ["toggle", "key_down", "text_commit", "pointer_wheel", "command_invoke"] {
+            assert!(first.contains(kind), "缺结构化变体 `{kind}`：{first}");
+        }
+        assert!(!first.contains("debug"), "不得再落进 Debug 字符串兜底：{first}");
+        let back: Vec<SceneEventRecord> = serde_json::from_str(&first).expect("可反序列化");
+        assert_eq!(records, back);
     }
 }

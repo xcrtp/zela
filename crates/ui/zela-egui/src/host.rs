@@ -137,6 +137,9 @@ impl EguiSceneHost {
     /// 要么全没了、要么爆掉」。
     pub fn clear_input(res: &mut Resources) {
         res.insert(InputEvents::from_events(Vec::new()));
+        // **CJ-05（B3）**：`FrameTag` 只属于本帧 —— 录制关闭 + RPC 注入时也必须清掉，
+        // 否则 tag 会残留在资源里，下一帧被误当成"注入帧"。
+        res.insert(ze_scene_core::domain::FrameTag(None));
     }
 
     // ─── 场景 → UI：视图声明 ───────────────────────────────────────────────
@@ -491,6 +494,18 @@ mod tests {
         );
     }
 
+    /// **CJ-05（B3）**：`clear_input` 同时清 `FrameTag` —— 录制关闭 + RPC 注入时，
+    /// tag 不得残留在资源里（否则下一帧被误标成注入）。
+    #[test]
+    fn clear_input_also_clears_the_frame_tag() {
+        use ze_scene_core::domain::{FrameTag, TagId};
+
+        let mut res = Resources::new();
+        res.insert(FrameTag(Some(TagId(7))));
+        EguiSceneHost::clear_input(&mut res);
+        assert_eq!(res.get::<FrameTag>().and_then(|tag| tag.0), None);
+    }
+
     /// **回归（滚轮缩放漂移）**：一次滚轮命令只能被消费一帧。
     ///
     /// 宿主在推进后清空 `InputEvents`（[`EguiSceneHost::clear_input`]）；否则
@@ -539,6 +554,68 @@ mod tests {
             scale(&scheduler),
             after_first,
             "事件只属于一帧：同一批事件不得在下一帧重复施加"
+        );
+    }
+
+    /// **CJ-05（B7）**：判据从真正的帧序（[`crate::frame::SceneFrame::begin`]）走 ——
+    /// 把 `begin` 里 `Advance` 之后的清理移除 ⇒ 本用例第二帧会再次施加缩放而失败。
+    #[test]
+    fn scene_frame_begin_consumes_input_exactly_once() {
+        use std::sync::Arc;
+        use zela_schedule::scheduler::{Phase, Scheduler};
+        use zela_scene_ecs::domain::{CameraCommand, InputEvents, LayerId, SceneEvent};
+        use zela_scene_ecs::{CameraInputSystem, DriverPod};
+
+        let mut world = hecs::World::new();
+        let handle = spawn_2d_camera(&mut world);
+        let mut res = Resources::new();
+        res.insert(handle);
+        res.insert(ViewRect::default());
+        res.insert(InputEvents::from_events(vec![SceneEvent::Camera {
+            layer: LayerId(0),
+            command: CameraCommand::Zoom { factor: 1.1 },
+        }]));
+        let mut scheduler = Scheduler::new(world, res);
+        scheduler.add_system(Phase::Input, CameraInputSystem);
+
+        let driver = Arc::new(DriverPod::new(scheduler));
+        let mut frame = crate::frame::SceneFrame::new(Arc::clone(&driver));
+        let ctx = egui::Context::default();
+        let run_one = |frame: &mut crate::frame::SceneFrame| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    frame.begin(ui);
+                });
+            });
+            // 测试没有真实纹理上传；不处理 delta 时 egui 会在 Drop 里 panic。
+            output.textures_delta.clear();
+        };
+
+        let scale = || {
+            driver.with_scheduler(|scheduler| {
+                scheduler
+                    .world()
+                    .query::<&Framing2D>()
+                    .iter()
+                    .next()
+                    .map(|framing| framing.scale)
+                    .expect("有 2D 相机")
+            })
+        };
+
+        let base = scale();
+        run_one(&mut frame);
+        let after_first = scale();
+        assert!(
+            (after_first - base * 1.1).abs() < 1e-3,
+            "第一帧必须施加一次缩放：{base} → {after_first}"
+        );
+
+        run_one(&mut frame);
+        assert_eq!(
+            scale(),
+            after_first,
+            "帧序必须自己清理输入：第二帧不得重复施加"
         );
     }
 }

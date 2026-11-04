@@ -135,14 +135,6 @@ impl SceneFrame {
             if let Some(input) = &input {
                 self.recorder.capture(frame as u32, input, tag);
             }
-            // tag 只属于本帧：录完即清，避免后续帧被误标成注入。
-            if tag.is_some() {
-                driver.with_scheduler_mut(|scheduler| {
-                    scheduler
-                        .resources_mut()
-                        .insert(ze_scene_core::domain::FrameTag(None));
-                });
-            }
         }
 
         // 3. **命令推进**：GUI 与 headless 共用同一条 `Advance(dt)` 命令。
