@@ -38,6 +38,18 @@ fn param_scopes(frame: &ze_interact::Frame) -> BTreeMap<String, Vec<String>> {
     groups
 }
 
+/// **CL-R 判据 2**：面板命令真的到达渲染层（0 = 面板不会出现）。
+#[test]
+fn panel_commands_reach_the_render_layer() {
+    let scene = headless::build(SceneChoice::Hud).expect("headless 装配");
+    scene.advance(2, 1.0 / 60.0);
+    assert!(
+        scene.widget_command_count() > 20,
+        "面板命令必须被发布（实际 {}）",
+        scene.widget_command_count()
+    );
+}
+
 #[test]
 fn dragging_one_panel_parameter_does_not_touch_the_other() {
     let scene = headless::build(SceneChoice::Hud).expect("headless 装配（无 GPU）");

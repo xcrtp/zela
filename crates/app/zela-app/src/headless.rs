@@ -158,6 +158,19 @@ impl HeadlessScene {
         crate::debug::frame_of(&self.driver)
     }
 
+    /// **CL-R**：本帧交给渲染层的面板命令条数（0 = 面板不会出现）。
+    ///
+    /// 生产接线自检：`HudSystem` 写 `WidgetCommands`，`SceneRecordSystem` 读它。
+    pub fn widget_command_count(&self) -> usize {
+        self.driver.with_scheduler(|scheduler| {
+            scheduler
+                .resources()
+                .get::<ze_scene_core::WidgetCommands>()
+                .map(|commands| commands.commands.len())
+                .unwrap_or(0)
+        })
+    }
+
     /// 语义控件的**世界坐标**落点（Agent 把"点哪儿"换算成场景坐标的唯一入口）。
     ///
     /// `t` 是沿控件宽度的比例（`0` = 左端，`1` = 右端）。

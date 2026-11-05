@@ -387,6 +387,10 @@ pub fn assemble_scheduler(assembly: SceneAssembly) -> AssembledScene {
     resources.insert(InputEvents::default());
     resources.insert(DrawQueue::new());
     resources.insert(DrawQueue3D::new());
+    // **CL-R**：表达层本帧命令（`HudSystem` 在 FrameEnd 写；录制层在 RenderCommit 读）。
+    // 资源必须在这里显式注入 —— `assemble_scheduler` 不跑 `init_resources`，
+    // 少了它面板就是空白（命令永远写不进去）。
+    resources.insert(ze_scene_core::WidgetCommands::default());
     // B14（X5-01）：`LightQueue` 此前**从未注入** ⇒ `SceneRecord3DSystem` 的
     // `with_world_and_resource_mut::<LightQueue>` 静默不生效，两个后端都只用默认灯、
     // 脚本里的 `Light` 组件被无声忽略。注入后灯才真正进入渲染（native 基线随之重录）。

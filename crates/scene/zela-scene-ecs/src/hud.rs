@@ -831,10 +831,12 @@ impl System for HudSystem {
     );
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
-        let events: Vec<SceneEvent> = match ctx.get::<InputEvents>() {
-            Some(events) => events.iter().cloned().collect(),
-            None => return,
-        };
+        // **别在 `InputEvents` 缺席时直接 return**：命令列表与输入无关，
+        // 一 return 面板就永远空白（宿主没插资源 / 本帧没有输入事件都会走到这里）。
+        let events: Vec<SceneEvent> = ctx
+            .get::<InputEvents>()
+            .map(|events| events.iter().cloned().collect())
+            .unwrap_or_default();
         if events.is_empty() {
             // 没有输入也要清掉上一帧的意图镜像：否则 debug 回执会把旧 outcome
             // 当成这一帧的。
@@ -1213,6 +1215,38 @@ mod tests {
         assert!(
             (value - 1.6).abs() < 1e-6,
             "Frame 语义值必须当帧刷新：{value}"
+        );
+    }
+
+    /// **回归**：没有 `InputEvents` 资源 / 本帧没有输入，命令列表仍必须发布
+    /// （否则渲染层读到空命令 ⇒ 面板空白）。
+    #[test]
+    fn commands_are_published_without_input_events() {
+        let mut scene = Scene::new();
+        let specs = vec![ControlSpec::slider(LayoutId(0), "speed", 0.0, 2.0, 1.0)];
+        let hud = build(
+            &mut scene,
+            specs,
+            HudMetrics::default_metrics(),
+            |_, _, _| Vec::new(),
+        );
+        let mut resources = Resources::new();
+        resources.insert(HudState::new(hud));
+        resources.insert(DirectorState::new());
+        resources.insert(crate::domain::UiConfig::default());
+        resources.insert(crate::animation::BindingTable::default());
+        let mut scheduler = Scheduler::new(scene.into_world(), resources);
+        scheduler.add_system(Phase::FrameEnd, HudSystem);
+        scheduler.init_resources();
+        scheduler.run_frame(1.0 / 60.0);
+
+        let commands = scheduler
+            .resources()
+            .get::<ze_scene_core::WidgetCommands>()
+            .expect("命令资源已注入");
+        assert!(
+            !commands.commands.is_empty(),
+            "没有输入事件时也必须发布本帧命令"
         );
     }
 
