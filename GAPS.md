@@ -2232,8 +2232,9 @@
 | CK-16 | 深度模型每次讨论都变成「怎么做」 | 渲染 / 语义 | **已关闭** | 单列为**几何偏序**：默认 **A = 同屏叠加**（沿用 X1-06 overlay 屏幕平面、PC-01 图层级叠加、PA-01 L3 不进产物）；B（同一深度空间互遮挡）的触发条件写进本条。按选择关账 `S2-03` / `CC-05` / `CE-08`；P0「统一相机 / 深度合成模型」按 A 记为已裁决。`PB-01`（路由粒度：整帧 vs 图层级）不是深度项，保持原记账不变。**不铺互遮挡实现**。 |
 | CK-17 | 控件是「轨道 + N 个字形 + 滑块」一堆实体 | UI / 渲染 | **部分关闭** | 新增声明组件 `Widget2D`（`control` / `role` / `label` / `theme`）+ 纯函数 `Widget2D::draw` → `Vec<DrawCommand>`（每条自带 `Style2D`；判据 `one_widget_draws_all_its_commands_with_per_command_style` / `hover_changes_only_colors`）；`Hud::commands()` 走同一份布局与字形；主题 id 进 `Diagnostics.environment.theme`。**未兑现**：渲染器仍消费既有场景图元（`Rect` / `Path` / `Circle`），「20 行 HUD = 20 实体」尚未成立。触发条件：矢量录制接 `Widget2D` 命令列表时一并切像素基线。 |
 | CK-18 | 三条反面约束没有代码 / 文档落点 | 图算法 / 全仓 | **已关闭** | `relation.rs` 模块头写死「不做增量索引 / 不建通用 `Relation` 运行期类型 / 不沿关系传播 tag」；`docs/principles.md` 结构性教训补同一段并指向本批。判据：归因链仍由 `debug.rs` 快照差分产生（零传播 tag 代码）。 |
+| CK-19 | 容器树的两遍扫描布局与 HudOverlay 真消费者未落地 | 布局 / UI | **记账** | 本批落地 Euler 编译、半开边界与 `View` 空间声明；「回溯测量 → 前推分配」的两遍扫描与 HudOverlay 需要**容器树**作为输入，而当前 HUD 是扁平控件集（`ControlSet`），没有嵌套容器可遍历。触发条件：HudOverlay / 嵌套面板出现时补（与 CK-17 的渲染消费同一批）。 |
 
-**CK 段小计**：已关闭 15（CK-01 / CK-02 / CK-03 / CK-04 / CK-05 / CK-07 / CK-08 / CK-09 / CK-10 / CK-12 / CK-13 / CK-14 / CK-15 / CK-16 / CK-18）· 部分关闭 2（CK-11 / CK-17）· 记账 1（CK-06）· 未执行 0 · 已记录 0。
+**CK 段小计**：已关闭 15（CK-01 / CK-02 / CK-03 / CK-04 / CK-05 / CK-07 / CK-08 / CK-09 / CK-10 / CK-12 / CK-13 / CK-14 / CK-15 / CK-16 / CK-18）· 部分关闭 2（CK-11 / CK-17）· 记账 2（CK-06 / CK-19）· 未执行 0 · 已记录 0。
 
 ---
 
