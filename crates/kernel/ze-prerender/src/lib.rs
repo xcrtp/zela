@@ -23,12 +23,12 @@ pub use cache::ContentCache;
 pub use engine::{CompileFn, ContentEngine, InMemoryEngine};
 #[cfg(feature = "metrics")]
 pub use metrics::{FONT_DIR_ENV, MetricsDb, MetricsError};
-#[cfg(feature = "metrics")]
-pub use text::{DirectTextEngine, TextOutput};
 pub use placeholder::engine as placeholder_engine;
 pub use request::{
     CacheKey, ContentConfig, ContentError, ContentHandle, ContentResult, ContentStatus,
 };
+#[cfg(feature = "metrics")]
+pub use text::{DirectTextEngine, TextOutput};
 
 // typst 模式下重导出入口。
 #[cfg(feature = "typst")]

@@ -94,10 +94,19 @@ pub fn signatures_of(namespace: &str) -> Option<&'static [FnSig]> {
 /// 四个 namespace 的**能力指纹**（`hash(signatures())`，D14 机制）。
 pub fn fingerprints() -> [(&'static str, u64); 4] {
     [
-        (render2d::NAMESPACE, capability_fingerprint(render2d::SIGNATURES)),
-        (render3d::NAMESPACE, capability_fingerprint(render3d::SIGNATURES)),
+        (
+            render2d::NAMESPACE,
+            capability_fingerprint(render2d::SIGNATURES),
+        ),
+        (
+            render3d::NAMESPACE,
+            capability_fingerprint(render3d::SIGNATURES),
+        ),
         (mixed::NAMESPACE, capability_fingerprint(mixed::SIGNATURES)),
-        (shapes::NAMESPACE, capability_fingerprint(shapes::SIGNATURES)),
+        (
+            shapes::NAMESPACE,
+            capability_fingerprint(shapes::SIGNATURES),
+        ),
     ]
 }
 
@@ -332,8 +341,11 @@ mod tests {
     #[test]
     fn partial_backend_fails_negotiation_explicitly() {
         // 只做 2D 的后端请求 mixed：必须失败。
-        let err = negotiate(&[render2d::NAMESPACE], &[render2d::NAMESPACE, mixed::NAMESPACE])
-            .unwrap_err();
+        let err = negotiate(
+            &[render2d::NAMESPACE],
+            &[render2d::NAMESPACE, mixed::NAMESPACE],
+        )
+        .unwrap_err();
         assert_eq!(err.missing, vec![mixed::NAMESPACE]);
         assert!(err.to_string().contains("zela.render.mixed"));
 
@@ -384,11 +396,13 @@ mod tests {
     /// 请求不支持的形态 ⇒ **显式错误**（不静默换一种），错误文案点名两侧。
     #[test]
     fn unsupported_mesh_form_fails_explicitly() {
-        let tri_only = RenderCapabilitySet::from_names(&[render3d::NAMESPACE])
-            .with_mesh(MeshForms::tri());
+        let tri_only =
+            RenderCapabilitySet::from_names(&[render3d::NAMESPACE]).with_mesh(MeshForms::tri());
         tri_only.require_mesh(MeshForm::Tri).expect("tri 受支持");
 
-        let error = tri_only.require_mesh(MeshForm::Line).expect_err("line 不受支持");
+        let error = tri_only
+            .require_mesh(MeshForm::Line)
+            .expect_err("line 不受支持");
         assert_eq!(error.requested, MeshForm::Line);
         assert_eq!(error.accepted, "tri");
         assert!(error.to_string().contains("line"), "{error}");
@@ -410,7 +424,12 @@ mod tests {
                 for token in all {
                     let lower = token.to_ascii_lowercase();
                     for forbidden in [
-                        "wgpu", "device", "queue", "textureview", "cullmode", "blendstate",
+                        "wgpu",
+                        "device",
+                        "queue",
+                        "textureview",
+                        "cullmode",
+                        "blendstate",
                         "samplecount",
                     ] {
                         assert!(

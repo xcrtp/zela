@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use mlua::{AnyUserData, Lua, MultiValue, Table, UserData, Value};
-use ze_pod_core::{Capability, ErasedFn, Field, Pod, PodValue, ScalarKind, ScalarValue, TypeSpec};
 use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, short_name};
+use ze_pod_core::{Capability, ErasedFn, Field, Pod, PodValue, ScalarKind, ScalarValue, TypeSpec};
 
 /// Lua 侧的不透明句柄令牌。
 #[derive(Clone, Copy, Debug)]
@@ -51,11 +51,7 @@ pub(crate) fn bind<C: Capability<'static>>(
 /// 剧本里 `clock.time()` 读**绑定时钟**；`clock.time_of(c)` 的叶子带 `c` 的身份，
 /// 不属于表达式（见 `BindSpec.clock`）。前缀约定让同一份 capability 暴露两个表，
 /// 不必新增 Service。
-fn install_clock_alias(
-    lua: &Lua,
-    table: &Table,
-    calls: &'static [ErasedFn],
-) -> mlua::Result<()> {
+fn install_clock_alias(lua: &Lua, table: &Table, calls: &'static [ErasedFn]) -> mlua::Result<()> {
     let clock = lua.create_table()?;
     let mut any = false;
     for item in calls {
@@ -131,13 +127,10 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
                         let value = args_to_pod(args, fields, type_name, None)?;
                         match call {
                             Some(call) => {
-                                let out =
-                                    call(&*svc, &[value]).map_err(mlua::Error::external)?;
+                                let out = call(&*svc, &[value]).map_err(mlua::Error::external)?;
                                 pod_to_lua(lua, &out)
                             }
-                            None => Ok(Value::UserData(
-                                lua.create_userdata(LuaPodValue(value))?,
-                            )),
+                            None => Ok(Value::UserData(lua.create_userdata(LuaPodValue(value))?)),
                         }
                     })?,
                 )?;
@@ -182,10 +175,7 @@ fn register_types(lua: &Lua, plan: &BindingPlan, service: Arc<dyn Pod>) -> mlua:
 ///
 /// 为什么多一层 `channel`：组件字段可能与地址同名（`Opacity.value`），
 /// 平铺会撞名；嵌套后 `Opacity.channel.value` 与构造参数 `value` 互不干扰。
-fn attach_channels(
-    lua: &Lua,
-    channels: &'static [ze_pod_core::ChannelDecl],
-) -> mlua::Result<()> {
+fn attach_channels(lua: &Lua, channels: &'static [ze_pod_core::ChannelDecl]) -> mlua::Result<()> {
     for channel in channels {
         let Value::Table(ctor) = lua.globals().get::<Value>(channel.component)? else {
             continue;
@@ -244,10 +234,7 @@ fn attach_channels(
 /// 也不会漏 `args` / 写错方法名（未注册的方法由 `expr.method` 装配期拒绝）。
 ///
 /// `expr` 在另一个 capability 里注册，故在**调用时**才解析（与通道常量一致）。
-fn attach_methods(
-    lua: &Lua,
-    methods: &'static [ze_pod_core::MethodDecl],
-) -> mlua::Result<()> {
+fn attach_methods(lua: &Lua, methods: &'static [ze_pod_core::MethodDecl]) -> mlua::Result<()> {
     for method in methods {
         let Value::Table(ctor) = lua.globals().get::<Value>(method.component)? else {
             continue;
@@ -336,19 +323,20 @@ fn table_to_pod(
         let value: Value = table.get(field.name)?;
         if value.is_nil() {
             // 默认值白名单（`Color.a = 255`）；不在白名单里 ⇒ 显式报错。
-            let default = ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
-                mlua::Error::RuntimeError(format!(
-                    "`{type_name}` 缺少字段 `{}`",
-                    field.name
-                ))
-            })?;
+            let default =
+                ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                    mlua::Error::RuntimeError(format!("`{type_name}` 缺少字段 `{}`", field.name))
+                })?;
             values.push((field.name, default));
             continue;
         }
-        values.push((field.name, lua_to_pod(&value, field.ty).map_err(|error| {
-            // 带上字段名：错在哪个字段必须一眼可见（表可以很深）。
-            mlua::Error::RuntimeError(format!("`{type_name}.{}`：{error}", field.name))
-        })?));
+        values.push((
+            field.name,
+            lua_to_pod(&value, field.ty).map_err(|error| {
+                // 带上字段名：错在哪个字段必须一眼可见（表可以很深）。
+                mlua::Error::RuntimeError(format!("`{type_name}.{}`：{error}", field.name))
+            })?,
+        ));
     }
     Ok(match variant {
         Some(variant) => PodValue::Enum(type_name, variant, values),
@@ -438,9 +426,8 @@ fn scalar_from_lua(value: &Value, kind: ScalarKind) -> mlua::Result<PodValue> {
         ScalarKind::U32 => ScalarValue::U32(integer(value)? as u32),
         ScalarKind::U64 => {
             let n = integer(value)?;
-            let n = u64::try_from(n).map_err(|_| {
-                mlua::Error::RuntimeError(format!("u64 必须是非负整数，实际 {n}"))
-            })?;
+            let n = u64::try_from(n)
+                .map_err(|_| mlua::Error::RuntimeError(format!("u64 必须是非负整数，实际 {n}")))?;
             ScalarValue::U64(n)
         }
         ScalarKind::U8 => {
@@ -484,19 +471,21 @@ fn integer(value: &Value) -> mlua::Result<i64> {
 
 fn pod_to_lua(lua: &Lua, value: &PodValue) -> mlua::Result<Value> {
     match value {
-        PodValue::Scalar(scalar) => Ok(match scalar {
-            ScalarValue::F32(v) => Value::Number(*v as f64),
-            ScalarValue::F64(v) => Value::Number(*v),
-            ScalarValue::I32(v) => Value::Integer(*v as i64),
-            ScalarValue::I64(v) => Value::Integer(*v),
-            ScalarValue::U32(v) => Value::Integer(*v as i64),
-            ScalarValue::U64(v) => Value::Integer(i64::try_from(*v).map_err(|_| {
-                mlua::Error::RuntimeError(format!("u64 超出 Lua 整数范围：{v}"))
-            })?),
-            ScalarValue::U8(v) => Value::Integer(*v as i64),
-            ScalarValue::Bool(v) => Value::Boolean(*v),
-            ScalarValue::String(v) => Value::String(lua.create_string(v)?),
-        }),
+        PodValue::Scalar(scalar) => {
+            Ok(match scalar {
+                ScalarValue::F32(v) => Value::Number(*v as f64),
+                ScalarValue::F64(v) => Value::Number(*v),
+                ScalarValue::I32(v) => Value::Integer(*v as i64),
+                ScalarValue::I64(v) => Value::Integer(*v),
+                ScalarValue::U32(v) => Value::Integer(*v as i64),
+                ScalarValue::U64(v) => Value::Integer(i64::try_from(*v).map_err(|_| {
+                    mlua::Error::RuntimeError(format!("u64 超出 Lua 整数范围：{v}"))
+                })?),
+                ScalarValue::U8(v) => Value::Integer(*v as i64),
+                ScalarValue::Bool(v) => Value::Boolean(*v),
+                ScalarValue::String(v) => Value::String(lua.create_string(v)?),
+            })
+        }
         PodValue::Opaque(handle) => Ok(Value::UserData(lua.create_userdata(LuaHandle(*handle))?)),
         PodValue::Struct("()", _) => Ok(Value::Nil),
         PodValue::Struct(..) | PodValue::Enum(..) => Ok(Value::UserData(

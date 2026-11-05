@@ -67,11 +67,9 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
         ("zela.Parent", "fill") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
         ("zela.Parent", "stroke") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
         // 3D 材质：Lambert + 非金属 + 中等粗糙 + 不双面 + 不透明 + 无纹理。
-        ("zela.Material3D", "variant") => Some(PodValue::Enum(
-            "zela.ShaderVariant",
-            "Lambert",
-            Vec::new(),
-        )),
+        ("zela.Material3D", "variant") => {
+            Some(PodValue::Enum("zela.ShaderVariant", "Lambert", Vec::new()))
+        }
         ("zela.Material3D", "metallic") => Some(PodValue::Scalar(ScalarValue::F32(0.0))),
         ("zela.Material3D", "roughness") => Some(PodValue::Scalar(ScalarValue::F32(0.5))),
         ("zela.Material3D", "double_sided") => Some(PodValue::Scalar(ScalarValue::Bool(false))),
@@ -85,14 +83,10 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
         // 空时钟（`Clock {}`）等价于全局时钟。
         ("zela.math.Clock", "links") => Some(PodValue::Array(Vec::new())),
         // 绑定缺省：恒真 predicate + hold + 无 duration 糖。
-        ("zela.math.Bind", "predicate") => Some(PodValue::Enum(
-            "zela.math.Predicate",
-            "Always",
-            Vec::new(),
-        )),
-        ("zela.math.Bind", "reset") => {
-            Some(PodValue::Enum("zela.math.Reset", "Hold", Vec::new()))
+        ("zela.math.Bind", "predicate") => {
+            Some(PodValue::Enum("zela.math.Predicate", "Always", Vec::new()))
         }
+        ("zela.math.Bind", "reset") => Some(PodValue::Enum("zela.math.Reset", "Hold", Vec::new())),
         ("zela.math.Bind", "duration") => Some(PodValue::Scalar(ScalarValue::F64(0.0))),
         // B4：批量绑定与单条绑定共用同一组默认（时钟 / predicate / reset）。
         // `with` / `without` **没有默认**：过滤条件必须显式写（否则等于全选）。
@@ -100,20 +94,16 @@ pub fn field_default(type_name: &str, field_name: &str) -> Option<PodValue> {
             "zela.math.Clock",
             vec![("links", PodValue::Array(Vec::new()))],
         )),
-        ("zela.math.BindEach", "predicate") => Some(PodValue::Enum(
-            "zela.math.Predicate",
-            "Always",
-            Vec::new(),
-        )),
+        ("zela.math.BindEach", "predicate") => {
+            Some(PodValue::Enum("zela.math.Predicate", "Always", Vec::new()))
+        }
         ("zela.math.BindEach", "reset") => {
             Some(PodValue::Enum("zela.math.Reset", "Hold", Vec::new()))
         }
         // **BY**：`State` 的推进 predicate 缺省恒真（每帧都推进）。
-        ("zela.math.State", "predicate") => Some(PodValue::Enum(
-            "zela.math.Predicate",
-            "Always",
-            Vec::new(),
-        )),
+        ("zela.math.State", "predicate") => {
+            Some(PodValue::Enum("zela.math.Predicate", "Always", Vec::new()))
+        }
         _ => None,
     }
 }

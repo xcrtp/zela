@@ -25,6 +25,6 @@ pub mod host;
 pub mod response;
 pub mod spec;
 
-pub use host::{CommandHost, FrameSink, FrameSinkFactory, Level, MemoryHost, CollectSink};
+pub use host::{CollectSink, CommandHost, FrameSink, FrameSinkFactory, Level, MemoryHost};
 pub use response::{DemoRow, Fact, ListSummary, RenderSummary, Response};
 pub use spec::{ArgSpec, ArgType, ArgValue, CommandArgs, CommandSpec, Validator};

@@ -60,7 +60,9 @@ impl fmt::Display for AccessError {
                 id.index(),
                 id.generation()
             ),
-            AccessError::TypeMismatch => write!(f, "GPU resource type mismatch"),
+            AccessError::TypeMismatch => {
+                write!(f, "GPU resource type mismatch")
+            }
             AccessError::Dropped => write!(f, "GPU resource has been dropped"),
         }
     }
@@ -197,10 +199,13 @@ mod tests {
     fn test_resource_id_sentinel() {
         let id = GpuResourceId::SENTINEL;
         assert!(id.is_sentinel());
-        assert_ne!(id, GpuResourceId {
-            index: 0,
-            generation: 1
-        });
+        assert_ne!(
+            id,
+            GpuResourceId {
+                index: 0,
+                generation: 1
+            }
+        );
     }
 
     /// **BQ-01**：native 上句柄可跨线程（批量渲染共享同一个设备的前提）。

@@ -17,9 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use ze_graph_algo::relation::{
-    self, RelationPhase, RelationError, RelationSource, TreeIndex,
-};
+use ze_graph_algo::relation::{self, RelationError, RelationPhase, RelationSource, TreeIndex};
 use ze_scene_contract::ObjectId;
 
 /// 场景 `Parent` 声明的最小只读视图。
@@ -93,12 +91,7 @@ mod tests {
         edges
             .iter()
             .filter_map(|(child, parent)| {
-                parent.map(|parent| {
-                    (
-                        ObjectId::new(*child, 1),
-                        ObjectId::new(parent, 1),
-                    )
-                })
+                parent.map(|parent| (ObjectId::new(*child, 1), ObjectId::new(parent, 1)))
             })
             .collect()
     }

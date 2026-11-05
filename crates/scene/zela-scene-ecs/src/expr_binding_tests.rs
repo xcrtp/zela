@@ -91,10 +91,7 @@ fn time_window(start: f64, end: f64) -> Expr {
             ),
             Expr::call(
                 OpRef::new("zela.math", "lt"),
-                [
-                    Expr::channel(ChannelRef::builtin("time")),
-                    Expr::pure(end),
-                ],
+                [Expr::channel(ChannelRef::builtin("time")), Expr::pure(end)],
             ),
         ],
     )
@@ -115,10 +112,7 @@ fn clock_range(start: f64, end: f64) -> Expr {
             ),
             Expr::call(
                 OpRef::new("zela.math", "lt"),
-                [
-                    Expr::channel(ChannelRef::builtin("time")),
-                    Expr::pure(end),
-                ],
+                [Expr::channel(ChannelRef::builtin("time")), Expr::pure(end)],
             ),
         ],
     )
@@ -163,8 +157,15 @@ fn radius_at(script: ze_scene_core::scene_script::SceneScript, time: f32) -> f32
 fn expression_binding_writes_the_component_through_the_host_monad() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
-    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 10.0)
-        .expect("装配期校验通过");
+    enc.bind_expr(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        10.0,
+    )
+    .expect("装配期校验通过");
     let script = enc.finish();
 
     // t = π/2 ⇒ sin = 1；t = π ⇒ sin = 0。
@@ -177,8 +178,15 @@ fn expression_binding_writes_the_component_through_the_host_monad() {
 fn expression_binding_survives_json_round_trip() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
-    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 2.0)
-        .expect("装配期校验通过");
+    enc.bind_expr(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        2.0,
+    )
+    .expect("装配期校验通过");
     let json = enc.finish().to_json().expect("序列化成功");
 
     // 库身份也在 JSON 里（产物自带 namespace + version）。
@@ -196,12 +204,26 @@ fn expression_binding_survives_json_round_trip() {
 fn append_shifts_expression_target_handles() {
     let mut a = SceneEncoder::new();
     let first = a.spawn(circle());
-    a.bind_expr(first, "CircleRadius", sin_time(), library(), global_clock(), 1.0)
-        .expect("a 绑定成功");
+    a.bind_expr(
+        first,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        1.0,
+    )
+    .expect("a 绑定成功");
     let mut b = SceneEncoder::new();
     let second = b.spawn(circle());
-    b.bind_expr(second, "CircleRadius", sin_time(), library(), global_clock(), 1.0)
-        .expect("b 绑定成功");
+    b.bind_expr(
+        second,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        1.0,
+    )
+    .expect("b 绑定成功");
 
     let mut script = a.finish();
     script.append(b.finish());
@@ -369,7 +391,14 @@ fn duration_sugar_equals_predicate_and_hold() {
     let mut sugar = SceneEncoder::new();
     let dot = sugar.spawn(circle());
     sugar
-        .bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 2.0)
+        .bind_expr(
+            dot,
+            "CircleRadius",
+            sin_time(),
+            library(),
+            global_clock(),
+            2.0,
+        )
         .expect("糖写法装配成功");
 
     let mut explicit = SceneEncoder::new();
@@ -442,10 +471,7 @@ fn still_time_is_none_when_not_analyzable() {
     let dot = other.spawn(circle());
     let predicate = Expr::call(
         OpRef::new("zela.math", "gt"),
-        [
-            Expr::channel(ChannelRef::builtin("time")),
-            Expr::pure(1.0),
-        ],
+        [Expr::channel(ChannelRef::builtin("time")), Expr::pure(1.0)],
     );
     other
         .bind_expr_gated(
@@ -486,8 +512,15 @@ fn still_time_understands_interval_windows() {
 fn still_time_skips_unanalyzable_bindings() {
     let mut enc = SceneEncoder::new();
     let dot = enc.spawn(circle());
-    enc.bind_expr(dot, "CircleRadius", sin_time(), library(), global_clock(), 2.0)
-        .expect("可分析绑定");
+    enc.bind_expr(
+        dot,
+        "CircleRadius",
+        sin_time(),
+        library(),
+        global_clock(),
+        2.0,
+    )
+    .expect("可分析绑定");
 
     // `Eq { time, time }`：边界不是字面量 ⇒ 不可分析（被跳过，而不是让整体 None）。
     let other = enc.spawn(circle());
@@ -607,8 +640,7 @@ fn registered_component_channels_are_allowed_but_unregistered_rejected() {
         dot,
         "CircleRadius",
         Expr::channel(
-            ChannelRef::new("zela.scene", "Circle.radius")
-                .with_type(ze_comb::ChannelType::Number),
+            ChannelRef::new("zela.scene", "Circle.radius").with_type(ze_comb::ChannelType::Number),
         ),
         library(),
         global_clock(),

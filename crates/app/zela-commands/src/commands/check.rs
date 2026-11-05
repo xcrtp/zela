@@ -33,23 +33,26 @@ pub fn run(host: &dyn CommandHost, script: &std::path::Path) -> Result<Response,
             "OK：{}（{} 个对象，静止时刻 {}）",
             script.display(),
             meta.object_count,
-            compiled.still_time.map_or_else(
-                || "不可推导".to_string(),
-                |value| format!("≈ {value:.3}s")
-            )
+            compiled
+                .still_time
+                .map_or_else(|| "不可推导".to_string(), |value| format!("≈ {value:.3}s"))
         ),
     );
     Ok(Response::facts(
         "check",
         vec![
-            ("script".to_string(), Fact::Text(script.display().to_string())),
+            (
+                "script".to_string(),
+                Fact::Text(script.display().to_string()),
+            ),
             ("objects".to_string(), Fact::Count(meta.object_count as u64)),
             (
                 "still_time".to_string(),
-                Fact::Text(compiled.still_time.map_or_else(
-                    || "不可推导".to_string(),
-                    |value| format!("{value:.3}"),
-                )),
+                Fact::Text(
+                    compiled
+                        .still_time
+                        .map_or_else(|| "不可推导".to_string(), |value| format!("{value:.3}")),
+                ),
             ),
         ],
     ))

@@ -58,8 +58,8 @@ pub mod shape {
 pub use draw::{
     ContentTextureQueue, DrawItem, DrawQueue, Drawable, MorphItem, MorphQueue, Painter2D,
     RevealItem, RevealQueue, SceneRender, apply_opacity, opacity_of, push_morph_item,
-    push_reveal_item, record_drawables, record_path_stroke, record_scene,
-    record_scene_for_surface, record_scene_tagged, visible_for,
+    push_reveal_item, record_drawables, record_path_stroke, record_scene, record_scene_for_surface,
+    record_scene_tagged, visible_for,
 };
 // B2-0b：`DrawCommand` / `ZIndex` 已迁入渲染 IR（唯一来源），此处转发保持
 // `zela_render::{DrawCommand, ZIndex}` 路径不变（下游与后端无需改动）。
@@ -79,8 +79,8 @@ pub use ze_notion::MeasureSpace;
 
 // ─── 3D 队列 / 绘制器 ─────────────────────────────────────────────────────
 pub use draw_queue_3d::{DrawQueue3D, LineDraw, MeshDraw};
-pub use painter_3d::Painter3D;
 pub use light_queue::{DirectionalLightRecord, LightQueue, PointLightRecord};
+pub use painter_3d::Painter3D;
 
 // ─── 视口（纯数据） ───────────────────────────────────────────────────────
 pub use viewport::Viewport;

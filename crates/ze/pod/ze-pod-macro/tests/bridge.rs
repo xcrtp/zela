@@ -14,8 +14,8 @@ use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use ze_pod_core::{
-    FunctionId, Injector, Lifecycle, QualifiedName, RegistryPod, Service, ServiceRequirement, Pod,
-    PodError, PodId, negotiate_dyn, validate_requirements,
+    FunctionId, Injector, Lifecycle, Pod, PodError, PodId, QualifiedName, RegistryPod, Service,
+    ServiceRequirement, negotiate_dyn, validate_requirements,
 };
 use ze_pod_macro::capability;
 

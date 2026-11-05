@@ -26,6 +26,6 @@ pub mod visitor;
 pub use dirty::dirty_downstream;
 pub use reach::reachable;
 pub use scc::{find_cycle, strongly_connected};
-pub use sort::{topo_sort, CycleNodes};
+pub use sort::{CycleNodes, topo_sort};
 pub use topology::{Adjacency, Topology};
-pub use visitor::{postorder, preorder, traverse, Visitor};
+pub use visitor::{Visitor, postorder, preorder, traverse};

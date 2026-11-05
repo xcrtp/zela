@@ -137,7 +137,9 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(
-            hex(&sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
+            hex(&sha256(
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+            )),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
     }
@@ -147,7 +149,9 @@ mod tests {
     /// 覆盖 64 字节块的边界（63 / 64 / 65）与超长输入，避免"只在短输入上一致"。
     #[test]
     fn fast_path_matches_the_hand_written_one() {
-        let frame = (0..640 * 480 * 4).map(|i| (i % 251) as u8).collect::<Vec<_>>();
+        let frame = (0..640 * 480 * 4)
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>();
         let cases: Vec<Vec<u8>> = vec![
             Vec::new(),
             b"abc".to_vec(),

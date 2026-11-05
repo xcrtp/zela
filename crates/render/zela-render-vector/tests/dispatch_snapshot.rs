@@ -84,8 +84,26 @@ use zela_render_vector::dispatch::{Dispatch, Extent, GroupSize, groups_for};
 /// 旧算法没有截断/折叠的上限问题；这里对"上限之内"的输入逐个比对。
 #[test]
 fn tiles_match_the_old_algorithm() {
-    let sizes = [(1920, 1080), (1280, 720), (256, 256), (1, 1), (7, 9), (0, 0), (4096, 2160)];
-    let entries = [("spread", 8), ("down", 8), ("up", 8), ("show", 16), ("composite", 16), ("keep", 16), ("bound_slabs", 16), ("nearest_of_samples", 16), ("sao", 8)];
+    let sizes = [
+        (1920, 1080),
+        (1280, 720),
+        (256, 256),
+        (1, 1),
+        (7, 9),
+        (0, 0),
+        (4096, 2160),
+    ];
+    let entries = [
+        ("spread", 8),
+        ("down", 8),
+        ("up", 8),
+        ("show", 16),
+        ("composite", 16),
+        ("keep", 16),
+        ("bound_slabs", 16),
+        ("nearest_of_samples", 16),
+        ("sao", 8),
+    ];
     for (width, height) in sizes {
         for (entry, tile) in entries {
             let shape = Dispatch::Tiles {

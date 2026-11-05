@@ -70,15 +70,15 @@ fn alias_option_id(alias: &'static str) -> &'static str {
 }
 
 /// `clap::ArgMatches → CommandArgs`（类型与默认值仍由 spec 统一决定）。
-pub fn collect_args(
-    spec: &CommandSpec,
-    matches: &clap::ArgMatches,
-) -> Result<CommandArgs, String> {
+pub fn collect_args(spec: &CommandSpec, matches: &clap::ArgMatches) -> Result<CommandArgs, String> {
     let mut pairs: Vec<(&'static str, Option<String>)> = Vec::new();
     for arg in spec.args {
         if arg.ty == ArgType::Flag {
             let present = matches.get_flag(arg.name);
-            pairs.push((arg.name, Some(if present { "true" } else { "false" }.to_string())));
+            pairs.push((
+                arg.name,
+                Some(if present { "true" } else { "false" }.to_string()),
+            ));
             continue;
         }
         if arg.positional {
@@ -270,7 +270,10 @@ impl FrameSink for HashSink {
             self.size.1
         );
         if let Some(path) = &self.hash_out {
-            if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            if let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("创建目录 {} 失败：{e}", parent.display()))?;
             }
@@ -510,7 +513,11 @@ pub fn format_human(response: &Response) -> String {
                 .map(|dir| format!("序列帧 {}", dir.display()))
                 .or_else(|| summary.out.as_deref().map(|out| out.display().to_string()))
                 .unwrap_or_else(|| "(无输出)".to_string());
-            let cancelled = if summary.cancelled { "（已取消）" } else { "" };
+            let cancelled = if summary.cancelled {
+                "（已取消）"
+            } else {
+                ""
+            };
             if summary.skipped {
                 return format!("序列帧已完整（{target}），跳过渲染");
             }
@@ -522,7 +529,12 @@ pub fn format_human(response: &Response) -> String {
         Response::List(summary) => summary
             .demos
             .iter()
-            .map(|row| format!("{:<22} {:<24} {} ({})", row.id, row.title, row.script, row.language))
+            .map(|row| {
+                format!(
+                    "{:<22} {:<24} {} ({})",
+                    row.id, row.title, row.script, row.language
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         Response::Facts { facts, .. } => facts

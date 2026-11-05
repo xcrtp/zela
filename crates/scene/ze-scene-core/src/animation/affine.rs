@@ -184,7 +184,9 @@ pub enum AffineError {
 
 /// 装配期门禁失败：`State.step` 不是仿射（显式拒绝，不降级 `Replay`）。
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("绑定 `{target}` 的 `State.step` 不是关于 prev 的仿射表达式：{reason}（本批 AI-07 不放开）")]
+#[error(
+    "绑定 `{target}` 的 `State.step` 不是关于 prev 的仿射表达式：{reason}（本批 AI-07 不放开）"
+)]
 pub struct StateUnsupported {
     pub target: String,
     pub reason: String,
@@ -366,12 +368,7 @@ impl StatePlan {
     /// 参数面板让用户改 `stiff` / `damp` 之后，这里必须复用同一判据：
     /// 谱半径 `|λ|max ≥ 1`（或非有限）⇒ [`AffineError::Unstable`] 显式拒绝，
     /// 原图保持不动（不允许先写进去、运行期再拿到 inf/NaN）。
-    pub fn set_linear(
-        &mut self,
-        row: usize,
-        col: usize,
-        value: f64,
-    ) -> Result<(), AffineError> {
+    pub fn set_linear(&mut self, row: usize, col: usize, value: f64) -> Result<(), AffineError> {
         let next = self
             .map
             .with_linear(row, col, value)
@@ -445,11 +442,7 @@ pub fn plan_from_expr(
 }
 
 /// 一条 `State` 的依赖通道集（`init` / `step` / `predicate` 全部计入）。
-fn dependencies_of(
-    init: &Expr,
-    step: &Expr,
-    predicate: Option<&Expr>,
-) -> StateDependencies {
+fn dependencies_of(init: &Expr, step: &Expr, predicate: Option<&Expr>) -> StateDependencies {
     let mut out = BTreeSet::new();
     for expression in [Some(init), Some(step), predicate].into_iter().flatten() {
         collect_dependencies(expression, &mut out);
@@ -490,18 +483,9 @@ fn init_values(init: &Expr) -> Result<(Vec<f64>, StateShape), AffineError> {
             Literal::F64(v) => Ok((vec![*v], StateShape::Scalar)),
             Literal::I32(v) => Ok((vec![f64::from(*v)], StateShape::Scalar)),
             Literal::I64(v) => Ok((vec![*v as f64], StateShape::Scalar)),
-            Literal::Vec2(v) => Ok((
-                v.iter().map(|x| f64::from(*x)).collect(),
-                StateShape::Vec2,
-            )),
-            Literal::Vec3(v) => Ok((
-                v.iter().map(|x| f64::from(*x)).collect(),
-                StateShape::Vec3,
-            )),
-            Literal::Vec4(v) => Ok((
-                v.iter().map(|x| f64::from(*x)).collect(),
-                StateShape::Vec4,
-            )),
+            Literal::Vec2(v) => Ok((v.iter().map(|x| f64::from(*x)).collect(), StateShape::Vec2)),
+            Literal::Vec3(v) => Ok((v.iter().map(|x| f64::from(*x)).collect(), StateShape::Vec3)),
+            Literal::Vec4(v) => Ok((v.iter().map(|x| f64::from(*x)).collect(), StateShape::Vec4)),
             Literal::Bool(_) | Literal::Text(_) => Err(AffineError::UnsupportedInit(
                 "Bool / Text 不是状态值".to_string(),
             )),
@@ -514,7 +498,7 @@ fn init_values(init: &Expr) -> Result<(Vec<f64>, StateShape), AffineError> {
                 other => {
                     return Err(AffineError::UnsupportedInit(format!(
                         "构造器 `{other}` 不是定长数值"
-                    )))
+                    )));
                 }
             };
             if args.len() != shape.width() {
@@ -619,7 +603,10 @@ impl Row {
     fn variable(index: usize, width: usize) -> Self {
         let mut coeffs = vec![0.0; width];
         coeffs[index] = 1.0;
-        Self { coeffs, offset: 0.0 }
+        Self {
+            coeffs,
+            offset: 0.0,
+        }
     }
 
     fn add(&self, other: &Self) -> Self {
@@ -828,12 +815,7 @@ fn add_values(a: Value, b: Value) -> Result<Value, AffineError> {
         });
     }
     Ok(Value {
-        rows: a
-            .rows
-            .iter()
-            .zip(&b.rows)
-            .map(|(x, y)| x.add(y))
-            .collect(),
+        rows: a.rows.iter().zip(&b.rows).map(|(x, y)| x.add(y)).collect(),
     })
 }
 
@@ -860,7 +842,9 @@ fn const_scalar(expr: &Expr) -> Result<f64, AffineError> {
                 };
                 Ok(const_scalar(a)? + const_scalar(b)?)
             }
-            "sum" => args.iter().try_fold(0.0, |acc, arg| Ok(acc + const_scalar(arg)?)),
+            "sum" => args
+                .iter()
+                .try_fold(0.0, |acc, arg| Ok(acc + const_scalar(arg)?)),
             "mul" => {
                 let [a, b] = args.as_slice() else {
                     return Err(AffineError::NotAffine("mul".into()));
@@ -905,10 +889,7 @@ mod tests {
     }
 
     fn scale(k: f64, of: Expr) -> Expr {
-        Expr::call(
-            ze_comb::OpRef::new("zela.math", "scale"),
-            [pure(k), of],
-        )
+        Expr::call(ze_comb::OpRef::new("zela.math", "scale"), [pure(k), of])
     }
 
     fn vec2(x: Expr, y: Expr) -> Expr {
@@ -991,7 +972,10 @@ mod tests {
             b: vec![0.0, 0.0],
         };
         let init = [1.0, 0.0];
-        assert!(map.replay_within(&init, 512, 0.0), "整数矩阵在 f64 下逐位相同");
+        assert!(
+            map.replay_within(&init, 512, 0.0),
+            "整数矩阵在 f64 下逐位相同"
+        );
     }
 
     /// **BY-a2 翻转定义**：非精确系数下两者**不**逐位相同，但仍在容差内 ⇒
@@ -1118,11 +1102,12 @@ mod tests {
         let plan = plan_from_expr(&init, &step, None).unwrap();
         let radius = plan.map().spectral_radius();
         assert!((radius - 0.99f64.sqrt()).abs() < 1e-9, "谱半径 {radius}");
-        assert!(plan
-            .map()
-            .apply(&[1.5, 0.0], 5000)
-            .iter()
-            .all(|component| component.is_finite()));
+        assert!(
+            plan.map()
+                .apply(&[1.5, 0.0], 5000)
+                .iter()
+                .all(|component| component.is_finite())
+        );
     }
 
     /// **BZ-d**：多实例共享一次矩阵幂；结果与逐个 `apply` **逐位相同**。
@@ -1152,7 +1137,11 @@ mod tests {
         let predicate = Expr::channel(ze_comb::ChannelRef::builtin("event"));
         let plan = plan_from_expr(&init, &step, Some(&predicate)).unwrap();
         assert!(plan.event_gated());
-        assert!(plan.dependencies().contains("event"), "{:?}", plan.dependencies());
+        assert!(
+            plan.dependencies().contains("event"),
+            "{:?}",
+            plan.dependencies()
+        );
         assert!(plan.event_predicate().is_some());
         // 帧 1 / 3 / 5 命中 ⇒ 第 0..6 帧的推进步数 = 0/1/1/2/2/3/3。
         let matched = [1i64, 3, 5];
@@ -1169,10 +1158,7 @@ mod tests {
     fn event_predicate_still_rejects_self_reference() {
         let init = pure(0.0);
         let step = add(scale(0.5, prev()), pure(0.5));
-        let predicate = add(
-            Expr::channel(ze_comb::ChannelRef::builtin("event")),
-            prev(),
-        );
+        let predicate = add(Expr::channel(ze_comb::ChannelRef::builtin("event")), prev());
         assert_eq!(
             plan_from_expr(&init, &step, Some(&predicate)),
             Err(AffineError::PredicateRefsState)

@@ -23,9 +23,7 @@
 use std::sync::Arc;
 
 use ze_interact::Frame;
-use ze_scene_core::domain::{
-    Injected, SceneInputContext, SceneEvent, WindowInput,
-};
+use ze_scene_core::domain::{Injected, SceneEvent, SceneInputContext, WindowInput};
 use zela_scene_ecs::domain::InputEvents;
 use zela_scene_ecs::hud::HudState;
 use zela_scene_ecs::{DriverCommand, DriverPod};
@@ -80,8 +78,8 @@ impl HeadlessScene {
     ///
     /// 返回派生出的场景事件数；环境缺失（没有可操作图层）⇒ 明确错误。
     pub fn inject_window_json(&self, json: &str) -> std::result::Result<usize, String> {
-        let input: WindowInput =
-            serde_json::from_str(json).map_err(|error| format!("窗口输入不是合法 JSON：{error}"))?;
+        let input: WindowInput = serde_json::from_str(json)
+            .map_err(|error| format!("窗口输入不是合法 JSON：{error}"))?;
         self.inject_window(&input)
     }
 

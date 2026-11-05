@@ -6,7 +6,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ze_pod_core::{Pod, QualifiedName, RegistryPod};
 
 fn build(size: usize) -> (RegistryPod, Vec<QualifiedName>) {
@@ -26,22 +26,20 @@ fn resolve_lookup(c: &mut Criterion) {
         let (pod, names) = build(size);
         let target = &names[size - 1];
 
-        group.bench_with_input(BenchmarkId::new("symbol_table_last", size), &size, |b, _| {
-            b.iter(|| black_box(pod.resolve(black_box(target)).is_some()))
-        });
         group.bench_with_input(
-            BenchmarkId::new("linear_scan_last", size),
+            BenchmarkId::new("symbol_table_last", size),
             &size,
-            |b, _| {
-                b.iter(|| {
-                    black_box(
-                        pod.functions()
-                            .iter()
-                            .position(|name| name == black_box(target)),
-                    )
-                })
-            },
+            |b, _| b.iter(|| black_box(pod.resolve(black_box(target)).is_some())),
         );
+        group.bench_with_input(BenchmarkId::new("linear_scan_last", size), &size, |b, _| {
+            b.iter(|| {
+                black_box(
+                    pod.functions()
+                        .iter()
+                        .position(|name| name == black_box(target)),
+                )
+            })
+        });
     }
     group.finish();
 }

@@ -43,8 +43,8 @@ pub fn is_known(op: &OpRef) -> bool {
 ///
 /// 未知算子 / 实参类型不符 ⇒ [`EvalError`]，不静默返回 0。
 pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    let entry = crate::op::eval_entry(&op.name)
-        .filter(|_| op.namespace == crate::LIBRARY_NAMESPACE);
+    let entry =
+        crate::op::eval_entry(&op.name).filter(|_| op.namespace == crate::LIBRARY_NAMESPACE);
     let Some(eval) = entry else {
         return Err(EvalError::op(op, format!("未知算子 `{}`", op.name)));
     };
@@ -59,11 +59,7 @@ pub fn eval(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 }
 
 /// 批量展开：标量广播、`Iter` 按下标对齐；`sum` 是升序折叠。
-fn eval_batched(
-    op: &OpRef,
-    args: &[Value],
-    eval: crate::op::EvalFn,
-) -> Result<Value, EvalError> {
+fn eval_batched(op: &OpRef, args: &[Value], eval: crate::op::EvalFn) -> Result<Value, EvalError> {
     // `sum(iter)`：单实参折叠（下标升序，与 `NatRec` 同序）。
     if op.name == "sum" && args.len() == 1 {
         if let Value::Iter(iter) = &args[0] {
@@ -126,14 +122,12 @@ fn number(op: &OpRef, args: &[Value], index: usize) -> Result<f64, EvalError> {
 }
 
 fn boolean(op: &OpRef, args: &[Value], index: usize) -> Result<bool, EvalError> {
-    args.get(index)
-        .and_then(Value::as_bool)
-        .ok_or_else(|| {
-            EvalError::op(
-                op,
-                format!("第 {index} 个实参不是布尔（Bool 由比较算子产出）"),
-            )
-        })
+    args.get(index).and_then(Value::as_bool).ok_or_else(|| {
+        EvalError::op(
+            op,
+            format!("第 {index} 个实参不是布尔（Bool 由比较算子产出）"),
+        )
+    })
 }
 
 fn vec2_arg(op: &OpRef, args: &[Value], index: usize) -> Result<[f32; 2], EvalError> {
@@ -165,8 +159,12 @@ pub fn cos(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 /// AU-11：签名表早就声明了 `SAME_VEC` 重载，但求值只吃标量 ⇒ 装配期能过、
 /// 运行期报错。现在两侧对齐：**同型才算**，混型是显式错误（不做隐式提升）。
 pub fn add(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    let a = args.first().ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
-    let b = args.get(1).ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    let a = args
+        .first()
+        .ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    let b = args
+        .get(1)
+        .ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
     if let (Some(a), Some(b)) = (a.as_vec2(), b.as_vec2()) {
         return Ok(Value::vec2([a[0] + b[0], a[1] + b[1]]));
     }
@@ -191,8 +189,12 @@ pub fn mul(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 ///
 /// 向量侧按 **f32** 逐分量相乘（向量分量本来就是 f32，`AU-04` 的口径）。
 pub fn scale(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    let a = args.first().ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
-    let b = args.get(1).ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    let a = args
+        .first()
+        .ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
+    let b = args
+        .get(1)
+        .ok_or_else(|| EvalError::op(op, "需要两个实参"))?;
     if let (Some(vector), Some(k)) = (a.as_vec2(), b.as_f64()) {
         let k = k as f32;
         return Ok(Value::vec2([vector[0] * k, vector[1] * k]));
@@ -254,8 +256,12 @@ pub fn sum(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 /// `mix(a, b, t)`：线性插值（数值 / Vec2 / Vec3 同型）。
 pub fn mix(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     let t = number(op, args, 2)?;
-    let a = args.first().ok_or_else(|| EvalError::op(op, "需要三个实参"))?;
-    let b = args.get(1).ok_or_else(|| EvalError::op(op, "需要三个实参"))?;
+    let a = args
+        .first()
+        .ok_or_else(|| EvalError::op(op, "需要三个实参"))?;
+    let b = args
+        .get(1)
+        .ok_or_else(|| EvalError::op(op, "需要三个实参"))?;
     // **端点返回原值**：`a + (b − a) × 1` 在 f32 上可能偏离 `b` 一个 ulp。
     if t == 0.0 {
         return Ok(a.clone());
@@ -335,7 +341,10 @@ pub fn vec4(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 pub fn w(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     match args.first().and_then(Value::as_vec4) {
         Some(v) => Ok(Value::f64(f64::from(v[3]))),
-        None => Err(EvalError::op(op, "第 0 个实参不是 Vec4（w 只取四维向量的分量）")),
+        None => Err(EvalError::op(
+            op,
+            "第 0 个实参不是 Vec4（w 只取四维向量的分量）",
+        )),
     }
 }
 
@@ -375,11 +384,7 @@ pub fn rotate3(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     let angle = number(op, args, 2)?;
     Ok(Value::vec3(rotate_rodrigues(
         [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])],
-        [
-            f64::from(axis[0]),
-            f64::from(axis[1]),
-            f64::from(axis[2]),
-        ],
+        [f64::from(axis[0]), f64::from(axis[1]), f64::from(axis[2])],
         angle,
     )))
 }
@@ -405,9 +410,7 @@ pub fn vec2_from_vec3(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 /// `length(v)`：向量模长。
 pub fn length(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
     if let Some(v) = args.first().and_then(Value::as_vec2) {
-        return Ok(Value::f64(f64::from(
-            (v[0] * v[0] + v[1] * v[1]).sqrt(),
-        )));
+        return Ok(Value::f64(f64::from((v[0] * v[0] + v[1] * v[1]).sqrt())));
     }
     if let Some(v) = args.first().and_then(Value::as_vec3) {
         return Ok(Value::f64(f64::from(
@@ -653,11 +656,7 @@ pub fn faceforward(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
         args.get(2).and_then(Value::as_vec2),
     ) {
         let d = e2[0] * e3[0] + e2[1] * e3[1];
-        return Ok(Value::vec2(if d < 0.0 {
-            e1
-        } else {
-            [-e1[0], -e1[1]]
-        }));
+        return Ok(Value::vec2(if d < 0.0 { e1 } else { [-e1[0], -e1[1]] }));
     }
     if let (Some(e1), Some(e2), Some(e3)) = (
         args.first().and_then(Value::as_vec3),
@@ -688,9 +687,7 @@ pub fn distance(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
         args.get(1).and_then(Value::as_vec3),
     ) {
         let (dx, dy, dz) = (a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-        return Ok(Value::f64(f64::from(
-            (dx * dx + dy * dy + dz * dz).sqrt(),
-        )));
+        return Ok(Value::f64(f64::from((dx * dx + dy * dy + dz * dz).sqrt())));
     }
     Err(EvalError::op(op, "需要两个同维向量（Vec2 或 Vec3）"))
 }
@@ -715,30 +712,22 @@ pub fn fract(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 
 /// `lt(a, b)`。
 pub fn lt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::Bool(
-        number(op, args, 0)? < number(op, args, 1)?,
-    ))
+    Ok(Value::Bool(number(op, args, 0)? < number(op, args, 1)?))
 }
 
 /// `gt(a, b)`。
 pub fn gt(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::Bool(
-        number(op, args, 0)? > number(op, args, 1)?,
-    ))
+    Ok(Value::Bool(number(op, args, 0)? > number(op, args, 1)?))
 }
 
 /// `le(a, b)`。
 pub fn le(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::Bool(
-        number(op, args, 0)? <= number(op, args, 1)?,
-    ))
+    Ok(Value::Bool(number(op, args, 0)? <= number(op, args, 1)?))
 }
 
 /// `ge(a, b)`。
 pub fn ge(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::Bool(
-        number(op, args, 0)? >= number(op, args, 1)?,
-    ))
+    Ok(Value::Bool(number(op, args, 0)? >= number(op, args, 1)?))
 }
 
 /// `eq` / `ne` 的公共实现（数值或布尔，不做隐式真值转换）。
@@ -770,16 +759,12 @@ pub fn ne(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
 
 /// `and(a, b)`。
 pub fn and(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::Bool(
-        boolean(op, args, 0)? && boolean(op, args, 1)?,
-    ))
+    Ok(Value::Bool(boolean(op, args, 0)? && boolean(op, args, 1)?))
 }
 
 /// `or(a, b)`。
 pub fn or(op: &OpRef, args: &[Value]) -> Result<Value, EvalError> {
-    Ok(Value::Bool(
-        boolean(op, args, 0)? || boolean(op, args, 1)?,
-    ))
+    Ok(Value::Bool(boolean(op, args, 0)? || boolean(op, args, 1)?))
 }
 
 /// `not(a)`。
@@ -907,11 +892,7 @@ mod tests {
         // 端点混型 ⇒ 显式错误（不静默当真值提升）。
         let err = eval(
             &math("mix"),
-            &[
-                Value::f64(0.0),
-                Value::vec2([1.0, 1.0]),
-                Value::f64(0.5),
-            ],
+            &[Value::f64(0.0), Value::vec2([1.0, 1.0]), Value::f64(0.5)],
         )
         .unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::mix"));
@@ -1015,7 +996,10 @@ mod tests {
         let Some(v) = rotated.as_vec3() else {
             panic!("rotate3 必须返回 Vec3");
         };
-        assert!((v[0] - 5.0).abs() < 1e-4 && v[1].abs() < 1e-4 && v[2].abs() < 1e-4, "{v:?}");
+        assert!(
+            (v[0] - 5.0).abs() < 1e-4 && v[1].abs() < 1e-4 && v[2].abs() < 1e-4,
+            "{v:?}"
+        );
     }
 
     /// 第 3 批（类型系统扩展）：转换算子族 —— 升降维是**显式**的，长度/单位化覆盖两种向量。
@@ -1155,11 +1139,26 @@ mod tests {
     fn comparisons_yield_bool() {
         let one = Value::f64(1.0);
         let two = Value::f64(2.0);
-        assert_eq!(eval(&math("lt"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(true));
-        assert_eq!(eval(&math("gt"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(false));
-        assert_eq!(eval(&math("le"), &[two.clone(), two.clone()]).unwrap(), Value::Bool(true));
-        assert_eq!(eval(&math("ge"), &[one.clone(), two.clone()]).unwrap(), Value::Bool(false));
-        assert_eq!(eval(&math("eq"), &[two.clone(), two.clone()]).unwrap(), Value::Bool(true));
+        assert_eq!(
+            eval(&math("lt"), &[one.clone(), two.clone()]).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval(&math("gt"), &[one.clone(), two.clone()]).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            eval(&math("le"), &[two.clone(), two.clone()]).unwrap(),
+            Value::Bool(true)
+        );
+        assert_eq!(
+            eval(&math("ge"), &[one.clone(), two.clone()]).unwrap(),
+            Value::Bool(false)
+        );
+        assert_eq!(
+            eval(&math("eq"), &[two.clone(), two.clone()]).unwrap(),
+            Value::Bool(true)
+        );
         assert_eq!(eval(&math("ne"), &[one, two]).unwrap(), Value::Bool(true));
     }
 
@@ -1174,7 +1173,10 @@ mod tests {
             eval(&math("or"), &[Value::Bool(true), Value::Bool(false)]).unwrap(),
             Value::Bool(true)
         );
-        assert_eq!(eval(&math("not"), &[Value::Bool(true)]).unwrap(), Value::Bool(false));
+        assert_eq!(
+            eval(&math("not"), &[Value::Bool(true)]).unwrap(),
+            Value::Bool(false)
+        );
 
         let err = eval(&math("and"), &[Value::f64(1.0), Value::Bool(true)]).unwrap_err();
         assert!(matches!(err, EvalError::Op { ref op, .. } if op == "zela.math::and"));
@@ -1194,9 +1196,7 @@ mod tests {
     // ─── BY-b：批量算子（`Iter` 实参在内部展开）────────────────────────────
 
     fn iter(items: Vec<f64>) -> Value {
-        Value::Iter(
-            ze_comb::ValueIter::new(items.into_iter().map(Value::f64).collect()).unwrap(),
-        )
+        Value::Iter(ze_comb::ValueIter::new(items.into_iter().map(Value::f64).collect()).unwrap())
     }
 
     fn values(value: &Value) -> Vec<Value> {
@@ -1254,11 +1254,9 @@ mod tests {
         let xs = [1e16, 1.0, -1e16];
         let folded = eval(&math("sum"), &[iter(xs.to_vec())]).unwrap();
         // 手动升序：((0 + 1e16) + 1.0) + (-1e16) = 0.0
-        let manual = xs
-            .iter()
-            .fold(Value::f64(0.0), |acc, x| {
-                eval(&math("sum"), &[acc, Value::f64(*x)]).unwrap()
-            });
+        let manual = xs.iter().fold(Value::f64(0.0), |acc, x| {
+            eval(&math("sum"), &[acc, Value::f64(*x)]).unwrap()
+        });
         assert_eq!(folded, manual);
         assert_eq!(folded, Value::f64(0.0));
         // 逆序会不同（(0 - 1e16) + 1.0 + 1e16 = 0? 1e16 精度吞掉 1 ⇒ 仍是 0；

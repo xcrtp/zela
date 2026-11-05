@@ -54,7 +54,7 @@ use crate::scene::components::{
     PhaseAnim, Reveal,
 };
 use ze_scene_core::View;
-use ze_scene_core::widget::Widget2D;
+use ze_scene_core::widget::WidgetDecl;
 
 /// FNV-1a（与 `ze_pod_core::capability_fingerprint` 同一算法：跨 Rust 版本稳定）。
 #[derive(Debug, Clone, Copy)]
@@ -235,6 +235,25 @@ pub fn fingerprint_world(
         hasher.u64(components.len() as u64);
         for component in components {
             hasher.bytes(component.as_bytes());
+            hasher.sep();
+        }
+        // **R-20 / CL-R**：控件声明的 `SpecId` 进结构摘要。
+        // 只靠组件名 `WidgetDecl` 的话，同一个组件名下换一种控件（第三方规格）
+        // 摘要不变 —— 结构对拍就看不见「控件种类变了」。
+        let mut widget_decl: Option<WidgetDecl> = None;
+        scene.with_component_ref(*id, std::any::TypeId::of::<WidgetDecl>(), &mut |any| {
+            if let Some(decl) = any.downcast_ref::<WidgetDecl>() {
+                widget_decl = Some(decl.clone());
+            }
+        });
+        if let Some(decl) = widget_decl {
+            hasher.bytes(b"widget-decl");
+            hasher.sep();
+            hasher.bytes(decl.spec.0.as_bytes());
+            hasher.sep();
+            hasher.bytes(decl.strategy.0.as_bytes());
+            hasher.sep();
+            hasher.u64(decl.constraints.revision());
             hasher.sep();
         }
         hasher.sep();

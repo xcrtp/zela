@@ -11,24 +11,24 @@
 - 路径：`crates/ui/zela-node-editor`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-algo`、`ze-interact`、`ze-node-core`
 - 被依赖（下游）：`zela-node-egui`、`zela-node-egui-ui`
-- 源文件：14 个 · 2918 行
+- 源文件：14 个 · 2931 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/command.rs` | 143 | Atomic state-change commands — the only contract between the UI layer and |
-| `src/edge_geom.rs` | 257 | Edge path geometry: a renderer-agnostic intermediate representation plus |
-| `src/editor.rs` | 1143 | The [`Editor`] state machine: graph, layout, edge geometry, selection and |
+| `src/edge_geom.rs` | 267 | Edge path geometry: a renderer-agnostic intermediate representation plus |
+| `src/editor.rs` | 1152 | The [`Editor`] state machine: graph, layout, edge geometry, selection and |
 | `src/error.rs` | 16 | Editor-level errors. |
 | `src/event.rs` | 40 | Logical events emitted by the editor after applying commands. |
-| `src/geometry.rs` | 282 | Pure geometry types shared by the editor state machine and the UI layer. |
-| `src/hit_test.rs` | 398 | Pluggable hit-testing: resolving a graph-local pointer position to a |
+| `src/geometry.rs` | 279 | Pure geometry types shared by the editor state machine and the UI layer. |
+| `src/hit_test.rs` | 397 | Pluggable hit-testing: resolving a graph-local pointer position to a |
 | `src/layout.rs` | 160 | Node placement strategies. |
 | `src/lib.rs` | 60 | `zela-node-editor` — pure-logic node editor state machine. |
 | `src/presentation.rs` | 59 | **UI side table**：`type_name → NodePresentation`。 |
 | `src/socket_layout.rs` | 149 | Socket geometry inside a node card. |
-| `src/test_util.rs` | 61 | Minimal node doubles for editor tests. Test-only. |
+| `src/test_util.rs` | 59 | Minimal node doubles for editor tests. Test-only. |
 | `src/undo.rs` | 60 | Undo/redo stacks holding inverse [`Command`](crate::Command)s by value. |
 | `src/validation.rs` | 90 | Connection validation: socket type compatibility and cycle detection. |
 

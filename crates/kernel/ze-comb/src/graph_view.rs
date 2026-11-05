@@ -175,7 +175,10 @@ mod tests {
     /// 共享 `Def`：两个 `Ref` 指向同一节点，视图里只算一个节点、一条边。
     fn shared() -> Expr {
         let leaf = Expr::pure(1.0).with_id("a");
-        Expr::call(math("add"), [leaf, Expr::reference("a"), Expr::reference("a")])
+        Expr::call(
+            math("add"),
+            [leaf, Expr::reference("a"), Expr::reference("a")],
+        )
     }
 
     #[test]

@@ -568,8 +568,11 @@ mod tests {
         let mut g = SimpleGraph::default();
         let fail = g.add_node(Box::new(FailNode::new()));
         let add = g.add_node(Box::new(AddNode::new(1.0, DirtyPolicy::Always)));
-        g.quick_connect(OutId::new(fail, 0), ze_node_core::InputSocketId::new(add, 0))
-            .unwrap();
+        g.quick_connect(
+            OutId::new(fail, 0),
+            ze_node_core::InputSocketId::new(add, 0),
+        )
+        .unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let exec = TestExecutor { log: log.clone() };
         let mut eval = LazyPullEval::new(Box::new(KahnSorter::new()), EvalErrorPolicy::FailFast);

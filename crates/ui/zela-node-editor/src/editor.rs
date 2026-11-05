@@ -515,7 +515,11 @@ impl Editor {
     /// `cursor`, with its graph-local position. Sockets on the source node
     /// itself are excluded (self-loops are rejected by validation anyway and
     /// would make the wire fold back on the card).
-    pub fn snap_target(&self, cursor: NodePos, from: OutputSocketId) -> Option<(InputSocketId, NodePos)> {
+    pub fn snap_target(
+        &self,
+        cursor: NodePos,
+        from: OutputSocketId,
+    ) -> Option<(InputSocketId, NodePos)> {
         let mut best: Option<(InputSocketId, NodePos, f32)> = None;
         for node in self.graph.all_nodes() {
             if node == from.node() {
@@ -686,7 +690,10 @@ mod tests {
         assert_eq!(editor.routed_target(), Some(HitTarget::Node(id)));
 
         assert_eq!(editor.pointer_pressed(inside), HitTarget::Node(id));
-        assert_eq!(editor.router().phase(), Some(ze_interact::RoutePhase::Capture));
+        assert_eq!(
+            editor.router().phase(),
+            Some(ze_interact::RoutePhase::Capture)
+        );
 
         // 指针移出卡片：capture 不跟命中走。
         assert_eq!(editor.pointer_moved(outside), HitTarget::Nothing);
@@ -842,7 +849,9 @@ mod tests {
             .unwrap();
         let path = editor.pending_path().expect("pending path exists");
         match path {
-            EdgePath::Bezier { to, .. } => assert_eq!(to, NodePos::new(500.0, 500.0)),
+            EdgePath::Bezier { to, .. } => {
+                assert_eq!(to, NodePos::new(500.0, 500.0))
+            }
             other => panic!("expected bezier, got {other:?}"),
         }
         editor.apply(Command::CancelConnection).unwrap();

@@ -12,8 +12,8 @@
 
 use ze_notion::Color32;
 
-use crate::text_metrics::{TextLine, TextMetrics};
 use crate::ContentIR;
+use crate::text_metrics::{TextLine, TextMetrics};
 
 /// 字体度量入口（包住 `ze-prerender::metrics::MetricsDb::measure`）。
 pub trait MetricsProvider {

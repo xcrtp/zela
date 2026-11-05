@@ -11,33 +11,33 @@
 - 路径：`crates/render/zela-render-backends`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-core`、`ze-vertex`、`zela-render`
 - 被依赖（下游）：`zela-app`、`zela-cli`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-web`
-- 源文件：21 个 · 13938 行
+- 源文件：21 个 · 14046 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/compositor.rs` | 1703 | — |
-| `src/diagnostics.rs` | 156 | — |
+| `src/compositor.rs` | 1701 | — |
+| `src/diagnostics.rs` | 164 | — |
 | `src/eframe_backend.rs` | 176 | — |
-| `src/frame.rs` | 66 | — |
-| `src/gpu_test.rs` | 196 | — |
-| `src/gpu_timing.rs` | 281 | GPU 时间归因（B12 Step 4）：timestamp query 的**唯一**入口。 |
+| `src/frame.rs` | 69 | — |
+| `src/gpu_test.rs` | 195 | — |
+| `src/gpu_timing.rs` | 289 | GPU 时间归因（B12 Step 4）：timestamp query 的**唯一**入口。 |
 | `src/gpu_util.rs` | 142 | — |
-| `src/lib.rs` | 141 | — |
-| `src/registry.rs` | 609 | — |
+| `src/lib.rs` | 145 | — |
+| `src/registry.rs` | 624 | — |
 | `src/render_backend.rs` | 148 | — |
-| `src/render_context.rs` | 422 | — |
+| `src/render_context.rs` | 412 | — |
 | `src/render_layer.rs` | 58 | — |
-| `src/render_pod_probe.rs` | 615 | — |
+| `src/render_pod_probe.rs` | 620 | — |
 | `src/render_target.rs` | 120 | — |
 | `src/resource_cache.rs` | 261 | — |
-| `src/routing.rs` | 722 | — |
-| `src/scene_callback.rs` | 1032 | — |
-| `src/standard_backends.rs` | 560 | — |
+| `src/routing.rs` | 736 | — |
+| `src/scene_callback.rs` | 1052 | — |
+| `src/standard_backends.rs` | 556 | — |
 | `src/vertex_layout.rs` | 323 | — |
-| `src/wgpu_2d.rs` | 2720 | — |
-| `src/wgpu_3d.rs` | 3487 | — |
+| `src/wgpu_2d.rs` | 2715 | — |
+| `src/wgpu_3d.rs` | 3540 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -83,7 +83,7 @@ graph LR
 | 文件 | 项 |
 |---|---|
 | `src/compositor.rs` | `pub struct CompositeOp` |
-| `src/compositor.rs` | `pub fn fit_rect(` |
+| `src/compositor.rs` | `pub fn fit_rect(rect: (f32, f32, f32, f32), fit: Option<(u32, u32)>) -> (f32, f32, f32, f32)` |
 | `src/compositor.rs` | `pub fn rect_to_ndc(rect: (f32, f32, f32, f32), viewport: (f32, f32)) -> [f32; 4]` |
 | `src/compositor.rs` | `pub enum Conversion` |
 | `src/compositor.rs` | `pub struct CompositeFrame` |

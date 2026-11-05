@@ -27,11 +27,7 @@ pub trait ExprVisitor<'a> {
     /// 前序进入；`parent` 是词法父节点（根为 `None`）。
     ///
     /// 返回 `Ok(false)` ⇒ **剪枝**：不进入该节点子树，也不会为它调用 [`Self::leave`]。
-    fn enter(
-        &mut self,
-        _expr: &'a Expr,
-        _parent: Option<&'a Node>,
-    ) -> Result<bool, Self::Error> {
+    fn enter(&mut self, _expr: &'a Expr, _parent: Option<&'a Node>) -> Result<bool, Self::Error> {
         Ok(true)
     }
 
@@ -49,7 +45,11 @@ impl Expr {
     where
         V: ExprVisitor<'a>,
     {
-        fn step<'a, V>(expr: &'a Expr, parent: Option<&'a Node>, visitor: &mut V) -> Result<(), V::Error>
+        fn step<'a, V>(
+            expr: &'a Expr,
+            parent: Option<&'a Node>,
+            visitor: &mut V,
+        ) -> Result<(), V::Error>
         where
             V: ExprVisitor<'a>,
         {
@@ -159,11 +159,8 @@ mod tests {
     /// `map_children` 保留 id 与叶子，只替换子表达式。
     #[test]
     fn map_children_rewrites_children_and_keeps_id() {
-        let tree = Expr::call(
-            op("sin"),
-            vec![Expr::channel(ChannelRef::builtin("time"))],
-        )
-        .with_id("h2");
+        let tree =
+            Expr::call(op("sin"), vec![Expr::channel(ChannelRef::builtin("time"))]).with_id("h2");
         let rewritten = tree.map_children(|_| Expr::pure(0.0));
         assert_eq!(rewritten.id.as_deref(), Some("h2"));
         let Node::Call { args, .. } = &rewritten.node else {

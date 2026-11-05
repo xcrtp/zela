@@ -94,10 +94,7 @@ impl TextMetrics {
 
         for (index, glyph) in self.glyphs.iter().enumerate() {
             if glyph.ch == '\n' {
-                lines.push(TextLine {
-                    start,
-                    end: index,
-                });
+                lines.push(TextLine { start, end: index });
                 start = index + 1;
                 width = 0.0;
                 continue;
@@ -231,7 +228,11 @@ mod tests {
         // 宽度 40：`ab ` = 35 放得下，`中`(30) 到这里会超 ⇒ 断在空格之后。
         let lines = metrics.wrap(40.0);
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], TextLine { start: 0, end: 3 }, "`ab `（空格留在前一行）");
+        assert_eq!(
+            lines[0],
+            TextLine { start: 0, end: 3 },
+            "`ab `（空格留在前一行）"
+        );
         assert_eq!(lines[1], TextLine { start: 3, end: 4 }, "`中`");
     }
 
@@ -267,10 +268,10 @@ mod tests {
         }
         metrics.width = 20.0;
         let lines = metrics.wrap(1000.0);
-        assert_eq!(lines, vec![
-            TextLine { start: 0, end: 1 },
-            TextLine { start: 2, end: 3 }
-        ]);
+        assert_eq!(
+            lines,
+            vec![TextLine { start: 0, end: 1 }, TextLine { start: 2, end: 3 }]
+        );
     }
 
     /// **CG-b**：字符盒与字符下标互为反查（半开矩形，边界唯一）。

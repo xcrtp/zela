@@ -115,7 +115,10 @@ fn check_backends(host: &dyn CommandHost) -> (bool, String) {
     let ctx = match RenderContext::headless_with_registry(DEFAULT_TARGET_FORMAT, &registry) {
         Ok(ctx) => ctx,
         Err(error) => {
-            host.diagnostic(Level::Warn, &format!("GPU：无法创建 headless 上下文（{error}）"));
+            host.diagnostic(
+                Level::Warn,
+                &format!("GPU：无法创建 headless 上下文（{error}）"),
+            );
             return (false, format!("{error}"));
         }
     };

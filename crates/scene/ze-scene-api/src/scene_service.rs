@@ -11,27 +11,29 @@
 use std::any::Any;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use ze_scene_core::components::Reveal as NativeReveal;
-use ze_scene_core::components::PathFollow as NativePathFollow;
-use ze_scene_core::scene_script::{
-    Handle as ScriptHandle, SceneEncoder, SceneScript, ScopeToken, handle_ref,
-};
-use ze_time::ClockProgram;
 use ze_notion::{Color32, Quat, Rect2D, Vec2 as NotionVec2, Vec3 as NotionVec3};
-use ze_scene_core::object::{
-    Arrow as NativeArrow, Axes2D as NativeAxes2D, Camera3D as NativeCamera3D, Circle as NativeCircle,
-    Framing2D, Path as NativePath, Projection, RayTrace as NativeRayTrace, TickSpec,
-    Transform as NativeTransform,
+use ze_pod_core::{
+    FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod,
 };
-use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
 use ze_render_ir::{FillSolid, MeasureSpace, Opacity as NativeOpacity, StrokeSolid};
 use ze_scene_contract::{
     Components, Group as NativeGroup, GroupId as NativeGroupId, Name as NativeName,
     Parent as NativeParent, ParentInherit as NativeParentInherit,
 };
+use ze_scene_core::components::PathFollow as NativePathFollow;
+use ze_scene_core::components::Reveal as NativeReveal;
+use ze_scene_core::object::{
+    Arrow as NativeArrow, Axes2D as NativeAxes2D, Camera3D as NativeCamera3D,
+    Circle as NativeCircle, Framing2D, Path as NativePath, Projection, RayTrace as NativeRayTrace,
+    TickSpec, Transform as NativeTransform,
+};
+use ze_scene_core::scene_script::{
+    Handle as ScriptHandle, SceneEncoder, SceneScript, ScopeToken, handle_ref,
+};
+use ze_time::ClockProgram;
 
-use crate::content_service::PathStore;
 use crate::RegisterSceneComponent;
+use crate::content_service::PathStore;
 use crate::types::{
     Arrow, Axes2D, BackgroundStroke, Camera2D, Camera3D, Circle, Color, Cube, CurveWindow, Dash,
     Fill, Gradient, Group, Light, LightKind, LineStyle, Material3D, Morph, Name, Opacity, Parent,
@@ -39,6 +41,7 @@ use crate::types::{
     ShaderVariant, Stroke, Surface, SurfaceMapping, SurfaceRenderer, Texture, TextureFilter,
     Transform, Transform3D, Vec2, Vec3,
 };
+use ze_render_ir::ShaderVariant as NativeShaderVariant;
 use ze_scene_core::components::{
     Light as NativeLight, Material3D as NativeMaterial3D, MorphShape as NativeMorphShape,
     PhaseAnim as NativePhaseAnim,
@@ -48,7 +51,6 @@ use ze_scene_core::surface::{
     SurfaceRenderer as NativeSurfaceRenderer, SurfaceTexture as NativeSurfaceTexture,
     SurfaceTextureRef, TextureFilter as NativeTextureFilter,
 };
-use ze_render_ir::ShaderVariant as NativeShaderVariant;
 
 /// 注入时使用的 Service 名（与 `LuaPod::requirements()` 对应）。
 pub const SERVICE_NAME: &str = "scene";
@@ -286,10 +288,8 @@ impl SceneServicePod {
         // 表达式绑定在 `run` 之后才合并 ⇒ 句柄映射要先快照再清空录制状态。
         *self.last_objects.lock().expect("对象句柄快照锁中毒") =
             std::mem::take(&mut rec.object_log);
-        *self
-            .last_component_names
-            .lock()
-            .expect("组件名快照锁中毒") = std::mem::take(&mut rec.component_names);
+        *self.last_component_names.lock().expect("组件名快照锁中毒") =
+            std::mem::take(&mut rec.component_names);
         self.paths.reset();
         *rec = Recording::new();
         match error {
@@ -609,24 +609,17 @@ fn scene_surface(pod: &dyn Pod, desc: Surface) -> Handle {
         mapping,
         NotionVec2::new(desc.anchor_x, desc.anchor_y),
     );
-    let mut texture = NativeSurfaceTexture::new(
-        [desc.texel_width, desc.texel_height],
-        filter,
-        desc.mipmap,
-    )
-    .with_composite(desc.composite);
+    let mut texture =
+        NativeSurfaceTexture::new([desc.texel_width, desc.texel_height], filter, desc.mipmap)
+            .with_composite(desc.composite);
     if desc.fit_margin > 0.0 {
         texture = texture.with_fit_margin(desc.fit_margin);
     }
-    service(pod)
-        .rec
-        .borrow_mut()
-        .components
-        .insert(vec![
-            Box::new(surface),
-            Box::new(renderer),
-            Box::new(texture),
-        ])
+    service(pod).rec.borrow_mut().components.insert(vec![
+        Box::new(surface),
+        Box::new(renderer),
+        Box::new(texture),
+    ])
 }
 
 fn scene_light(pod: &dyn Pod, light: Light) -> Handle {
@@ -719,7 +712,10 @@ fn scene_phase_anim(pod: &dyn Pod, phase: PhaseAnim) -> Handle {
         .rec
         .borrow_mut()
         .components
-        .insert(vec![Box::new(NativePhaseAnim::new(phase.phase, phase.omega))])
+        .insert(vec![Box::new(NativePhaseAnim::new(
+            phase.phase,
+            phase.omega,
+        ))])
 }
 
 /// `zela.Morph` → `MorphShape`（`Target.MorphT` 的写入对象）。
@@ -727,10 +723,7 @@ fn scene_phase_anim(pod: &dyn Pod, phase: PhaseAnim) -> Handle {
 /// 折线点表 → `Path2D::from_polyline`，与 `reveal` / `polyline` 同一口径。
 fn scene_morph(pod: &dyn Pod, morph: Morph) -> Handle {
     let to_points = |points: &[crate::types::Vec2]| -> Vec<NotionVec2> {
-        points
-            .iter()
-            .map(|p| NotionVec2::new(p.x, p.y))
-            .collect()
+        points.iter().map(|p| NotionVec2::new(p.x, p.y)).collect()
     };
     let from = ze_notion::Path2D::from_polyline(&to_points(&morph.from), morph.closed);
     let to = ze_notion::Path2D::from_polyline(&to_points(&morph.to), morph.closed);
@@ -861,33 +854,39 @@ fn scene_dash(pod: &dyn Pod, dash: Dash) -> Handle {
         dash.period > 0.0,
         "Dash.period 必须 > 0（不画虚线就不要挂 Dash）"
     );
-    service(pod).rec.borrow_mut().components.insert(vec![
-        Box::new(ze_render_ir::Dash {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(ze_render_ir::Dash {
             period: dash.period,
             duty: dash.duty,
             phase: dash.phase,
-        }),
-    ])
+        })])
 }
 
 fn scene_second_paint(pod: &dyn Pod, second: SecondPaint) -> Handle {
-    service(pod).rec.borrow_mut().components.insert(vec![
-        Box::new(ze_render_ir::SecondPaint {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(ze_render_ir::SecondPaint {
             fill: straight(second.fill),
             stroke: straight(second.stroke),
             background: straight(second.background),
             mix: second.mix,
-        }),
-    ])
+        })])
 }
 
 fn scene_background_stroke(pod: &dyn Pod, background: BackgroundStroke) -> Handle {
-    service(pod).rec.borrow_mut().components.insert(vec![
-        Box::new(ze_render_ir::BackgroundStroke {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(ze_render_ir::BackgroundStroke {
             color: straight(background.color),
             width: background.width,
-        }),
-    ])
+        })])
 }
 
 fn scene_curve_window(pod: &dyn Pod, window: CurveWindow) -> Handle {
@@ -897,12 +896,14 @@ fn scene_curve_window(pod: &dyn Pod, window: CurveWindow) -> Handle {
         window.lo,
         window.hi
     );
-    service(pod).rec.borrow_mut().components.insert(vec![
-        Box::new(ze_render_ir::CurveWindow {
+    service(pod)
+        .rec
+        .borrow_mut()
+        .components
+        .insert(vec![Box::new(ze_render_ir::CurveWindow {
             lo: window.lo,
             hi: window.hi,
-        }),
-    ])
+        })])
 }
 
 fn scene_transform(pod: &dyn Pod, transform: Transform) -> Handle {
@@ -1027,8 +1028,7 @@ fn scene_scope_begin(pod: &dyn Pod, path: String, shift: f64, rate: f64) -> f64 
 /// **CC-a**：退出作用域（把栈截断回令牌深度）。
 fn scene_scope_end(pod: &dyn Pod, token: f64) {
     let mut rec = service(pod).rec.borrow_mut();
-    rec.encoder
-        .end_scope(ScopeToken(token.max(0.0) as usize));
+    rec.encoder.end_scope(ScopeToken(token.max(0.0) as usize));
 }
 
 // ─── 第 BB 批（阶段 4）：构造糖 ─────────────────────────────────────────

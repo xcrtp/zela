@@ -11,7 +11,7 @@
 - 路径：`crates/schedule/zela-schedule`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`zela-app`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-render`、`zela-scene-ecs`
-- 源文件：11 个 · 2353 行
+- 源文件：11 个 · 2361 行
 
 ### 文件清单
 
@@ -20,14 +20,14 @@
 | `src/access.rs` | 172 | — |
 | `src/context.rs` | 329 | — |
 | `src/lib.rs` | 29 | — |
-| `src/resource.rs` | 246 | — |
-| `src/scheduler.rs` | 586 | — |
+| `src/resource.rs` | 248 | — |
+| `src/scheduler.rs` | 589 | — |
 | `src/system.rs` | 389 | — |
 | `src/telemetry/clock.rs` | 61 | — |
 | `src/telemetry/frame_report.rs` | 136 | — |
-| `src/telemetry/log.rs` | 75 | — |
+| `src/telemetry/log.rs` | 73 | — |
 | `src/telemetry/mod.rs` | 25 | — |
-| `src/telemetry/snapshot.rs` | 305 | — |
+| `src/telemetry/snapshot.rs` | 310 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

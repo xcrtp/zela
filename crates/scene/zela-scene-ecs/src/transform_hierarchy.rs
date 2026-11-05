@@ -30,8 +30,8 @@ use std::collections::BTreeMap;
 
 use ze_notion::{Color32, Mat4, Quat, Transform3D, Vec3};
 use ze_render_ir::{FillSolid, Opacity, StrokeSolid};
-use ze_scene_core::{Transform, WorldInherit};
 use ze_scene_contract::{ObjectId, Parent, ParentInherit, SceneRead};
+use ze_scene_core::{Transform, WorldInherit};
 use zela_schedule::context::ExecutorContext;
 use zela_schedule::system::System;
 
@@ -110,7 +110,14 @@ impl System for TransformHierarchySystem {
             world.for_each::<StrokeSolid>(|id, stroke| {
                 local_stroke.insert(id, stroke.color);
             });
-            (locals, parents, inherits, local_opacity, local_fill, local_stroke)
+            (
+                locals,
+                parents,
+                inherits,
+                local_opacity,
+                local_fill,
+                local_stroke,
+            )
         };
 
         // 拓扑序由 ObjectId 升序决定（确定性；BTreeMap 的键序即最终序）。
@@ -149,10 +156,7 @@ impl System for TransformHierarchySystem {
                             // 全 0 ⇒ 不继承变换 ⇒ world = local。
                             if w.full_transform() {
                                 local.compose(parent_world)
-                            } else if w.position == 0.0
-                                && w.rotation == 0.0
-                                && w.scale == 0.0
-                            {
+                            } else if w.position == 0.0 && w.rotation == 0.0 && w.scale == 0.0 {
                                 local
                             } else {
                                 local.compose(mix_transform(&parent_world, &w))
@@ -166,9 +170,10 @@ impl System for TransformHierarchySystem {
                     let style = match tree.parent(id) {
                         None => own_style,
                         Some(parent) => {
-                            let parent_style = style_out.get(&parent).copied().unwrap_or_else(|| {
-                                local_style(&parent, &local_opacity, &local_fill, &local_stroke)
-                            });
+                            let parent_style =
+                                style_out.get(&parent).copied().unwrap_or_else(|| {
+                                    local_style(&parent, &local_opacity, &local_fill, &local_stroke)
+                                });
                             let w = inherits.get(&id).copied().unwrap_or_default();
                             InheritedStyle {
                                 // world_opacity = local × mix(1, parent_world, w)
@@ -299,11 +304,7 @@ fn inherit_color(local: Option<Color32>, parent: Option<Color32>, w: f32) -> Opt
         return local;
     }
     match local {
-        Some(color) => Some(mix_color(
-            color,
-            parent.unwrap_or(Color32::TRANSPARENT),
-            w,
-        )),
+        Some(color) => Some(mix_color(color, parent.unwrap_or(Color32::TRANSPARENT), w)),
         None => parent,
     }
 }
@@ -367,15 +368,9 @@ mod tests {
         let (worlds, error) = run(world);
         assert!(!error.is_err());
         // S1：get2d（2D 投影视图）逐位等于旧的 to_affine2d ⇒ 2D 路径回退不变性。
-        assert_eq!(
-            worlds.get2d(id),
-            Some(transform(2.0, 3.0).to_affine2d())
-        );
+        assert_eq!(worlds.get2d(id), Some(transform(2.0, 3.0).to_affine2d()));
         // S1：3D 世界矩阵与 local 的 to_affine3d 逐位一致。
-        assert_eq!(
-            worlds.get(id),
-            Some(&transform(2.0, 3.0).to_affine3d())
-        );
+        assert_eq!(worlds.get(id), Some(&transform(2.0, 3.0).to_affine3d()));
     }
 
     #[test]
@@ -389,10 +384,7 @@ mod tests {
         let (worlds, error) = run(world);
         assert!(!error.is_err());
         assert_eq!(
-            worlds
-                .get2d(child_id)
-                .unwrap()
-                .apply_point(Vec2::ZERO),
+            worlds.get2d(child_id).unwrap().apply_point(Vec2::ZERO),
             Vec2::new(10.0, 5.0)
         );
     }
@@ -502,8 +494,8 @@ mod tests {
     #[test]
     fn glyph_styles_are_independent_under_a_shared_parent() {
         use ze_notion::{Color32, Path2D};
-        use ze_scene_core::Path;
         use ze_render_ir::StrokeSolid;
+        use ze_scene_core::Path;
 
         let mut world = hecs::World::new();
         let parent = world.spawn((transform(2.0, 3.0),));
@@ -697,7 +689,10 @@ mod tests {
         let child_id = crate::contract::object_id_of(child);
 
         let (worlds, _, _) = run_all(world);
-        let p = worlds.get(child_id).unwrap().apply_point(ze_notion::Vec3::ZERO);
+        let p = worlds
+            .get(child_id)
+            .unwrap()
+            .apply_point(ze_notion::Vec3::ZERO);
         assert!((p.x - 4.0).abs() < 1e-5, "x = {}", p.x);
     }
 

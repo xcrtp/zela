@@ -83,7 +83,8 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        let desc = RenderTargetDesc::new(320, 240, ColorFormat::Bgra8UnormSrgb).with_sample_count(4);
+        let desc =
+            RenderTargetDesc::new(320, 240, ColorFormat::Bgra8UnormSrgb).with_sample_count(4);
         let json = serde_json::to_string(&desc).unwrap();
         let back: RenderTargetDesc = serde_json::from_str(&json).unwrap();
         assert_eq!(back, desc);
@@ -96,7 +97,11 @@ mod tests {
         assert_eq!(h(&desc), h(&back));
         assert_ne!(
             h(&desc),
-            h(&RenderTargetDesc::new(320, 240, ColorFormat::Bgra8UnormSrgb))
+            h(&RenderTargetDesc::new(
+                320,
+                240,
+                ColorFormat::Bgra8UnormSrgb
+            ))
         );
     }
 
@@ -104,8 +109,12 @@ mod tests {
     #[test]
     fn invalid_desc_is_explicit_error() {
         let zero = RenderTargetDesc::new(0, 10, ColorFormat::Rgba8Unorm);
-        assert!(matches!(zero.validate(), Err(TargetDescError::EmptySize { .. })));
-        let bad_samples = RenderTargetDesc::new(10, 10, ColorFormat::Rgba8Unorm).with_sample_count(3);
+        assert!(matches!(
+            zero.validate(),
+            Err(TargetDescError::EmptySize { .. })
+        ));
+        let bad_samples =
+            RenderTargetDesc::new(10, 10, ColorFormat::Rgba8Unorm).with_sample_count(3);
         assert!(matches!(
             bad_samples.validate(),
             Err(TargetDescError::InvalidSampleCount { sample_count: 3 })

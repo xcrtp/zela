@@ -270,10 +270,7 @@ fn anim_to_value(_channel: &ChannelRef, value: &AnimValue) -> Result<Value, Eval
 
 /// `Path2D` → `zela.Path` 字节块（曲线按固定容差展平；慢路径，不进零拷贝）。
 fn encode_path_value(path: &ze_notion::Path2D) -> ze_comb::ValueBytes {
-    let closed = matches!(
-        path.commands.last(),
-        Some(ze_notion::PathCommand::Close)
-    );
+    let closed = matches!(path.commands.last(), Some(ze_notion::PathCommand::Close));
     let points: Vec<[f32; 2]> = path
         .flatten(ze_notion::MORPH_TOLERANCE)
         .into_iter()
@@ -363,9 +360,10 @@ mod tests {
             Value::Bool(true)
         );
         // 组件字段通道与基础通道同形：`read`（无对象）对它仍是显式缺失。
-        assert!(mono
-            .read(&ChannelRef::new("zela.scene", "Circle.radius"))
-            .is_err());
+        assert!(
+            mono.read(&ChannelRef::new("zela.scene", "Circle.radius"))
+                .is_err()
+        );
     }
 
     /// **BY-a1/a3**：`Step::State` 在生产路径上**消费**装配期的闭式计划。
@@ -438,9 +436,13 @@ mod tests {
             ze_pod_core::TypeSpec::Struct { name, .. } => match *name {
                 "zela.Vec2" => ze_comb::ChannelType::Vec2,
                 "zela.Vec3" => ze_comb::ChannelType::Vec3,
-                other => panic!("方法 `{}` 的返回类型 `{other}` 未登记", spec.name),
+                other => {
+                    panic!("方法 `{}` 的返回类型 `{other}` 未登记", spec.name)
+                }
             },
-            other => panic!("方法 `{}` 的返回类型 {:?} 未登记", spec.name, other),
+            other => {
+                panic!("方法 `{}` 的返回类型 {:?} 未登记", spec.name, other)
+            }
         }
     }
 
@@ -542,8 +544,8 @@ mod tests {
         let ws = WorldScene::new(&mut world);
         let mono = SceneMono::new(0.0, 0, &ws);
         // `Circle.radius` 实际是标量，却声明成 Vec2。
-        let channel = ChannelRef::new("zela.scene", "Circle.radius")
-            .with_type(ze_comb::ChannelType::Vec2);
+        let channel =
+            ChannelRef::new("zela.scene", "Circle.radius").with_type(ze_comb::ChannelType::Vec2);
         let err = mono
             .read_object(&channel, id.to_packed())
             .expect_err("类型不符必须显式失败");
@@ -565,8 +567,8 @@ mod tests {
     #[test]
     fn color_reads_as_vec4_but_path_round_trips_through_bytes() {
         let channel = ChannelRef::new("zela.scene", "Shape.fill");
-        let color = anim_to_value(&channel, &AnimValue::Color([0.1, 0.2, 0.3, 1.0]))
-            .expect("Color 可读");
+        let color =
+            anim_to_value(&channel, &AnimValue::Color([0.1, 0.2, 0.3, 1.0])).expect("Color 可读");
         assert_eq!(color, ze_comb::Value::vec4([0.1, 0.2, 0.3, 1.0]));
 
         let points = [
@@ -662,7 +664,10 @@ mod tests {
 
         let ghost = ObjectId::new(999, 1);
         let err = mono
-            .read_object(&ChannelRef::new("zela.scene", "Circle.radius"), ghost.to_packed())
+            .read_object(
+                &ChannelRef::new("zela.scene", "Circle.radius"),
+                ghost.to_packed(),
+            )
             .unwrap_err();
         assert!(
             matches!(err, EvalError::MissingComponent { .. }),

@@ -13,8 +13,8 @@
 // 逐命令映射的实现已统一到 `crate::object::map_path_affine`（单份），
 // 本文件的正反向都复用它 —— 不再各写一份。
 
-use ze_notion::{Path2D, Transform2D as Affine2D, Vec2, Vec3};
 use crate::object::{Camera2D, Circle, Line, Path};
+use ze_notion::{Path2D, Transform2D as Affine2D, Vec2, Vec3};
 
 /// 2D 坐标系转换 Trait（非消耗版本）。
 ///

@@ -161,7 +161,11 @@ mod tests {
     fn char_at_is_half_open() {
         let run = run();
         assert_eq!(run.char_at(Point::new(5.0, 6.0)), Some(0));
-        assert_eq!(run.char_at(Point::new(10.0, 6.0)), Some(1), "边界属于后一个");
+        assert_eq!(
+            run.char_at(Point::new(10.0, 6.0)),
+            Some(1),
+            "边界属于后一个"
+        );
         assert_eq!(run.char_at(Point::new(20.0, 6.0)), None, "末尾之外不命中");
         assert_eq!(run.char_at(Point::new(5.0, 12.0)), None, "上界之外不命中");
         assert_eq!(run.char_at(Point::new(-1.0, 6.0)), None);

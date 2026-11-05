@@ -40,6 +40,9 @@ ze-pod-core = { path = "../../ze/pod/ze-pod-core" }
 # 内容编译的宿主侧适配（content.rs）：排版引擎 → IR → 世界坐标轮廓。
 ze-content = { path = "../../kernel/ze-content" }
 ze-prerender = { path = "../../kernel/ze-prerender", default-features = false }
+# CL-R：控件声明（`WidgetDecl`）是产物里的组件 —— 定义在表达层，组件登记表在这里。
+# `widgets` 拿 `WidgetDecl` / `StrategyId` / `ConstraintDecl`，`serde` 让它进 payload。
+ze-interact = { path = "../../kernel/ze-interact", features = ["widgets", "serde"] }
 
 # 组件持久化：组件 serde + tagged JSON 编码。
 serde_json.workspace = true

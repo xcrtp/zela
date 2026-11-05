@@ -129,7 +129,10 @@ mod tests {
                     assert_eq!(s.attrib2, AttribSemantic::Undefined);
                 }
             }
-            assert!(!s.shader_note.is_empty(), "{model:?} 必须带 shader 解释说明");
+            assert!(
+                !s.shader_note.is_empty(),
+                "{model:?} 必须带 shader 解释说明"
+            );
         }
     }
 

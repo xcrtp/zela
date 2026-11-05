@@ -13,11 +13,11 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use ze_pod_core::{
-    Broker, Capability, FunctionId, Handle, QualifiedName, RegistryPod, ServiceRequirement, Pod,
-    PodError, PodId, PodNode,
-};
 use ze_pod_binding::CapabilityDocs;
+use ze_pod_core::{
+    Broker, Capability, FunctionId, Handle, Pod, PodError, PodId, PodNode, QualifiedName,
+    RegistryPod, ServiceRequirement,
+};
 use ze_pod_lua::{LuaPod, RUN_ENTRY};
 use ze_pod_macro::{PodType, capability};
 
@@ -93,11 +93,16 @@ impl MiniPod {
             *mini(pod).rec.borrow_mut() = Recorded::default();
             Ok(Box::new(()))
         });
-        registry.register_erased(FINISH_PATH, &[], "Result<Box<dyn Any>, String>", |pod, _| {
-            Ok(Box::new(
-                mini(pod).finish().map(|out| Box::new(out) as Box<dyn Any>),
-            ))
-        });
+        registry.register_erased(
+            FINISH_PATH,
+            &[],
+            "Result<Box<dyn Any>, String>",
+            |pod, _| {
+                Ok(Box::new(
+                    mini(pod).finish().map(|out| Box::new(out) as Box<dyn Any>),
+                ))
+            },
+        );
 
         Self {
             id,

@@ -81,12 +81,16 @@ impl Args {
                         .parse()
                         .map_err(|_| "--workers 必须是正整数".to_string())?;
                     if workers == 0 {
-                        return Err("--workers 至少是 1（0 不是「自动」，自动是缺省值）".to_string());
+                        return Err(
+                            "--workers 至少是 1（0 不是「自动」，自动是缺省值）".to_string()
+                        );
                     }
                 }
                 "--work" => {
                     i += 1;
-                    works.push(parse_work(raw.get(i).ok_or("--work 需要 name=WxH[:vector]")?)?);
+                    works.push(parse_work(
+                        raw.get(i).ok_or("--work 需要 name=WxH[:vector]")?,
+                    )?);
                 }
                 "--sink-bypass" => sink_bypass = true,
                 other => return Err(format!("未知参数：{other}")),
@@ -119,7 +123,9 @@ fn parse_work(spec: &str) -> Result<Work, String> {
     let (size, backend) = match rest.split_once(':') {
         Some((size, "vector")) => (size, LoopBackend::Vector),
         Some((size, "wgpu")) => (size, LoopBackend::Wgpu),
-        Some((_, other)) => return Err(format!("--work 的后端只接受 wgpu|vector：{other}")),
+        Some((_, other)) => {
+            return Err(format!("--work 的后端只接受 wgpu|vector：{other}"));
+        }
         None => (rest, LoopBackend::Wgpu),
     };
     let (w, h) = size
@@ -160,9 +166,7 @@ fn run() -> Result<(), String> {
         ) {
             Ok(ctx) => ctx,
             Err(error) => {
-                eprintln!(
-                    "[gpu-timing] 无法请求 TIMESTAMP_QUERY：{error}（退回不测，**不填 0**）"
-                );
+                eprintln!("[gpu-timing] 无法请求 TIMESTAMP_QUERY：{error}（退回不测，**不填 0**）");
                 RenderContext::headless()
                     .map_err(|e| format!("无法创建 headless GPU 上下文：{e}"))?
             }
@@ -252,7 +256,8 @@ mod defaults_snapshot {
         assert_eq!(parsed.workers, default_workers(), "缺省 = 本机可用并行度");
         assert!(parsed.workers >= 1, "缺省不得是 0");
 
-        let parsed = Args::parse_from(&base(&["--work", "a=1x1", "--workers", "1"])).expect("可解析");
+        let parsed =
+            Args::parse_from(&base(&["--work", "a=1x1", "--workers", "1"])).expect("可解析");
         assert_eq!(parsed.workers, 1, "--workers 1 = 串行");
 
         let error = Args::parse_from(&base(&["--work", "a=1x1", "--workers", "0"]))

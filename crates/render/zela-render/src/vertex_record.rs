@@ -22,13 +22,13 @@
 
 use ze_notion::{Path2D, Transform2D, Vec2, Vec3};
 use ze_render_ir::{PrimitiveTopology, Shape2D, Style2D, UvProjection};
+use ze_scene_core::components::MeshGeometry;
 use ze_vertex::{
     ReconcilePlan, Semantic, VertexAttrib, VertexBufferData, VertexBufferError, VertexLayout,
     bytes_of, reconcile,
 };
-use ze_scene_core::components::MeshGeometry;
 
-use crate::tessellate::{TessKind, Tessellation2D, TessellateError, tessellate, tessellate_reveal};
+use crate::tessellate::{TessKind, TessellateError, Tessellation2D, tessellate, tessellate_reveal};
 
 /// 生产端错误：三角化失败与打包失败都**显式**冒泡（不静默）。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -57,10 +57,7 @@ pub struct TessellatedBuffer {
 
 fn pack(t: Tessellation2D) -> Result<TessellatedBuffer, VertexRecordError> {
     let data = VertexBufferData::new(t.layout, bytes_of(&t.vertices).to_vec(), t.indices)?;
-    Ok(TessellatedBuffer {
-        data,
-        kind: t.kind,
-    })
+    Ok(TessellatedBuffer { data, kind: t.kind })
 }
 
 /// 2D 图元 → 顶点缓冲（填充 / 描边各至多一项；`Group` 递归成多项）。
@@ -121,9 +118,14 @@ pub fn morph_endpoint_buffers(
     style: &Style2D,
     tolerance: f32,
 ) -> Result<Option<MorphEndpointBuffers>, VertexRecordError> {
-    let from_tess = tessellate(&Shape2D::Path(from_path.clone()), transform, style, tolerance)?
-        .into_iter()
-        .next();
+    let from_tess = tessellate(
+        &Shape2D::Path(from_path.clone()),
+        transform,
+        style,
+        tolerance,
+    )?
+    .into_iter()
+    .next();
     let to_tess = tessellate(&Shape2D::Path(to_path.clone()), transform, style, tolerance)?
         .into_iter()
         .next();
@@ -240,10 +242,7 @@ fn interleave(
     for (index, position) in positions.iter().enumerate() {
         for attrib in &plan.layout.attribs {
             let semantic = Semantic::of(attrib.semantic).unwrap_or_else(|| {
-                panic!(
-                    "不静默：3D 采纳布局里出现非契约语义 {:?}",
-                    attrib.semantic
-                )
+                panic!("不静默：3D 采纳布局里出现非契约语义 {:?}", attrib.semantic)
             });
             let components = attrib.ty.size() as usize / 4;
             let value = match semantic {
@@ -258,7 +257,9 @@ fn interleave(
                     .map(|normal| [normal.x, normal.y, normal.z, 0.0])
                     .or_else(|| padding_value(plan, semantic))
                     .expect("ShadingNormal 必须有默认值"),
-                other => panic!("不静默：3D 采纳布局含暂无数据来源的语义 {other:?}"),
+                other => {
+                    panic!("不静默：3D 采纳布局含暂无数据来源的语义 {other:?}")
+                }
             };
             out.extend_from_slice(&value[..components]);
         }
@@ -493,10 +494,7 @@ mod tests {
     fn line_bytes_are_pinned() {
         let data = line_vertex_buffer(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)).unwrap();
         assert_eq!(data.layout.stride, 12, "线段布局：position F32x3");
-        assert_eq!(
-            words_of(&data),
-            vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
-        );
+        assert_eq!(words_of(&data), vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
     }
 
     /// 线框立方体的字节：顶点数与位置逐个一致，每顶点 3 个 f32。
@@ -523,13 +521,7 @@ mod tests {
             fill: Some(Color32::WHITE),
             ..Style2D::default()
         };
-        let buffers = tessellate_to_buffers(
-            &shape,
-            &Transform2D::identity(),
-            &style,
-            1.0,
-        )
-        .unwrap();
+        let buffers = tessellate_to_buffers(&shape, &Transform2D::identity(), &style, 1.0).unwrap();
         assert!(!buffers.is_empty());
         for b in buffers {
             assert_eq!(b.data.layout.stride, 24);

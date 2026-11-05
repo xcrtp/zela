@@ -121,9 +121,7 @@ impl Node {
     pub fn children(&self) -> Vec<&Expr> {
         match self {
             Node::Call { args, .. } => args.iter().collect(),
-            Node::Select {
-                cond, then, r#else,
-            } => vec![cond, then, r#else],
+            Node::Select { cond, then, r#else } => vec![cond, then, r#else],
             Node::NatRec { count, init, step } => vec![count, init, step],
             Node::State {
                 init,
@@ -393,14 +391,15 @@ impl ChannelType {
                 ScalarKind::String => None,
                 _ => Some(Self::Number),
             },
-            TypeSpec::Struct { name, layout, .. } => match name.strip_prefix("zela.").unwrap_or(name)
-            {
-                "Vec2" => Some(Self::Vec2),
-                "Vec3" => Some(Self::Vec3),
-                "Vec4" => Some(Self::Vec4),
-                // 没有布局 ⇒ 变长 / 不透明 ⇒ 字节块协商（`zela.Path` 就在这里）。
-                _ => layout.is_none().then_some(Self::Bytes),
-            },
+            TypeSpec::Struct { name, layout, .. } => {
+                match name.strip_prefix("zela.").unwrap_or(name) {
+                    "Vec2" => Some(Self::Vec2),
+                    "Vec3" => Some(Self::Vec3),
+                    "Vec4" => Some(Self::Vec4),
+                    // 没有布局 ⇒ 变长 / 不透明 ⇒ 字节块协商（`zela.Path` 就在这里）。
+                    _ => layout.is_none().then_some(Self::Bytes),
+                }
+            }
             TypeSpec::Opaque(name) => match name.strip_prefix("zela.").unwrap_or(name) {
                 "Vec2" => Some(Self::Vec2),
                 "Vec3" => Some(Self::Vec3),
@@ -726,11 +725,7 @@ impl Expr {
     /// **方法调用**（B2）：`object.method(args…)`。
     ///
     /// `object` 与 [`Expr::read`] 同一编码（声明期脚本句柄下标）。
-    pub fn method(
-        method: MethodRef,
-        object: u64,
-        args: impl IntoIterator<Item = Expr>,
-    ) -> Self {
+    pub fn method(method: MethodRef, object: u64, args: impl IntoIterator<Item = Expr>) -> Self {
         Self::new(Node::Method {
             method,
             object,
@@ -796,10 +791,7 @@ impl Expr {
     ///
     /// 只在装配期有意义：场景层把对象集冻结后，它会折叠成 `Bool` 字面量。
     pub fn exists(requires: Vec<String>, excludes: Vec<String>) -> Self {
-        Self::new(Node::Exists {
-            requires,
-            excludes,
-        })
+        Self::new(Node::Exists { requires, excludes })
     }
 
     /// 装配期校验：重名 id / 悬空 `Ref` / 环 / 递归叶子越界。
@@ -874,11 +866,7 @@ fn check_recursive_leaves(expr: &Expr) -> Result<(), ExprError> {
     impl<'a> ExprVisitor<'a> for RecLeaves {
         type Error = ExprError;
 
-        fn enter(
-            &mut self,
-            expr: &'a Expr,
-            parent: Option<&'a Node>,
-        ) -> Result<bool, ExprError> {
+        fn enter(&mut self, expr: &'a Expr, parent: Option<&'a Node>) -> Result<bool, ExprError> {
             let inherited = *self.in_step.last().unwrap_or(&false);
             // 只有 `NatRec.step` / `State.step` 这两条边打开递归作用域；
             // `count` / `init` 继承外层。
@@ -889,7 +877,9 @@ fn check_recursive_leaves(expr: &Expr) -> Result<(), ExprError> {
                 None => false,
             };
             match expr.node.rec_leaf() {
-                Some(name) if !in_step => return Err(ExprError::OrphanRec(name)),
+                Some(name) if !in_step => {
+                    return Err(ExprError::OrphanRec(name));
+                }
                 _ => {}
             }
             self.in_step.push(in_step);
@@ -947,11 +937,7 @@ fn collect_defs<'a>(
     impl<'d, 'a> ExprVisitor<'a> for Collector<'d, 'a> {
         type Error = ExprError;
 
-        fn enter(
-            &mut self,
-            expr: &'a Expr,
-            _parent: Option<&'a Node>,
-        ) -> Result<bool, ExprError> {
+        fn enter(&mut self, expr: &'a Expr, _parent: Option<&'a Node>) -> Result<bool, ExprError> {
             if let Some(id) = expr.id.as_deref() {
                 if self.defs.insert(id, expr).is_some() {
                     return Err(ExprError::DuplicateId(ReflectError::duplicate(
@@ -1053,7 +1039,12 @@ mod tests {
         };
         assert_eq!(op, &math("sin"));
         assert_eq!(args.len(), 2);
-        assert_eq!(args[0].node, Node::Pure { value: Literal::F32(1.0) });
+        assert_eq!(
+            args[0].node,
+            Node::Pure {
+                value: Literal::F32(1.0)
+            }
+        );
         assert_eq!(
             args[1].node,
             Node::Channel {
@@ -1086,7 +1077,8 @@ mod tests {
 
     #[test]
     fn ids_and_refs_round_trip() {
-        let shared = Expr::call(math("sin"), [Expr::channel(ChannelRef::builtin("time"))]).with_id("h1");
+        let shared =
+            Expr::call(math("sin"), [Expr::channel(ChannelRef::builtin("time"))]).with_id("h1");
         let root = Expr::call(
             math("sum"),
             [
@@ -1145,8 +1137,8 @@ mod tests {
         );
 
         // 组件字段通道的容器给了类型名，但 ze-comb 只认内核的小封闭集。
-        let component = ChannelRef::new("zela.scene", "Circle.radius")
-            .with_type(ChannelType::Number);
+        let component =
+            ChannelRef::new("zela.scene", "Circle.radius").with_type(ChannelType::Number);
         assert_eq!(component.ty, ChannelType::Number);
         assert_eq!(
             serde_json::to_value(&component).unwrap()["channel"],
@@ -1213,7 +1205,10 @@ mod tests {
     fn validate_rejects_duplicate_ids() {
         let root = Expr::call(
             math("sum"),
-            [Expr::pure(1.0).with_id("dup"), Expr::pure(2.0).with_id("dup")],
+            [
+                Expr::pure(1.0).with_id("dup"),
+                Expr::pure(2.0).with_id("dup"),
+            ],
         );
         let error = root.validate().unwrap_err();
         let ExprError::DuplicateId(diagnostic) = error else {
@@ -1268,7 +1263,10 @@ mod tests {
         let expr = Expr::nat_rec(
             Expr::pure(2_i64),
             Expr::pure(1.0),
-            Expr::call(OpRef::new("zela.math", "add"), [Expr::rec_prev(), Expr::pure(1.0)]),
+            Expr::call(
+                OpRef::new("zela.math", "add"),
+                [Expr::rec_prev(), Expr::pure(1.0)],
+            ),
         );
         let raw = serde_json::to_value(&expr).expect("必须可序列化");
         assert_eq!(raw["node"]["type"], "nat_rec");

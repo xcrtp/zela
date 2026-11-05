@@ -28,12 +28,11 @@ use crate::capability::Capability;
 use crate::error::PodError;
 use crate::handle::PodHandle;
 use crate::inject::{
-    Injector, MissingRequirements, Service, ServiceRequirement, SyncInjector,
-    validate_requirements,
+    Injector, MissingRequirements, Service, ServiceRequirement, SyncInjector, validate_requirements,
 };
 use crate::lifecycle::Lifecycle;
-use crate::qualified::QualifiedName;
 use crate::pod::{Pod, SyncPod, negotiate_dyn};
+use crate::qualified::QualifiedName;
 
 /// 描述层的一个节点：**纯数据**（不持有 Pod）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -280,14 +279,18 @@ impl fmt::Display for BrokerError {
             Self::Missing { node, missing } => {
                 write!(f, "`{node}` 缺少必需能力：{missing}")
             }
-            Self::UnknownNode { node } => write!(f, "装配图中没有节点 `{node}`"),
+            Self::UnknownNode { node } => {
+                write!(f, "装配图中没有节点 `{node}`")
+            }
             Self::BadEntry { entry, message } => {
                 write!(f, "入口函数名 `{entry}` 不合法：{message}")
             }
             Self::UnknownEntry { node, entry } => {
                 write!(f, "`{node}` 没有入口函数 `{entry}`")
             }
-            Self::Run { node, source } => write!(f, "调用 `{node}` 失败：{source}"),
+            Self::Run { node, source } => {
+                write!(f, "调用 `{node}` 失败：{source}")
+            }
             Self::BadOutput { node, expected } => {
                 write!(f, "`{node}` 的返回值不是 `{expected}`")
             }
@@ -361,11 +364,9 @@ impl Broker {
             .ok_or_else(|| BrokerError::UnknownNode {
                 node: node.to_string(),
             })?;
-        negotiate_dyn::<C>(&*target.pod).ok_or_else(|| {
-            BrokerError::UnsupportedCapability {
-                node: target.name.clone(),
-                capability: capability_label::<'c, C>(),
-            }
+        negotiate_dyn::<C>(&*target.pod).ok_or_else(|| BrokerError::UnsupportedCapability {
+            node: target.name.clone(),
+            capability: capability_label::<'c, C>(),
         })
     }
 
@@ -379,14 +380,13 @@ impl Broker {
             0 => Err(BrokerError::NoProvider {
                 capability: capability_label::<'c, C>(),
             }),
-            1 => Ok(negotiate_dyn::<C>(&*providers[0].pod)
-                .expect("providers_of 已判定该节点提供能力")),
+            1 => {
+                Ok(negotiate_dyn::<C>(&*providers[0].pod)
+                    .expect("providers_of 已判定该节点提供能力"))
+            }
             _ => Err(BrokerError::AmbiguousProvider {
                 capability: capability_label::<'c, C>(),
-                providers: providers
-                    .iter()
-                    .map(|node| node.name.clone())
-                    .collect(),
+                providers: providers.iter().map(|node| node.name.clone()).collect(),
             }),
         }
     }
@@ -423,11 +423,9 @@ impl Broker {
             .ok_or_else(|| BrokerError::UnknownNode {
                 node: handle.to_string(),
             })?;
-        node.sync
-            .clone()
-            .ok_or_else(|| BrokerError::NotSyncPod {
-                node: node.name.clone(),
-            })
+        node.sync.clone().ok_or_else(|| BrokerError::NotSyncPod {
+            node: node.name.clone(),
+        })
     }
 
     /// 路由策略 1 的句柄版本：在 `handle` 指向的节点上协商能力。
@@ -442,11 +440,9 @@ impl Broker {
             .ok_or_else(|| BrokerError::UnknownNode {
                 node: handle.to_string(),
             })?;
-        negotiate_dyn::<C>(&*target.pod).ok_or_else(|| {
-            BrokerError::UnsupportedCapability {
-                node: target.name.clone(),
-                capability: capability_label::<'c, C>(),
-            }
+        negotiate_dyn::<C>(&*target.pod).ok_or_else(|| BrokerError::UnsupportedCapability {
+            node: target.name.clone(),
+            capability: capability_label::<'c, C>(),
         })
     }
 
@@ -726,7 +722,10 @@ fn topological_order(
     nodes: &[NodeSpec],
     dependencies: &[BTreeSet<usize>],
 ) -> Result<Vec<usize>, BrokerError> {
-    let graph = AssemblyGraph { nodes, dependencies };
+    let graph = AssemblyGraph {
+        nodes,
+        dependencies,
+    };
     match ze_graph_core::topo_sort(&graph) {
         Ok(order) => Ok(order),
         Err(_) => {
@@ -811,7 +810,11 @@ mod tests {
             .clone()
     }
 
-    fn test_inject(pod: &dyn Pod, service: String, _service_pod: Arc<dyn Pod>) -> Result<(), PodError> {
+    fn test_inject(
+        pod: &dyn Pod,
+        service: String,
+        _service_pod: Arc<dyn Pod>,
+    ) -> Result<(), PodError> {
         pod.as_any()
             .downcast_ref::<TestPod>()
             .expect("TestPod")
@@ -901,7 +904,9 @@ mod tests {
             ),
         ]);
         match plan.validate().unwrap_err() {
-            BrokerError::Cycle { chain } => assert_eq!(chain, vec!["a", "b", "a"]),
+            BrokerError::Cycle { chain } => {
+                assert_eq!(chain, vec!["a", "b", "a"])
+            }
             other => panic!("期望 Cycle，实际 {other}"),
         }
     }

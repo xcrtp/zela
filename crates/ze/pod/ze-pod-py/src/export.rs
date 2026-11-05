@@ -17,10 +17,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use ze_pod_binding::{BindingPlan, CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name};
 use ze_pod_core::{Field, Kind, OpDef, RetType, ScalarKind, TypeSpec};
-use ze_pod_binding::{
-    BindingPlan, CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
-};
 
 /// Python 关键字（不能直接作形参名）；仅对我们 domain 里出现的做最小映射。
 fn py_ident(name: &str) -> String {
@@ -31,7 +29,9 @@ fn py_ident(name: &str) -> String {
 }
 
 fn parent_of(full: &str) -> &str {
-    full.rsplit_once('.').map(|(parent, _)| parent).unwrap_or("")
+    full.rsplit_once('.')
+        .map(|(parent, _)| parent)
+        .unwrap_or("")
 }
 
 fn root_of(path: &str) -> &str {
@@ -120,20 +120,22 @@ fn py_type(spec: &'static TypeSpec, components: &BTreeSet<&'static str>) -> Stri
     match spec {
         TypeSpec::Scalar(kind) => match kind {
             ScalarKind::F32 | ScalarKind::F64 => "float".to_string(),
-            ScalarKind::I32 | ScalarKind::I64 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => "int".to_string(),
+            ScalarKind::I32
+            | ScalarKind::I64
+            | ScalarKind::U32
+            | ScalarKind::U64
+            | ScalarKind::U8 => "int".to_string(),
             ScalarKind::Bool => "bool".to_string(),
             ScalarKind::String => "str".to_string(),
         },
         TypeSpec::Struct { name, .. } if *name == "()" => "None".to_string(),
         // 通道常量的值形状：T 由组件字段给出；`Bind.target` 不限定值类型。
-        TypeSpec::Struct { name, .. } if *name == "zela.math.Channel" => {
-            "Channel[Any]".to_string()
-        }
+        TypeSpec::Struct { name, .. } if *name == "zela.math.Channel" => "Channel[Any]".to_string(),
         TypeSpec::Struct { name, .. } if components.contains(name) => "Any".to_string(),
-        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => {
-            short_name(name).to_string()
+        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => short_name(name).to_string(),
+        TypeSpec::Array { elem, .. } => {
+            format!("List[{}]", py_type(elem, components))
         }
-        TypeSpec::Array { elem, .. } => format!("List[{}]", py_type(elem, components)),
         TypeSpec::Opaque(_) => "Handle".to_string(),
         TypeSpec::App { ty, args } => {
             let name = short_name(ty);
@@ -246,7 +248,11 @@ fn render_type(
 ) {
     let name = short_name(full_name);
     match spec {
-        TypeSpec::Struct { name: type_name, fields, .. } => {
+        TypeSpec::Struct {
+            name: type_name,
+            fields,
+            ..
+        } => {
             if components.contains(full_name) {
                 // 算子构造器返回**带静态类型的表达式句柄**；其它组件返回 Handle。
                 let returns = if let Some(op) = op_by_spec(capabilities, full_name) {
@@ -322,7 +328,10 @@ fn render_type(
                 ));
             }
         }
-        TypeSpec::Enum { name: type_name, variants } => {
+        TypeSpec::Enum {
+            name: type_name,
+            variants,
+        } => {
             out.push_str(&format!("class {name}:\n"));
             if variants.is_empty() {
                 out.push_str("    ...\n");
@@ -336,13 +345,7 @@ fn render_type(
                     out.push_str(&format!(
                         "    @staticmethod\n    def {}({}) -> {}: ...\n",
                         variant.name,
-                        params(
-                            variant.fields,
-                            components,
-                            type_name,
-                            &parent,
-                            typed_expr
-                        ),
+                        params(variant.fields, components, type_name, &parent, typed_expr),
                         name
                     ));
                 }
@@ -369,7 +372,9 @@ fn py_call_return(
         "exists" => "Expr[bool]".to_string(),
         "clock_range" | "clock_range_of" => "Expr[bool]".to_string(),
         "rec_index" => "Expr[int]".to_string(),
-        "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr[Any]".to_string(),
+        "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => {
+            "Expr[Any]".to_string()
+        }
         _ => py_type(item.io.ret, components),
     }
 }
@@ -422,8 +427,7 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
     for capability in capabilities {
         let plan = BindingPlan::new(capability.calls);
         for (&full_name, &spec) in &plan.types {
-            if matches!(spec, TypeSpec::Struct { .. }) && plan.component_ctor(full_name).is_some()
-            {
+            if matches!(spec, TypeSpec::Struct { .. }) && plan.component_ctor(full_name).is_some() {
                 components.insert(full_name);
             }
         }
@@ -494,17 +498,16 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
     for package in &packages {
         let root = root_of(package);
         // 本包是否需要泛型（`Expr<T>` 由根包定义；`Channel<T>` 在 zela.math 定义）。
-        let defines_channel = types.iter().any(|(&full, _)| {
-            full == "zela.math.Channel" && type_home.get(full) == Some(package)
-        });
+        let defines_channel = types
+            .iter()
+            .any(|(&full, _)| full == "zela.math.Channel" && type_home.get(full) == Some(package));
         let needs_generic = defines_channel || (typed_expr && package == root);
         let package_has_math = types.iter().any(|(&full, _)| {
             type_home.get(full) == Some(package) && full.starts_with("zela.math.")
         });
 
-        let mut out = String::from(
-            "# 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。\n",
-        );
+        let mut out =
+            String::from("# 由 zela-app 的 export_scene_api 生成；与 scene_api.json 同源。\n");
         if needs_generic {
             out.push_str(&format!(
                 "from typing import Any, {}Generic, List, Protocol, TypeVar\n\n",
@@ -531,10 +534,7 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
             if typed_expr && package_has_math {
                 imported.push("Expr");
             }
-            out.push_str(&format!(
-                "from {root} import {}\n\n",
-                imported.join(", ")
-            ));
+            out.push_str(&format!("from {root} import {}\n\n", imported.join(", ")));
         }
 
         let package_types: Vec<(&'static str, &'static TypeSpec)> = types
@@ -580,14 +580,12 @@ pub fn pyi_files(capabilities: &[CapabilityDocs]) -> BTreeMap<String, String> {
         // `clock_*` 的别名表挂在根模块上（与 Lua / JS 一致；`clock.time()` 与
         // `clock.time()` 读绑定时钟）。
         if package == root
-            && capabilities
-                .iter()
-                .any(|capability| {
-                    capability
-                        .calls
-                        .iter()
-                        .any(|item| item.signature.name.starts_with("clock_"))
-                })
+            && capabilities.iter().any(|capability| {
+                capability
+                    .calls
+                    .iter()
+                    .any(|item| item.signature.name.starts_with("clock_"))
+            })
         {
             out.push_str("clock: Any\n\n");
         }

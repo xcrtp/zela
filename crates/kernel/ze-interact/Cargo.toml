@@ -13,11 +13,16 @@ serde = { workspace = true, optional = true }
 # 默认构建仍零依赖，启用方显式承担 glam 的间接依赖）。
 ze-render-ir = { path = "../ze-render-ir", optional = true }
 ze-notion = { path = "../ze-notion", optional = true }
+# CL-R：`StrategyId("kasuari")` 的求解后端。版本锁定在 workspace 一处。
+kasuari = { workspace = true, optional = true }
 
 [features]
 default = []
 serde = ["dep:serde"]
 widgets = ["dep:ze-render-ir", "dep:ze-notion"]
+# CL-R：约束求解策略。**不并进 `widgets`**：默认表达层不需要迭代求解，
+# 启用方（`zela-scene-ecs`）显式承担这份依赖。
+layout-kasuari = ["widgets", "dep:kasuari"]
 
 [dev-dependencies]
 serde_json.workspace = true

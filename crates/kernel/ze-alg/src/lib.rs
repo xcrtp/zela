@@ -467,7 +467,9 @@ pub fn spectral_radius_slice(a: &[Vec<f64>]) -> f64 {
             let disc = trace * trace - 4.0 * det;
             if disc >= 0.0 {
                 let root = disc.sqrt();
-                ((trace + root) / 2.0).abs().max(((trace - root) / 2.0).abs())
+                ((trace + root) / 2.0)
+                    .abs()
+                    .max(((trace - root) / 2.0).abs())
             } else {
                 det.abs().sqrt()
             }
@@ -515,12 +517,7 @@ pub fn affine_apply(a: &[Vec<f64>], b: &[f64], init: &[f64], n: u64) -> Vec<f64>
 }
 
 /// 多实例共享**一次**矩阵幂（每个结果与 [`affine_apply`] 逐位相同）。
-pub fn affine_apply_many(
-    a: &[Vec<f64>],
-    b: &[f64],
-    inits: &[Vec<f64>],
-    n: u64,
-) -> Vec<Vec<f64>> {
+pub fn affine_apply_many(a: &[Vec<f64>], b: &[f64], inits: &[Vec<f64>], n: u64) -> Vec<Vec<f64>> {
     let powered = affine_powered_matrix(a, b, n);
     inits
         .iter()
@@ -536,12 +533,7 @@ pub fn affine_replay(a: &[Vec<f64>], b: &[f64], init: &[f64], n: u64) -> Vec<f64
     let mut state = init.to_vec();
     for _ in 0..n {
         state = (0..a.len())
-            .map(|i| {
-                (0..a.len())
-                    .map(|j| a[i][j] * state[j])
-                    .sum::<f64>()
-                    + b[i]
-            })
+            .map(|i| (0..a.len()).map(|j| a[i][j] * state[j]).sum::<f64>() + b[i])
             .collect();
     }
     state
@@ -613,7 +605,10 @@ mod tests {
         assert_eq!(c[0], 1.0);
         assert!((c[1] + 1.97).abs() < 1e-15, "c1 = {}", c[1]);
         assert!((c[2] - 0.99).abs() < 1e-15, "c2 = {}", c[2]);
-        assert_eq!(&char_poly_slice(&matrix(&[&[1.0, 1.0], &[-0.02, 0.97]]))[..=2], &c[..=2]);
+        assert_eq!(
+            &char_poly_slice(&matrix(&[&[1.0, 1.0], &[-0.02, 0.97]]))[..=2],
+            &c[..=2]
+        );
     }
 
     #[test]

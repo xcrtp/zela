@@ -98,7 +98,11 @@ impl MiniPod {
             ze_pod_js::FINISH_PATH,
             &[],
             "Result<Box<dyn Any>, String>",
-            |pod, _| Ok(Box::new(mini(pod).finish().map(|out| Box::new(out) as Box<dyn Any>))),
+            |pod, _| {
+                Ok(Box::new(
+                    mini(pod).finish().map(|out| Box::new(out) as Box<dyn Any>),
+                ))
+            },
         );
 
         Self {
@@ -216,16 +220,14 @@ fn run(source: &str) -> MiniOutput {
 /// 双向：JS 调宿主能力、宿主取回结构化结果（与 `lua_mini.rs` 同形）。
 #[test]
 fn js_calls_host_and_host_runs_js() {
-    let out = run(
-        r#"
+    let out = run(r#"
         const dot = Dot({ x: 1.0, y: 2.0, r: 0.5 });
         scene.emit(3.5);
         scene.kind(Kind.Const);
         scene.kind(Kind.Weight({ value: 2.0 }));
         scene.emit(scene.total() + 1.0);
         scene.count(7);
-        "#,
-    );
+        "#);
     assert_eq!(out.dots, 1);
     assert_eq!(out.values, vec![3.5, 4.5], "宿主返回值被 JS 读回");
     assert_eq!(out.kinds, vec!["Const", "Weight(2)"]);
@@ -236,7 +238,9 @@ fn js_calls_host_and_host_runs_js() {
 #[test]
 fn js_pod_run_is_generic() {
     let (_, js, _) = assembly();
-    let out: MiniOutput = js.run("scene.emit(1.5); scene.emit(2.5)").expect("脚本成功");
+    let out: MiniOutput = js
+        .run("scene.emit(1.5); scene.emit(2.5)")
+        .expect("脚本成功");
     assert_eq!(out.values, vec![1.5, 2.5]);
 }
 
@@ -291,9 +295,7 @@ fn docs_are_complete_and_structural() {
 #[test]
 fn missing_injection_is_explicit() {
     let bare = JsPod::new();
-    let err = bare
-        .run::<MiniOutput>("1")
-        .expect_err("未注入 ⇒ 必须失败");
+    let err = bare.run::<MiniOutput>("1").expect_err("未注入 ⇒ 必须失败");
     assert!(err.to_string().contains("尚未注入"), "实际：{err}");
 }
 

@@ -19,7 +19,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use mlua::{Lua, Table, Value};
-use ze_pod_core::{Capability, FunctionId, QualifiedName, ServiceRequirement, Pod, PodError, PodId};
+use ze_pod_core::{
+    Capability, FunctionId, Pod, PodError, PodId, QualifiedName, ServiceRequirement,
+};
 
 /// `Injector` 的两个函数（与 `ze_pod_core::Injector::signatures()` 逐字一致）。
 pub const REQUIREMENTS_PATH: &str = "ze_pod_core::injector::requirements";
@@ -287,27 +289,28 @@ fn requirements_impl(pod: &dyn Pod) -> Vec<ServiceRequirement> {
     this.binders
         .borrow()
         .values()
-        .flat_map(|entries| entries.iter().flat_map(|entry| entry.requirements.iter().cloned()))
+        .flat_map(|entries| {
+            entries
+                .iter()
+                .flat_map(|entry| entry.requirements.iter().cloned())
+        })
         .collect()
 }
 
 fn inject_impl(pod: &dyn Pod, service: String, service_pod: Arc<dyn Pod>) -> Result<(), PodError> {
     let this = lua_pod(pod);
-    let entries: Vec<(fn(&Lua, &str, Arc<dyn Pod>) -> Result<(), PodError>, String)> = match this
-        .binders
-        .borrow()
-        .get(&service)
-    {
-        Some(entries) => entries
-            .iter()
-            .map(|entry| (entry.bind, entry.global.clone()))
-            .collect(),
-        None => {
-            return Err(PodError::CallFailed(format!(
-                "未知 Service `{service}`（能力未注册；先调用 `LuaPod::register_capability`）"
-            )));
-        }
-    };
+    let entries: Vec<(fn(&Lua, &str, Arc<dyn Pod>) -> Result<(), PodError>, String)> =
+        match this.binders.borrow().get(&service) {
+            Some(entries) => entries
+                .iter()
+                .map(|entry| (entry.bind, entry.global.clone()))
+                .collect(),
+            None => {
+                return Err(PodError::CallFailed(format!(
+                    "未知 Service `{service}`（能力未注册；先调用 `LuaPod::register_capability`）"
+                )));
+            }
+        };
     let mut state = this.state.borrow_mut();
     for (binder, global) in entries {
         binder(&state.lua, &global, Arc::clone(&service_pod))?;

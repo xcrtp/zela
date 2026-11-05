@@ -16,10 +16,10 @@ use std::collections::HashMap;
 
 use wgpu::util::DeviceExt as _;
 
+use ze_render_ir::LayerBlend;
 use zela_render::{
     AaModel, CacheStrategy, POST_UNIFORM_SIZE, PostFilterChain, Vertex2D, VertexLayout,
 };
-use ze_render_ir::LayerBlend;
 
 use crate::gpu_util::bytes_of;
 use crate::vertex_layout::to_wgpu;
@@ -99,10 +99,7 @@ pub struct CompositeOp {
 /// 保比例适配：把 `src`（源像素尺寸）按 contain 居中放进 `rect`（宽高比不一致时 letterbox）。
 ///
 /// `fit = None`、尺寸为 0、或矩形非正 ⇒ 原样返回（铺满）。
-pub fn fit_rect(
-    rect: (f32, f32, f32, f32),
-    fit: Option<(u32, u32)>,
-) -> (f32, f32, f32, f32) {
+pub fn fit_rect(rect: (f32, f32, f32, f32), fit: Option<(u32, u32)>) -> (f32, f32, f32, f32) {
     let Some((sw, sh)) = fit else {
         return rect;
     };
@@ -112,12 +109,7 @@ pub fn fit_rect(
     }
     let scale = (width / sw as f32).min(height / sh as f32);
     let (dw, dh) = (sw as f32 * scale, sh as f32 * scale);
-    (
-        left + (width - dw) * 0.5,
-        top + (height - dh) * 0.5,
-        dw,
-        dh,
-    )
+    (left + (width - dw) * 0.5, top + (height - dh) * 0.5, dw, dh)
 }
 
 /// 屏幕矩形 → 裁剪空间 `[x0, x1, y0, y1]`（y 轴翻转：屏幕 y 向下、NDC y 向上）。
@@ -859,8 +851,14 @@ mod tests {
         // contain ⇒ 高度受限：90 高 → 宽 120。
         assert!((fitted.2 - 120.0).abs() < 1e-4, "宽度应为 120：{fitted:?}");
         assert!((fitted.3 - 90.0).abs() < 1e-4, "高度应为 90：{fitted:?}");
-        assert!((fitted.0 - 20.0).abs() < 1e-4, "水平居中 ⇒ left = 20：{fitted:?}");
-        assert!((fitted.1 - 0.0).abs() < 1e-4, "垂直无黑边 ⇒ top = 0：{fitted:?}");
+        assert!(
+            (fitted.0 - 20.0).abs() < 1e-4,
+            "水平居中 ⇒ left = 20：{fitted:?}"
+        );
+        assert!(
+            (fitted.1 - 0.0).abs() < 1e-4,
+            "垂直无黑边 ⇒ top = 0：{fitted:?}"
+        );
         // 比例不变（宽/高 == 源比例）。
         assert!((fitted.2 / fitted.3 - 4.0 / 3.0).abs() < 1e-4);
     }

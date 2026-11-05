@@ -10,10 +10,10 @@
 
 use std::any::Any;
 
+use crate::pod::Pod;
 use crate::qualified::QualifiedName;
 use crate::type_name::PodTypeName;
 use crate::typespec::ErasedFn;
-use crate::pod::Pod;
 
 /// capability 的自述元数据（全部可选，缺省为"无"）。
 ///

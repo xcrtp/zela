@@ -28,10 +28,10 @@ use zela_render_backends::{
 use zela_scene_ecs::DriverCommand;
 use zela_scene_ecs::contract::WorldView;
 
+use zela_render_backends::RoutingDecision;
 use zela_render_backends::gpu_timing::{GpuSpan, GpuTimingSupport};
 use zela_render_backends::routing as backend_router;
 pub use zela_render_backends::routing::LoopBackend;
-use zela_render_backends::RoutingDecision;
 
 /// 一次渲染作业的画幅 / 帧率 / 后端。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -345,7 +345,6 @@ pub fn frames_for(runtime: &Runtime, fps: f64) -> u32 {
     .max(1)
 }
 
-
 /// 矢量后端自述的能力（B10 Step 4）：后处理四项全开，采样数取 4（与 2D 路径同口径）。
 /// 只用于 [`zela_scene_bundle::RenderParams::default_for`]：**默认值绑后端能力**的机制
 /// 需要一份 `Capabilities`，而矢量后端不走 `StandardBackends`（进程级开关）。
@@ -521,10 +520,7 @@ pub fn run_frames(
 
         // **与 GUI 同一条命令**：固定 dt（导出比实时墙钟更确定）。
         let mark = Instant::now();
-        runtime
-            .driver
-            .submit(DriverCommand::Advance { dt })
-            .wait();
+        runtime.driver.submit(DriverCommand::Advance { dt }).wait();
         timing.advance = mark.elapsed();
 
         // 结构指纹：**推进之后、渲染之前** —— 与"这一帧画的就是这个状态"同口径。
@@ -532,7 +528,9 @@ pub fn run_frames(
         structure.push(runtime.driver.with_scheduler(|scheduler| {
             zela_scene_ecs::fingerprint_world(
                 scheduler.world(),
-                scheduler.resources().get::<zela_scene_ecs::WorldTransforms>(),
+                scheduler
+                    .resources()
+                    .get::<zela_scene_ecs::WorldTransforms>(),
             )
         }));
 
@@ -657,9 +655,8 @@ pub fn run_frames(
                 .ok_or_else(|| "本帧没有可渲染图层（场景为空）".to_string())?;
             timing.build = mark.elapsed();
 
-            let (pixels, headless) = render_frame_headless_cached_timed(
-                ctx, backends, &callback, screen, clear, target,
-            );
+            let (pixels, headless) =
+                render_frame_headless_cached_timed(ctx, backends, &callback, screen, clear, target);
             timing.prepare = headless.render.prepare;
             timing.paint = headless.render.paint;
             timing.submit = headless.render.submit;

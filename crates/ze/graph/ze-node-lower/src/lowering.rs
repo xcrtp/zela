@@ -123,9 +123,9 @@ fn pull_input(
     match upstream.as_slice() {
         [] => Err(LowerError::MissingInput { node, input: index }),
         [source] => {
-            let exprs = outputs
-                .get(&source.node())
-                .ok_or(LowerError::MissingNode { node: source.node() })?;
+            let exprs = outputs.get(&source.node()).ok_or(LowerError::MissingNode {
+                node: source.node(),
+            })?;
             exprs
                 .get(source.index() as usize)
                 .cloned()
@@ -296,7 +296,7 @@ mod tests {
     impl Mul {
         fn new() -> Self {
             Self {
-                 meta: NodeMeta::new("test.mul", 1),
+                meta: NodeMeta::new("test.mul", 1),
                 inputs: (0..2)
                     .map(|i| InputSocket::new(f32_tag()).with_index(i as u32))
                     .collect(),

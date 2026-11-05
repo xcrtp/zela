@@ -138,7 +138,8 @@ fn adjacency<T: Topology>(
     nodes: &BTreeSet<T::Id>,
     reverse: bool,
 ) -> BTreeMap<T::Id, Vec<T::Id>> {
-    let mut map: BTreeMap<T::Id, Vec<T::Id>> = nodes.iter().map(|&node| (node, Vec::new())).collect();
+    let mut map: BTreeMap<T::Id, Vec<T::Id>> =
+        nodes.iter().map(|&node| (node, Vec::new())).collect();
     for &node in nodes {
         let edges = if reverse {
             graph.predecessors(node)

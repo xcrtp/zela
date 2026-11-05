@@ -2,9 +2,7 @@
 
 use std::any::Any;
 
-use ze_node_core::{
-    DirtyPolicy, InputSocket, NamedTypeTag, Node, NodeMeta, OutputSocket, TypeTag,
-};
+use ze_node_core::{DirtyPolicy, InputSocket, NamedTypeTag, Node, NodeMeta, OutputSocket, TypeTag};
 
 /// Configurable test node: `n_in` inputs and `n_out` outputs, all carrying
 /// the same named type tag.

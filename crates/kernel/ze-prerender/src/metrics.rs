@@ -78,7 +78,8 @@ impl MetricsDb {
     fn from_database(db: fontdb::Database) -> Result<Self, MetricsError> {
         let mut faces = Vec::new();
         for info in db.faces() {
-            let Some((data, index)) = db.with_face_data(info.id, |data, index| (data.to_vec(), index))
+            let Some((data, index)) =
+                db.with_face_data(info.id, |data, index| (data.to_vec(), index))
             else {
                 continue;
             };

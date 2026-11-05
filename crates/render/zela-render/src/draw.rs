@@ -108,6 +108,65 @@ pub struct DrawQueue {
 // 迁往场景对象层 `ze-object` —— 那里才是"实现里含本地类型"的合法落点
 // （孤儿规则）。本模块只保留"队列便捷方法"用的**已是屏幕空间**的构造。
 
+/// **CL-R**：把控件命令列表（**世界坐标**）录进 2D 队列。
+///
+/// 解除 CL-08：渲染器不再只认 `Rect` / `Path` / `Circle` 组件，而是消费表达层的
+/// `Vec<DrawCommand>`（20 行 HUD = 20 个声明实体，不再有逐字形实体）。
+/// `Shape2D` 变体零改动；世界 → 屏幕的换算仍只发生在本 crate（唯一换算点）。
+pub fn record_widget_commands(commands: &[DrawCommand], camera: &Camera2D, queue: &mut DrawQueue) {
+    let affine = camera.to_transform2d();
+    for command in commands {
+        let Some(shape) = transform_shape(&command.shape, &affine) else {
+            continue;
+        };
+        let mut style = command.style.clone();
+        if style.stroke.is_some() {
+            style.stroke_width *= camera.scale;
+        }
+        queue.push(DrawCommand::new(command.z, shape, style));
+    }
+}
+
+/// 单个世界图元 → 屏幕图元（相机仿射）。不认识的变体 ⇒ `None`（显式跳过，不猜）。
+fn transform_shape(shape: &Shape2D, affine: &Affine2D) -> Option<Shape2D> {
+    match shape {
+        Shape2D::Empty => None,
+        Shape2D::Rect(rect) => Some(Shape2D::Rect(ze_notion::Rect2D::new(
+            affine.apply_point(rect.min),
+            affine.apply_point(rect.max),
+        ))),
+        Shape2D::Circle { center, radius } => Some(Shape2D::Circle {
+            center: affine.apply_point(*center),
+            radius: *radius * affine_scale(affine),
+        }),
+        Shape2D::Ellipse { center, rx, ry } => Some(Shape2D::Ellipse {
+            center: affine.apply_point(*center),
+            rx: *rx * affine_scale(affine),
+            ry: *ry * affine_scale(affine),
+        }),
+        Shape2D::Line { start, end } => Some(Shape2D::Line {
+            start: affine.apply_point(*start),
+            end: affine.apply_point(*end),
+        }),
+        Shape2D::Polyline { points } => Some(Shape2D::Polyline {
+            points: points.iter().map(|p| affine.apply_point(*p)).collect(),
+        }),
+        Shape2D::Polygon { points } => Some(Shape2D::Polygon {
+            points: points.iter().map(|p| affine.apply_point(*p)).collect(),
+        }),
+        Shape2D::Path(path) => Some(Shape2D::Path(path.transformed(affine))),
+        // 分组 / 宿主自定义图元不属控件输出；跳过而不是猜语义。
+        _ => None,
+    }
+}
+
+/// 相机仿射的均匀缩放（平移列之外的 2×2 部分的 x 长度）。
+fn affine_scale(affine: &Affine2D) -> f32 {
+    let origin = affine.apply_point(ze_notion::Vec2::ZERO);
+    let unit = affine.apply_point(ze_notion::Vec2::new(1.0, 0.0));
+    (unit - origin).length()
+}
+
 fn rect_shape(r: &Rect) -> Shape2D {
     Shape2D::Rect(r.0)
 }
@@ -135,10 +194,7 @@ impl DrawQueue {
     }
 
     /// 追加一条 Surface 路由错误（crate 内录制使用）。
-    pub(crate) fn push_surface_error(
-        &mut self,
-        error: crate::surface_route::SurfaceRecordError,
-    ) {
+    pub(crate) fn push_surface_error(&mut self, error: crate::surface_route::SurfaceRecordError) {
         self.surface_errors.push(error);
     }
 
@@ -660,7 +716,14 @@ fn record_group<S, A, B>(
         // B3 Step 2：Surface 显式路由。Renderer3D ⇒ 派生为网格（不再走 2D）；
         // Renderer2D / 无 Surface ⇒ 默认 2D 路径（像素逐位不变）。
         if crate::surface_route::try_record_direct(
-            scene, id, a, b, z.copied(), worlds, inherit, queue,
+            scene,
+            id,
+            a,
+            b,
+            z.copied(),
+            worlds,
+            inherit,
+            queue,
         ) {
             return;
         }
@@ -674,9 +737,7 @@ fn record_group<S, A, B>(
         // S5：优先用父子累乘的**世界矩阵**（S1：2D 读投影视图）；缺席 WorldTransforms / 该对象 ⇒ local。
         // 无 `Parent` 时 WorldTransforms 存的就是 local 的逐位拷贝 ⇒ 默认行为不变。
         let local = scene.with::<Transform, _>(id, |tr| tr.to_affine2d());
-        let obj = worlds
-            .and_then(|w| w.get2d(id))
-            .or(local);
+        let obj = worlds.and_then(|w| w.get2d(id)).or(local);
         let world_t = match obj {
             Some(obj) => obj.compose(*t),
             None => *t,
@@ -709,13 +770,13 @@ fn paint_of<S: SceneRead>(
     world_t: &ze_notion::Transform2D,
     scale: f32,
 ) -> ze_render_ir::PathOptions {
-    use ze_render_ir::{
-        BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint,
-    };
+    use ze_render_ir::{BackgroundStroke, CurveWindow, Dash, Gradient, PathOptions, SecondPaint};
     let mut paint = PathOptions::default();
     if let Some(gradient) = scene.with::<Gradient, _>(id, |g| {
         let place = |p: [f32; 3]| {
-            let screen = world_t.matrix.transform_point2(ze_notion::Vec2::new(p[0], p[1]));
+            let screen = world_t
+                .matrix
+                .transform_point2(ze_notion::Vec2::new(p[0], p[1]));
             [screen.x, screen.y, 0.0]
         };
         Gradient {
@@ -744,7 +805,10 @@ fn paint_of<S: SceneRead>(
     // **阶段 2（着色 codegen）**：装饰性 —— 颜色由生成的 WGSL 在 GPU 上算。
     if let Some(shader) = scene.with::<ze_render_ir::ShaderPaint, _>(id, |s| s.clone()) {
         if std::env::var_os("ZELA_CODEGEN_TRACE").is_some() {
-            eprintln!("[codegen] 对象 {id:?} 挂着色程序（{} 字节 WGSL）", shader.source.len());
+            eprintln!(
+                "[codegen] 对象 {id:?} 挂着色程序（{} 字节 WGSL）",
+                shader.source.len()
+            );
         }
         paint.shader = Some(shader);
     }
@@ -824,18 +888,117 @@ pub fn record_scene_tagged_with<S: SceneRead>(
     let t = camera.to_transform2d();
     let scale = camera.scale;
 
-    record_group::<S, Circle, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
-    record_group::<S, Circle, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
-    record_group::<S, Path, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
-    record_group::<S, Path, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
-    record_group::<S, Line, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
-    record_group::<S, Rect, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
-    record_group::<S, Rect, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Circle, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
+    record_group::<S, Circle, FillSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
+    record_group::<S, Path, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
+    record_group::<S, Path, FillSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
+    record_group::<S, Line, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
+    record_group::<S, Rect, FillSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
+    record_group::<S, Rect, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
     // T2：箭头是**一等图元**，两种样式各一组（`FillSolid` ⇒ 实心箭头，`StrokeSolid` ⇒ 空心）。
     // 加在既有 7 组之后 ⇒ 同 `z` 下的绘制顺序向后追加，**不影响**已有对象之间的相对顺序
     // （`DrawQueue` 稳定排序）。
-    record_group::<S, Arrow, StrokeSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
-    record_group::<S, Arrow, FillSolid>(scene, &t, scale, camera_tag, groups, worlds, inherit, queue, Z, SurfaceScope::Viewport);
+    record_group::<S, Arrow, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
+    record_group::<S, Arrow, FillSolid>(
+        scene,
+        &t,
+        scale,
+        camera_tag,
+        groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Viewport,
+    );
 }
 
 /// **内容层录制**（B3 Step 1）：只录归属某 `Surface` 的 2D 对象。
@@ -858,15 +1021,114 @@ pub fn record_scene_for_surface<S: SceneRead>(
     let scale = camera.scale;
     let groups = GroupVisibility::default();
 
-    record_group::<S, Circle, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Circle, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Path, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Path, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Line, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Rect, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Rect, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Arrow, StrokeSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
-    record_group::<S, Arrow, FillSolid>(scene, &t, scale, None, &groups, worlds, inherit, queue, Z, SurfaceScope::Content(surface));
+    record_group::<S, Circle, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Circle, FillSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Path, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Path, FillSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Line, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Rect, FillSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Rect, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Arrow, StrokeSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
+    record_group::<S, Arrow, FillSolid>(
+        scene,
+        &t,
+        scale,
+        None,
+        &groups,
+        worlds,
+        inherit,
+        queue,
+        Z,
+        SurfaceScope::Content(surface),
+    );
 }
 
 /// 录制**单个**路径描边实体到队列（z=0，与 [`record_scene`] 同口径）。
@@ -1142,7 +1404,10 @@ mod tests {
     fn test_scene_render_path_stroke() {
         let mut world = TestScene::new();
         let path = Path::new(Path2D::from_polyline(
-            &[ze_notion::Vec2::new(0.0, 0.0), ze_notion::Vec2::new(1.0, 1.0)],
+            &[
+                ze_notion::Vec2::new(0.0, 0.0),
+                ze_notion::Vec2::new(1.0, 1.0),
+            ],
             false,
         ));
         world.spawn((path, StrokeSolid::new(1.0, (0, 0, 255, 255))));
@@ -1173,7 +1438,10 @@ mod tests {
             FillSolid::new((0, 255, 0, 128)),
         ));
         let path = Path::new(Path2D::from_polyline(
-            &[ze_notion::Vec2::new(0.0, 0.0), ze_notion::Vec2::new(1.0, 1.0)],
+            &[
+                ze_notion::Vec2::new(0.0, 0.0),
+                ze_notion::Vec2::new(1.0, 1.0),
+            ],
             false,
         ));
         world.spawn((path, FillSolid::new((0, 0, 255, 255))));
@@ -1225,7 +1493,10 @@ mod tests {
     }
     fn mk_path() -> Path {
         Path::new(Path2D::from_polyline(
-            &[ze_notion::Vec2::new(0.0, 0.0), ze_notion::Vec2::new(1.0, 0.0)],
+            &[
+                ze_notion::Vec2::new(0.0, 0.0),
+                ze_notion::Vec2::new(1.0, 0.0),
+            ],
             false,
         ))
     }
@@ -1536,7 +1807,11 @@ mod tests {
     fn absent_or_identity_transform_is_bit_identical() {
         let mut world = TestScene::new();
         world.spawn((mk_circle(3.0), mk_stroke()));
-        world.spawn((mk_circle(3.0), mk_stroke(), ze_scene_core::Transform::default()));
+        world.spawn((
+            mk_circle(3.0),
+            mk_stroke(),
+            ze_scene_core::Transform::default(),
+        ));
         // spawn 顺序 = 查询顺序 ⇒ 两条命令一一对应。
         let mut q = DrawQueue::new();
         record_scene(&world, &cam_with_scale(10.0), &mut q);
@@ -1612,7 +1887,10 @@ mod tests {
         // 基准（未摆放）：世界 (0,0)→(1,0) ⇒ 屏幕 (50,50)→(60,50)。
         assert_eq!(
             (*s0, *e0),
-            (ze_notion::Vec2::new(50.0, 50.0), ze_notion::Vec2::new(60.0, 50.0))
+            (
+                ze_notion::Vec2::new(50.0, 50.0),
+                ze_notion::Vec2::new(60.0, 50.0)
+            )
         );
 
         let Shape2D::Line { start: s1, end: e1 } = &q.commands()[1].shape else {

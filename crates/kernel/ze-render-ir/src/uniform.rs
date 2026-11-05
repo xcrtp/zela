@@ -118,7 +118,10 @@ impl UniformLayout {
 
     /// 按名字取字段偏移（消费者用；未声明即 `None`，不静默返回 0）。
     pub fn offset_of(&self, name: &str) -> Option<u32> {
-        self.fields.iter().find(|f| f.name == name).map(|f| f.offset)
+        self.fields
+            .iter()
+            .find(|f| f.name == name)
+            .map(|f| f.offset)
     }
 
     /// 校验：对齐 / 不重叠 / size 覆盖。

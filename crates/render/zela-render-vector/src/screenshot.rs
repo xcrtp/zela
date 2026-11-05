@@ -59,8 +59,8 @@ pub fn read_texture_rgba(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, String> {
-    let padded_row =
-        (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("zela-debug-screenshot"),
         size: u64::from(padded_row) * u64::from(height),
@@ -97,7 +97,9 @@ pub fn read_texture_rgba(
     device
         .poll(wgpu::PollType::wait_indefinitely())
         .map_err(|error| error.to_string())?;
-    let mapped = slice.get_mapped_range().map_err(|error| error.to_string())?;
+    let mapped = slice
+        .get_mapped_range()
+        .map_err(|error| error.to_string())?;
     let rgba = unpad_rows(&mapped, width, height, padded_row)?;
     drop(mapped);
     buffer.unmap();
@@ -115,7 +117,10 @@ mod tests {
         padded[0..8].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         padded[256..264].copy_from_slice(&[9, 10, 11, 12, 13, 14, 15, 16]);
         let rgba = unpad_rows(&padded, 2, 2, 256).expect("缓冲足够");
-        assert_eq!(rgba, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+        assert_eq!(
+            rgba,
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
     }
 
     /// **CJ-05（B6）**：短缓冲 / 非法行宽返回显式错误，不 panic。
@@ -123,6 +128,9 @@ mod tests {
     fn unpadding_rejects_short_buffers_and_narrow_rows() {
         let short = vec![0u8; 8];
         assert!(unpad_rows(&short, 2, 2, 256).is_err(), "短缓冲必须报错");
-        assert!(unpad_rows(&[0u8; 256], 2, 1, 4).is_err(), "行宽小于紧凑行宽必须报错");
+        assert!(
+            unpad_rows(&[0u8; 256], 2, 1, 4).is_err(),
+            "行宽小于紧凑行宽必须报错"
+        );
     }
 }

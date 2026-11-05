@@ -12,9 +12,7 @@
 
 use std::any::Any;
 
-use ze_comb::{
-    ChannelRef, CompiledExpr, EvalError as CombEvalError, Expr, Mono, OpRef, Value,
-};
+use ze_comb::{ChannelRef, CompiledExpr, EvalError as CombEvalError, Expr, Mono, OpRef, Value};
 use ze_graph_algo::KahnSorter;
 use ze_graph_eval::LazyPullEval;
 use ze_node_core::{
@@ -390,10 +388,9 @@ fn rule_rejection_names_the_node() {
     let mut graph = SimpleGraph::default();
     let node = graph.add_node(Box::new(PureNode::scalar(1.0)));
     let mut lowering = Lowering::new();
-    lowering.register(
-        "test.const.f64",
-        |_node: &dyn Node, _inputs: &[Expr]| Err(RuleError::new("本用例故意拒绝")),
-    );
+    lowering.register("test.const.f64", |_node: &dyn Node, _inputs: &[Expr]| {
+        Err(RuleError::new("本用例故意拒绝"))
+    });
     let error = lowering.lower(&graph).unwrap_err();
     assert_eq!(
         error,

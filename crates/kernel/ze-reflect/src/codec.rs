@@ -13,9 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use ze_type::layout::{
-    decode_path, encode_path, decode_record, encode_record,
-};
+use ze_type::layout::{decode_path, decode_record, encode_path, encode_record};
 use ze_type::{Blame, Layout, LayoutError, NameKind, Record, ReflectError, Transcode};
 
 /// 命名类型的注册表：名字 → Layout（`None` = 没有 Layout，永远走慢路径）。
@@ -127,7 +125,12 @@ pub trait Codec {
     /// typed 形式。
     type Item;
 
-    fn decode(&self, ty: &str, bytes: &[u8], layout: Option<Layout>) -> Result<Self::Item, LayoutError>;
+    fn decode(
+        &self,
+        ty: &str,
+        bytes: &[u8],
+        layout: Option<Layout>,
+    ) -> Result<Self::Item, LayoutError>;
 
     fn encode(&self, item: &Self::Item, layout: Option<Layout>) -> Result<Vec<u8>, LayoutError>;
 }
@@ -139,7 +142,12 @@ pub struct RecordCodec;
 impl Codec for RecordCodec {
     type Item = Record;
 
-    fn decode(&self, ty: &str, bytes: &[u8], layout: Option<Layout>) -> Result<Record, LayoutError> {
+    fn decode(
+        &self,
+        ty: &str,
+        bytes: &[u8],
+        layout: Option<Layout>,
+    ) -> Result<Record, LayoutError> {
         decode_record(ty, bytes, layout)
     }
 
@@ -184,9 +192,9 @@ pub fn decode_path_bytes(bytes: &[u8]) -> Result<(Vec<[f32; 2]>, bool), LayoutEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ze_type::layout::VEC2_FIELDS;
     use ze_type::Record;
     use ze_type::Scalar;
+    use ze_type::layout::VEC2_FIELDS;
 
     const VEC2_LAYOUT: Layout = Layout::new(8, 4, VEC2_FIELDS);
     const SWAPPED_FIELDS: &[ze_type::FieldLayout] = &[
@@ -200,7 +208,10 @@ mod tests {
         let registry = TypeRegistry::builtin();
         assert_eq!(registry.layout("zela.Vec2"), Some(VEC2_LAYOUT));
         assert_eq!(registry.layout("zela.Vec3").unwrap().size, 12);
-        assert!(registry.layout("zela.Path").is_none(), "变长类型没有 Layout");
+        assert!(
+            registry.layout("zela.Path").is_none(),
+            "变长类型没有 Layout"
+        );
     }
 
     #[test]

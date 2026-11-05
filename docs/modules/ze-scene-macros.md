@@ -11,13 +11,13 @@
 - 路径：`crates/scene/ze-scene-macros`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-core`
-- 源文件：1 个 · 444 行
+- 源文件：1 个 · 451 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 444 | 场景层的 proc-macro：`#[derive(SceneComponent)]` 与 `#[derive(Channels)]`。 |
+| `src/lib.rs` | 451 | 场景层的 proc-macro：`#[derive(SceneComponent)]` 与 `#[derive(Channels)]`。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

@@ -11,16 +11,16 @@
 - 路径：`crates/kernel/ze-time`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-core`、`zela-authored`、`zela-scene-ecs`
-- 源文件：6 个 · 1520 行
+- 源文件：6 个 · 1536 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/clock.rs` | 500 | — |
-| `src/curve.rs` | 609 | — |
+| `src/curve.rs` | 622 | — |
 | `src/director.rs` | 236 | — |
-| `src/easing.rs` | 143 | — |
+| `src/easing.rs` | 146 | — |
 | `src/error.rs` | 14 | — |
 | `src/lib.rs` | 18 | — |
 

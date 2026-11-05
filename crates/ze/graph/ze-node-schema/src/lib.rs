@@ -29,16 +29,16 @@ pub mod spec;
 // The property vocabulary itself lives in the kernel now (CA-a). Re-export the
 // **modules** as well as the items: `ze_node_schema::property::Property` and
 // `crate::dynamic::DynamicObject` paths keep resolving for existing callers.
-pub use ze_property::{dynamic, error, property};
+pub use dynamic_node::{DynamicNode, DynamicNodeBuilder};
+pub use registry::{NodeRegistry, RegistryCategory, RegistryNodeInfo};
+pub use spec::{NodeSpec, property_schema, property_value};
 pub use ze_property::{
     BoolConfig, ColorConfig, DoubleConfig, DynamicConfig, DynamicField, DynamicObject, EnumConfig,
     FunctionConfig, FunctionHandle, IntegerConfig, ListConfig, ParameterEntry, ParameterRegistry,
     Property, PropertyError, PropertyValue, RangeConfig, ScalarConfig, StringConfig, StringKind,
     VEC_MAX_COMPONENTS, VecNConfig,
 };
-pub use dynamic_node::{DynamicNode, DynamicNodeBuilder};
-pub use registry::{NodeRegistry, RegistryCategory, RegistryNodeInfo};
-pub use spec::{NodeSpec, property_schema, property_value};
+pub use ze_property::{dynamic, error, property};
 
 /// Re-export of the `#[derive(NodeSpec)]` proc-macro.
 ///

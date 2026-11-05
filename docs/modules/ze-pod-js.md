@@ -11,15 +11,15 @@
 - 路径：`crates/ze/pod/ze-pod-js`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`
 - 被依赖（下游）：`ze-pod-tests`、`zela-app`、`zela-commands`
-- 源文件：4 个 · 1473 行
+- 源文件：4 个 · 1478 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/binding.rs` | 741 | — |
-| `src/export.rs` | 348 | — |
-| `src/js_pod.rs` | 346 | — |
+| `src/binding.rs` | 735 | — |
+| `src/export.rs` | 350 | — |
+| `src/js_pod.rs` | 355 | — |
 | `src/lib.rs` | 38 | JS 适配器（boa）：能力注入 + 宿主 → 脚本入口。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

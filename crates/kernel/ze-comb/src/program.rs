@@ -175,11 +175,7 @@ impl Scalar {
         if (self.ty, self.dim) != (ScalarKind::F32, 3) {
             return None;
         }
-        Some([
-            self.lane_f32(0)?,
-            self.lane_f32(1)?,
-            self.lane_f32(2)?,
-        ])
+        Some([self.lane_f32(0)?, self.lane_f32(1)?, self.lane_f32(2)?])
     }
 
     /// `F32 × 4` 视图（`Vec4`）。
@@ -212,7 +208,10 @@ impl Scalar {
             ScalarKind::U8 => "u8",
             // 构造函数已拒绝这两个：`Bool` 有独立变体，`String` 是变长（阶段 2 下沉 Bytes）。
             ScalarKind::Bool | ScalarKind::String => {
-                panic!("Scalar 不承载 {ty:?}（Bool 走 Value::Bool，String 走 Value::Bytes + zela.Text）", ty = self.ty)
+                panic!(
+                    "Scalar 不承载 {ty:?}（Bool 走 Value::Bool，String 走 Value::Bytes + zela.Text）",
+                    ty = self.ty
+                )
             }
         }
     }
@@ -312,11 +311,11 @@ impl<'de> serde::Deserialize<'de> for Scalar {
         }
 
         let wire = Wire::deserialize(deserializer)?;
-        let ty = kind_from_code(&wire.ty).ok_or_else(|| {
-            serde::de::Error::custom(format!("未知标量种类 `{}`", wire.ty))
+        let ty = kind_from_code(&wire.ty)
+            .ok_or_else(|| serde::de::Error::custom(format!("未知标量种类 `{}`", wire.ty)))?;
+        let width = Scalar::lane_width(ty).ok_or_else(|| {
+            serde::de::Error::custom(format!("标量种类 `{}` 不能承载值", wire.ty))
         })?;
-        let width = Scalar::lane_width(ty)
-            .ok_or_else(|| serde::de::Error::custom(format!("标量种类 `{}` 不能承载值", wire.ty)))?;
         if wire.dim == 0 || wire.dim > SCALAR_MAX_DIM {
             return Err(serde::de::Error::custom(format!(
                 "标量维度必须在 1..=4，实际 {}",
@@ -372,9 +371,7 @@ fn kind_from_code(code: &str) -> Option<ScalarKind> {
 }
 
 /// 带类型名的字节块。
-#[derive(
-    Clone, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ValueBytes {
     /// 命名类型（`zela.Path` / `acme.Tensor` …）。
     pub ty: String,
@@ -787,14 +784,20 @@ pub enum Step {
     /// `object` 是 `ObjectId` 打包值：`commit` 时场景层把 `Node::Read.object`
     /// （脚本局部句柄下标）重写为 `index:u32<<32 | generation:u32` 再编译，
     /// 运行期经 [`Mono::read_object`] 解包读组件。
-    Read { channel: ChannelRef, object: u64 },
+    Read {
+        channel: ChannelRef,
+        object: u64,
+    },
     /// **方法调用**（B2）：实参在 `args` 里，`object` 是对象打包值。
     Method {
         method: MethodRef,
         object: u64,
         args: Vec<usize>,
     },
-    Call { op: OpRef, args: Vec<usize> },
+    Call {
+        op: OpRef,
+        args: Vec<usize>,
+    },
     /// **值分支**（H 批）：`cond` 是外层程序里的索引，两个分支各自是**独立子程序**。
     ///
     /// 子程序形态让"惰性"成为结构性事实：只有被选中的那一支会被 `eval`，
@@ -956,7 +959,7 @@ impl CompiledExpr {
                     None => {
                         return Err(EvalError::SelectCondition {
                             actual: value_kind(&values[*cond]),
-                        })
+                        });
                     }
                 },
                 Step::NatRec { count, init, step } => {
@@ -965,7 +968,7 @@ impl CompiledExpr {
                         _ => {
                             return Err(EvalError::RecCount {
                                 actual: value_kind(&values[*count]),
-                            })
+                            });
                         }
                     };
                     if count > REC_MAX_STEPS {
@@ -988,14 +991,7 @@ impl CompiledExpr {
                         Some(cache) if cache.count <= count => Some((cache.value, cache.count)),
                         _ => None,
                     };
-                    let state = Self::fold(
-                        mono,
-                        context.element,
-                        count,
-                        init,
-                        step,
-                        seed,
-                    )?;
+                    let state = Self::fold(mono, context.element, count, init, step, seed)?;
                     if owns_cache {
                         context.cache = Some(RecCache {
                             count,
@@ -1025,7 +1021,7 @@ impl CompiledExpr {
                     let count = match mono.frame_index() {
                         Some(value) if value >= 0 => value,
                         Some(value) => {
-                            return Err(EvalError::FrameIndex { actual: value })
+                            return Err(EvalError::FrameIndex { actual: value });
                         }
                         None => return Err(EvalError::FrameContext),
                     };
@@ -1039,11 +1035,15 @@ impl CompiledExpr {
                 }
                 Step::RecPrev => match &context.rec {
                     Some(frame) => frame.prev.clone(),
-                    None => return Err(EvalError::RecContext { leaf: "rec_prev" }),
+                    None => {
+                        return Err(EvalError::RecContext { leaf: "rec_prev" });
+                    }
                 },
                 Step::RecIndex => match &context.rec {
                     Some(frame) => Value::i64(frame.index),
-                    None => return Err(EvalError::RecContext { leaf: "rec_index" }),
+                    None => {
+                        return Err(EvalError::RecContext { leaf: "rec_index" });
+                    }
                 },
                 Step::UnfoldedExists => return Err(EvalError::UnfoldedExists),
                 Step::Method {
@@ -1051,11 +1051,13 @@ impl CompiledExpr {
                     object,
                     args,
                 } => {
-                    let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
+                    let args: Vec<Value> =
+                        args.iter().map(|&index| values[index].clone()).collect();
                     mono.call_method(method, *object, &args)?
                 }
                 Step::Call { op, args } => {
-                    let args: Vec<Value> = args.iter().map(|&index| values[index].clone()).collect();
+                    let args: Vec<Value> =
+                        args.iter().map(|&index| values[index].clone()).collect();
                     mono.call(op, &args)?
                 }
             };
@@ -1500,7 +1502,10 @@ mod tests {
             .unwrap()
             .eval(&mono)
             .unwrap();
-            assert_eq!(driven, replay, "frame {frame}: 二维 State 与重放必须逐位相同");
+            assert_eq!(
+                driven, replay,
+                "frame {frame}: 二维 State 与重放必须逐位相同"
+            );
         }
 
         // **压力用例**（计划 §7.4）：高刚度 + 长序列。判据不变（逐位相同），
@@ -1528,7 +1533,11 @@ mod tests {
         .unwrap();
         let mono = Vec2Mono { frame: 2000 };
         let driven = stiff.eval(&mono).unwrap();
-        assert_eq!(driven, replay.eval(&mono).unwrap(), "高刚度长序列必须逐位相同");
+        assert_eq!(
+            driven,
+            replay.eval(&mono).unwrap(),
+            "高刚度长序列必须逐位相同"
+        );
         match &driven {
             Value::Scalar(scalar) => {
                 let [x, v] = scalar.as_vec2().expect("状态是 Vec2");
@@ -1540,10 +1549,13 @@ mod tests {
 
     /// 共享节点：`h1 = sin(t × 1)`，根 = `h1 + 2 × h1`。
     fn shared_tree() -> Expr {
-        let h1 = Expr::call(math("sin"), [Expr::call(math("mul"), [
-            Expr::channel(ChannelRef::builtin("time")),
-            Expr::pure(1.0),
-        ])])
+        let h1 = Expr::call(
+            math("sin"),
+            [Expr::call(
+                math("mul"),
+                [Expr::channel(ChannelRef::builtin("time")), Expr::pure(1.0)],
+            )],
+        )
         .with_id("h1");
         Expr::call(
             math("add"),
@@ -1684,7 +1696,8 @@ mod tests {
     #[test]
     fn read_without_host_impl_fails_explicitly() {
         let expr = Expr::read(
-            ChannelRef::new("zela.scene", "Circle.radius").with_type(crate::expr::ChannelType::Number),
+            ChannelRef::new("zela.scene", "Circle.radius")
+                .with_type(crate::expr::ChannelType::Number),
             7,
         );
         let program = CompiledExpr::compile(&expr).expect("Read 是叶子，编译必然成功");
@@ -1727,7 +1740,11 @@ mod tests {
         assert_eq!(bytes.kind(), "bytes");
         let canonical = bytes.canonical_bytes();
         assert_eq!(canonical[0], 5, "Bytes 的规范标签");
-        assert!(canonical.windows("zela.Path".len()).any(|w| w == b"zela.Path"));
+        assert!(
+            canonical
+                .windows("zela.Path".len())
+                .any(|w| w == b"zela.Path")
+        );
     }
 
     /// **阶段 1 门禁（§0.1）**：`Scalar` 能承载哪些 `ScalarKind` 必须**逐条登记**。
@@ -1750,7 +1767,10 @@ mod tests {
             .map(|kind| kind_code(*kind))
             .collect();
 
-        assert_eq!(payload, vec!["f32", "f64", "i32", "i64", "u32", "u64", "u8"]);
+        assert_eq!(
+            payload,
+            vec!["f32", "f64", "i32", "i64", "u32", "u64", "u8"]
+        );
         assert_eq!(
             rejected,
             vec!["bool", "string"],
@@ -1767,10 +1787,16 @@ mod tests {
         assert_eq!(Value::vec3([1.0, 2.0, 3.0]).kind(), "vec3");
         assert_eq!(Value::vec4([1.0, 2.0, 3.0, 4.0]).kind(), "vec4");
 
-        assert_eq!(Value::vec3([1.0, 2.0, 3.0]).as_vec3(), Some([1.0, 2.0, 3.0]));
+        assert_eq!(
+            Value::vec3([1.0, 2.0, 3.0]).as_vec3(),
+            Some([1.0, 2.0, 3.0])
+        );
         assert_eq!(Value::vec2([1.0, 2.0]).as_vec3(), None, "不做隐式升维");
         assert_eq!(Value::f64(1.0).as_vec2(), None, "标量不是向量");
-        assert_eq!(Value::vec4([1.0, 2.0, 3.0, 4.0]).as_vec4(), Some([1.0, 2.0, 3.0, 4.0]));
+        assert_eq!(
+            Value::vec4([1.0, 2.0, 3.0, 4.0]).as_vec4(),
+            Some([1.0, 2.0, 3.0, 4.0])
+        );
     }
 
     /// 既有四种组合的规范字节**逐位不变**（值序列哈希是基线的一部分）。
@@ -1824,7 +1850,6 @@ mod tests {
             assert_eq!(back, value, "JSON 往返必须逐位不变：{json}");
         }
     }
-
 
     /// **阶段 2**：`Text` 下沉为 `Bytes + zela.Text`，往返逐位不变。
     #[test]
@@ -1889,11 +1914,7 @@ mod tests {
     /// `RecIndex` 是 `I64`：`value(k) = k` ⇒ `value(count) = count`。
     #[test]
     fn rec_index_is_an_i64_state() {
-        let expr = Expr::nat_rec(
-            Expr::pure(3_i64),
-            Expr::pure(0_i64),
-            Expr::rec_index(),
-        );
+        let expr = Expr::nat_rec(Expr::pure(3_i64), Expr::pure(0_i64), Expr::rec_index());
         let program = CompiledExpr::compile(&expr).unwrap();
         assert_eq!(
             program.eval(&ScalarMono::new(0.0, 0)).unwrap(),
@@ -1972,10 +1993,7 @@ mod tests {
         let a = Expr::call(math("add"), [Expr::reference("b")]).with_id("a");
         let b = Expr::call(math("add"), [Expr::reference("a")]).with_id("b");
         let root = Expr::call(math("add"), [a, b]);
-        assert!(matches!(
-            root.validate().unwrap_err(),
-            ExprError::Cycle(_)
-        ));
+        assert!(matches!(root.validate().unwrap_err(), ExprError::Cycle(_)));
     }
 
     /// 递归叶子越界 ⇒ 结构守卫显式拒绝。
@@ -1987,11 +2005,7 @@ mod tests {
             ExprError::OrphanRec("rec_prev")
         );
 
-        let expr = Expr::nat_rec(
-            Expr::pure(1_i64),
-            Expr::rec_index(),
-            Expr::rec_prev(),
-        );
+        let expr = Expr::nat_rec(Expr::pure(1_i64), Expr::rec_index(), Expr::rec_prev());
         assert_eq!(
             expr.validate().unwrap_err(),
             ExprError::OrphanRec("rec_index")
@@ -2035,10 +2049,7 @@ mod tests {
     /// 多个 `NatRec` 时缓存只属于**第一个被求值**的那个（不串状态）。
     #[test]
     fn nat_rec_cache_is_owned_by_exactly_one_fold() {
-        let expr = Expr::call(
-            math("add"),
-            [nat_rec_add_two(2), nat_rec_add_two(3)],
-        );
+        let expr = Expr::call(math("add"), [nat_rec_add_two(2), nat_rec_add_two(3)]);
         let program = CompiledExpr::compile(&expr).unwrap();
         let mono = ScalarMono::new(0.0, 0);
         let mut cache = None;
@@ -2046,10 +2057,7 @@ mod tests {
         assert_eq!(value, Value::f64(12.0), "5 + 7");
         let cache = cache.expect("第一个 NatRec 产出缓存");
         assert_eq!(cache.count, 2, "缓存属于第一个 fold");
-        assert_eq!(
-            program.eval_cached(&mono, &mut Some(cache)).unwrap(),
-            value
-        );
+        assert_eq!(program.eval_cached(&mono, &mut Some(cache)).unwrap(), value);
     }
 
     /// **G 批**：宿主覆写 `read_object` 后，`Read` 返回注入值。

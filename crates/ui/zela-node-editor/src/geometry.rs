@@ -30,10 +30,7 @@ impl NodePos {
     }
 
     pub const fn splat(value: f32) -> Self {
-        Self {
-            x: value,
-            y: value,
-        }
+        Self { x: value, y: value }
     }
 
     pub fn is_zero(self) -> bool {

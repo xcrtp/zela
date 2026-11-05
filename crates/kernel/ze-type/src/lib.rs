@@ -30,12 +30,12 @@ pub mod ty;
 pub mod unify;
 
 pub use conflict::{Blame, NameKind, ReflectError};
-pub use r#gen::{MonoInstance, MAX_INSTANCES};
-pub use tag::{CastError, DefaultTypeCast, NamedTypeTag, TypeCast, TypeTag};
+pub use r#gen::{MAX_INSTANCES, MonoInstance};
 pub use layout::{
     ENDIAN, Endian, FieldLayout, FieldTy, Layout, LayoutError, Record, Scalar, Transcode,
     VEC2_FIELDS, VEC3_FIELDS,
 };
+pub use tag::{CastError, DefaultTypeCast, NamedTypeTag, TypeCast, TypeTag};
 pub use ty::{
     Field, FnIo, HANDLE_SPEC, Kind, OpDef, OpSig, ParamSpec, RetType, ScalarKind, Target, TypeSpec,
     UNIT_SPEC, VEC2_SPEC, VEC3_SPEC, Variant,

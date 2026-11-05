@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use ze_type::r#gen::{monomorphize, MAX_INSTANCES};
+use ze_type::r#gen::{MAX_INSTANCES, monomorphize};
 use ze_type::{Blame, MonoInstance, OpSig, ReflectError};
 
 /// 按算子名缓存单态化实例（上限 [`MAX_INSTANCES`]）。

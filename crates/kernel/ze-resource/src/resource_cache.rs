@@ -20,7 +20,10 @@ use crate::render_backend::{AccessError, GpuHandle, GpuResourceId};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ResourceKey {
-    Content { type_id: TypeId, hash: u64 },
+    Content {
+        type_id: TypeId,
+        hash: u64,
+    },
     Versioned {
         type_id: TypeId,
         id: u64,
@@ -492,7 +495,10 @@ where
 
     /// 当前全部条目的字节数（由调用方给出每个条目占多少 —— kernel 不知道资源形状）。
     pub fn total_bytes(&self, bytes_of: impl Fn(&T) -> usize) -> usize {
-        self.entries.values().map(|entry| bytes_of(&entry.meta)).sum()
+        self.entries
+            .values()
+            .map(|entry| bytes_of(&entry.meta))
+            .sum()
     }
 
     /// 条目的元数据（只读）：键在则给引用。
@@ -635,9 +641,7 @@ mod tests {
     fn named_key_hits_the_same_entry() {
         let mut cache = ResourceCache::<()>::new();
         let key = ResourceKey::named::<Groups>("scene", 1);
-        let first = cache
-            .insert_handle(key, (), GpuHandle::new(7_u32))
-            .id();
+        let first = cache.insert_handle(key, (), GpuHandle::new(7_u32)).id();
         assert_eq!(key.name(), Some("scene"));
         let again = cache.get(key).expect("命中").id();
         assert_eq!(first, again, "同名同版本必须是同一条目");
@@ -679,7 +683,10 @@ mod tests {
 
         let second = cache.insert_handle(key, (), GpuHandle::new(1_u32)).id();
         assert_ne!(first, second, "重建必须换 slot（旧 id 已失效）");
-        assert!(cache.get_by_id(first).is_err(), "旧 id 必须是 Stale / Dropped");
+        assert!(
+            cache.get_by_id(first).is_err(),
+            "旧 id 必须是 Stale / Dropped"
+        );
         cache.get_by_id(second).expect("新 id 可访问");
     }
 
@@ -735,7 +742,11 @@ mod tests {
         assert!(cache.get(b).is_some());
         assert!(cache.get(c).is_some());
         assert_eq!(cache.total_bytes(|bytes| *bytes), 200);
-        assert_eq!(cache.pending_destroy_count(), 1, "驱逐走延迟销毁，不立即 drop");
+        assert_eq!(
+            cache.pending_destroy_count(),
+            1,
+            "驱逐走延迟销毁，不立即 drop"
+        );
     }
 
     /// `keep` 里的键是本帧的强引用：预算再紧也不驱逐它。
@@ -795,8 +806,17 @@ mod tests {
         let key = ResourceKey::named::<Groups>("live", 1);
         cache.insert_handle(key, 1, GpuHandle::new(1_u32));
         let id = cache.get(key).expect("条目在").id();
-        *cache.get_mut(key).expect("条目在").downcast_mut::<u32>().expect("u32") = 9;
-        assert_eq!(cache.get(key).and_then(|handle| handle.downcast_ref::<u32>()), Some(&9));
+        *cache
+            .get_mut(key)
+            .expect("条目在")
+            .downcast_mut::<u32>()
+            .expect("u32") = 9;
+        assert_eq!(
+            cache
+                .get(key)
+                .and_then(|handle| handle.downcast_ref::<u32>()),
+            Some(&9)
+        );
         assert_eq!(cache.get(key).expect("条目在").id(), id, "原地更新不换 id");
     }
 

@@ -14,15 +14,13 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ze_notion::Mat4;
+use ze_notion::{Color32, Rect2D, Vec2};
+use ze_scene_core::{Camera3D, Projection};
+use zela_render::{DrawQueue, DrawQueue3D, LightQueue};
+use zela_render_backends::{Compositor, SceneCompositorCallback, SceneLayer, WgpuBackend3D};
 use zela_scene_ecs::domain::{LayerBlend, LayerId, LayerKind};
 use zela_scene_ecs::scene::components::{Material3D, MeshGeometry};
-use ze_scene_core::{Camera3D, Projection};
 use zela_scene_ecs::scene::primitives::wireframe_cube;
-use zela_render::{DrawQueue, DrawQueue3D, LightQueue};
-use zela_render_backends::{
-    Compositor, SceneCompositorCallback, SceneLayer, WgpuBackend3D,
-};
-use ze_notion::{Color32, Rect2D, Vec2};
 
 struct Cube3dApp {
     start: Instant,
@@ -52,7 +50,11 @@ impl eframe::App for Cube3dApp {
 
         let white = Color32::new(255, 255, 255, 255);
         let mut queue = DrawQueue3D::new();
-        queue.draw_mesh(Arc::clone(&self.cube), Mat4::IDENTITY, Material3D::color(white));
+        queue.draw_mesh(
+            Arc::clone(&self.cube),
+            Mat4::IDENTITY,
+            Material3D::color(white),
+        );
 
         // S3-2/C3：图层先渲染到自己的离屏纹理（透明清屏），再由合成器混合到主 pass。
         // S3-2 修复：2D/3D 合并为**单个**回调，一次性合成全部图层。

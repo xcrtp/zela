@@ -45,8 +45,8 @@ pub struct Interval {
 
 impl Interval {
     fn new(start: Bound, end: Bound) -> Option<Self> {
-        let valid = start.value < end.value
-            || (start.value == end.value && start.closed && end.closed);
+        let valid =
+            start.value < end.value || (start.value == end.value && start.closed && end.closed);
         valid.then_some(Self { start, end })
     }
 
@@ -171,9 +171,7 @@ impl IntervalSet {
                 // 有序：后一段的起点严格大于前一段的终点；
                 // 相等时只允许"两端都开"（否则本应合并）。
                 let ordered = end.value < interval.start.value
-                    || (end.value == interval.start.value
-                        && !end.closed
-                        && !interval.start.closed);
+                    || (end.value == interval.start.value && !end.closed && !interval.start.closed);
                 if !ordered {
                     return false;
                 }
@@ -503,10 +501,7 @@ impl MultiIntervalSet {
             let (left_name, left_set) = self.vars.iter().next().expect("len == 1");
             let (right_name, right_set) = other.vars.iter().next().expect("len == 1");
             if left_name == right_name {
-                return Some(Self::on(
-                    left_name.clone(),
-                    left_set.union(right_set),
-                ));
+                return Some(Self::on(left_name.clone(), left_set.union(right_set)));
             }
         }
         None
@@ -628,7 +623,6 @@ fn continuous_variable(expr: &Expr) -> Option<String> {
         .map(|(channel, object)| format!("{}#{object}", channel.qualified()))
 }
 
-
 fn number(expr: &Expr) -> Option<f64> {
     expr.node.literal().and_then(Literal::as_real)
 }
@@ -675,19 +669,26 @@ mod tests {
         let set = window(1.0, 4.0);
         assert_eq!(set.time_last_active(0.5), None, "还没生效过");
         assert_eq!(set.time_last_active(2.0), Some(2.0), "区间内就是 t");
-        assert_eq!(set.time_last_active(9.0), Some(4.0), "空隙取前一段右端（U3）");
+        assert_eq!(
+            set.time_last_active(9.0),
+            Some(4.0),
+            "空隙取前一段右端（U3）"
+        );
     }
 
     #[test]
     fn not_complements_and_or_unions() {
         let inside = window(1.0, 4.0);
-        let outside = analyze(&call("not", vec![call(
-            "and",
-            vec![
-                call("gt", vec![time(), Expr::pure(1.0)]),
-                call("lt", vec![time(), Expr::pure(4.0)]),
-            ],
-        )]))
+        let outside = analyze(&call(
+            "not",
+            vec![call(
+                "and",
+                vec![
+                    call("gt", vec![time(), Expr::pure(1.0)]),
+                    call("lt", vec![time(), Expr::pure(4.0)]),
+                ],
+            )],
+        ))
         .expect("Not 可分析");
         assert!(!outside.time_contains(2.0));
         assert!(outside.time_contains(0.0));
@@ -709,19 +710,11 @@ mod tests {
 
     #[test]
     fn equality_is_a_point_and_inequality_its_complement() {
-        let at_two = analyze(&call(
-            "eq",
-            vec![time(), Expr::pure(2.0)],
-        ))
-        .expect("Eq 可分析");
+        let at_two = analyze(&call("eq", vec![time(), Expr::pure(2.0)])).expect("Eq 可分析");
         assert!(at_two.time_contains(2.0));
         assert!(!at_two.time_contains(2.0001));
 
-        let not_two = analyze(&call(
-            "ne",
-            vec![time(), Expr::pure(2.0)],
-        ))
-        .expect("Ne 可分析");
+        let not_two = analyze(&call("ne", vec![time(), Expr::pure(2.0)])).expect("Ne 可分析");
         assert!(!not_two.time_contains(2.0));
         assert!(not_two.time_contains(1.0));
     }

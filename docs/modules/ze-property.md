@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-property`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-node-schema`、`ze-scene-core`、`zela-app`、`zela-egui`、`zela-scene-ecs`
-- 源文件：5 个 · 1112 行
+- 源文件：5 个 · 1104 行
 
 ### 文件清单
 
@@ -21,7 +21,7 @@
 | `src/error.rs` | 31 | Errors raised by the property model. All operations return errors rather |
 | `src/lib.rs` | 39 | `ze-property` — the kernel-level property model: schema + value + constraints. |
 | `src/property.rs` | 613 | The property model: a serializable, UI-neutral description of every |
-| `src/registry.rs` | 204 | [`ParameterRegistry`] — the enumerable side table of tunable parameters. |
+| `src/registry.rs` | 196 | [`ParameterRegistry`] — the enumerable side table of tunable parameters. |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

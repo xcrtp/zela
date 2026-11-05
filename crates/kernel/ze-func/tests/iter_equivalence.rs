@@ -61,12 +61,7 @@ fn iter_fold_matches_nat_rec_bit_for_bit() {
 
 #[test]
 fn iter_sum_uses_the_same_rule_as_the_sum_operator() {
-    let iter = ValueIter::new(vec![
-        Value::f64(0.5),
-        Value::f64(0.25),
-        Value::f64(0.125),
-    ])
-    .unwrap();
+    let iter = ValueIter::new(vec![Value::f64(0.5), Value::f64(0.25), Value::f64(0.125)]).unwrap();
     assert_eq!(
         iter.sum().unwrap(),
         ze_func::eval(&math("sum"), iter.items()).unwrap(),

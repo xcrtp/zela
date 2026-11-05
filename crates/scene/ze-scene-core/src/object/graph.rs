@@ -109,11 +109,7 @@ impl FunctionGraph {
         }
         let margin = span * PHASE_MARGIN;
         Path2D::from_polyline(
-            &self.points_between(
-                self.sampler.start - margin,
-                self.sampler.end + margin,
-                0.0,
-            ),
+            &self.points_between(self.sampler.start - margin, self.sampler.end + margin, 0.0),
             false,
         )
     }

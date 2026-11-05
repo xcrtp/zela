@@ -219,9 +219,9 @@ fn reject_reason(
     match kind {
         // wgpu 三角化不依赖 adapter feature；内容纹理 / 混排 / 网格形态都由它自己的
         // 后端实现覆盖（那是今天的默认路径）。唯一的例外是光追（BV-5）：它没有这个 pass。
-        BackendKind::Wgpu => content.raytrace.then(|| {
-            "本帧的 3D 视图要求光追（`RayTrace`），wgpu 后端没有光追 pass".to_string()
-        }),
+        BackendKind::Wgpu => content
+            .raytrace
+            .then(|| "本帧的 3D 视图要求光追（`RayTrace`），wgpu 后端没有光追 pass".to_string()),
         BackendKind::Vector => {
             // 1) adapter 硬前置（B11 Step 0）。
             match facts {
@@ -313,7 +313,9 @@ pub fn route_with_order(
                 // PE Step 3：wgpu 不消费的绘制参数必须**显式**说明被忽略，
                 // 否则就是"填了没效果也不说"（V-01 / V-02 的同型）。
                 let reason = match (*kind, content.ignored_style_note()) {
-                    (BackendKind::Wgpu, Some(note)) => format!("{reason}（{note}）"),
+                    (BackendKind::Wgpu, Some(note)) => {
+                        format!("{reason}（{note}）")
+                    }
                     _ => reason,
                 };
                 return Ok(RoutingDecision {
@@ -350,8 +352,7 @@ mod tests {
 
     fn capable() -> Option<AdapterFacts> {
         Some(AdapterFacts {
-            features: wgpu::Features::FLOAT32_BLENDABLE
-                | wgpu::Features::DEPTH32FLOAT_STENCIL8,
+            features: wgpu::Features::FLOAT32_BLENDABLE | wgpu::Features::DEPTH32FLOAT_STENCIL8,
             blends_float32: true,
         })
     }
@@ -522,7 +523,8 @@ mod tests {
         let decision = route(LoopBackend::Wgpu, content, capable()).unwrap();
         assert_eq!(decision.backend, BackendKind::Wgpu);
         assert!(
-            decision.reason.contains("忽略") && decision.reason.contains("渐变")
+            decision.reason.contains("忽略")
+                && decision.reason.contains("渐变")
                 && decision.reason.contains("虚线"),
             "理由必须点名被忽略的特性：{}",
             decision.reason
@@ -564,8 +566,16 @@ mod tests {
         };
         let decision = route(LoopBackend::Wgpu, generated, capable()).unwrap();
         assert!(decision.reason.contains("已忽略"), "{}", decision.reason);
-        assert!(decision.reason.contains("着色 codegen"), "{}", decision.reason);
-        assert!(!decision.reason.contains("手写 WGSL"), "{}", decision.reason);
+        assert!(
+            decision.reason.contains("着色 codegen"),
+            "{}",
+            decision.reason
+        );
+        assert!(
+            !decision.reason.contains("手写 WGSL"),
+            "{}",
+            decision.reason
+        );
     }
 
     /// 回退路径同样要写明：矢量因 adapter 被拒 ⇒ 回退 wgpu 且说明忽略了什么。
@@ -695,11 +705,15 @@ mod tests {
         assert!(decision.validate().unwrap_err().contains("静默决策"));
 
         let mut decision = RoutingDecision::explicit_wgpu();
-        decision.rejected.push((BackendKind::Vector, "  ".to_string()));
+        decision
+            .rejected
+            .push((BackendKind::Vector, "  ".to_string()));
         assert!(decision.validate().unwrap_err().contains("静默决策"));
 
         let mut decision = RoutingDecision::explicit_wgpu();
-        decision.rejected.push((BackendKind::Wgpu, "不该同时出现".to_string()));
+        decision
+            .rejected
+            .push((BackendKind::Wgpu, "不该同时出现".to_string()));
         assert!(decision.validate().unwrap_err().contains("自相矛盾"));
     }
 

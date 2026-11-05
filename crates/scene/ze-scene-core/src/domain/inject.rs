@@ -29,8 +29,17 @@ use crate::domain::input_window::WindowInput;
 
 /// 注入标记：声明序号（与 `Handle` / `LayoutId` / `ScopeId` 同构，单调、稳定）。
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
-    serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub struct TagId(pub u32);
 
@@ -157,9 +166,7 @@ impl Injected {
             });
         }
         if let InjectedPayload::External { name } = &self.payload {
-            return Err(InjectError::ExternalUnsupported {
-                name: name.clone(),
-            });
+            return Err(InjectError::ExternalUnsupported { name: name.clone() });
         }
         Ok(())
     }

@@ -59,7 +59,11 @@ where
 }
 
 /// 只读访问组件 `T` 的对称形态；未命中 ⇒ `None`。
-pub fn read_component<T, R>(scene: &dyn SceneRead, id: ObjectId, f: impl FnOnce(&T) -> R) -> Option<R>
+pub fn read_component<T, R>(
+    scene: &dyn SceneRead,
+    id: ObjectId,
+    f: impl FnOnce(&T) -> R,
+) -> Option<R>
 where
     T: 'static + Send + Sync,
 {

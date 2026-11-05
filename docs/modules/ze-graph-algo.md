@@ -11,7 +11,7 @@
 - 路径：`crates/ze/graph/ze-graph-algo`
 - 生产依赖（上游，dev-deps 不计）：`ze-graph-core`、`ze-node-core`
 - 被依赖（下游）：`ze-node`、`ze-node-lower`、`zela-node-editor`、`zela-scene-ecs`
-- 源文件：6 个 · 1414 行
+- 源文件：6 个 · 1445 行
 
 ### 文件清单
 
@@ -20,9 +20,9 @@
 | `src/bfs_dirty.rs` | 154 | Breadth-first dirty propagation. |
 | `src/kahn_sort.rs` | 150 | Kahn's algorithm topological sort. |
 | `src/lib.rs` | 24 | `zela-graph-algo` — concrete graph algorithms for `zela-node`. |
-| `src/relation.rs` | 894 | **CK-a**：关系契约 —— 树 / DAG 的六问，与编译期纯值索引。 |
+| `src/relation.rs` | 922 | **CK-a**：关系契约 —— 树 / DAG 的六问，与编译期纯值索引。 |
 | `src/tarjan_scc.rs` | 140 | Cycle detection via SCC (delegates to `ze-graph-core`). |
-| `src/topology.rs` | 52 | `Graph` → `ze-graph-core::Topology` 适配器。 |
+| `src/topology.rs` | 55 | `Graph` → `ze-graph-core::Topology` 适配器。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

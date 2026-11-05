@@ -1,7 +1,7 @@
 //! L2 验收：`///` → `Capability::docs()`（编译期常量，与 `signatures()` 逐条对应）。
 #![allow(dead_code)] // 只检查文档，不调用函数字段。
 
-use ze_pod_core::{Capability, RegistryPod, Pod};
+use ze_pod_core::{Capability, Pod, RegistryPod};
 use ze_pod_macro::capability;
 
 #[capability(namespace = "doc", description = "文档测试能力")]

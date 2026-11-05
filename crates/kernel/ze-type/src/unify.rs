@@ -28,11 +28,7 @@ impl TypeSpec {
             } => {
                 let elem = elem.layout()?;
                 let count = *len;
-                Some(Layout::new(
-                    elem.size.checked_mul(count)?,
-                    elem.align,
-                    &[],
-                ))
+                Some(Layout::new(elem.size.checked_mul(count)?, elem.align, &[]))
             }
             TypeSpec::Enum { .. }
             | TypeSpec::Array { len: None, .. }
@@ -82,7 +78,7 @@ impl TypeSpec {
                             expected: format!("Array<{}, {left}>", left_elem.render()),
                             actual: format!("Array<{}, {right}>", right_elem.render()),
                             origin,
-                        })
+                        });
                     }
                     (Some(len), _) | (_, Some(len)) => Some(*len),
                     (None, None) => None,
@@ -299,7 +295,10 @@ mod tests {
     const F32: TypeSpec = TypeSpec::Scalar(ScalarKind::F32);
     const F64: TypeSpec = TypeSpec::Scalar(ScalarKind::F64);
 
-    const POINT_FIELDS: &[Field] = &[Field { name: "x", ty: &F32 }];
+    const POINT_FIELDS: &[Field] = &[Field {
+        name: "x",
+        ty: &F32,
+    }];
     const POINT_LAYOUT: Layout = Layout::new(4, 4, &[FieldLayout::new("x", 0, FieldTy::F32)]);
 
     const POINT: TypeSpec = TypeSpec::Struct {
@@ -315,7 +314,10 @@ mod tests {
     const POINT_OTHER_FIELDS: TypeSpec = TypeSpec::Struct {
         name: "acme.Point",
         layout: None,
-        fields: &[Field { name: "y", ty: &F32 }],
+        fields: &[Field {
+            name: "y",
+            ty: &F32,
+        }],
     };
     const OTHER_LAYOUT: Layout = Layout::new(8, 8, &[]);
 

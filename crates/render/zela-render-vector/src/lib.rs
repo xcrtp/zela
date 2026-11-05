@@ -31,15 +31,15 @@ pub const UPSTREAM_COMMIT: &str = "dcfe01a932118263c238a50563d1bb6fab09e08e";
 /// 上游仓库名（记录用）。
 pub const UPSTREAM_REPO: &str = "manimgx";
 
-mod environment;
-mod mesh;
-mod render;
-/// BN 批：pass 声明、资源槽位与调度校验（纯数据 + 纯函数）。
-pub mod passes;
 /// BO 批：`workgroup_size` 的单一来源与 dispatch 形状。
 pub mod dispatch;
+mod environment;
+mod mesh;
 /// BR 批：Typed Pass 节点（`PassNode` / `AnyPass` / 驱动）。
 pub mod nodes;
+/// BN 批：pass 声明、资源槽位与调度校验（纯数据 + 纯函数）。
+pub mod passes;
+mod render;
 /// CH-d：debug-only 截图旁路（按需回读纹理；不进主循环）。
 pub mod screenshot;
 
@@ -58,9 +58,9 @@ pub use api::{
 };
 #[cfg(target_arch = "wasm32")]
 pub use api::{
-    render_2d_async, render_2d_async_on, render_2d_to_texture_async,
-    render_2d_to_texture_async_on, render_3d_to_texture_async, render_3d_to_texture_async_on,
-    render_3d_with_async, render_3d_with_async_on,
+    render_2d_async, render_2d_async_on, render_2d_to_texture_async, render_2d_to_texture_async_on,
+    render_3d_to_texture_async, render_3d_to_texture_async_on, render_3d_with_async,
+    render_3d_with_async_on,
 };
 // B11 Step 3：device 注入入口（native / wasm 同签名，内部绕开 `Gpu::new()`）。
 // BQ-02：`Gpu` 公开为可注入句柄，`GpuLease` 是它的独占借用（`*_on` 变体的入参来源）。
@@ -74,11 +74,14 @@ pub use render::{HeldTotals, held_totals};
 // AW-07（E-G3）：几何数组上传字节（持久前缀生效后，稳态帧应为 0）。
 pub use render::take_store_upload_bytes;
 // B18：MSAA 能力查询（adapter 自述）、判别实验的采样覆盖、链表溢出的显式记录。
-pub use render::{OverflowTotals, ShadowTotals, msaa_samples, set_sample_override, take_overflow_totals, take_shadow_totals};
-/// **BS-0**：命令流快照（`pass[组…]` 序列；默认关，只在用例里打开）。
-pub use render::{start_command_flow, take_command_flow};
 /// **PI-04（PC-05）**：把宿主的阴影开关登记进 player 缓存键（状态变化 ⇒ 换 player）。
 pub use render::set_shadow_state;
+pub use render::{
+    OverflowTotals, ShadowTotals, msaa_samples, set_sample_override, take_overflow_totals,
+    take_shadow_totals,
+};
+/// **BS-0**：命令流快照（`pass[组…]` 序列；默认关，只在用例里打开）。
+pub use render::{start_command_flow, take_command_flow};
 /// **PG Step 3**：内置影棚的 id（`EnvironmentLight` 没有图时用它；**程序化生成，零资产**）。
 pub const BUILTIN_ENVIRONMENT: u32 = environment::STUDIO;
 /// **PH Step 3**：内置影棚 id 的另一个名字（与 [`BUILTIN_ENVIRONMENT`] 同值）。
@@ -89,7 +92,10 @@ pub const STUDIO: u32 = environment::STUDIO;
 /// **PH Step 3**：Radiance `.hdr` 解码入口（RGBE，行优先），配合 [`add_environment`] 使用。
 pub use environment::read_hdr;
 // B18：移动端条纹的逐项排查开关（页面 `?skip=`；默认 0 = 全开）。
-pub use render::{SKIP_AO, SKIP_BLOOM, SKIP_DEPTH, SKIP_ENVIRONMENT, SKIP_LIGHT, SKIP_SHADOW, SKIP_STENCIL, set_skip};
+pub use render::{
+    SKIP_AO, SKIP_BLOOM, SKIP_DEPTH, SKIP_ENVIRONMENT, SKIP_LIGHT, SKIP_SHADOW, SKIP_STENCIL,
+    set_skip,
+};
 
 /// **B17**：让复用的 player 丢掉上一次播放的离屏目标。
 ///

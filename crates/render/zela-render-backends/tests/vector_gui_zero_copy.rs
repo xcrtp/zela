@@ -121,8 +121,12 @@ fn texture_target_matches_the_cpu_readback_and_repeats_bitwise() {
     // （矢量要 FLOAT32_BLENDABLE / DEPTH32FLOAT_STENCIL8，否则 R32Float 不可混合）。
     let adapter = ctx.adapter().expect("headless 上下文应带 adapter").clone();
     let mut registry = BackendRegistry::with_standard();
-    registry.register(BackendKind::Vector).expect("注册矢量后端");
-    let features = registry.required_device_features(&adapter).expect("能力并集");
+    registry
+        .register(BackendKind::Vector)
+        .expect("注册矢量后端");
+    let features = registry
+        .required_device_features(&adapter)
+        .expect("能力并集");
     let limits = registry.required_device_limits(&adapter);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("vector-gui-zero-copy"),
@@ -155,11 +159,7 @@ fn texture_target_matches_the_cpu_readback_and_repeats_bitwise() {
     assert!(
         first == reference,
         "纹理目标与 CPU 读回不一致：{} / {} 字节不同",
-        first
-            .iter()
-            .zip(&reference)
-            .filter(|(a, b)| a != b)
-            .count(),
+        first.iter().zip(&reference).filter(|(a, b)| a != b).count(),
         reference.len()
     );
     assert!(first == second, "同一帧连渲两次应逐位相同");
@@ -174,11 +174,7 @@ fn texture_target_matches_the_cpu_readback_and_repeats_bitwise() {
     assert!(
         after == reference,
         "同尺寸换纹理后仍写旧目标：新纹理与参考不一致（{} / {} 字节不同）",
-        after
-            .iter()
-            .zip(&reference)
-            .filter(|(a, b)| a != b)
-            .count(),
+        after.iter().zip(&reference).filter(|(a, b)| a != b).count(),
         reference.len()
     );
 }

@@ -185,7 +185,10 @@ mod tests {
         };
         table.add(composite);
         let winners = field_winners(&table);
-        assert!(!wins_all(&table.bindings[1], 1, &winners), "scale 被赢走 ⇒ 整条跳过");
+        assert!(
+            !wins_all(&table.bindings[1], 1, &winners),
+            "scale 被赢走 ⇒ 整条跳过"
+        );
         // 单字段仍归它自己。
         assert!(wins_all(&table.bindings[0], 0, &winners));
     }

@@ -4,14 +4,14 @@
 // 用例体从 `animation/target.rs` 的 `#[cfg(test)] mod tests` 原样迁来，
 // 只把 `use super::*` 换成核心层的显式 import。
 
+use crate::contract::WorldScene;
+use ze_render_ir::Opacity;
+use ze_scene_contract::ObjectId;
+use ze_scene_contract::Scene as _;
 use ze_scene_core::animation::target::*;
 use ze_scene_core::components::{PhaseAnim, Reveal};
 use ze_scene_core::object::{Camera3D, Circle, Framing2D, Transform};
-use ze_scene_contract::ObjectId;
-use ze_scene_contract::Scene as _;
-use ze_render_ir::Opacity;
 use ze_time::AnimValue;
-use crate::contract::WorldScene;
 mod tests {
     use super::*;
     use ze_notion::{Vec2, Vec3};
@@ -30,7 +30,11 @@ mod tests {
     }
 
     /// 经契约适配器施加一次动画值。
-    fn apply_once(t: &dyn Target, scene: &mut SceneStruct, v: AnimValue) -> Result<(), TargetError> {
+    fn apply_once(
+        t: &dyn Target,
+        scene: &mut SceneStruct,
+        v: AnimValue,
+    ) -> Result<(), TargetError> {
         t.apply(&mut WorldScene::new(scene.world_mut()), &v)
     }
 
@@ -38,9 +42,18 @@ mod tests {
     #[test]
     fn component_names_come_from_the_registry() {
         use crate::contract::known_type_name;
-        assert_eq!(ze_scene_core::object::primitives::CIRCLE_RADIUS.component, known_type_name::<Circle>().unwrap());
-        assert_eq!(ze_scene_core::components::PHASE_ANIM_PHASE.component, known_type_name::<PhaseAnim>().unwrap());
-        assert_eq!(ze_scene_core::object::camera::CAMERA3D_EYE.component, known_type_name::<Camera3D>().unwrap());
+        assert_eq!(
+            ze_scene_core::object::primitives::CIRCLE_RADIUS.component,
+            known_type_name::<Circle>().unwrap()
+        );
+        assert_eq!(
+            ze_scene_core::components::PHASE_ANIM_PHASE.component,
+            known_type_name::<PhaseAnim>().unwrap()
+        );
+        assert_eq!(
+            ze_scene_core::object::camera::CAMERA3D_EYE.component,
+            known_type_name::<Camera3D>().unwrap()
+        );
         assert_eq!(
             ze_scene_core::components::MORPH_SHAPE_T.component,
             known_type_name::<ze_scene_core::components::MorphShape>().unwrap()
@@ -49,12 +62,18 @@ mod tests {
             ze_scene_core::object::camera::FRAMING2D_SCALE.component,
             known_type_name::<Framing2D>().unwrap()
         );
-        assert_eq!(ze_scene_core::components::REVEAL_END.component, known_type_name::<Reveal>().unwrap());
+        assert_eq!(
+            ze_scene_core::components::REVEAL_END.component,
+            known_type_name::<Reveal>().unwrap()
+        );
         assert_eq!(
             TRANSFORM_POSITION.component,
             known_type_name::<Transform>().unwrap()
         );
-        assert_eq!(OPACITY_VALUE.component, known_type_name::<Opacity>().unwrap());
+        assert_eq!(
+            OPACITY_VALUE.component,
+            known_type_name::<Opacity>().unwrap()
+        );
 
         // `name` 与 `address` 共用**同一个**查表命名空间（见 `target_entry`）：
         // 单字段规格的 `name` 就是 `address`；组合目标没有单一地址，二者也相同。
@@ -300,7 +319,11 @@ mod tests {
 
         // 再只用 Vec2：xy 变、**z 保持**（混排作品里 z 可能被 3D 内容占用）。
         apply_once(&t, &mut scene, AnimValue::Vec2(Vec2::new(2.0, -3.0)));
-        assert_eq!(read_tr(&scene).0, Vec3::new(2.0, -3.0, 3.0), "Vec2 不得清零 z");
+        assert_eq!(
+            read_tr(&scene).0,
+            Vec3::new(2.0, -3.0, 3.0),
+            "Vec2 不得清零 z"
+        );
         assert_eq!(read_tr(&scene).1, Vec3::ONE, "Vec2 不得改缩放");
     }
 

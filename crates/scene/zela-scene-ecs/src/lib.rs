@@ -15,10 +15,10 @@ pub mod deferred;
 pub mod director_state;
 pub mod driver;
 pub mod errors;
-pub mod expr_mono;
-pub mod fingerprint;
 #[cfg(test)]
 mod expr_binding_tests;
+pub mod expr_mono;
+pub mod fingerprint;
 pub mod geometry;
 /// CG-f：自研面板（三组控件全是场景图元）+ HUD System。
 pub mod hud;
@@ -42,9 +42,9 @@ pub use ze_scene_api as pod;
 pub use ze_scene_core::content;
 
 // B3-1b：纯数据 / 对象 / 组件已下沉 `ze-scene-core`；这里保留原公开路径。
-pub use ze_scene_core::{domain, types};
 pub use ze_scene_core::{Color32, Rect2D, Vec2, Vec3, Vec4};
 pub use ze_scene_core::{TimeState, Transform2D, Transform2DInto};
+pub use ze_scene_core::{domain, types};
 
 pub use animation::{
     Binding, BindingTable, FieldSpec, FieldTarget, SeekKind, Target, TargetEntry, TargetError,
@@ -62,9 +62,7 @@ pub use driver::{DriverCommand, DriverEvent, DriverPod};
 pub use errors::Error;
 pub use expr_mono::SceneMono;
 // 执行计划阶段 1：结构指纹（纯数值状态层）。
-pub use fingerprint::{
-    StructureFingerprint, WorldRead, fingerprint_world, sequence_digest,
-};
+pub use fingerprint::{StructureFingerprint, WorldRead, fingerprint_world, sequence_digest};
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 pub use hud::{
     ActionIntent, Hud, HudMetrics, HudOutcome, HudOutcomeKind, HudState, HudSystem, ValueIntent,
@@ -79,14 +77,12 @@ pub use lifetime::{
     LifetimeEvent, LifetimeEventKind, LifetimeEvents, LifetimeFlushSystem, LifetimeTracker,
 };
 // B3-1b：数学函数 Pod 与持久化已下沉核心层；路径保持不变。
-pub use ze_scene_core::{math_pod, persist};
+pub use scene::{Scene, comp, components, primitives};
 pub use ze_scene_core::math_pod::{SharedPod, builtin_f32, function_from_pod, math_pod};
 pub use ze_scene_core::persist::{
     PersistError, TaggedComponent, deserialize_components, serialize_components,
 };
-pub use scene::{
-    components, comp, primitives, Scene,
-};
+pub use ze_scene_core::{math_pod, persist};
 // B3-1b：脚本数据（SceneScript / SceneEncoder）已下沉核心层；路径保持不变。
 pub use ze_scene_core::scene_script;
 pub use ze_scene_core::scene_script::{
@@ -96,9 +92,7 @@ pub use ze_scene_core::scene_script::{
 
 #[cfg(test)]
 mod scene_script_tests;
-pub use transform_hierarchy::{
-    TransformHierarchyError, TransformHierarchySystem, WorldTransforms,
-};
+pub use transform_hierarchy::{TransformHierarchyError, TransformHierarchySystem, WorldTransforms};
 // `Transform2D` 的模块路径（`ze_scene_core::transform`；本层转发以便下游少一个依赖）。
 pub use ze_scene_core::transform;
 pub use ze_time::{

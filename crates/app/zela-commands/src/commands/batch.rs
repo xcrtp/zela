@@ -148,7 +148,8 @@ pub fn run_batch(ctx: &RenderContext, options: &BatchOptions) -> Result<Vec<Work
     let mut reports = ReportLines::new();
     let slots = place_in_input_order(
         total,
-        rx.into_iter().map(|(index, lines, result)| (index, (lines, result))),
+        rx.into_iter()
+            .map(|(index, lines, result)| (index, (lines, result))),
     );
     for (index, slot) in slots.into_iter().enumerate() {
         let name = &options.works[index].name;
@@ -225,8 +226,13 @@ fn run_work(
     enforce_timings: bool,
 ) -> Result<WorkOutcome, String> {
     let (script_path, language) = locate_script(&options.scripts, &work.name)?;
-    let source = std::fs::read_to_string(&script_path)
-        .map_err(|e| format!("[{}] 读取脚本 {} 失败：{e}", work.name, script_path.display()))?;
+    let source = std::fs::read_to_string(&script_path).map_err(|e| {
+        format!(
+            "[{}] 读取脚本 {} 失败：{e}",
+            work.name,
+            script_path.display()
+        )
+    })?;
 
     // 同一作品可能以两个后端各跑一遍 ⇒ 中间文件名带后端，避免并行时互相覆盖。
     let zsb = options
@@ -252,8 +258,7 @@ fn run_work(
     drop(runtime);
 
     // ── 路径 2：同一份 ZSB ──
-    let bytes =
-        std::fs::read(&zsb).map_err(|e| format!("[{}] 读取 ZSB 失败：{e}", work.name))?;
+    let bytes = std::fs::read(&zsb).map_err(|e| format!("[{}] 读取 ZSB 失败：{e}", work.name))?;
     let bundle =
         Bundle::from_bytes(&bytes).map_err(|e| format!("[{}] ZSB 解析失败：{e}", work.name))?;
     let mut runtime = build_bundle_runtime(ctx.clone(), &bundle)
@@ -300,8 +305,8 @@ fn compile_and_write(
     language: ScriptLanguage,
     out: &Path,
 ) -> Result<String, String> {
-    let compiled = compile_script(source, language)
-        .map_err(|e| format!("[{name}] 编译失败：{e}"))?;
+    let compiled =
+        compile_script(source, language).map_err(|e| format!("[{name}] 编译失败：{e}"))?;
     let bundle = Bundle::encode(
         &compiled.script,
         MetaInput {
@@ -397,10 +402,7 @@ pub fn run_sink_bypass(
     if a != b {
         return Err("V3-12 失败：挂 / 不挂 HashSink 的 PNG 字节不同".to_string());
     }
-    println!(
-        "[verify] {{\"sink_bypass\":\"ok\",\"bytes\":{}}}",
-        a.len()
-    );
+    println!("[verify] {{\"sink_bypass\":\"ok\",\"bytes\":{}}}", a.len());
     Ok(())
 }
 
@@ -670,8 +672,7 @@ fn render_png(
     hash: bool,
     env: &str,
 ) -> Result<Vec<u8>, String> {
-    std::fs::create_dir_all(dir)
-        .map_err(|e| format!("创建目录 {} 失败：{e}", dir.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("创建目录 {} 失败：{e}", dir.display()))?;
     let mut runtime = build_script_runtime(ctx.clone(), source, language)
         .map_err(|e| format!("[{}] 装配失败：{e}", work.name))?;
     let frames = frames_for(&runtime, fps);
@@ -848,7 +849,10 @@ mod tests {
         assert_eq!(language, ScriptLanguage::JavaScript);
 
         let (path, language) = locate_script(&dir, "surface_matrix").expect("按顺序探测");
-        assert!(path.ends_with("surface_matrix.lua"), "探测顺序仍以 .lua 优先");
+        assert!(
+            path.ends_with("surface_matrix.lua"),
+            "探测顺序仍以 .lua 优先"
+        );
         assert_eq!(language, ScriptLanguage::Lua);
         std::fs::remove_dir_all(&dir).ok();
     }

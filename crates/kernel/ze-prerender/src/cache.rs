@@ -40,7 +40,10 @@ impl ContentCache {
 
     /// 写入缓存。仅当结果为 Ok 或希望记住错误时才需要。
     pub fn insert(&self, key: CacheKey, value: ContentResult) {
-        self.inner.write().expect("cache poisoned").insert(key, value);
+        self.inner
+            .write()
+            .expect("cache poisoned")
+            .insert(key, value);
     }
 
     /// 清空缓存。
@@ -49,7 +52,11 @@ impl ContentCache {
     }
 
     #[cfg(test)]
-    pub fn hits(&self) -> u64 { *self.hits.lock().unwrap() }
+    pub fn hits(&self) -> u64 {
+        *self.hits.lock().unwrap()
+    }
     #[cfg(test)]
-    pub fn misses(&self) -> u64 { *self.misses.lock().unwrap() }
+    pub fn misses(&self) -> u64 {
+        *self.misses.lock().unwrap()
+    }
 }

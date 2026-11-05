@@ -7,8 +7,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use egui::Color32;
-use zela_node_editor::NodePos;
 use ze_node_core::{Node, NodePresentation};
+use zela_node_editor::NodePos;
 
 /// How a node type is presented as a card.
 pub trait NodeView: Send + Sync + 'static {

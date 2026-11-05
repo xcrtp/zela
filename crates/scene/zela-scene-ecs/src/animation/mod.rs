@@ -27,10 +27,10 @@ pub use ze_scene_core::animation::params;
 // CC-a：作用域（独立时钟 + 命名空间）。
 pub use ze_scene_core::animation::{ScopeId, ScopeSpec, scope};
 // CC-c：字段级写入仲裁（绑定 vs 绑定）。
-pub use ze_scene_core::animation::{resolve, SuppressedWrite, WriteResolution};
 pub use ze_scene_core::animation::{
     Binding, BindingDriver, BindingTable, Camera2DFraming, CameraEye, CircleRadius, FieldSpec,
     FieldTarget, LibraryRef, MorphT, OpacityValue, Phase, ResetBehavior, RevealRange, SeekKind,
-    Target, TargetCtor, TargetEntry, TargetError, Timeline, TransformChannel, TransformChannelValue,
-    target_ctor_by_name, target_entry,
+    Target, TargetCtor, TargetEntry, TargetError, Timeline, TransformChannel,
+    TransformChannelValue, target_ctor_by_name, target_entry,
 };
+pub use ze_scene_core::animation::{SuppressedWrite, WriteResolution, resolve};

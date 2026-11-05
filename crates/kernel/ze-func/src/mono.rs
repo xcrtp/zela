@@ -62,17 +62,15 @@ impl ze_comb::OpResolver for MathMonomorphizer {
             ("mul" | "scale", [Vec2, F64]) => {
                 (TypedOp::Vec2xF64ToVec2(instances::scale_vec2), Vec2)
             }
-            ("mul" | "scale", [F64, Vec2]) => (
-                TypedOp::F64xVec2ToVec2(instances::scale_vec2_left),
-                Vec2,
-            ),
+            ("mul" | "scale", [F64, Vec2]) => {
+                (TypedOp::F64xVec2ToVec2(instances::scale_vec2_left), Vec2)
+            }
             ("mul" | "scale", [Vec3, F64]) => {
                 (TypedOp::Vec3xF64ToVec3(instances::scale_vec3), Vec3)
             }
-            ("mul" | "scale", [F64, Vec3]) => (
-                TypedOp::F64xVec3ToVec3(instances::scale_vec3_left),
-                Vec3,
-            ),
+            ("mul" | "scale", [F64, Vec3]) => {
+                (TypedOp::F64xVec3ToVec3(instances::scale_vec3_left), Vec3)
+            }
             ("mix", [F64, F64, F64]) => (TypedOp::MixF64(instances::mix_f64), F64),
             ("mix", [Vec2, Vec2, F64]) => (TypedOp::MixVec2(instances::mix_vec2), Vec2),
             ("mix", [Vec3, Vec3, F64]) => (TypedOp::MixVec3(instances::mix_vec3), Vec3),
@@ -80,9 +78,7 @@ impl ze_comb::OpResolver for MathMonomorphizer {
             ("vec2", [F64, F64]) => (TypedOp::F64xF64ToVec2(instances::vec2_of), Vec2),
             ("vec3", [F64, F64, F64]) => (TypedOp::F64x3ToVec3(instances::vec3_of), Vec3),
             // **BT-1**：`vec4` 构造器与 `w` 分量（其余算子暂不对 Vec4 开口）。
-            ("vec4", [F64, F64, F64, F64]) => {
-                (TypedOp::F64x4ToVec4(instances::vec4_of), Vec4)
-            }
+            ("vec4", [F64, F64, F64, F64]) => (TypedOp::F64x4ToVec4(instances::vec4_of), Vec4),
             ("w", [Vec4]) => (TypedOp::Vec4ToF64(instances::w_of_vec4), F64),
             ("x", [Vec2]) => (TypedOp::Vec2ToF64(instances::x_of_vec2), F64),
             ("x", [Vec3]) => (TypedOp::Vec3ToF64(instances::x_of_vec3), F64),
@@ -132,29 +128,17 @@ impl ze_comb::OpResolver for MathMonomorphizer {
             ("dot", [Vec2, Vec2]) => (TypedOp::Vec2xVec2ToF64(instances::dot_vec2), F64),
             ("dot", [Vec3, Vec3]) => (TypedOp::Vec3xVec3ToF64(instances::dot_vec3), F64),
             ("cross", [Vec3, Vec3]) => (TypedOp::Vec3xVec3ToVec3(instances::cross_vec3), Vec3),
-            ("reflect", [Vec2, Vec2]) => {
-                (TypedOp::Vec2xVec2ToVec2(instances::reflect_vec2), Vec2)
+            ("reflect", [Vec2, Vec2]) => (TypedOp::Vec2xVec2ToVec2(instances::reflect_vec2), Vec2),
+            ("reflect", [Vec3, Vec3]) => (TypedOp::Vec3xVec3ToVec3(instances::reflect_vec3), Vec3),
+            ("faceforward", [Vec2, Vec2, Vec2]) => {
+                (TypedOp::Vec2x3ToVec2(instances::faceforward_vec2), Vec2)
             }
-            ("reflect", [Vec3, Vec3]) => {
-                (TypedOp::Vec3xVec3ToVec3(instances::reflect_vec3), Vec3)
+            ("faceforward", [Vec3, Vec3, Vec3]) => {
+                (TypedOp::Vec3x3ToVec3(instances::faceforward_vec3), Vec3)
             }
-            ("faceforward", [Vec2, Vec2, Vec2]) => (
-                TypedOp::Vec2x3ToVec2(instances::faceforward_vec2),
-                Vec2,
-            ),
-            ("faceforward", [Vec3, Vec3, Vec3]) => (
-                TypedOp::Vec3x3ToVec3(instances::faceforward_vec3),
-                Vec3,
-            ),
-            ("distance", [Vec2, Vec2]) => {
-                (TypedOp::Vec2xVec2ToF64(instances::distance_vec2), F64)
-            }
-            ("distance", [Vec3, Vec3]) => {
-                (TypedOp::Vec3xVec3ToF64(instances::distance_vec3), F64)
-            }
-            ("smoothstep", [F64, F64, F64]) => {
-                (TypedOp::F64x3ToF64(instances::smoothstep), F64)
-            }
+            ("distance", [Vec2, Vec2]) => (TypedOp::Vec2xVec2ToF64(instances::distance_vec2), F64),
+            ("distance", [Vec3, Vec3]) => (TypedOp::Vec3xVec3ToF64(instances::distance_vec3), F64),
+            ("smoothstep", [F64, F64, F64]) => (TypedOp::F64x3ToF64(instances::smoothstep), F64),
             ("fract", [F64]) => (TypedOp::F64ToF64(instances::fract), F64),
             ("lt", [F64, F64]) => (TypedOp::F64xF64ToBool(instances::lt), Bool),
             ("gt", [F64, F64]) => (TypedOp::F64xF64ToBool(instances::gt), Bool),
@@ -327,11 +311,7 @@ mod instances {
     pub fn rotate3(v: [f32; 3], axis: [f32; 3], angle: f64) -> [f32; 3] {
         rotate_rodrigues(
             [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])],
-            [
-                f64::from(axis[0]),
-                f64::from(axis[1]),
-                f64::from(axis[2]),
-            ],
+            [f64::from(axis[0]), f64::from(axis[1]), f64::from(axis[2])],
             angle,
         )
     }
@@ -471,11 +451,7 @@ mod instances {
     }
 
     pub fn step(edge: f64, x: f64) -> f64 {
-        if x < edge {
-            0.0
-        } else {
-            1.0
-        }
+        if x < edge { 0.0 } else { 1.0 }
     }
 
     pub fn dot_vec2(a: [f32; 2], b: [f32; 2]) -> f64 {
@@ -501,20 +477,12 @@ mod instances {
 
     pub fn reflect_vec3(e1: [f32; 3], e2: [f32; 3]) -> [f32; 3] {
         let k = 2.0 * (e2[0] * e1[0] + e2[1] * e1[1] + e2[2] * e1[2]);
-        [
-            e1[0] - k * e2[0],
-            e1[1] - k * e2[1],
-            e1[2] - k * e2[2],
-        ]
+        [e1[0] - k * e2[0], e1[1] - k * e2[1], e1[2] - k * e2[2]]
     }
 
     pub fn faceforward_vec2(e1: [f32; 2], e2: [f32; 2], e3: [f32; 2]) -> [f32; 2] {
         let d = e2[0] * e3[0] + e2[1] * e3[1];
-        if d < 0.0 {
-            e1
-        } else {
-            [-e1[0], -e1[1]]
-        }
+        if d < 0.0 { e1 } else { [-e1[0], -e1[1]] }
     }
 
     pub fn faceforward_vec3(e1: [f32; 3], e2: [f32; 3], e3: [f32; 3]) -> [f32; 3] {

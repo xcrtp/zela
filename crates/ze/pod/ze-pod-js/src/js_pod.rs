@@ -24,7 +24,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use boa_engine::{Context, JsString, Source};
-use ze_pod_core::{Capability, FunctionId, Pod, PodError, PodId, QualifiedName, ServiceRequirement};
+use ze_pod_core::{
+    Capability, FunctionId, Pod, PodError, PodId, QualifiedName, ServiceRequirement,
+};
 
 use crate::binding::HostState;
 
@@ -274,13 +276,20 @@ fn requirements_impl(pod: &dyn Pod) -> Vec<ServiceRequirement> {
     this.binders
         .borrow()
         .values()
-        .flat_map(|entries| entries.iter().flat_map(|entry| entry.requirements.iter().cloned()))
+        .flat_map(|entries| {
+            entries
+                .iter()
+                .flat_map(|entry| entry.requirements.iter().cloned())
+        })
         .collect()
 }
 
 fn inject_impl(pod: &dyn Pod, service: String, service_pod: Arc<dyn Pod>) -> Result<(), PodError> {
     let this = js_pod(pod);
-    let entries: Vec<(fn(&mut Context, &str, Arc<dyn Pod>) -> Result<(), PodError>, String)> = {
+    let entries: Vec<(
+        fn(&mut Context, &str, Arc<dyn Pod>) -> Result<(), PodError>,
+        String,
+    )> = {
         match this.binders.borrow().get(&service) {
             Some(entries) => entries
                 .iter()

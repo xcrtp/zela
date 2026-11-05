@@ -81,12 +81,8 @@ impl RenderContext {
         instance: &wgpu::Instance,
         options: wgpu::RequestAdapterOptions<'_, '_>,
     ) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
-        Self::request_adapter_and_device_with_features(
-            instance,
-            options,
-            wgpu::Features::empty(),
-        )
-        .await
+        Self::request_adapter_and_device_with_features(instance, options, wgpu::Features::empty())
+            .await
     }
 
     /// 同 [`Self::request_adapter_and_device`]，但**显式**给出 device 需要的 features
@@ -131,9 +127,7 @@ impl RenderContext {
                 ..Default::default()
             })
             .await
-            .map_err(|e| {
-                RenderContextError::Initialization(format!("Request device failed: {e}"))
-            })
+            .map_err(|e| RenderContextError::Initialization(format!("Request device failed: {e}")))
     }
 
     /// **异步：按后端注册表请求 adapter + device + 上下文**（B11 Step 1 / §5.3）。
@@ -314,11 +308,7 @@ impl RenderContext {
     /// 会在 `await` 前调用一次 `poll(wait)`（行为与同步版一致）。
     ///
     /// 返回字节序同 [`RenderContext::read_texture`]（目标格式，不是无条件 RGBA8）。
-    pub async fn read_texture_async(
-        &self,
-        texture: &wgpu::Texture,
-        size: (u32, u32),
-    ) -> Vec<u8> {
+    pub async fn read_texture_async(&self, texture: &wgpu::Texture, size: (u32, u32)) -> Vec<u8> {
         let (buffer, height, unpadded, padded) = self.copy_to_readback(texture, size);
         let slice = buffer.slice(..);
         let (tx, rx) = futures_channel::oneshot::channel();

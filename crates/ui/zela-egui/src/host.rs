@@ -26,9 +26,9 @@ use ze_notion::Rect2D;
 use zela_render::ViewRect;
 use zela_render_backends::SceneCompositorCallback;
 use zela_scene_ecs::contract::WorldView;
-use zela_scene_ecs::domain::{InputEvents, SceneView};
 #[cfg(test)]
 use zela_scene_ecs::domain::LayerKind;
+use zela_scene_ecs::domain::{InputEvents, SceneView};
 use zela_schedule::resource::Resources;
 
 use crate::resources::UiConfig;
@@ -186,7 +186,11 @@ impl EguiSceneHost {
                     keys.insert(key);
                 }
             }
-            let screen_size = i.raw.screen_rect.map(|rect| rect.size()).unwrap_or_default();
+            let screen_size = i
+                .raw
+                .screen_rect
+                .map(|rect| rect.size())
+                .unwrap_or_default();
             ze_scene_core::domain::WindowInput {
                 pointer: ze_scene_core::domain::PointerState {
                     position: i
@@ -514,9 +518,9 @@ mod tests {
     /// clamp（实测："滚两下不动，再滚一下要么全没了、要么爆掉"）。
     #[test]
     fn wheel_zoom_is_applied_exactly_once() {
-        use zela_schedule::scheduler::{Phase, Scheduler};
-        use zela_scene_ecs::domain::{CameraCommand, LayerId, SceneEvent};
         use zela_scene_ecs::CameraInputSystem;
+        use zela_scene_ecs::domain::{CameraCommand, LayerId, SceneEvent};
+        use zela_schedule::scheduler::{Phase, Scheduler};
 
         let mut world = hecs::World::new();
         let handle = spawn_2d_camera(&mut world);
@@ -562,9 +566,9 @@ mod tests {
     #[test]
     fn scene_frame_begin_consumes_input_exactly_once() {
         use std::sync::Arc;
-        use zela_schedule::scheduler::{Phase, Scheduler};
         use zela_scene_ecs::domain::{CameraCommand, InputEvents, LayerId, SceneEvent};
         use zela_scene_ecs::{CameraInputSystem, DriverPod};
+        use zela_schedule::scheduler::{Phase, Scheduler};
 
         let mut world = hecs::World::new();
         let handle = spawn_2d_camera(&mut world);

@@ -47,7 +47,9 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, spanned::Spanned, Attribute, DeriveInput, Ident, LitStr, Token, Type};
+use syn::{
+    Attribute, DeriveInput, Ident, LitStr, Token, Type, parse_macro_input, spanned::Spanned,
+};
 
 /// 从组件类型声明生成 `SceneComponent` 常量（`POD_TYPE_NAME` / `CTOR_NAME`）。
 #[proc_macro_derive(SceneComponent, attributes(pod_type))]
@@ -229,7 +231,11 @@ fn expand_channels(input: &DeriveInput) -> syn::Result<TokenStream2> {
         let make_fn = Ident::new(&format!("make_{struct_snake}_{field_str}"), span);
         let address = format!("{component}.{field_str}");
         // 持久化名：`name = "..."` 覆盖，缺省 = 规范地址。
-        let name = cf.name.as_ref().map(|l| l.value()).unwrap_or_else(|| address.clone());
+        let name = cf
+            .name
+            .as_ref()
+            .map(|l| l.value())
+            .unwrap_or_else(|| address.clone());
 
         let (ty, write_body, read_body) = match map_type(&cf.ty)? {
             MappedKind::F32 => (
@@ -437,7 +443,8 @@ mod tests {
         let f: ChannelField = syn::parse_str("color: Color32").unwrap();
         let err = map_type(&f.ty).unwrap_err();
         assert!(
-            err.to_string().contains("字段通道只支持 f32/Vec2/Vec3/bool"),
+            err.to_string()
+                .contains("字段通道只支持 f32/Vec2/Vec3/bool"),
             "非法类型应报编译期错误：{err}"
         );
     }

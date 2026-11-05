@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-notion`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-content`、`ze-interact`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-time`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-ecs`
-- 源文件：15 个 · 3711 行
+- 源文件：15 个 · 3719 行
 
 ### 文件清单
 
@@ -20,17 +20,17 @@
 | `src/color.rs` | 168 | — |
 | `src/curve.rs` | 182 | — |
 | `src/func.rs` | 321 | — |
-| `src/lerp.rs` | 112 | — |
+| `src/lerp.rs` | 114 | — |
 | `src/lib.rs` | 64 | — |
 | `src/mat.rs` | 8 | — |
-| `src/path.rs` | 1282 | — |
+| `src/path.rs` | 1286 | — |
 | `src/primitives.rs` | 829 | — |
 | `src/proj.rs` | 17 | — |
 | `src/rect.rs` | 142 | — |
 | `src/sample.rs` | 150 | — |
 | `src/space.rs` | 99 | — |
 | `src/stroke.rs` | 66 | — |
-| `src/transform.rs` | 236 | — |
+| `src/transform.rs` | 238 | — |
 | `src/vec.rs` | 35 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

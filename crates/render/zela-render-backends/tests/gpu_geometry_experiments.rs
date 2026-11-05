@@ -65,10 +65,7 @@ fn read_back(
     device
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("等待 GPU");
-    let mapped = readback
-        .slice(..)
-        .get_mapped_range()
-        .expect("映射读回缓冲");
+    let mapped = readback.slice(..).get_mapped_range().expect("映射读回缓冲");
     let bytes = mapped.to_vec();
     drop(mapped);
     readback.unmap();
@@ -211,9 +208,8 @@ fn run_lerp_pass(
             },
         ],
     });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("e5"),
-    });
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("e5") });
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("e5"),
@@ -268,7 +264,10 @@ fn e5_compute_pass_written_controls_flatten_correctly() {
 
     let first = run_lerp_pass(&device, &queue, &base, &target, mix);
     let second = run_lerp_pass(&device, &queue, &base, &target, mix);
-    assert_eq!(first, second, "同一份输入两次运行必须逐字节相同（本机逐次一致）");
+    assert_eq!(
+        first, second,
+        "同一份输入两次运行必须逐字节相同（本机逐次一致）"
+    );
 
     let gpu_points = ctrl_points(&first);
     let expected_points: Vec<[f32; 3]> = base
@@ -368,9 +367,8 @@ fn e6_gpu_bounds_reduce_is_bit_exact() {
             },
         ],
     });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("e6"),
-    });
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("e6") });
     {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("e6"),
@@ -393,9 +391,18 @@ fn e6_gpu_bounds_reduce_is_bit_exact() {
         points.iter().map(|p| p[2]).fold(f32::INFINITY, f32::min),
     ]);
     let cpu_hi = normalize_zero([
-        points.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max),
-        points.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max),
-        points.iter().map(|p| p[2]).fold(f32::NEG_INFINITY, f32::max),
+        points
+            .iter()
+            .map(|p| p[0])
+            .fold(f32::NEG_INFINITY, f32::max),
+        points
+            .iter()
+            .map(|p| p[1])
+            .fold(f32::NEG_INFINITY, f32::max),
+        points
+            .iter()
+            .map(|p| p[2])
+            .fold(f32::NEG_INFINITY, f32::max),
     ]);
     assert_eq!(
         gpu_lo.map(f32::to_bits),

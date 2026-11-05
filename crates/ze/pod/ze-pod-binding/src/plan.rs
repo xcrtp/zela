@@ -56,10 +56,7 @@ impl BindingPlan {
 const VALUE_SHAPES: &[&str] = &["zela.math.Channel", "zela.math.Clock"];
 
 /// 递归收集命名类型（struct / enum）。
-pub fn collect_types(
-    spec: &'static TypeSpec,
-    out: &mut BTreeMap<&'static str, &'static TypeSpec>,
-) {
+pub fn collect_types(spec: &'static TypeSpec, out: &mut BTreeMap<&'static str, &'static TypeSpec>) {
     match spec {
         TypeSpec::Struct { name, fields, .. } => {
             if *name != "()" {

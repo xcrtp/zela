@@ -146,9 +146,7 @@ pub fn lowering() -> Lowering {
 mod tests {
     use ze_graph_algo::KahnSorter;
     use ze_graph_eval::LazyPullEval;
-    use ze_node_core::{
-        EvalErrorPolicy, EvalStrategy, Graph, NodeId, OutputSocketId, SimpleGraph,
-    };
+    use ze_node_core::{EvalErrorPolicy, EvalStrategy, Graph, NodeId, OutputSocketId, SimpleGraph};
     use ze_node_lower::Lowered;
     use ze_scene_core::animation::affine::StateShape;
 

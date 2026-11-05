@@ -67,7 +67,9 @@ impl std::fmt::Display for InputError {
                 "不支持的输入流格式 `{found}`（本实现支持 `{INPUT_FORMAT}`）"
             ),
             Self::Json { message } => write!(f, "输入流 JSON 非法：{message}"),
-            Self::Zsb { message } => write!(f, "读取 ZSB 失败（配对信息）：{message}"),
+            Self::Zsb { message } => {
+                write!(f, "读取 ZSB 失败（配对信息）：{message}")
+            }
             Self::PayloadHashMismatch { expected, actual } => write!(
                 f,
                 "输入流与 ZSB 不匹配：输入流记录 {expected}，当前 ZSB 是 {actual}\n  \
@@ -116,11 +118,9 @@ pub struct Pairing {
 impl Pairing {
     /// 从一份 ZSB 读取配对信息。
     pub fn for_bundle(bundle: &Bundle) -> Result<Self, InputError> {
-        let script = bundle
-            .script()
-            .map_err(|error| InputError::Zsb {
-                message: error.to_string(),
-            })?;
+        let script = bundle.script().map_err(|error| InputError::Zsb {
+            message: error.to_string(),
+        })?;
         Ok(Self {
             zsb_payload_hash: bundle.payload_hash_hex(),
             libraries: libraries_of(&script),
@@ -185,21 +185,21 @@ impl InputStream {
         if events.is_empty() {
             return;
         }
-        match self.frames.binary_search_by_key(&frame, |entry| entry.frame) {
+        match self
+            .frames
+            .binary_search_by_key(&frame, |entry| entry.frame)
+        {
             Ok(index) => self.frames[index].events.extend(events),
-            Err(index) => self.frames.insert(
-                index,
-                FrameEvents {
-                    frame,
-                    events,
-                },
-            ),
+            Err(index) => self.frames.insert(index, FrameEvents { frame, events }),
         }
     }
 
     /// 第 `frame` 帧的事件（稀疏；没有事件返回空切片）。
     pub fn events_at(&self, frame: u32) -> &[SceneEvent] {
-        match self.frames.binary_search_by_key(&frame, |entry| entry.frame) {
+        match self
+            .frames
+            .binary_search_by_key(&frame, |entry| entry.frame)
+        {
             Ok(index) => &self.frames[index].events,
             Err(_) => &[],
         }
@@ -355,7 +355,10 @@ impl WindowStream {
             input: input.clone(),
             tag,
         };
-        match self.frames.binary_search_by_key(&frame, |entry| entry.frame) {
+        match self
+            .frames
+            .binary_search_by_key(&frame, |entry| entry.frame)
+        {
             Ok(index) => self.frames[index] = entry,
             Err(index) => self.frames.insert(index, entry),
         }
@@ -463,10 +466,10 @@ mod tests {
     use crate::MetaInput;
     use ze_comb::{ChannelRef, Expr, OpRef};
     use ze_scene_core::Circle;
+    use zela_scene_ecs::ClockProgram;
     use zela_scene_ecs::animation::LibraryRef;
     use zela_scene_ecs::domain::ids;
     use zela_scene_ecs::scene_script::SceneEncoder;
-    use zela_scene_ecs::ClockProgram;
 
     fn library() -> LibraryRef {
         LibraryRef {
@@ -484,7 +487,14 @@ mod tests {
             [Expr::channel(ChannelRef::builtin("time"))],
         );
         encoder
-            .bind_expr(dot, "CircleRadius", expr, library(), ClockProgram::new(), 2.0)
+            .bind_expr(
+                dot,
+                "CircleRadius",
+                expr,
+                library(),
+                ClockProgram::new(),
+                2.0,
+            )
             .expect("表达式绑定合法");
         encoder.finish()
     }
@@ -534,11 +544,19 @@ mod tests {
     #[test]
     fn stream_is_frame_indexed_and_byte_stable() {
         let mut stream = InputStream::new(pairing());
-        stream.record(3, [SceneEvent::Button { id: ids::PLAY_PAUSE }]);
-        stream.record(1, [SceneEvent::Slider {
-            id: ids::SPEED,
-            value: 0.5,
-        }]);
+        stream.record(
+            3,
+            [SceneEvent::Button {
+                id: ids::PLAY_PAUSE,
+            }],
+        );
+        stream.record(
+            1,
+            [SceneEvent::Slider {
+                id: ids::SPEED,
+                value: 0.5,
+            }],
+        );
         stream.record(3, [SceneEvent::Button { id: ids::REPLAY }]);
 
         let text = stream.to_json().expect("规范 JSON");
@@ -546,7 +564,10 @@ mod tests {
         let back = InputStream::from_json(&text).expect("可读回");
         assert_eq!(back.to_json().expect("规范"), text, "读回后仍逐字节相同");
         assert_eq!(
-            back.frames.iter().map(|entry| entry.frame).collect::<Vec<_>>(),
+            back.frames
+                .iter()
+                .map(|entry| entry.frame)
+                .collect::<Vec<_>>(),
             vec![1, 3],
             "帧号升序"
         );
@@ -574,11 +595,19 @@ mod tests {
     #[test]
     fn replay_twice_is_identical() {
         let mut stream = InputStream::new(pairing());
-        stream.record(0, [SceneEvent::Button { id: ids::PLAY_PAUSE }]);
-        stream.record(2, [SceneEvent::Slider {
-            id: ids::SPEED,
-            value: 1.5,
-        }]);
+        stream.record(
+            0,
+            [SceneEvent::Button {
+                id: ids::PLAY_PAUSE,
+            }],
+        );
+        stream.record(
+            2,
+            [SceneEvent::Slider {
+                id: ids::SPEED,
+                value: 1.5,
+            }],
+        );
         let text = stream.to_json().expect("规范 JSON");
         let run = || {
             let decoded = InputStream::from_json(&text).expect("读回");
@@ -596,10 +625,10 @@ mod tests {
     #[test]
     fn format_is_explicit() {
         let stream = InputStream::new(pairing());
-        let text = stream.to_json().expect("规范 JSON").replace(
-            INPUT_FORMAT,
-            "zela.input/999",
-        );
+        let text = stream
+            .to_json()
+            .expect("规范 JSON")
+            .replace(INPUT_FORMAT, "zela.input/999");
         match InputStream::from_json(&text) {
             Err(InputError::UnsupportedFormat { found }) => {
                 assert_eq!(found, "zela.input/999");

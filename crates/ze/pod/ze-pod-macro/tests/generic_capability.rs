@@ -7,8 +7,8 @@
 #![allow(dead_code)]
 
 use ze_pod_core::{
-    Broadcast, Capability, CommandQueue, EventSink, IntoPodTypeName, Pod, QualifiedName,
-    Receipt, RegistryPod,
+    Broadcast, Capability, CommandQueue, EventSink, IntoPodTypeName, Pod, QualifiedName, Receipt,
+    RegistryPod,
 };
 use ze_pod_macro::{PodType, capability};
 

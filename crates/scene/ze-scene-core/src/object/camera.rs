@@ -34,14 +34,7 @@ const FIT_MIN_EXTENT: f32 = 1e-3;
 /// （`Framing2D::to_camera_2d` 现算），场景里不存储这个组件 —— 给它挂 `#[channel]`
 /// 会得到"写永远命不中"的静默 no-op。2D 相机的可写通道是存储组件 `Framing2D`
 /// 的 `Framing2D.center` / `Framing2D.scale`（旧组合键 `Camera2DFraming` 同源）。
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    derive_new::new,
-    serde::Serialize,
-    serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, derive_new::new, serde::Serialize, serde::Deserialize)]
 pub struct Camera2D {
     /// 逻辑坐标系中相机中心位置
     pub center: Vec2,

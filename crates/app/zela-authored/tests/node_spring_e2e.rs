@@ -116,7 +116,10 @@ fn position_after(script: SceneScript, frames: u32) -> (f32, f32) {
     sched.add_system(Phase::SceneSync, BindingApplySystem);
     sched.init_resources();
     for frame in 1..=frames {
-        let time = sched.resources_mut().get_mut::<TimeState>().expect("TimeState");
+        let time = sched
+            .resources_mut()
+            .get_mut::<TimeState>()
+            .expect("TimeState");
         time.elapsed = frame as f32 / 60.0;
         // `State` 的轮数来自帧号（不是秒）：两处一起推进。
         time.frame = u64::from(frame);
@@ -244,7 +247,11 @@ fn panel_stays_draggable_after_assembly() {
     let changed: Vec<usize> = (0..before.len())
         .filter(|&index| before[index] != after[index])
         .collect();
-    assert_eq!(changed.len(), 1, "只有被拖的那一块改动：{before:?} → {after:?}");
+    assert_eq!(
+        changed.len(),
+        1,
+        "只有被拖的那一块改动：{before:?} → {after:?}"
+    );
     let index = changed[0];
     // 期望值由滑块自己的映射给出（轨道 75% 处的参数值）。
     let expected = slider.value_at(press.x);

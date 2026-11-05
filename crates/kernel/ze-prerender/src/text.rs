@@ -89,12 +89,7 @@ impl DirectTextEngine {
     }
 
     /// face 版本：字体数据 + face index 的指纹（同一次装配内稳定）。
-    fn face_version(
-        cache: &mut GlyphCache,
-        family: &str,
-        index: u32,
-        data: &[u8],
-    ) -> u64 {
+    fn face_version(cache: &mut GlyphCache, family: &str, index: u32, data: &[u8]) -> u64 {
         let key = (family.to_string(), index);
         if let Some(version) = cache.face_versions.get(&key) {
             return *version;
@@ -131,8 +126,7 @@ impl DirectTextEngine {
         {
             return Some(path.clone());
         }
-        let scaled = outline(face, ch)?
-            .transformed(&Transform2D::scale(Vec2::splat(scale)));
+        let scaled = outline(face, ch)?.transformed(&Transform2D::scale(Vec2::splat(scale)));
         #[cfg(test)]
         self.outline_builds
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -203,13 +197,11 @@ impl DirectTextEngine {
                 if !ch.is_whitespace() {
                     match self.scaled_outline(&face, face_version, ch, scale, font_size) {
                         Some(path) => {
-                            let placed = path
-                                .transformed(&Transform2D::translate(Vec2::new(pen, baseline)));
+                            let placed =
+                                path.transformed(&Transform2D::translate(Vec2::new(pen, baseline)));
                             items.push(
-                                StyledPath::filled(placed, fill).with_anchor(Span::new(
-                                    byte_start,
-                                    byte_start + ch.len_utf8(),
-                                )),
+                                StyledPath::filled(placed, fill)
+                                    .with_anchor(Span::new(byte_start, byte_start + ch.len_utf8())),
                             );
                         }
                         None => missing_outlines += 1,
@@ -371,7 +363,8 @@ mod tests {
         // 所有盒上方（y 超过上界）不命中。
         let top = output.run.chars[0].rect.max.y + 1.0;
         assert_eq!(
-            output.run
+            output
+                .run
                 .char_at(IxPoint::new(output.run.chars[0].rect.min.x, top)),
             None
         );
@@ -427,7 +420,13 @@ mod tests {
             .layout(text, None, 16.0, 0.0, Color32::BLACK)
             .expect("可排版");
         let wrapped = engine
-            .layout(text, None, 16.0, single.ir.bounds.size().x * 0.5, Color32::BLACK)
+            .layout(
+                text,
+                None,
+                16.0,
+                single.ir.bounds.size().x * 0.5,
+                Color32::BLACK,
+            )
             .expect("可排版");
         let single_height = single.ir.bounds.size().y;
         assert!(

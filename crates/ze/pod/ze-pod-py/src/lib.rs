@@ -25,7 +25,7 @@
 // 每帧 `FunctionX2Y` / 跨 Pod batch 调用不在本轮（见计划 §9 记账）。
 #![forbid(unsafe_code)]
 
-use ze_pod_core::{IntoPodTypeName, TypeSpec, PodType, PodTypeName, PodValue, PodValueError};
+use ze_pod_core::{IntoPodTypeName, PodType, PodTypeName, PodValue, PodValueError, TypeSpec};
 use ze_pod_macro::capability;
 
 pub mod export;

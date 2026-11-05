@@ -14,7 +14,7 @@ use std::sync::Arc;
 use ze_pod_core::{
     Broker, Capability, FunctionId, Pod, PodError, PodId, PodNode, QualifiedName, RegistryPod,
 };
-use ze_pod_func::{ExprPod, MathApi, LIBRARY_NAMESPACE, LIBRARY_VERSION, SERVICE, SugarApi};
+use ze_pod_func::{ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, MathApi, SERVICE, SugarApi};
 use ze_pod_lua::{LuaPod, RUN_ENTRY};
 use ze_pod_macro::capability;
 
@@ -43,13 +43,18 @@ impl Sink {
             *sink(pod).out.borrow_mut() = None;
             Ok(Box::new(()))
         });
-        registry.register_erased(FINISH_PATH, &[], "Result<Box<dyn Any>, String>", |pod, _| {
-            let out = sink(pod).out.borrow().clone();
-            Ok(Box::new(match out {
-                Some(text) => Ok(Box::new(text) as Box<dyn Any>),
-                None => Err("脚本没有 emit 任何文本".to_string()),
-            }))
-        });
+        registry.register_erased(
+            FINISH_PATH,
+            &[],
+            "Result<Box<dyn Any>, String>",
+            |pod, _| {
+                let out = sink(pod).out.borrow().clone();
+                Ok(Box::new(match out {
+                    Some(text) => Ok(Box::new(text) as Box<dyn Any>),
+                    None => Err("脚本没有 emit 任何文本".to_string()),
+                }))
+            },
+        );
         Self {
             id: PodId::next(),
             registry,
@@ -135,8 +140,7 @@ fn run(source: &str) -> String {
 /// 脚本只提交结构：`Σ sin(k t) / k` 的单项，产物是表达式 JSON。
 #[test]
 fn lua_builds_an_expression_and_exports_it() {
-    let out = run(
-        r#"
+    let out = run(r#"
         local k = 3.0
         local t = clock.time()
         -- 表构造器（与 `scene.spawn{}` 同构）；字面量仍需显式 `expr.pure`
@@ -146,8 +150,7 @@ fn lua_builds_an_expression_and_exports_it() {
             of = Sin { of = Mul { a = t, b = expr.pure(k) } },
         }
         scene.emit(expr.expression(y))
-        "#,
-    );
+        "#);
     let json: serde_json::Value = serde_json::from_str(&out).expect("产物必须是合法 JSON");
     assert_eq!(json["library"]["namespace"], LIBRARY_NAMESPACE);
     assert_eq!(json["library"]["version"], LIBRARY_VERSION);
@@ -171,8 +174,7 @@ fn lua_builds_an_expression_and_exports_it() {
 /// `sum` 接收数组；空数组退化为字面量零（不产生无参 call）。
 #[test]
 fn lua_sum_accepts_an_array() {
-    let out = run(
-        r#"
+    let out = run(r#"
         local terms = {}
         for i = 1, 3 do
             local k = i * 2.0
@@ -182,8 +184,7 @@ fn lua_sum_accepts_an_array() {
             }
         end
         scene.emit(expr.expression(Sum { terms = terms }))
-        "#,
-    );
+        "#);
     let json: serde_json::Value = serde_json::from_str(&out).unwrap();
     let args = json["expr"]["node"]["data"]["args"]
         .as_array()
@@ -194,20 +195,21 @@ fn lua_sum_accepts_an_array() {
 /// **B5**：Lua 侧能构造 `NatRec`（离散层的脚本入口），且 `rec_prev` 落在 step 内。
 #[test]
 fn lua_can_build_a_nat_rec() {
-    let out = run(
-        r#"
+    let out = run(r#"
         local fold = NatRec {
             count = 4.0,
             init = expr.pure(1.0),
             step = Add { a = expr.rec_prev(), b = expr.pure(2.0) },
         }
         scene.emit(expr.expression(fold))
-        "#,
-    );
+        "#);
     let json: serde_json::Value = serde_json::from_str(&out).expect("产物必须是合法 JSON");
     let node = &json["expr"]["node"];
     assert_eq!(node["type"], "nat_rec");
-    assert_eq!(node["data"]["count"]["node"]["data"]["value"]["type"], "i64");
+    assert_eq!(
+        node["data"]["count"]["node"]["data"]["value"]["type"],
+        "i64"
+    );
     assert_eq!(
         node["data"]["step"]["node"]["data"]["args"][0]["node"]["type"],
         "rec_prev"
@@ -219,8 +221,7 @@ fn lua_can_build_a_nat_rec() {
 /// 这是"糖不进 payload"的直接证据：同一个表达式，写糖与写 core 得到同一份 JSON。
 #[test]
 fn sugar_expands_to_the_hand_written_core_form() {
-    let out = run(
-        r#"
+    let out = run(r#"
         local ramp = sugar.ramp(0.0, 1.0, 2.0)
         local ramp_core = Mix {
             a = expr.pure(0.0), b = expr.pure(1.0),
@@ -274,8 +275,7 @@ fn sugar_expands_to_the_hand_written_core_form() {
             expr.expression(wave) .. "\n" .. expr.expression(wave_core) .. "\n" ..
             expr.expression(orbit) .. "\n" .. expr.expression(orbit_core)
         )
-        "#,
-    );
+        "#);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 8, "每个糖与它的 core 写法各一行");
     for pair in lines.chunks(2) {
@@ -368,7 +368,10 @@ fn table_constructors_are_generated_for_expression_ops() {
     assert!(lua.contains("function Scale(spec) end"), "Scale 构造器缺失");
 
     // **A 批**：声明文件输出算子的 L2 类型签名（文档/诊断用）。
-    assert!(lua.contains("Sin: (F64) -> F64"), "缺 Sin 的类型签名：\n{lua}");
+    assert!(
+        lua.contains("Sin: (F64) -> F64"),
+        "缺 Sin 的类型签名：\n{lua}"
+    );
     assert!(
         lua.contains("Mul: (Vector, F64) -> Vector"),
         "几何位置多态必须体现在签名里：\n{lua}"
@@ -403,7 +406,10 @@ fn typed_stubs_carry_l2_signatures() {
     }];
 
     let lua = ze_pod_lua::lua_ls(&capabilities);
-    assert!(lua.contains("---@class Expr<T>: Handle"), "缺 Expr<T>：\n{lua}");
+    assert!(
+        lua.contains("---@class Expr<T>: Handle"),
+        "缺 Expr<T>：\n{lua}"
+    );
     // 阶段 5：`Sin.of` 的签名是 `F64` ⇒ 参数侧展开成 `Expr<number>`（不再是 `Expr<any>`）。
     assert!(
         lua.contains("---@field of Expr<number>"),

@@ -28,9 +28,7 @@ use zela_app::export::{ExportError, target_pix_fmt, write_png};
 use zela_app::frame_loop::{
     FrameLoopOptions, FrameView, LoopBackend, frames_for, run_frames, timing_json,
 };
-use zela_app::{
-    ScriptLanguage, build_bundle_runtime, build_script_runtime, language_from_path,
-};
+use zela_app::{ScriptLanguage, build_bundle_runtime, build_script_runtime, language_from_path};
 use zela_render_backends::{HeadlessTarget, RenderContext, StandardBackends};
 use zela_scene_bundle::Bundle;
 use zela_scene_bundle::frame_hash::FrameSequenceHash;
@@ -252,7 +250,9 @@ fn run() -> Result<(), String> {
             .ok_or_else(|| "上下文没有 adapter：无法判定后端可用性".to_string())?;
         for entry in registry.availability(adapter) {
             match entry.reason {
-                Some(reason) => eprintln!("[backend] {:?} 不可用：{reason}", entry.kind),
+                Some(reason) => {
+                    eprintln!("[backend] {:?} 不可用：{reason}", entry.kind)
+                }
                 None => eprintln!("[backend] {:?} 可用", entry.kind),
             }
         }
@@ -286,10 +286,11 @@ fn run() -> Result<(), String> {
             "[zsb] payload hash = {}（{} 个对象，静止时刻 {}）",
             bundle.payload_hash_hex(),
             bundle.meta().object_count,
-            bundle.script().ok().and_then(|script| script.still_time()).map_or_else(
-                || "不可推导".to_string(),
-                |value| format!("≈ {value:.3}s")
-            )
+            bundle
+                .script()
+                .ok()
+                .and_then(|script| script.still_time())
+                .map_or_else(|| "不可推导".to_string(), |value| format!("≈ {value:.3}s"))
         );
         // D 批：输入流是**独立产物**，加载时先做配对校验（不匹配 ⇒ 显式失败）。
         if let Some(path) = &args.input_stream {
@@ -320,7 +321,10 @@ fn run() -> Result<(), String> {
             let pairing = runtime.pairing.clone().ok_or_else(|| {
                 "--record-input 需要可配对的 ZSB（当前装配路径没有 payload 身份）".to_string()
             })?;
-            Some((zela_scene_bundle::Recorder::recording(pairing), path.clone()))
+            Some((
+                zela_scene_bundle::Recorder::recording(pairing),
+                path.clone(),
+            ))
         }
         None => None,
     };
@@ -580,7 +584,10 @@ impl FrameSink for HashSink {
             self.size.1
         );
         if let Some(path) = &self.hash_out {
-            if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            if let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("创建目录 {} 失败：{e}", parent.display()))?;
             }
@@ -714,7 +721,12 @@ mod defaults_snapshot {
     #[test]
     fn size_split_and_backend_parse() {
         let parsed = Args::parse_from(&args(&[
-            "--script", "a.lua", "--size", "1280x720", "--backend", "vector",
+            "--script",
+            "a.lua",
+            "--size",
+            "1280x720",
+            "--backend",
+            "vector",
         ]))
         .expect("显式参数可解析");
         assert_eq!(parsed.size, (1280, 720), "--size 按 WxH 切分");
@@ -736,4 +748,3 @@ mod defaults_snapshot {
         assert!(error.contains("用法：zela-render"));
     }
 }
-

@@ -51,11 +51,7 @@ pub struct SeqKey {
 impl SeqKey {
     /// 逐字段构造。
     pub const fn new(frame: u64, source: PodHandle, seq: u64) -> Self {
-        Self {
-            frame,
-            source,
-            seq,
-        }
+        Self { frame, source, seq }
     }
 }
 

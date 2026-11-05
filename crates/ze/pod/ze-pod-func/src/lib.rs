@@ -35,7 +35,6 @@ pub use api::{
     SUGAR_API_FINGERPRINT, SUGAR_API_VERSION, ScaleSpec, ShaderSourceSpec, ShaderSpec, SinSpec,
     StateSpec, SugarApi, SumSpec, method_signature,
 };
-pub use sugar::{SUGAR, SugarDoc};
 pub use expr_pod::{
     ExprPod, LIBRARY_NAMESPACE, LIBRARY_VERSION, PendingBindEach, PendingBinding, PendingPlot,
     PendingShader, QUERY_SELF_OBJECT, SCENE_NAMESPACE,
@@ -49,6 +48,7 @@ pub use ops::eval as eval_op;
 pub use signature::{
     SIGNATURES, check_op_revisions, collect_op_revisions, op_revision, signature_of,
 };
+pub use sugar::{SUGAR, SugarDoc};
 pub use ze_comb::ChannelType;
 
 /// 本函子库在 Broker 里的 Service 名（脚本侧全局表名也是它：`expr.*`）。

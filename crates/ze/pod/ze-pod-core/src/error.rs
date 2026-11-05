@@ -29,21 +29,27 @@ impl fmt::Display for PodError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnknownFunction(name) => write!(f, "未知函数：{name}"),
-            Self::BadQualifiedName(input) => write!(f, "无法解析完整函数名：{input}"),
+            Self::BadQualifiedName(input) => {
+                write!(f, "无法解析完整函数名：{input}")
+            }
             Self::ArityMismatch { expected, got } => {
                 write!(f, "参数个数不匹配：期望 {expected}，实际 {got}")
             }
             Self::ArgTypeMismatch { index, expected } => {
                 write!(f, "第 {index} 个参数类型不匹配：期望 {expected}")
             }
-            Self::HandleReleased { slot } => write!(f, "句柄已释放（槽位 {slot}）"),
-            Self::CrossPodHandle { expected, actual } => {
-                write!(f, "跨 Pod 句柄：句柄属于 Pod {actual}，当前 Pod 是 {expected}")
+            Self::HandleReleased { slot } => {
+                write!(f, "句柄已释放（槽位 {slot}）")
             }
-            Self::StaleFunction { slot, generation } => write!(
-                f,
-                "函数句柄已失效（槽位 {slot}，generation {generation}）"
-            ),
+            Self::CrossPodHandle { expected, actual } => {
+                write!(
+                    f,
+                    "跨 Pod 句柄：句柄属于 Pod {actual}，当前 Pod 是 {expected}"
+                )
+            }
+            Self::StaleFunction { slot, generation } => {
+                write!(f, "函数句柄已失效（槽位 {slot}，generation {generation}）")
+            }
             Self::CallFailed(msg) => write!(f, "调用失败：{msg}"),
         }
     }

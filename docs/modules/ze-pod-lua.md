@@ -17,10 +17,10 @@
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/binding.rs` | 525 | — |
-| `src/export.rs` | 457 | — |
+| `src/binding.rs` | 514 | — |
+| `src/export.rs` | 465 | — |
 | `src/lib.rs` | 26 | — |
-| `src/lua_pod.rs` | 366 | — |
+| `src/lua_pod.rs` | 369 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

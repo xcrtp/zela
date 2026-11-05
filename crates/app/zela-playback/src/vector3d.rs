@@ -111,7 +111,8 @@ const ENVIRONMENT_UNSET: u8 = 0;
 const ENVIRONMENT_ON: u8 = 1;
 const ENVIRONMENT_OFF: u8 = 2;
 
-static ENVIRONMENT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(ENVIRONMENT_UNSET);
+static ENVIRONMENT: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(ENVIRONMENT_UNSET);
 
 /// 显式开关 IBL（宿主用：浏览器 / 测试）。
 pub fn set_environment(on: bool) {
@@ -172,8 +173,7 @@ pub fn view3(
 ) -> Result<View3, String> {
     let Projection::Perspective { fov_y, .. } = camera.projection else {
         return Err(
-            "矢量后端的 3D 视图只有 focal 透视形式：本帧相机是正交投影（不静默近似）"
-                .to_string(),
+            "矢量后端的 3D 视图只有 focal 透视形式：本帧相机是正交投影（不静默近似）".to_string(),
         );
     };
     let to_eye = camera.eye - camera.target;
@@ -341,8 +341,12 @@ fn mesh_record(
                         .to_string(),
                 );
             }
-            let (positions, normals, triangles) =
-                line_ribbons(&geometry.positions, geometry.indices.as_deref(), transform, lines)?;
+            let (positions, normals, triangles) = line_ribbons(
+                &geometry.positions,
+                geometry.indices.as_deref(),
+                transform,
+                lines,
+            )?;
             if triangles.is_empty() {
                 return Ok(None); // 全部线段退化为点（与视线平行）⇒ 没有可画的面积
             }
@@ -396,11 +400,7 @@ fn mesh_record(
     let material_params = match material.variant {
         ShaderVariant::Flat => None,
         ShaderVariant::Lambert => Some([0.0, 1.0, DEFAULT_REFLECTANCE]),
-        ShaderVariant::Pbr => Some([
-            material.metallic,
-            material.roughness,
-            DEFAULT_REFLECTANCE,
-        ]),
+        ShaderVariant::Pbr => Some([material.metallic, material.roughness, DEFAULT_REFLECTANCE]),
     };
     // **PF Step 1**：`transparent` 意图映射。
     //
@@ -455,7 +455,10 @@ fn line_ribbons(
                     indices.len()
                 ));
             }
-            indices.chunks_exact(2).map(|pair| [pair[0], pair[1]]).collect()
+            indices
+                .chunks_exact(2)
+                .map(|pair| [pair[0], pair[1]])
+                .collect()
         }
         None => (0..positions.len() / 2)
             .map(|i| [2 * i as u32, 2 * i as u32 + 1])
@@ -628,30 +631,38 @@ mod tests {
     #[test]
     fn lights_pass_direction_through_and_scale_intensity() {
         let mut queue = LightQueue::new();
-        queue.directional.push(
-            zela_render::light_queue::DirectionalLightRecord::new(
+        queue
+            .directional
+            .push(zela_render::light_queue::DirectionalLightRecord::new(
                 Vec3::new(0.0, 0.0, 1.0),
                 Color32::WHITE,
                 2.0,
-            ),
-        );
-        queue.points.push(zela_render::light_queue::PointLightRecord::new(
-            Vec3::new(1.0, 2.0, 3.0),
-            Color32::WHITE,
-            1.0,
-            5.0,
-        ));
+            ));
+        queue
+            .points
+            .push(zela_render::light_queue::PointLightRecord::new(
+                Vec3::new(1.0, 2.0, 3.0),
+                Color32::WHITE,
+                1.0,
+                5.0,
+            ));
         let mapped = lights(Some(&queue));
         assert_eq!(mapped.len(), 3, "方向光 + 点光 + 环境项");
         match mapped[0] {
-            Light::Sun { direction, intensity, .. } => {
+            Light::Sun {
+                direction,
+                intensity,
+                ..
+            } => {
                 assert_eq!(direction, [0.0, 0.0, 1.0], "方向是\"指向光源\"⇒ 原样透传");
                 assert!((intensity - 2.0 * LIGHT_GAIN).abs() < 1e-6);
             }
             other => panic!("第一盏应是 Sun：{other:?}"),
         }
         match mapped[2] {
-            Light::Ambient { intensity, .. } => assert_eq!(intensity, DEFAULT_AMBIENT),
+            Light::Ambient { intensity, .. } => {
+                assert_eq!(intensity, DEFAULT_AMBIENT)
+            }
             other => panic!("最后一盏应是环境项：{other:?}"),
         }
 
@@ -659,7 +670,11 @@ mod tests {
         assert_eq!(empty.len(), 2, "空队列 = 默认方向光 + 环境项");
         match empty[0] {
             Light::Sun { direction, .. } => {
-                assert_eq!(direction, [0.0, 0.0, 1.0], "与 wgpu default_light_bytes 同参")
+                assert_eq!(
+                    direction,
+                    [0.0, 0.0, 1.0],
+                    "与 wgpu default_light_bytes 同参"
+                )
             }
             other => panic!("{other:?}"),
         }
@@ -789,11 +804,14 @@ mod tests {
             toward_eye: [0.0, 0.0, 1.0],
             world_per_pixel: 2.0,
         };
-        let PathRecord::Mesh(mesh) =
-            mesh_record(&geometry, Mat4::IDENTITY, &Material3D::color(Color32::WHITE), style)
-                .expect("线框应可映射")
-                .expect("非退化线段必须产出记录")
-        else {
+        let PathRecord::Mesh(mesh) = mesh_record(
+            &geometry,
+            Mat4::IDENTITY,
+            &Material3D::color(Color32::WHITE),
+            style,
+        )
+        .expect("线框应可映射")
+        .expect("非退化线段必须产出记录") else {
             panic!("应是网格记录");
         };
         assert_eq!(mesh.positions.len(), 4, "每段 4 个角点");
@@ -803,7 +821,9 @@ mod tests {
         assert!(ys.iter().any(|y| (*y - 1.0).abs() < 1e-9), "{ys:?}");
         assert!(ys.iter().any(|y| (*y + 1.0).abs() < 1e-9), "{ys:?}");
         assert!(
-            mesh.normals.as_ref().is_some_and(|n| n.iter().all(|n| n[2] > 0.99)),
+            mesh.normals
+                .as_ref()
+                .is_some_and(|n| n.iter().all(|n| n[2] > 0.99)),
             "细条法线应指向相机"
         );
         mesh.validate().expect("细条记录必须自洽");

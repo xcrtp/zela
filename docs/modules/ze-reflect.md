@@ -11,15 +11,15 @@
 - 路径：`crates/kernel/ze-reflect`
 - 生产依赖（上游，dev-deps 不计）：`ze-type`
 - 被依赖（下游）：`ze-func`、`ze-pod-core`、`ze-pod-func`、`ze-scene-core`
-- 源文件：5 个 · 869 行
+- 源文件：5 个 · 876 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/cache.rs` | 98 | **单态化缓存**：按需生成、按 op 缓存、带上界。 |
-| `src/codec.rs` | 259 | **Codec**：跨边界 `Bytes ↔ typed`，慢路径的正式名分。 |
-| `src/handle.rs` | 233 | **统一句柄机制**：generation 感知的槽位表 + 解析协议。 |
+| `src/codec.rs` | 270 | **Codec**：跨边界 `Bytes ↔ typed`，慢路径的正式名分。 |
+| `src/handle.rs` | 229 | **统一句柄机制**：generation 感知的槽位表 + 解析协议。 |
 | `src/lib.rs` | 31 | ze-reflect：**运行时反射层**。 |
 | `src/sym.rs` | 248 | **符号表 = handle arena**（计划 §1）。 |
 

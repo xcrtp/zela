@@ -77,7 +77,11 @@ impl From<CompiledExpr> for ExprProgram {
 pub struct NoMonomorphizer;
 
 impl OpResolver for NoMonomorphizer {
-    fn resolve(&self, _op: &crate::expr::OpRef, _args: &[crate::typed::SlotType]) -> Option<crate::typed::TypedCall> {
+    fn resolve(
+        &self,
+        _op: &crate::expr::OpRef,
+        _args: &[crate::typed::SlotType],
+    ) -> Option<crate::typed::TypedCall> {
         None
     }
 }

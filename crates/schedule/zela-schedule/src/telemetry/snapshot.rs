@@ -147,7 +147,9 @@ impl SnapshotRegistry {
         // 排序键**显式写死**：实体 id / 组件 type_name / Resource type_name。
         let mut entities: Vec<EntitySnapshot> = entities;
         for entity in &mut entities {
-            entity.components.sort_by(|a, b| a.type_name.cmp(&b.type_name));
+            entity
+                .components
+                .sort_by(|a, b| a.type_name.cmp(&b.type_name));
         }
         entities.sort_by_key(|entity| entity.id);
 
@@ -300,6 +302,9 @@ mod tests {
 
         let ja = serde_json::to_string(&reg.snapshot(&a, &Resources::new(), 1)).unwrap();
         let jb = serde_json::to_string(&reg.snapshot(&b, &Resources::new(), 1)).unwrap();
-        assert_eq!(ja, jb, "同一个 World（不同组件插入序）必须产出逐字节相同的 JSON");
+        assert_eq!(
+            ja, jb,
+            "同一个 World（不同组件插入序）必须产出逐字节相同的 JSON"
+        );
     }
 }

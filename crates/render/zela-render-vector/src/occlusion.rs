@@ -44,11 +44,26 @@ pub(crate) struct Occluded {
 
 impl Occlusion {
     /// Its passes: the depth's with the raster pipeline's shader (`blend`) and scene layout.
-    pub(crate) fn new(device: &wgpu::Device, blend: &wgpu::ShaderModule, scene: &wgpu::BindGroupLayout) -> Self {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        blend: &wgpu::ShaderModule,
+        scene: &wgpu::BindGroupLayout,
+    ) -> Self {
         let depth = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("occlusion depth"),
-            layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(scene)], immediate_size: 0 })),
-            vertex: wgpu::VertexState { module: blend, entry_point: Some("vs_depth"), compilation_options: Default::default(), buffers: &[] },
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: None,
+                    bind_group_layouts: &[Some(scene)],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: blend,
+                entry_point: Some("vs_depth"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
             fragment: None,
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -62,17 +77,72 @@ impl Occlusion {
             multiview_mask: None,
             cache: None,
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("occlusion"), source: wgpu::ShaderSource::Wgsl(include_str!("occlusion.wgsl").into()) });
-        let entry = |binding, ty| wgpu::BindGroupLayoutEntry { binding, visibility: wgpu::ShaderStages::COMPUTE, ty, count: None };
-        let params = entry(0, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None });
-        let texture = |binding| entry(binding, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false });
-        let out = entry(6, wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: wgpu::TextureFormat::R32Float, view_dimension: wgpu::TextureViewDimension::D2 });
-        let depth_in = entry(1, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("occlusion"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("occlusion.wgsl").into()),
+        });
+        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty,
+            count: None,
+        };
+        let params = entry(
+            0,
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+        );
+        let texture = |binding| {
+            entry(
+                binding,
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+            )
+        };
+        let out = entry(
+            6,
+            wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::R32Float,
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+        );
+        let depth_in = entry(
+            1,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+        );
         let make = |label: &str, entries: &[wgpu::BindGroupLayoutEntry]| {
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
-            let options = wgpu::PipelineCompilationOptions { zero_initialize_workgroup_memory: false, ..Default::default() }; // (written before read)
-            let pass = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(label), layout: Some(&pipeline_layout), module: &shader, entry_point: Some(label), compilation_options: options, cache: None });
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries,
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+            let options = wgpu::PipelineCompilationOptions {
+                zero_initialize_workgroup_memory: false,
+                ..Default::default()
+            }; // (written before read)
+            let pass = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(label),
+                compilation_options: options,
+                cache: None,
+            });
             (layout, pass)
         };
         let [(l0, p0), (l1, p1), (l2, p2), (l3, ph), (_, pv)] = [
@@ -82,66 +152,183 @@ impl Occlusion {
             make("blur_h", &[params, texture(3), texture(5), out]),
             make("blur_v", &[params, texture(3), texture(5), out]),
         ];
-        Self { depth, layouts: [l0, l1, l2, l3], passes: [p0, p1, p2, ph, pv] }
+        Self {
+            depth,
+            layouts: [l0, l1, l2, l3],
+            passes: [p0, p1, p2, ph, pv],
+        }
     }
 
     /// Where a view of `size` finds its occlusion.
     ///
     /// **BV-1**：六张目标与金字塔的每级视图都按 [`super::TargetDesc`] / [`super::TargetView`] 从
     /// 画布的目标池申请（同一张纹理复用；租约由池持有）。
-    pub(crate) fn occluded(&self, pool: &mut super::TargetPool, device: &wgpu::Device, [width, height]: [u32; 2]) -> Occluded {
+    pub(crate) fn occluded(
+        &self,
+        pool: &mut super::TargetPool,
+        device: &wgpu::Device,
+        [width, height]: [u32; 2],
+    ) -> Occluded {
         // the pyramid's levels: down to about 32 pixels across the view's longer side, 2 to 8 of them
-        let levels = (32 - width.max(height).leading_zeros()).saturating_sub(5).clamp(2, 8);
-        let sizes: Vec<[u32; 2]> = (0..levels).map(|l| [(width >> l).max(1), (height >> l).max(1)]).collect();
+        let levels = (32 - width.max(height).leading_zeros())
+            .saturating_sub(5)
+            .clamp(2, 8);
+        let sizes: Vec<[u32; 2]> = (0..levels)
+            .map(|l| [(width >> l).max(1), (height >> l).max(1)])
+            .collect();
         let written = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
         let [w0, h0] = sizes[0];
         let single = |pool: &mut super::TargetPool, label: &'static str, format| {
-            pool.view(device, super::TargetDesc::new(label, w0, h0, format, written), super::TargetView::default())
+            pool.view(
+                device,
+                super::TargetDesc::new(label, w0, h0, format, written),
+                super::TargetView::default(),
+            )
         };
         let depth = pool.view(
             device,
-            super::TargetDesc::new("occlusion depth", w0, h0, wgpu::TextureFormat::Depth32Float, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING),
+            super::TargetDesc::new(
+                "occlusion depth",
+                w0,
+                h0,
+                wgpu::TextureFormat::Depth32Float,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            ),
             super::TargetView::default(),
         );
         let r32 = wgpu::TextureFormat::R32Float;
-        let (distances, raw, horizontal, out) = (single(pool, "distances", r32), single(pool, "occlusion", r32), single(pool, "occlusion across", r32), single(pool, "occlusion low-passed", r32));
-        let pyramid = super::TargetDesc { label: "distances' pyramid", width: sizes[1][0], height: sizes[1][1], layers: 1, mips: levels - 1, samples: 1, format: r32, usage: written };
-        let level: Vec<super::TrackedView> = (0..levels - 1).map(|l| pool.view(device, pyramid, super::TargetView::mip(l))).collect();
+        let (distances, raw, horizontal, out) = (
+            single(pool, "distances", r32),
+            single(pool, "occlusion", r32),
+            single(pool, "occlusion across", r32),
+            single(pool, "occlusion low-passed", r32),
+        );
+        let pyramid = super::TargetDesc {
+            label: "distances' pyramid",
+            width: sizes[1][0],
+            height: sizes[1][1],
+            layers: 1,
+            mips: levels - 1,
+            samples: 1,
+            format: r32,
+            usage: written,
+        };
+        let level: Vec<super::TrackedView> = (0..levels - 1)
+            .map(|l| pool.view(device, pyramid, super::TargetView::mip(l)))
+            .collect();
         let mips = pool.view(device, pyramid, super::TargetView::default());
-        let params = super::counted_buffer(device, &wgpu::BufferDescriptor { label: Some("occlusion"), size: 64, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let params = super::counted_buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("occlusion"),
+                size: 64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         let bind = |k: usize, entries: &[(u32, wgpu::BindingResource)]| {
-            let entries: Vec<wgpu::BindGroupEntry> = entries.iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding: *binding, resource: resource.clone() }).collect();
-            device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &self.layouts[k], entries: &entries })
+            let entries: Vec<wgpu::BindGroupEntry> = entries
+                .iter()
+                .map(|(binding, resource)| wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: resource.clone(),
+                })
+                .collect();
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &self.layouts[k],
+                entries: &entries,
+            })
         };
         let view = wgpu::BindingResource::TextureView;
-        let mut groups = vec![bind(0, &[(0, params.as_entire_binding()), (1, view(&depth)), (6, view(&distances))])];
+        let mut groups = vec![bind(
+            0,
+            &[
+                (0, params.as_entire_binding()),
+                (1, view(&depth)),
+                (6, view(&distances)),
+            ],
+        )];
         // level l from level l - 1 (the distances themselves for the first)
         for l in 1..levels as usize {
             let finer = if l == 1 { &distances } else { &level[l - 2] };
             groups.push(bind(1, &[(7, view(finer)), (6, view(&level[l - 1]))]));
         }
-        groups.push(bind(2, &[(0, params.as_entire_binding()), (3, view(&distances)), (4, view(&mips)), (6, view(&raw))]));
+        groups.push(bind(
+            2,
+            &[
+                (0, params.as_entire_binding()),
+                (3, view(&distances)),
+                (4, view(&mips)),
+                (6, view(&raw)),
+            ],
+        ));
         // the low-pass: across into its own image, then down into `out`
-        groups.push(bind(3, &[(0, params.as_entire_binding()), (3, view(&distances)), (5, view(&raw)), (6, view(&horizontal))]));
-        groups.push(bind(3, &[(0, params.as_entire_binding()), (3, view(&distances)), (5, view(&horizontal)), (6, view(&out))]));
-        Occluded { depth, out, params, groups, sizes }
+        groups.push(bind(
+            3,
+            &[
+                (0, params.as_entire_binding()),
+                (3, view(&distances)),
+                (5, view(&raw)),
+                (6, view(&horizontal)),
+            ],
+        ));
+        groups.push(bind(
+            3,
+            &[
+                (0, params.as_entire_binding()),
+                (3, view(&distances)),
+                (5, view(&horizontal)),
+                (6, view(&out)),
+            ],
+        ));
+        Occluded {
+            depth,
+            out,
+            params,
+            groups,
+            sizes,
+        }
     }
 
     /// A view's occlusion, once its opaque depth is drawn: `projection` the view's (rows; a 3D view's: depth z / w =
     /// near / distance, see `feed.view`), how much (`amount`) and how far around (`radius`, in the world's units).
     ///
     /// **BR-3**：拆成"写参数"（prepare）与"录制"（execute），由 `PassNode` 驱动。
-    pub(crate) fn write_params(&self, queue: &wgpu::Queue, o: &Occluded, projection: &[[f32; 4]; 4], amount: f32, radius: f32) {
+    pub(crate) fn write_params(
+        &self,
+        queue: &wgpu::Queue,
+        o: &Occluded,
+        projection: &[[f32; 4]; 4],
+        amount: f32,
+        radius: f32,
+    ) {
         let length = |r: [f32; 4]| (r[0] * r[0] + r[1] * r[1] + r[2] * r[2]).sqrt();
         let unit = length(projection[3]); // w a unit along the view: one over the focal distance
-        let (tan_x, tan_y, near) = (unit / length(projection[0]), unit / length(projection[1]), projection[2][3] / unit);
+        let (tan_x, tan_y, near) = (
+            unit / length(projection[0]),
+            unit / length(projection[1]),
+            projection[2][3] / unit,
+        );
         let peak = 0.1 * radius;
         let [width, height] = o.sizes[0];
         let params: [f32; 16] = [
-            tan_x, tan_y, near, (o.sizes.len() - 1) as f32,
-            radius, 2.0, TAU * peak * amount / SAMPLES, BIAS, // (twice a power of 1)
-            peak * peak, 1.0 / (radius * radius), 0.5 * height as f32 / tan_y, 0.0,
-            0.0, TURNS * TAU / (SAMPLES - 0.5), SAMPLES, 1.0 / (SAME_SURFACE * radius),
+            tan_x,
+            tan_y,
+            near,
+            (o.sizes.len() - 1) as f32,
+            radius,
+            2.0,
+            TAU * peak * amount / SAMPLES,
+            BIAS, // (twice a power of 1)
+            peak * peak,
+            1.0 / (radius * radius),
+            0.5 * height as f32 / tan_y,
+            0.0,
+            0.0,
+            TURNS * TAU / (SAMPLES - 0.5),
+            SAMPLES,
+            1.0 / (SAME_SURFACE * radius),
         ];
         queue.write_buffer(&o.params, 0, bytemuck::cast_slice(&params));
     }
@@ -149,13 +336,19 @@ impl Occlusion {
     /// 录一次遮蔽：线性化 → 深度金字塔 → SAO → 横 / 竖两次模糊。
     pub(crate) fn record(&self, pass: &mut wgpu::ComputePass<'_>, o: &Occluded) {
         let [width, height] = o.sizes[0];
-        let mut dispatch = |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], entry: &'static str| {
-            pass.set_pipeline(&self.passes[k]);
-            pass.set_bind_group(0, group, &[]);
-            // BO-2：除数跟随该 entry 的 `@workgroup_size`（同文件内 8×8 与 16×16 混用，正是易漂移处）。
-            let [x, y, _] = groups_for(Dispatch::Tiles { group: GroupSize::Entry(entry) }, Extent::px(w, h));
-            pass.dispatch_workgroups(x, y, 1);
-        };
+        let mut dispatch =
+            |k: usize, group: &wgpu::BindGroup, [w, h]: [u32; 2], entry: &'static str| {
+                pass.set_pipeline(&self.passes[k]);
+                pass.set_bind_group(0, group, &[]);
+                // BO-2：除数跟随该 entry 的 `@workgroup_size`（同文件内 8×8 与 16×16 混用，正是易漂移处）。
+                let [x, y, _] = groups_for(
+                    Dispatch::Tiles {
+                        group: GroupSize::Entry(entry),
+                    },
+                    Extent::px(w, h),
+                );
+                pass.dispatch_workgroups(x, y, 1);
+            };
         let n = o.groups.len();
         dispatch(0, &o.groups[0], [width, height], "linearize");
         for (l, size) in o.sizes.iter().enumerate().skip(1) {

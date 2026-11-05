@@ -167,11 +167,21 @@ impl EdgeGeometry for OrthogonalGeometry {
         let points = if to.x - from.x >= 2.0 * self.min_offset {
             // Forward: S-curve through a vertical midline.
             let mid_x = (from.x + to.x) / 2.0;
-            vec![from, NodePos::new(mid_x, from.y), NodePos::new(mid_x, to.y), to]
+            vec![
+                from,
+                NodePos::new(mid_x, from.y),
+                NodePos::new(mid_x, to.y),
+                to,
+            ]
         } else {
             // Reverse (or nearly vertical): detour below both endpoints.
             let y_off = from.y.max(to.y) + self.min_offset * 2.0;
-            vec![from, NodePos::new(from.x, y_off), NodePos::new(to.x, y_off), to]
+            vec![
+                from,
+                NodePos::new(from.x, y_off),
+                NodePos::new(to.x, y_off),
+                to,
+            ]
         };
         EdgePath::Polyline { points }
     }

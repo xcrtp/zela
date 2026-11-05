@@ -39,7 +39,7 @@ use crate::components::{MORPH_SHAPE_T, PHASE_ANIM_PHASE, REVEAL_TOLERANCE, Revea
 use crate::object::camera::CAMERA3D_EYE;
 use crate::object::primitives::CIRCLE_RADIUS;
 use crate::object::{Framing2D, Transform};
-use crate::scene_write::{read_component, with_component, SceneRead, SceneWrite};
+use crate::scene_write::{SceneRead, SceneWrite, read_component, with_component};
 use ze_render_ir::Opacity;
 
 /// `scene_clip` 装配失败时的占位回退（F 批：make 构造器随 `#[derive(Channels)]`
@@ -59,7 +59,11 @@ pub enum TargetError {
 
 impl TargetError {
     /// 类型不符（`pub(crate)`：`#[derive(Channels)]` 生成的 write fn 也要调用）。
-    pub(crate) fn mismatch(target: &'static str, expected: &'static str, value: &AnimValue) -> Self {
+    pub(crate) fn mismatch(
+        target: &'static str,
+        expected: &'static str,
+        value: &AnimValue,
+    ) -> Self {
         Self::TypeMismatch {
             target,
             expected,
@@ -247,9 +251,30 @@ macro_rules! scalar_spec {
 
 // 类型在 ze-render-ir 的组件（ze-scene-core 依赖 ze-render-ir，方向不可逆，
 // derive 无法用于它们 ⇒ 保持手写规格）。`name` 缺省 = 规范地址。
-scalar_spec!(DASH_PERIOD, "Dash.period", "Dash.period", "Dash", ze_render_ir::Dash, period);
-scalar_spec!(DASH_DUTY, "Dash.duty", "Dash.duty", "Dash", ze_render_ir::Dash, duty);
-scalar_spec!(DASH_PHASE, "Dash.phase", "Dash.phase", "Dash", ze_render_ir::Dash, phase);
+scalar_spec!(
+    DASH_PERIOD,
+    "Dash.period",
+    "Dash.period",
+    "Dash",
+    ze_render_ir::Dash,
+    period
+);
+scalar_spec!(
+    DASH_DUTY,
+    "Dash.duty",
+    "Dash.duty",
+    "Dash",
+    ze_render_ir::Dash,
+    duty
+);
+scalar_spec!(
+    DASH_PHASE,
+    "Dash.phase",
+    "Dash.phase",
+    "Dash",
+    ze_render_ir::Dash,
+    phase
+);
 // 第 BB 批（阶段 7）：线宽可动画（`Stroke { width = … }` 的后续可写通道）。
 // `MeasureSpace` 不动：只改粗细，不改"按屏幕还是按世界计量"。
 scalar_spec!(
@@ -347,12 +372,14 @@ pub static CAMERA2D_FRAMING: FieldSpec = FieldSpec {
             with_component::<Framing2D, _>(scene, id, |f| f.center = center);
             Ok(())
         } else {
-            Err(TargetError::mismatch("Camera2DFraming", "scalar | vec2", value))
+            Err(TargetError::mismatch(
+                "Camera2DFraming",
+                "scalar | vec2",
+                value,
+            ))
         }
     },
-    read: |scene, id| {
-        read_component::<Framing2D, _>(scene, id, |f| AnimValue::Scalar(f.scale))
-    },
+    read: |scene, id| read_component::<Framing2D, _>(scene, id, |f| AnimValue::Scalar(f.scale)),
 };
 
 /// 旧名 `RevealRange`：`Scalar → end`（笔尖）、`Vec2 → (start, end)`（区间）。
@@ -379,9 +406,11 @@ pub static REVEAL_RANGE: FieldSpec = FieldSpec {
             Err(TargetError::mismatch("RevealRange", "scalar | vec2", value))
         }
     },
-    read: |scene, id| read_component::<Reveal, _>(scene, id, |r| {
-        AnimValue::Vec2(ze_notion::Vec2::new(r.start, r.end))
-    }),
+    read: |scene, id| {
+        read_component::<Reveal, _>(scene, id, |r| {
+            AnimValue::Vec2(ze_notion::Vec2::new(r.start, r.end))
+        })
+    },
 };
 
 /// 规范地址 `Reveal.range`（只接受 `Vec2`）。
@@ -406,9 +435,11 @@ pub static REVEAL_RANGE_ADDR: FieldSpec = FieldSpec {
         });
         Ok(())
     },
-    read: |scene, id| read_component::<Reveal, _>(scene, id, |r| {
-        AnimValue::Vec2(ze_notion::Vec2::new(r.start, r.end))
-    }),
+    read: |scene, id| {
+        read_component::<Reveal, _>(scene, id, |r| {
+            AnimValue::Vec2(ze_notion::Vec2::new(r.start, r.end))
+        })
+    },
 };
 
 // ─── 方法（B2）：状态 + 参数 → 值的**纯函数** ───────────────────────────
@@ -475,11 +506,12 @@ pub static REVEAL_POINT_AT_METHOD: MethodSpec = MethodSpec {
     reads: &[],
     eval: |scene, id, args| {
         let t = method_scalar_arg("Reveal.point_at", args)?;
-        let point = read_component::<Reveal, _>(scene, id, |r| r.path.point_at(t, REVEAL_TOLERANCE))
-            .ok_or_else(|| EvalError::MissingComponent {
-                object: id.to_packed(),
-                channel: ChannelRef::new("zela.scene", "Reveal.point_at"),
-            })?;
+        let point =
+            read_component::<Reveal, _>(scene, id, |r| r.path.point_at(t, REVEAL_TOLERANCE))
+                .ok_or_else(|| EvalError::MissingComponent {
+                    object: id.to_packed(),
+                    channel: ChannelRef::new("zela.scene", "Reveal.point_at"),
+                })?;
         Ok(Value::vec2([point.x, point.y]))
     },
 };
@@ -535,12 +567,7 @@ fn encode_rect(rect: Rect2D) -> Value {
 /// 读局部包围盒共用的读集（**静态声明**：方法体是黑盒）。
 ///
 /// 只列会影响 local bounds 的**可写字段**；`Path` / `Line` / `Rect` 没有可写通道。
-const BOUNDS_READS: &[&str] = &[
-    "Circle.center",
-    "Circle.radius",
-    "Arrow.from",
-    "Arrow.to",
-];
+const BOUNDS_READS: &[&str] = &["Circle.center", "Circle.radius", "Arrow.from", "Arrow.to"];
 
 /// `Object.bounds`：对象级聚合（local，多图元取并集）。
 pub static OBJECT_BOUNDS_METHOD: MethodSpec = MethodSpec {
@@ -625,9 +652,7 @@ pub static TRANSFORM_POSITION: FieldSpec = FieldSpec {
         });
         Ok(())
     },
-    read: |scene, id| {
-        read_component::<Transform, _>(scene, id, |t| AnimValue::Vec3(t.position))
-    },
+    read: |scene, id| read_component::<Transform, _>(scene, id, |t| AnimValue::Vec3(t.position)),
 };
 
 /// 写 `Transform.rotation`（`Scalar` 弧度 → 绕 Z 四元数）。
@@ -666,9 +691,7 @@ pub static TRANSFORM_SCALE: FieldSpec = FieldSpec {
         with_component::<Transform, _>(scene, id, |t| t.scale = scale);
         Ok(())
     },
-    read: |scene, id| {
-        read_component::<Transform, _>(scene, id, |t| AnimValue::Vec3(t.scale))
-    },
+    read: |scene, id| read_component::<Transform, _>(scene, id, |t| AnimValue::Vec3(t.scale)),
 };
 
 /// 写 `Opacity.value`（`Opacity` 是元组结构体 ⇒ 字段名是 `0`）。
@@ -1282,7 +1305,10 @@ mod tests {
             spec: &crate::object::primitives::CIRCLE_CENTER,
         };
         center
-            .apply(&mut scene, &AnimValue::Vec2(ze_notion::Vec2::new(-4.0, 6.0)))
+            .apply(
+                &mut scene,
+                &AnimValue::Vec2(ze_notion::Vec2::new(-4.0, 6.0)),
+            )
             .expect("center 写入不应失败");
         assert_eq!(
             center.read(&scene),
@@ -1346,10 +1372,7 @@ mod tests {
         assert_eq!(point.component, "Reveal");
         assert_eq!(point.params.len(), 1, "point_at(t) 只有一个显式参数");
         assert!(point.reads.is_empty(), "路径帧间不变 ⇒ 不读任何通道");
-        assert!(
-            target_entry("Reveal.point_at").is_none(),
-            "方法不得进写表"
-        );
+        assert!(target_entry("Reveal.point_at").is_none(), "方法不得进写表");
         let value = (point.eval)(&scene, id, &[Value::f64(0.5)]).expect("求值成功");
         assert_eq!(value, Value::vec2([2.0, 0.0]), "直线中点");
 

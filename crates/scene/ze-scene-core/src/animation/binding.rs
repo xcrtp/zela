@@ -268,7 +268,15 @@ impl BindingTable {
         active: Option<MultiIntervalSet>,
         reset: ResetBehavior,
     ) {
-        self.bind_expr_gated_with_states(clock, program, target, predicate, active, reset, Vec::new());
+        self.bind_expr_gated_with_states(
+            clock,
+            program,
+            target,
+            predicate,
+            active,
+            reset,
+            Vec::new(),
+        );
     }
 
     /// **BY**：带 `State` 闭式计划的表达式绑定（计划下标 = `Step::State.id`）。
@@ -464,17 +472,21 @@ mod tests {
             ze_comb::OpRef::new("zela.math", "sin"),
             [ze_comb::Expr::pure(1.0)],
         );
-        assert!(!ze_comb::CompiledExpr::compile(&continuous)
-            .expect("可编译")
-            .requires_replay());
+        assert!(
+            !ze_comb::CompiledExpr::compile(&continuous)
+                .expect("可编译")
+                .requires_replay()
+        );
 
         let discrete = ze_comb::Expr::new(ze_comb::Node::NatRec {
             count: Box::new(ze_comb::Expr::pure(3i64)),
             init: Box::new(ze_comb::Expr::pure(0.0)),
             step: Box::new(ze_comb::Expr::rec_prev()),
         });
-        assert!(ze_comb::CompiledExpr::compile(&discrete)
-            .expect("NatRec 可编译")
-            .requires_replay());
+        assert!(
+            ze_comb::CompiledExpr::compile(&discrete)
+                .expect("NatRec 可编译")
+                .requires_replay()
+        );
     }
 }

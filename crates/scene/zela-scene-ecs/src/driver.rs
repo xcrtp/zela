@@ -414,7 +414,10 @@ mod tests {
             EventSink::<DriverEvent>::signatures()[0]
                 .qualified()
                 .to_string(),
-            format!("ze_pod_core::event_sink::on_event({}) -> ()", event_type_name())
+            format!(
+                "ze_pod_core::event_sink::on_event({}) -> ()",
+                event_type_name()
+            )
         );
     }
 }

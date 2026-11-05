@@ -99,9 +99,7 @@ impl crate::value::PodType for PodHandle {
         crate::value::PodValue::Scalar(crate::value::ScalarValue::U64(self.get()))
     }
 
-    fn from_pod_value(
-        value: &crate::value::PodValue,
-    ) -> Result<Self, crate::value::PodValueError> {
+    fn from_pod_value(value: &crate::value::PodValue) -> Result<Self, crate::value::PodValueError> {
         match value {
             crate::value::PodValue::Scalar(crate::value::ScalarValue::U64(raw)) => {
                 Ok(Self(PodId::new(*raw)))

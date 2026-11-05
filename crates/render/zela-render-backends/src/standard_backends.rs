@@ -69,8 +69,11 @@ pub trait BackendStore {
     /// **内容纹理层专用的** 2D 后端实例：与视口层隔离 uniform arena
     /// （同一帧两次 `finish_frame` 会互相覆盖 arena，见 `ContentBackend2D` 的说明）。
     /// 惰性创建：首次遇到内容层才建。
-    fn content_backend_2d(&mut self, device: &wgpu::Device, queue: &wgpu::Queue)
-    -> &mut WgpuBackend2D;
+    fn content_backend_2d(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> &mut WgpuBackend2D;
 
     /// 3D 后端。缺失 ⇒ 3D 图层与"内容纹理注册"都跳过。
     fn backend_3d(&mut self) -> Option<&mut WgpuBackend3D>;
@@ -277,13 +280,7 @@ pub fn render_frame_to_view_timed(
             label: Some("zela-frame-encoder"),
         });
     let prepare = clock();
-    let composed = frame.prepare_frame(
-        ctx.device(),
-        ctx.queue(),
-        &mut encoder,
-        screen,
-        backends,
-    );
+    let composed = frame.prepare_frame(ctx.device(), ctx.queue(), &mut encoder, screen, backends);
     timing.prepare = prepare.elapsed();
 
     let paint = clock();
@@ -557,4 +554,3 @@ mod tests {
         assert_eq!(s.pixels_per_point, 2.0);
     }
 }
-

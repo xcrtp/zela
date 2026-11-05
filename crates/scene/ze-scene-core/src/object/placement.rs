@@ -139,10 +139,7 @@ mod tests {
     /// 默认 ⇒ 3D 恒等仿射。
     #[test]
     fn default_to_affine3d_is_identity() {
-        assert_eq!(
-            Transform::default().to_affine3d(),
-            Transform3D::identity()
-        );
+        assert_eq!(Transform::default().to_affine3d(), Transform3D::identity());
     }
 
     /// **S1-0 探针固化**：`to_affine3d` 投影出的 2D 子块 vs `to_affine2d`。

@@ -43,7 +43,10 @@ pub enum ControlKind {
 
 impl ControlKind {
     /// 自然尺寸（宽按可用宽度铺满；高度按控件类型）。
-    fn height(self) -> f64 {
+    ///
+    /// `pub(crate)`：`widget::BuiltinWidget::measure` 必须与它逐位一致，
+    /// 否则命中矩形（本状态机）与 `Frame`（`ui_layout`）会错位。
+    pub(crate) fn height(self) -> f64 {
         match self {
             ControlKind::Slider { .. } => 20.0,
             ControlKind::Button => 24.0,
@@ -211,7 +214,8 @@ impl ControlSet {
         match event {
             ControlEvent::Moved(point) => {
                 let hit = self.index_at(point);
-                self.router.pointer_moved(hit.map(|index| route_key(self.specs[index].id)));
+                self.router
+                    .pointer_moved(hit.map(|index| route_key(self.specs[index].id)));
                 // capture 期间：滑块跟着走（指针移出轨道也不丢抓）。
                 if let Some(RouteKey { target, .. }) = self.router.capture().cloned() {
                     let index = target.0 as usize;
@@ -219,10 +223,7 @@ impl ControlSet {
                         if let ControlKind::Slider { min, max } = spec.kind {
                             let value = value_at(self.rects[index], point, min, max);
                             if self.set_value(index, value) {
-                                outcomes.push(ControlOutcome::ValueChanged {
-                                    id: spec.id,
-                                    value,
-                                });
+                                outcomes.push(ControlOutcome::ValueChanged { id: spec.id, value });
                             }
                         }
                     }
@@ -260,7 +261,10 @@ impl ControlSet {
                 if let Some(RouteKey { target, .. }) = self.router.capture().cloned() {
                     let index = target.0 as usize;
                     if let Some(spec) = self.specs.get(index).cloned() {
-                        let inside = self.rects.get(index).is_some_and(|rect| rect.contains(point));
+                        let inside = self
+                            .rects
+                            .get(index)
+                            .is_some_and(|rect| rect.contains(point));
                         if spec.kind == ControlKind::Button
                             && inside
                             && self.pressed_buttons.contains(&spec.id)
@@ -282,6 +286,33 @@ impl ControlSet {
         self.specs.get(key.target.0 as usize).map(|spec| spec.id)
     }
 
+    /// **CL-R**：结构变化（卸载 / reparent）时显式取消路由。
+    ///
+    /// 「拖拽中把控件删了」不能停在半截：capture 还指着不存在的目标，指针就会一直
+    /// 被当成拖拽。返回被取消的目标 id（诊断用）；没指向任何控件 ⇒ `None`。
+    pub fn cancel_routing(&mut self) -> Option<LayoutId> {
+        let target = self.routed();
+        self.router.cancel();
+        target
+    }
+
+    /// 卸载一个控件（结构 delta 的消费者）：移除声明并同步落点。
+    ///
+    /// 返回 `true` 表示确实移除了；`false` = 该 id 不在本集合里（调用方记诊断）。
+    pub fn unmount(&mut self, id: LayoutId) -> bool {
+        let Some(index) = self.specs.iter().position(|spec| spec.id == id) else {
+            return false;
+        };
+        self.specs.remove(index);
+        if index < self.rects.len() {
+            self.rects.remove(index);
+        }
+        self.pressed_buttons.remove(&id);
+        // 落点表按声明序，删掉后重排一次（结构变化，不在每帧）。
+        self.rects = vec![Rect::default(); self.specs.len()];
+        true
+    }
+
     fn set_value(&mut self, index: usize, value: f64) -> bool {
         let Some(spec) = self.specs.get_mut(index) else {
             return false;
@@ -295,9 +326,7 @@ impl ControlSet {
 
     /// 点 → 控件下标（半开矩形；从后往前找 ⇒ 后声明的在上，与绘制顺序一致）。
     fn index_at(&self, point: Point) -> Option<usize> {
-        self.rects
-            .iter()
-            .rposition(|rect| rect.contains(point))
+        self.rects.iter().rposition(|rect| rect.contains(point))
     }
 }
 
@@ -499,6 +528,11 @@ mod tests {
         );
         set.handle(ControlEvent::Released(at(0.999)));
         assert_eq!(set.value(LayoutId(0)), Some(2.0));
-        assert_eq!(set.frame(Constraints::new(300.0, 400.0)).semantics[0].value.as_deref(), Some("2"));
+        assert_eq!(
+            set.frame(Constraints::new(300.0, 400.0)).semantics[0]
+                .value
+                .as_deref(),
+            Some("2")
+        );
     }
 }

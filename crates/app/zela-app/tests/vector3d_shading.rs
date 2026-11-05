@@ -22,10 +22,7 @@ fn script_path() -> PathBuf {
 }
 
 /// 用给定的着色栈参数渲一帧（一帧作品：`duration = 0` ⇒ `frames_for` = 1）。
-fn render(
-    ctx: &RenderContext,
-    params: Option<RenderParams>,
-) -> Vec<u8> {
+fn render(ctx: &RenderContext, params: Option<RenderParams>) -> Vec<u8> {
     let source = std::fs::read_to_string(script_path()).expect("读取 shaded_meshes.lua");
     let mut runtime = build_script_runtime(ctx.clone(), source, ScriptLanguage::Lua)
         .expect("3D 作品装配（含 3D 相机与网格）");
@@ -104,8 +101,14 @@ fn shading_stack_changes_pixels_on_a_mesh_work() {
     assert!(drawn > 2000, "3D 网格应真的画出来（非背景像素 {drawn}）");
 
     // 1) tone：同一曝光 + 同一 bloom，只换曲线 ⇒ 必须不同。
-    let agx = render(&ctx, Some(params_with(4.0, ze_render_ir::ToneCurve::AgX, true, true)));
-    let clip = render(&ctx, Some(params_with(4.0, ze_render_ir::ToneCurve::Clip, true, true)));
+    let agx = render(
+        &ctx,
+        Some(params_with(4.0, ze_render_ir::ToneCurve::AgX, true, true)),
+    );
+    let clip = render(
+        &ctx,
+        Some(params_with(4.0, ze_render_ir::ToneCurve::Clip, true, true)),
+    );
     assert!(
         changed(&agx, &clip) > 2000,
         "AgX 与 clip 必须产生可判读的差异（实际 {} 像素）",
@@ -122,7 +125,10 @@ fn shading_stack_changes_pixels_on_a_mesh_work() {
         bloom.threshold = 0.0;
     }
     let glow = render(&ctx, Some(glow_params));
-    let no_bloom = render(&ctx, Some(params_with(4.0, ze_render_ir::ToneCurve::AgX, false, true)));
+    let no_bloom = render(
+        &ctx,
+        Some(params_with(4.0, ze_render_ir::ToneCurve::AgX, false, true)),
+    );
     assert!(
         luma_sum(&no_bloom) < luma_sum(&glow),
         "有 bloom（门槛 0）的画面应更亮：with = {}，without = {}",
@@ -131,7 +137,10 @@ fn shading_stack_changes_pixels_on_a_mesh_work() {
     );
 
     // 3) AO：关掉后内角变亮（AO 乘的是环境项）。
-    let no_ao = render(&ctx, Some(params_with(4.0, ze_render_ir::ToneCurve::AgX, true, false)));
+    let no_ao = render(
+        &ctx,
+        Some(params_with(4.0, ze_render_ir::ToneCurve::AgX, true, false)),
+    );
     assert!(
         luma_sum(&no_ao) > luma_sum(&agx),
         "开 AO 后画面应更暗：with = {}，without = {}",

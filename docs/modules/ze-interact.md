@@ -10,36 +10,42 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-interact`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-render-ir`
-- 被依赖（下游）：`ze-content`、`ze-prerender`、`zela-app`、`zela-authored`、`zela-node-editor`、`zela-scene-ecs`
-- 源文件：8 个 · 2755 行
+- 被依赖（下游）：`ze-content`、`ze-prerender`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-node-editor`、`zela-scene-ecs`
+- 源文件：9 个 · 4345 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/control.rs` | 504 | **CG-d**：控件层 —— 从「画控件」变成「描述控件」。 |
-| `src/frame.rs` | 193 | **CG-c**：结构化帧（`Frame`）—— UI 的一次**快照**。 |
-| `src/hit.rs` | 313 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
-| `src/layout.rs` | 482 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
-| `src/lib.rs` | 65 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
-| `src/route.rs` | 205 | 路由（CE-c）：hover / focus / capture 三档。 |
-| `src/text.rs` | 225 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
-| `src/widget.rs` | 768 | **CL-b**：表达层定型 —— 一个控件 = 一份纯值声明 + 一个 `dyn` 实现 + 一段命令列表。 |
+| `src/control.rs` | 538 | **CG-d**：控件层 —— 从「画控件」变成「描述控件」。 |
+| `src/frame.rs` | 196 | **CG-c**：结构化帧（`Frame`）—— UI 的一次**快照**。 |
+| `src/hit.rs` | 311 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
+| `src/layout.rs` | 506 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
+| `src/lib.rs` | 68 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
+| `src/route.rs` | 209 | 路由（CE-c）：hover / focus / capture 三档。 |
+| `src/solver.rs` | 1090 | **CL-R**：布局策略落地 —— 两遍扫描是默认策略，约束求解是**同一条链上的第二个策略**。 |
+| `src/text.rs` | 229 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
+| `src/widget.rs` | 1198 | **CL-b**：表达层定型 —— 一个控件 = 一份纯值声明 + 一个 `dyn` 实现 + 一段命令列表。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
 ```mermaid
 graph LR
+    f6["src/control.rs"]
     f0["src/frame.rs"]
     f1["src/hit.rs"]
     f2["src/layout.rs"]
+    f4["src/solver.rs"]
     f3["src/text.rs"]
-    f4["src/widget.rs"]
+    f5["src/widget.rs"]
     f0 --> f1
     f0 --> f2
     f0 --> f3
     f4 --> f1
     f4 --> f2
+    f5 --> f6
+    f5 --> f1
+    f5 --> f2
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -79,19 +85,35 @@ graph LR
 | `src/route.rs` | `pub struct RouteKey` |
 | `src/route.rs` | `pub enum RoutePhase` |
 | `src/route.rs` | `pub struct Router` |
+| `src/solver.rs` | `pub struct StrategyId(pub String)` |
+| `src/solver.rs` | `pub struct LayoutTokens` |
+| `src/solver.rs` | `pub enum LayoutVar` |
+| `src/solver.rs` | `pub struct LinearTerm` |
+| `src/solver.rs` | `pub enum ConstraintOp` |
+| `src/solver.rs` | `pub enum ConstraintStrength` |
+| `src/solver.rs` | `pub struct Constraint` |
+| `src/solver.rs` | `pub struct ConstraintDecl` |
+| `src/solver.rs` | `pub enum SolveErrorKind` |
+| `src/solver.rs` | `pub struct SolveError` |
+| `src/solver.rs` | `pub trait LayoutSolver: Send + Sync + 'static` |
+| `src/solver.rs` | `pub struct TwoPassSolver` |
+| `src/solver.rs` | `pub fn strategies() -> BTreeMap<StrategyId, SolverFactory>` |
+| `src/solver.rs` | `pub fn solver_for(` |
+| `src/solver.rs` | `pub fn plan_revision(` |
+| `src/solver.rs` | `pub struct LayoutEngine` |
 | `src/text.rs` | `pub struct CharBox` |
 | `src/text.rs` | `pub struct TextRunMarker` |
 | `src/text.rs` | `pub struct TextRun` |
 | `src/widget.rs` | `pub struct WidgetSpecId(pub String)` |
-| `src/widget.rs` | `pub struct StrategyId(pub String)` |
 | `src/widget.rs` | `pub struct ThemeId(pub String)` |
-| `src/widget.rs` | `pub struct LayoutTokens` |
 | `src/widget.rs` | `pub struct PaintTokens` |
 | `src/widget.rs` | `pub struct Theme` |
 | `src/widget.rs` | `pub struct ThemeTable` |
 | `src/widget.rs` | `pub struct DrawEnv` |
+| `src/widget.rs` | `pub struct Metrics` |
 | `src/widget.rs` | `pub struct MeasureCtx<'a>` |
 | `src/widget.rs` | `pub struct DrawCtx<'a>` |
+| `src/widget.rs` | `pub struct IntentCtx<'a>` |
 | `src/widget.rs` | `pub enum WidgetPhase` |
 | `src/widget.rs` | `pub struct WidgetState` |
 | `src/widget.rs` | `pub enum HitPart` |

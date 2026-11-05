@@ -39,11 +39,8 @@ pub struct MonoInstance {
 /// 同一类型变量在 `params` / `ret` 中复用同一份赋值 —— 这是 rank-1 的核心，
 /// 也是 `mix(a: T, b: T, t: Num) -> T` 不会产出 `(F32, F64) -> F32` 的原因。
 pub fn monomorphize(sig: &OpSig) -> Result<Vec<MonoInstance>, ReflectError> {
-    let groups: Vec<&'static [TypeSpec]> = sig
-        .vars
-        .iter()
-        .map(|(_, kind)| kind.concrete())
-        .collect();
+    let groups: Vec<&'static [TypeSpec]> =
+        sig.vars.iter().map(|(_, kind)| kind.concrete()).collect();
 
     // 没有变量 ⇒ 本身就是具体类型，一个实例。
     if groups.is_empty() {

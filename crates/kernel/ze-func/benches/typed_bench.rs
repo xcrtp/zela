@@ -4,7 +4,7 @@
 //! 口径：两条路径都从同一棵 `Expr` 编译；typed 只在可单态化时参与（本基准的表达式
 //! 全部是数值/向量，必然可单态化）。
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 use ze_comb::{ChannelRef, CompiledExpr, EvalError, Expr, Mono, OpRef, TypedProgram, Value};
 

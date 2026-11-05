@@ -164,11 +164,7 @@ mod tests {
         }
     }
 
-    const FULL_3D: [Semantic; 3] = [
-        Semantic::Position,
-        Semantic::Uv,
-        Semantic::ShadingNormal,
-    ];
+    const FULL_3D: [Semantic; 3] = [Semantic::Position, Semantic::Uv, Semantic::ShadingNormal];
 
     /// 需求 ⊆ 提供 ⇒ 无补齐，布局与提供方逐项一致（stride 32）。
     #[test]

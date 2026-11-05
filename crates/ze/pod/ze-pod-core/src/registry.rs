@@ -14,9 +14,9 @@ use ze_reflect::sym::SymbolTable;
 
 use crate::error::PodError;
 use crate::handle::PodId;
+use crate::pod::{FunctionId, Pod};
 use crate::qualified::QualifiedName;
 use crate::type_name::{IntoPodTypeName, PodTypeName};
-use crate::pod::{FunctionId, Pod};
 
 /// 类型擦除的可调用对象（慢路径）。
 ///
@@ -64,7 +64,9 @@ impl<A1: Clone + 'static, R: 'static> ErasedCall for fn(&dyn Pod, A1) -> R {
     }
 }
 
-impl<A1: Clone + 'static, A2: Clone + 'static, R: 'static> ErasedCall for fn(&dyn Pod, A1, A2) -> R {
+impl<A1: Clone + 'static, A2: Clone + 'static, R: 'static> ErasedCall
+    for fn(&dyn Pod, A1, A2) -> R
+{
     fn invoke(&self, pod: &dyn Pod, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
         expect_arity(args, 2)?;
         let a1 = arg::<A1>(args, 0)?.clone();
@@ -86,13 +88,8 @@ impl<A1: Clone + 'static, A2: Clone + 'static, A3: Clone + 'static, R: 'static> 
 }
 
 /// arity 4（第 BB 批：糖层的 `rgba(r, g, b, a)` 需要四个独立标量）。
-impl<
-        A1: Clone + 'static,
-        A2: Clone + 'static,
-        A3: Clone + 'static,
-        A4: Clone + 'static,
-        R: 'static,
-    > ErasedCall for fn(&dyn Pod, A1, A2, A3, A4) -> R
+impl<A1: Clone + 'static, A2: Clone + 'static, A3: Clone + 'static, A4: Clone + 'static, R: 'static>
+    ErasedCall for fn(&dyn Pod, A1, A2, A3, A4) -> R
 {
     fn invoke(&self, pod: &dyn Pod, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
         expect_arity(args, 4)?;
@@ -106,13 +103,13 @@ impl<
 
 /// arity 5（第 BB 批：糖层的 `ramp2(ax, ay, bx, by, dur)` 需要五个独立标量）。
 impl<
-        A1: Clone + 'static,
-        A2: Clone + 'static,
-        A3: Clone + 'static,
-        A4: Clone + 'static,
-        A5: Clone + 'static,
-        R: 'static,
-    > ErasedCall for fn(&dyn Pod, A1, A2, A3, A4, A5) -> R
+    A1: Clone + 'static,
+    A2: Clone + 'static,
+    A3: Clone + 'static,
+    A4: Clone + 'static,
+    A5: Clone + 'static,
+    R: 'static,
+> ErasedCall for fn(&dyn Pod, A1, A2, A3, A4, A5) -> R
 {
     fn invoke(&self, pod: &dyn Pod, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
         expect_arity(args, 5)?;
@@ -406,9 +403,8 @@ impl Pod for RegistryPod {
 
     fn call(&self, id: FunctionId, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
         id.ensure_owner(self.id)?;
-        let slot = u32::try_from(id.slot()).map_err(|_| PodError::UnknownFunction(format!(
-            "函数编号 {id}"
-        )))?;
+        let slot = u32::try_from(id.slot())
+            .map_err(|_| PodError::UnknownFunction(format!("函数编号 {id}")))?;
         // generation 不匹配 ⇒ 槽位已被复用：显式错误，不是读到别人的函数。
         self.index
             .get(ze_reflect::SymbolId::new(slot, id.generation()))
@@ -438,10 +434,7 @@ mod tests {
 
         let id = pod.function_id(&name).expect("已注册");
         assert_eq!(id.owner(), pod.id());
-        assert_eq!(
-            *pod.call(id, &[]).unwrap().downcast::<u64>().unwrap(),
-            7u64
-        );
+        assert_eq!(*pod.call(id, &[]).unwrap().downcast::<u64>().unwrap(), 7u64);
 
         // generation 不匹配 ⇒ 显式错误，不是读到别人的函数。
         let stale = FunctionId::local(pod.id(), id.slot(), id.generation() + 1);
@@ -469,10 +462,7 @@ mod tests {
         pod.register_fn0::<u64>("test::value", |_| 2u64);
         let name = QualifiedName::from_path("test::value", Vec::new(), "u64");
         let id = pod.function_id(&name).unwrap();
-        assert_eq!(
-            *pod.call(id, &[]).unwrap().downcast::<u64>().unwrap(),
-            2u64
-        );
+        assert_eq!(*pod.call(id, &[]).unwrap().downcast::<u64>().unwrap(), 2u64);
         assert_eq!(pod.len(), 1, "同名重注册复用同一槽位");
     }
 }

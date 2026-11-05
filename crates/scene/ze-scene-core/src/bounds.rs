@@ -20,7 +20,7 @@ use ze_notion::{Path2D, Rect2D, Vec2};
 use ze_scene_contract::ObjectId;
 
 use crate::object::{Arrow, Circle, Line, Path, Rect};
-use crate::scene_write::{read_component, SceneRead};
+use crate::scene_write::{SceneRead, read_component};
 
 /// 能给出**局部**包围盒的图元（`None` = 空 / 退化几何）。
 pub trait Bounds2D {
@@ -98,10 +98,10 @@ pub fn object_bounds(scene: &dyn SceneRead, id: ObjectId) -> Option<Rect2D> {
     merge(read_component::<Line, _>(scene, id, |l| l.local_bounds()).flatten());
     merge(read_component::<Arrow, _>(scene, id, |a| a.local_bounds()).flatten());
     merge(read_component::<Rect, _>(scene, id, |r| r.local_bounds()).flatten());
-    merge(read_component::<crate::components::Reveal, _>(scene, id, |r| {
-        r.path.compute_bounds()
-    })
-    .flatten());
+    merge(
+        read_component::<crate::components::Reveal, _>(scene, id, |r| r.path.compute_bounds())
+            .flatten(),
+    );
     out
 }
 
@@ -112,19 +112,20 @@ mod tests {
     use ze_notion::Path2D;
 
     fn line_path() -> Path2D {
-        Path2D::from_polyline(
-            &[Vec2::new(0.0, 0.0), Vec2::new(4.0, 2.0)],
-            false,
-        )
+        Path2D::from_polyline(&[Vec2::new(0.0, 0.0), Vec2::new(4.0, 2.0)], false)
     }
 
     #[test]
     fn each_primitive_has_a_local_bounds() {
-        let bounds = Circle::new((1.0, 2.0), 3.0).local_bounds().expect("圆有包围盒");
+        let bounds = Circle::new((1.0, 2.0), 3.0)
+            .local_bounds()
+            .expect("圆有包围盒");
         assert_eq!(bounds.min, Vec2::new(-2.0, -1.0));
         assert_eq!(bounds.max, Vec2::new(4.0, 5.0));
 
-        let line = Line::new((0.0, 0.0), (2.0, -1.0)).local_bounds().expect("线有包围盒");
+        let line = Line::new((0.0, 0.0), (2.0, -1.0))
+            .local_bounds()
+            .expect("线有包围盒");
         assert_eq!(line.min, Vec2::new(0.0, -1.0));
         assert_eq!(line.max, Vec2::new(2.0, 0.0));
 
@@ -136,7 +137,10 @@ mod tests {
         let rect = Rect::new((1.0, 1.0), (3.0, 4.0));
         assert_eq!(rect.local_bounds(), Some(*rect.as_primitive()));
 
-        assert!(Path::new(Path2D::new()).local_bounds().is_none(), "空路径 ⇒ None");
+        assert!(
+            Path::new(Path2D::new()).local_bounds().is_none(),
+            "空路径 ⇒ None"
+        );
     }
 
     /// 迷你场景：只挂一个圆（`object_bounds` 的聚合 / 空集用例够用）。
@@ -195,10 +199,7 @@ mod tests {
                 && tip.x <= bounds.max.x
                 && tip.y >= bounds.min.y
                 && tip.y <= bounds.max.y;
-            assert!(
-                inside,
-                "end = {end} 的笔尖 {tip:?} 必须落在 {bounds:?} 内"
-            );
+            assert!(inside, "end = {end} 的笔尖 {tip:?} 必须落在 {bounds:?} 内");
         }
     }
 }

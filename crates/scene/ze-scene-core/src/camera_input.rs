@@ -27,9 +27,9 @@
 // `SceneEvent::Camera` 的 `layer` 字段因此**未被消费**（当前只有一个中央视口，
 // 且各模式互不重叠）；将来出现"多个 2D 视口各自一台相机"时才需要 layer→相机 映射。
 
-use ze_notion::Vec3;
-use crate::object::{Camera3D, FPS_PITCH_LIMIT, FpsView, Framing2D};
 use crate::domain::{CameraCommand, CameraMode};
+use crate::object::{Camera3D, FPS_PITCH_LIMIT, FpsView, Framing2D};
+use ze_notion::Vec3;
 
 /// 2D 相机缩放范围（单位：像素/世界单位）。
 pub const MIN_SCALE: f32 = 5.0;

@@ -2,12 +2,13 @@
 //! 持久化往返与"克隆后重新 commit"。
 
 use ze_notion::{FunctionX2Y, Path2D, Rect2D, Sampler1D, Vec2, Vec3};
+use ze_render_ir::{
+    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
+};
+use ze_scene_core::widget::WidgetDecl;
 use ze_scene_core::{
     Arrow, Axes2D, AxesLine, Camera2D, Camera3D, Circle, FpsView, Framing2D, FunctionGraph, Line,
     Path, Projection, Rect, Transform, ZOrder,
-};
-use ze_render_ir::{
-    BackgroundStroke, CurveWindow, Dash, FillSolid, Gradient, Opacity, SecondPaint, StrokeSolid,
 };
 use zela_scene_ecs::contract::{
     Components, Group, GroupId, Name, ObjectId, Parent, SceneRead, Visibility,
@@ -20,7 +21,6 @@ use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene::components::{
     ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
 };
-use ze_scene_core::widget::Widget2D;
 use zela_scene_ecs::{SceneEncoder, SceneScript};
 
 /// 33 个登记组件的样例（与 `known_component_table!` 一一对应）。
@@ -89,8 +89,15 @@ fn samples() -> zela_scene_ecs::contract::Components {
         Box::new(Reveal::new(Path2D::new())),
         Box::new(PathFollow::new(Path2D::new())),
         Box::new(Parent(ObjectId::DANGLING)),
-        // CK-g：一等控件实体（声明）。
-        Box::new(Widget2D::new(1, "slider", "speed", "zela.default")),
+        // **CL-R**：一等控件声明（进产物的那一份）。
+        Box::new(WidgetDecl {
+            id: ze_interact::LayoutId(1),
+            spec: ze_interact::widget::WidgetSpecId::new("slider"),
+            label: "speed".to_string(),
+            role: "slider".to_string(),
+            value: 0.5,
+            ..WidgetDecl::default()
+        }),
     ]
 }
 
@@ -137,7 +144,7 @@ fn every_registered_component_round_trips() {
         "Reveal",
         "PathFollow",
         "Parent",
-        "Widget2D",
+        "WidgetDecl",
     ];
     expected.sort_unstable();
     assert_eq!(names, expected, "登记表 34 条必须逐条出现");
@@ -300,25 +307,19 @@ fn cloned_script_can_be_committed_again() {
 /// （`PendingTarget`）仍是唯一可序列化形态 —— 本用例钉住它仍能往返。
 fn bind_fade(enc: &mut SceneEncoder, object: zela_scene_ecs::Handle, dur: f64) {
     use ze_comb::{ChannelRef, Expr};
-    use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
     use zela_scene_ecs::ClockProgram;
+    use zela_scene_ecs::animation::{LibraryRef, ResetBehavior};
 
     let window = Expr::call(
         ze_comb::OpRef::new("zela.math", "and"),
         [
             Expr::call(
                 ze_comb::OpRef::new("zela.math", "ge"),
-                [
-                    Expr::channel(ChannelRef::builtin("time")),
-                    Expr::pure(0.0),
-                ],
+                [Expr::channel(ChannelRef::builtin("time")), Expr::pure(0.0)],
             ),
             Expr::call(
                 ze_comb::OpRef::new("zela.math", "lt"),
-                [
-                    Expr::channel(ChannelRef::builtin("time")),
-                    Expr::pure(dur),
-                ],
+                [Expr::channel(ChannelRef::builtin("time")), Expr::pure(dur)],
             ),
         ],
     );

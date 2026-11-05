@@ -86,7 +86,10 @@ mod tests {
     fn contains_uses_the_same_half_open_bounds_as_hit_testing() {
         let view = View::screen(bounds());
         assert!(view.contains(Vec2::new(10.0, 20.0)), "min 端点属于本面");
-        assert!(!view.contains(Vec2::new(110.0, 80.0)), "max 端点属于下一个面");
+        assert!(
+            !view.contains(Vec2::new(110.0, 80.0)),
+            "max 端点属于下一个面"
+        );
         assert!(view.contains(Vec2::new(109.999, 79.999)));
         assert!(!view.contains(Vec2::new(9.0, 50.0)));
     }

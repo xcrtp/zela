@@ -139,8 +139,13 @@ impl System for CameraDriveSystem {
                     });
                     // 自动轨道的目标可能是悬垂 id（无 3D 相机，或脚本相机在宿主侧才
                     // 登记）⇒ 再按 clock 兜底移出一次，保持旧行为。
-                    if !taken.iter().any(|binding| binding.clock == self.orbit.clock) {
-                        table.bindings.retain(|binding| binding.clock != self.orbit.clock);
+                    if !taken
+                        .iter()
+                        .any(|binding| binding.clock == self.orbit.clock)
+                    {
+                        table
+                            .bindings
+                            .retain(|binding| binding.clock != self.orbit.clock);
                         taken.push(self.orbit.clone());
                     }
                     self.suspended3d = taken;
@@ -234,7 +239,7 @@ mod tests {
                     reset: crate::animation::ResetBehavior::Hold,
                     initial: None,
                     state_plans: Vec::new(),
-            seek_kind: SeekKind::O1,
+                    seek_kind: SeekKind::O1,
                 },
                 Binding {
                     clock: c_scale,
@@ -255,7 +260,7 @@ mod tests {
                     reset: crate::animation::ResetBehavior::Hold,
                     initial: None,
                     state_plans: Vec::new(),
-            seek_kind: SeekKind::O1,
+                    seek_kind: SeekKind::O1,
                 },
             ];
             let orbit = Binding {
@@ -276,7 +281,7 @@ mod tests {
                 reset: crate::animation::ResetBehavior::Hold,
                 initial: None,
                 state_plans: Vec::new(),
-            seek_kind: SeekKind::O1,
+                seek_kind: SeekKind::O1,
             };
 
             let mut table = BindingTable::new();

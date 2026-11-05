@@ -19,8 +19,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender};
 
 use serde::{Deserialize, Serialize};
 
@@ -237,11 +237,13 @@ pub struct BridgeTarget {
 impl DebugTarget for BridgeTarget {
     fn execute(&self, request: &Request) -> Response {
         let (reply, wait) = std::sync::mpsc::channel();
-        if self.jobs.send(Job {
-            request: request.clone(),
-            reply,
-        })
-        .is_err()
+        if self
+            .jobs
+            .send(Job {
+                request: request.clone(),
+                reply,
+            })
+            .is_err()
         {
             return Response::error(request.id, "GUI 主线程已退出");
         }
@@ -336,9 +338,7 @@ impl DebugTarget for DriverTarget {
             ),
             Command::Inject { injected } => {
                 match crate::debug::inject_injected(&self.driver, injected) {
-                    Ok(count) => {
-                        Response::ok(request.id, serde_json::json!({ "injected": count }))
-                    }
+                    Ok(count) => Response::ok(request.id, serde_json::json!({ "injected": count })),
                     Err(error) => Response::error(request.id, error),
                 }
             }

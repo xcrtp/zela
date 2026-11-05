@@ -35,8 +35,8 @@ use zela_render_backends::registry::{AdapterFacts, BackendKind};
 use zela_render_backends::routing::{self, LoopBackend};
 use zela_render_backends::{RenderContext, RoutingDecision, install_standard_backends};
 use zela_scene_ecs::DriverPod;
-use zela_scene_ecs::domain::ViewportCamera;
 use zela_scene_ecs::Result;
+use zela_scene_ecs::domain::ViewportCamera;
 use zela_scene_ecs::errors::Error;
 
 /// 启动时的初始选中项。
@@ -111,7 +111,8 @@ pub fn launch_with(initial: Initial) -> eframe::Result<()> {
 fn request_vector_device(options: &mut eframe::NativeOptions) {
     use zela_render_backends::{BackendKind, BackendRegistry};
 
-    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup else {
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup
+    else {
         // 宿主自带 device（`WgpuSetup::Existing`）⇒ 能力由调用方负责，这里不猜。
         return;
     };
@@ -119,7 +120,9 @@ fn request_vector_device(options: &mut eframe::NativeOptions) {
         let mut registry = BackendRegistry::with_standard();
         let _ = registry.register(BackendKind::Vector);
         // 并集失败（没有任何可用后端）在 GUI 里不可能发生：wgpu 后端总是注册着。
-        let features = registry.required_device_features(adapter).unwrap_or_default();
+        let features = registry
+            .required_device_features(adapter)
+            .unwrap_or_default();
         eframe::wgpu::DeviceDescriptor {
             label: Some("zela"),
             required_features: features,
@@ -264,14 +267,15 @@ impl App {
             wgpu_state.queue.clone(),
             &wgpu_state.adapter,
         )
-        .map_err(|why| {
-            Error::InitializationError(format!("矢量后端 GPU 注入失败：{why}"))
-        })?;
+        .map_err(|why| Error::InitializationError(format!("矢量后端 GPU 注入失败：{why}")))?;
         let render_ctx = install_standard_backends(&wgpu_state);
 
         let entries = entries();
         let selected = initial_index(&entries, initial);
-        let (title, source) = (entries[selected].title.clone(), entries[selected].source.clone());
+        let (title, source) = (
+            entries[selected].title.clone(),
+            entries[selected].source.clone(),
+        );
         let runtime = load(render_ctx.clone(), &source)
             .map_err(|why| Error::InitializationError(format!("载入「{title}」失败：{why}")))?;
         install_camera_control(&runtime);
@@ -541,15 +545,20 @@ impl App {
         // 这些作品是静止帧，`reusable` 之后不再重渲，因此不是每帧成本。
         if snapshot.has_composite_content() {
             let render_start = std::time::Instant::now();
-            let rgba =
-                match snapshot.render_at(&self.runtime, width, height, scale, &params, background)
-                {
-                    Ok(rgba) => rgba,
-                    Err(why) => {
-                        self.status = format!("矢量渲染失败：{why}（本帧回退 Wgpu）");
-                        return false;
-                    }
-                };
+            let rgba = match snapshot.render_at(
+                &self.runtime,
+                width,
+                height,
+                scale,
+                &params,
+                background,
+            ) {
+                Ok(rgba) => rgba,
+                Err(why) => {
+                    self.status = format!("矢量渲染失败：{why}（本帧回退 Wgpu）");
+                    return false;
+                }
+            };
             let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
             let upload_start = std::time::Instant::now();
             self.last_vector = Some(LastVector {
@@ -830,7 +839,9 @@ fn initial_index(entries: &[Entry], initial: Initial) -> usize {
         Initial::First => 0,
         Initial::Demo(id) => entries
             .iter()
-            .position(|entry| matches!(&entry.source, EntrySource::Demo(demo) if demo.id == id.as_str()))
+            .position(
+                |entry| matches!(&entry.source, EntrySource::Demo(demo) if demo.id == id.as_str()),
+            )
             .unwrap_or(0),
         Initial::Choice(choice) => entries
             .iter()
@@ -841,14 +852,14 @@ fn initial_index(entries: &[Entry], initial: Initial) -> usize {
 
 fn load(render_ctx: RenderContext, source: &EntrySource) -> std::result::Result<Runtime, String> {
     match source {
-        EntrySource::Demo(demo) => {
-            build_script_runtime(render_ctx, demo.source, demo.language).map_err(|why| why.to_string())
-        }
+        EntrySource::Demo(demo) => build_script_runtime(render_ctx, demo.source, demo.language)
+            .map_err(|why| why.to_string()),
         EntrySource::Choice(choice) => {
             build_scene_runtime(render_ctx, *choice).map_err(|why| why.to_string())
         }
         EntrySource::File { source, language } => {
-            build_script_runtime(render_ctx, source.clone(), *language).map_err(|why| why.to_string())
+            build_script_runtime(render_ctx, source.clone(), *language)
+                .map_err(|why| why.to_string())
         }
     }
 }
@@ -961,7 +972,10 @@ impl ScriptPicker {
                     .show(ui, |ui| {
                         for dir in &dirs {
                             let name = file_name(dir);
-                            if ui.selectable_label(false, format!("[目录] {name}")).clicked() {
+                            if ui
+                                .selectable_label(false, format!("[目录] {name}"))
+                                .clicked()
+                            {
                                 self.dir = dir.clone();
                             }
                         }

@@ -274,7 +274,14 @@ fn record_expression(
     match scope {
         Some(scope) => {
             timeline.bind_expr_pending_scoped(
-                expr, library, clock, predicate, reset, make, object.0, Some(scope),
+                expr,
+                library,
+                clock,
+                predicate,
+                reset,
+                make,
+                object.0,
+                Some(scope),
             );
         }
         None => {
@@ -296,10 +303,7 @@ fn record_expression(
 /// 手写 predicate 完全一致（否则两边的 `op_revisions` 会差三条）。
 pub fn duration_predicate(duration: f64) -> Expr {
     let leaf = || Expr::channel(ChannelRef::builtin("time"));
-    let ge = Expr::call(
-        OpRef::new("zela.math", "ge"),
-        [leaf(), Expr::pure(0.0)],
-    );
+    let ge = Expr::call(OpRef::new("zela.math", "ge"), [leaf(), Expr::pure(0.0)]);
     let lt = Expr::call(
         OpRef::new("zela.math", "lt"),
         [leaf(), Expr::pure(duration)],
@@ -451,7 +455,11 @@ impl SceneEncoder {
     /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
     ///
     /// 装饰性：不影响几何 / 状态；组件挂在创建载荷里 ⇒ 提交后与普通组件同样可见。
-    pub fn shader_fill(&mut self, object: Handle, paint: ze_render_ir::ShaderPaint) -> Result<(), String> {
+    pub fn shader_fill(
+        &mut self,
+        object: Handle,
+        paint: ze_render_ir::ShaderPaint,
+    ) -> Result<(), String> {
         let components = self
             .creates
             .get_mut(object.0 as usize)
@@ -495,11 +503,7 @@ impl SceneEncoder {
     ) -> Result<(), ExprBindError> {
         // **CC-a**：绑定继承目标对象的作用域（对象在哪个 scope 里创建，
         // 它的动画就属于哪条时间轴）。
-        let scope = self
-            .object_scopes
-            .get(object.0)
-            .cloned()
-            .flatten();
+        let scope = self.object_scopes.get(object.0).cloned().flatten();
         record_expression(
             &mut self.timeline,
             self.creates.len(),
@@ -650,7 +654,11 @@ impl SceneScript {
     /// **阶段 2（着色 codegen）**：给对象挂"填充色由生成的 WGSL 在 GPU 上算"的组件。
     ///
     /// 与 [`SceneEncoder::shader_fill`] 同一口径：装饰性，不影响几何 / 状态。
-    pub fn shader_fill(&mut self, object: Handle, paint: ze_render_ir::ShaderPaint) -> Result<(), String> {
+    pub fn shader_fill(
+        &mut self,
+        object: Handle,
+        paint: ze_render_ir::ShaderPaint,
+    ) -> Result<(), String> {
         let components = self
             .creates
             .get_mut(object.0 as usize)
@@ -861,10 +869,7 @@ impl SceneScript {
             };
             let mut replaced = false;
             for component in components.iter_mut() {
-                if let Some(native) = component
-                    .as_any_mut()
-                    .downcast_mut::<crate::object::Path>()
-                {
+                if let Some(native) = component.as_any_mut().downcast_mut::<crate::object::Path>() {
                     native.0 = path.clone();
                     replaced = true;
                 } else if let Some(reveal) = component
@@ -1003,7 +1008,9 @@ impl SceneScript {
                     );
                     handles.push(id)
                 }
-                None => return Err(ScriptError::CreateFailed { handle: Handle(i) }),
+                None => {
+                    return Err(ScriptError::CreateFailed { handle: Handle(i) });
+                }
             }
         }
 

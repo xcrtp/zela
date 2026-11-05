@@ -334,8 +334,7 @@ mod tests {
 
         // Corner falls through to a card hit（卡是半开区间：取角内侧一点）。
         assert_eq!(
-            h.policy()
-                .hit_test(&ctx, rect.max - NodePos::new(1.0, 1.0)),
+            h.policy().hit_test(&ctx, rect.max - NodePos::new(1.0, 1.0)),
             HitTarget::Node(id)
         );
     }

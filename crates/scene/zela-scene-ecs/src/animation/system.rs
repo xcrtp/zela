@@ -169,7 +169,9 @@ impl System for BindingApplySystem {
                         None
                     }
                     ResetBehavior::Skip => None,
-                    ResetBehavior::Hold => b.active.as_ref().and_then(|set| set.time_last_active(lt)),
+                    ResetBehavior::Hold => {
+                        b.active.as_ref().and_then(|set| set.time_last_active(lt))
+                    }
                 }
             };
             let Some(eval_at) = eval_at else {
@@ -183,9 +185,7 @@ impl System for BindingApplySystem {
                     &SceneMono::with_global(eval_at, t_global, frame, &scene)
                         .with_state_plans(&b.state_plans)
                         .with_event(has_events)
-                        .with_event_logs(
-                            event_log.slice(log_offsets[index], b.state_plans.len()),
-                        ),
+                        .with_event_logs(event_log.slice(log_offsets[index], b.state_plans.len())),
                 ) {
                     Ok(value) => match anim_value(&value) {
                         Some(value) => value,
@@ -398,12 +398,7 @@ mod tests {
         let plan = plan_from_expr(&init, &step, Some(&predicate)).unwrap();
         assert!(plan.event_gated());
         let expected_plan = plan.clone();
-        let program = CompiledExpr::compile(&Expr::state_gated(
-            init,
-            step,
-            predicate,
-        ))
-        .unwrap();
+        let program = CompiledExpr::compile(&Expr::state_gated(init, step, predicate)).unwrap();
 
         let mut table = BindingTable::new();
         table.add(Binding {
@@ -448,10 +443,10 @@ mod tests {
             scheduler.run_frame(0.1);
 
             let radius = scheduler.world().get::<&Circle>(entity).unwrap().radius;
-            let expected = expected_plan
-                .map()
-                .apply(&[0.0], matched.iter().filter(|&&f| f <= frame as i64).count() as u64)[0]
-                as f32;
+            let expected = expected_plan.map().apply(
+                &[0.0],
+                matched.iter().filter(|&&f| f <= frame as i64).count() as u64,
+            )[0] as f32;
             assert!(
                 (radius - expected).abs() < 1e-6,
                 "frame {frame}: radius {radius} != {expected}"
@@ -485,17 +480,11 @@ mod tests {
             [
                 Expr::call(
                     OpRef::new("zela.math", "ge"),
-                    [
-                        Expr::channel(ChannelRef::builtin("time")),
-                        Expr::pure(0.0),
-                    ],
+                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(0.0)],
                 ),
                 Expr::call(
                     OpRef::new("zela.math", "lt"),
-                    [
-                        Expr::channel(ChannelRef::builtin("time")),
-                        Expr::pure(1.0),
-                    ],
+                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(1.0)],
                 ),
             ],
         ))
@@ -601,10 +590,7 @@ mod tests {
             [
                 Expr::call(
                     OpRef::new("zela.math", "scale"),
-                    [
-                        Expr::pure(0.5),
-                        Expr::channel(ChannelRef::builtin("time")),
-                    ],
+                    [Expr::pure(0.5), Expr::channel(ChannelRef::builtin("time"))],
                 ),
                 Expr::pure(0.0),
                 Expr::pure(1.0),
@@ -613,7 +599,10 @@ mod tests {
         let root = Expr::call(
             OpRef::new("zela.math", "vec2"),
             [
-                Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(2.0), progress]),
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [Expr::pure(2.0), progress],
+                ),
                 Expr::pure(0.0),
             ],
         );
@@ -672,8 +661,8 @@ mod tests {
         };
         use crate::scene::components::{MorphShape, PhaseAnim, Reveal};
         use std::sync::Arc;
-        use ze_scene_core::{Camera3D, Framing2D, Projection, Transform};
         use ze_render_ir::Opacity;
+        use ze_scene_core::{Camera3D, Framing2D, Projection, Transform};
         use ze_time::{AnimValue, Interp};
 
         fn kf(from: AnimValue, to: AnimValue) -> Curve {
@@ -716,7 +705,7 @@ mod tests {
                 reset: crate::animation::ResetBehavior::Hold,
                 initial: None,
                 state_plans: Vec::new(),
-            seek_kind: SeekKind::O1,
+                seek_kind: SeekKind::O1,
             });
         };
         bind(

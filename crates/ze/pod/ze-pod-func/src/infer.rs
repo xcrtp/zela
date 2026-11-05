@@ -217,7 +217,7 @@ impl Subst {
                 return Err(format!(
                     "{context}：类型变量 `{}` 没有被具体类型约束",
                     self.names[var as usize]
-                ))
+                ));
             }
         };
         let required = self.kinds[var as usize];
@@ -300,7 +300,9 @@ fn spec_concrete(spec: &TypeSpec) -> Result<ChannelType, String> {
         TypeSpec::Array { .. } | TypeSpec::App { .. } => {
             "签名里的数组 / 类型构造应用不支持（rank-1 限定）".to_string()
         }
-        other => format!("签名里的类型 `{}` 尚未接入表达式类型系统", other.render()),
+        other => {
+            format!("签名里的类型 `{}` 尚未接入表达式类型系统", other.render())
+        }
     })
 }
 
@@ -315,10 +317,7 @@ fn kind_of(ty: ChannelType) -> Kind {
 }
 
 /// 逐条尝试一个算子的重载。
-fn unify_overloads(
-    def: &OpDef,
-    args: &[ChannelType],
-) -> Result<ChannelType, TypeError> {
+fn unify_overloads(def: &OpDef, args: &[ChannelType]) -> Result<ChannelType, TypeError> {
     let mut successes: Vec<(ChannelType, String)> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     for sig in def.sigs {
@@ -579,9 +578,7 @@ impl<'a> Infer<'a> {
                     ty,
                     pointwise: PointwiseReport::blocked("rec_prev"),
                 }),
-                None => Err(TypeError::new(
-                    "`RecPrev` 只能出现在 `NatRec.step` 内",
-                )),
+                None => Err(TypeError::new("`RecPrev` 只能出现在 `NatRec.step` 内")),
             },
             Node::RecIndex => Ok(Inference {
                 ty: ChannelType::I64,
@@ -747,7 +744,10 @@ mod tests {
         let report = infer_pointwise(&polluted).expect("可推导");
         assert!(!report.pointwise, "读了非 pointwise ⇒ 整棵非 pointwise");
         assert!(
-            report.blocker.as_deref().is_some_and(|text| text.contains("read")),
+            report
+                .blocker
+                .as_deref()
+                .is_some_and(|text| text.contains("read")),
             "必须点名污染源，实际 {:?}",
             report.blocker
         );
@@ -765,37 +765,26 @@ mod tests {
         let info = infer_full(&expr).expect("NatRec 可推导");
         assert_eq!(info.ty, ChannelType::Number);
         assert!(!info.pointwise.pointwise, "NatRec 是离散层");
-        assert!(info
-            .pointwise
-            .blocker
-            .as_deref()
-            .is_some_and(|text| text.contains("nat_rec")));
+        assert!(
+            info.pointwise
+                .blocker
+                .as_deref()
+                .is_some_and(|text| text.contains("nat_rec"))
+        );
 
         // count 用 f64 ⇒ 显式拒绝（不取整）。
-        let bad_count = Expr::nat_rec(
-            Expr::pure(4.0),
-            Expr::pure(1.0),
-            Expr::rec_prev(),
-        );
+        let bad_count = Expr::nat_rec(Expr::pure(4.0), Expr::pure(1.0), Expr::rec_prev());
         assert!(infer(&bad_count).is_err());
 
         // init / step 类型不同 ⇒ 显式拒绝。
-        let mismatch = Expr::nat_rec(
-            Expr::pure(1_i64),
-            Expr::pure(1.0),
-            Expr::rec_index(),
-        );
+        let mismatch = Expr::nat_rec(Expr::pure(1_i64), Expr::pure(1.0), Expr::rec_index());
         assert!(infer(&mismatch).is_err());
     }
 
     /// `RecIndex` 的类型是 `I64`（不经过 f64）。
     #[test]
     fn rec_index_infers_as_i64() {
-        let expr = Expr::nat_rec(
-            Expr::pure(1_i64),
-            Expr::pure(0_i64),
-            Expr::rec_index(),
-        );
+        let expr = Expr::nat_rec(Expr::pure(1_i64), Expr::pure(0_i64), Expr::rec_index());
         assert_eq!(infer(&expr).expect("可推导"), ChannelType::I64);
     }
 

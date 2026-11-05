@@ -82,11 +82,12 @@ impl<'de> serde::Deserialize<'de> for PendingTarget {
 
         let Repr::Pending { ctor, handle } =
             <Repr as serde::Deserialize>::deserialize(deserializer)?;
-        let (make, name) = crate::animation::target::target_ctor_by_name(&ctor).ok_or_else(|| {
-            serde::de::Error::custom(
-                crate::persist::PersistError::UnknownTarget(ctor.clone()).to_string(),
-            )
-        })?;
+        let (make, name) =
+            crate::animation::target::target_ctor_by_name(&ctor).ok_or_else(|| {
+                serde::de::Error::custom(
+                    crate::persist::PersistError::UnknownTarget(ctor.clone()).to_string(),
+                )
+            })?;
         Ok(PendingTarget { make, name, handle })
     }
 }
@@ -210,7 +211,9 @@ impl Timeline {
     /// 故 payload 里 `Read.object` 仍是脚本句柄下标（与 `handle_ref` 惯例一致）。
     pub(crate) fn rewrite_read_objects(&mut self, resolve: &impl Fn(u64) -> u64) {
         for step in &mut self.steps {
-            let Step::Expr { expr, predicate, .. } = step;
+            let Step::Expr {
+                expr, predicate, ..
+            } = step;
             *expr = rewrite_reads(expr, resolve);
             if let Some(predicate) = predicate {
                 *predicate = rewrite_reads(predicate, resolve);
@@ -249,9 +252,8 @@ impl Timeline {
                     scope,
                     ..
                 } => {
-                    let scope_id = bindings.declare_scope(
-                        scope.as_ref().map(|spec| spec.path.as_str()).unwrap_or(""),
-                    );
+                    let scope_id = bindings
+                        .declare_scope(scope.as_ref().map(|spec| spec.path.as_str()).unwrap_or(""));
                     if scope_clocks.len() <= scope_id.0 as usize {
                         scope_clocks.resize(scope_id.0 as usize + 1, None);
                     }
@@ -426,7 +428,9 @@ impl Timeline {
         let mut report = StillTimeReport::default();
         for step in &self.steps {
             match step {
-                Step::Expr { predicate: None, .. } => {
+                Step::Expr {
+                    predicate: None, ..
+                } => {
                     // 恒生效 ⇒ 画面永远在变，没有静止时刻。
                     report.never_static = true;
                     return report;
@@ -489,10 +493,9 @@ impl Timeline {
                 library,
             } = step;
             // 串行合并时作用域时钟也整体后移；`time_base = 0` 即"并行"（作用域保持独立）。
-            let scope = scope.as_ref().map(|spec| ScopeSpec::new(
-                spec.path.clone(),
-                shifted_clock(&spec.clock, time_base),
-            ));
+            let scope = scope.as_ref().map(|spec| {
+                ScopeSpec::new(spec.path.clone(), shifted_clock(&spec.clock, time_base))
+            });
             self.steps.push(Step::Expr {
                 duration: *duration,
                 target: PendingTarget {
@@ -519,7 +522,10 @@ fn shifted_clock(clock: &ClockProgram, base: f64) -> ClockProgram {
         return clock.clone();
     }
     let mut links = Vec::with_capacity(clock.links.len() + 1);
-    links.push(ze_time::ClockLink { shift: base, rate: 1.0 });
+    links.push(ze_time::ClockLink {
+        shift: base,
+        rate: 1.0,
+    });
     links.extend_from_slice(&clock.links);
     ClockProgram { links }
 }
@@ -561,10 +567,7 @@ fn rewrite_reads(expr: &Expr, resolve: &impl Fn(u64) -> u64) -> Expr {
             node: Node::Method {
                 method: method.clone(),
                 object: resolve(object),
-                args: args
-                    .iter()
-                    .map(|arg| rewrite_reads(arg, resolve))
-                    .collect(),
+                args: args.iter().map(|arg| rewrite_reads(arg, resolve)).collect(),
             },
         };
     }
@@ -630,14 +633,20 @@ mod tests {
                     .unwrap()
                     .0,
                 0,
-                Some(ScopeSpec::new(path, ClockProgram::nested(&ClockProgram::new(), shift, 1.0))),
+                Some(ScopeSpec::new(
+                    path,
+                    ClockProgram::nested(&ClockProgram::new(), shift, 1.0),
+                )),
             );
         }
         let mut forest = ClockForest::new();
         let mut bindings = BindingTable::new();
         tl.compile(&mut forest, &mut bindings);
 
-        assert_eq!(bindings.scopes(), &["".to_string(), "panel_a".to_string(), "panel_b".to_string()]);
+        assert_eq!(
+            bindings.scopes(),
+            &["".to_string(), "panel_a".to_string(), "panel_b".to_string()]
+        );
         assert_eq!(bindings.bindings[0].scope, crate::animation::ScopeId(1));
         assert_eq!(bindings.bindings[1].scope, crate::animation::ScopeId(2));
 
@@ -696,10 +705,7 @@ mod tests {
     }
 
     fn compare(op: &str, left: Expr, right: Expr) -> Expr {
-        Expr::call(
-            ze_comb::OpRef::new("zela.math", op),
-            [left, right],
-        )
+        Expr::call(ze_comb::OpRef::new("zela.math", op), [left, right])
     }
 
     /// 只依赖时间的窗口 ⇒ `at = Some(...)`，没有"非时间依赖"标记。

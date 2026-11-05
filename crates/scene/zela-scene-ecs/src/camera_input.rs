@@ -97,12 +97,12 @@ impl System for CameraInputSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ze_notion::Vec3;
-    use ze_scene_core::FPS_PITCH_LIMIT;
     use crate::TimeState;
     use crate::domain::LayerId;
-    use ze_scene_core::Projection;
+    use ze_notion::Vec3;
     use ze_scene_contract::ObjectId;
+    use ze_scene_core::FPS_PITCH_LIMIT;
+    use ze_scene_core::Projection;
     use zela_schedule::resource::Resources;
     use zela_schedule::scheduler::{Phase, Scheduler};
 
@@ -410,10 +410,7 @@ mod tests {
             apply_orbit(&mut camera, CameraCommand::Dolly { delta: -0.02 });
         }
         let far = (camera.eye - camera.target).length();
-        assert!(
-            far > near + 0.5,
-            "负向 Dolly 必须能拉回：{near} → {far}"
-        );
+        assert!(far > near + 0.5, "负向 Dolly 必须能拉回：{near} → {far}");
     }
 
     /// 3D 视口命令经 System 落到场景对象上（Orbit 模式）。

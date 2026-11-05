@@ -150,9 +150,7 @@ impl ReflectError {
             Self::DuplicateName { name, .. } => Some(name),
             Self::LayoutMismatch { ty, .. } => Some(ty),
             Self::VersionMismatch { op, .. } => Some(op),
-            Self::TypeMismatch { .. }
-            | Self::CapabilityMissing { .. }
-            | Self::Layout(_) => None,
+            Self::TypeMismatch { .. } | Self::CapabilityMissing { .. } | Self::Layout(_) => None,
         }
     }
 
@@ -171,11 +169,9 @@ impl ReflectError {
 impl fmt::Display for ReflectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DuplicateName { kind, name, origin } => write!(
-                f,
-                "{}冲突：`{name}`（污染源：{origin}）",
-                kind.label()
-            ),
+            Self::DuplicateName { kind, name, origin } => {
+                write!(f, "{}冲突：`{name}`（污染源：{origin}）", kind.label())
+            }
             Self::TypeMismatch {
                 expected,
                 actual,
@@ -184,10 +180,9 @@ impl fmt::Display for ReflectError {
                 f,
                 "类型不合一：期望 `{expected}`，实际 `{actual}`（污染源：{origin}）"
             ),
-            Self::LayoutMismatch { ty, detail, origin } => write!(
-                f,
-                "类型 `{ty}` 布局协商失败：{detail}（污染源：{origin}）"
-            ),
+            Self::LayoutMismatch { ty, detail, origin } => {
+                write!(f, "类型 `{ty}` 布局协商失败：{detail}（污染源：{origin}）")
+            }
             Self::VersionMismatch {
                 op,
                 required_since,

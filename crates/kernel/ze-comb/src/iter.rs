@@ -45,7 +45,7 @@ impl ValueIter {
                         index,
                         expected,
                         actual,
-                    })
+                    });
                 }
             }
         }
@@ -104,9 +104,9 @@ impl ValueIter {
     pub fn sum(&self) -> Result<Value, EvalError> {
         let total = self.fold(Value::f64(0.0), |acc, item, _| {
             let acc = acc.as_f64().expect("sum 的状态恒为 f64");
-            let item = item
-                .as_f64()
-                .ok_or(EvalError::IterNotSummable { actual: item.kind() })?;
+            let item = item.as_f64().ok_or(EvalError::IterNotSummable {
+                actual: item.kind(),
+            })?;
             Ok(Value::f64(acc + item))
         })?;
         Ok(total)

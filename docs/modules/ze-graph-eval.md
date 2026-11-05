@@ -11,14 +11,14 @@
 - 路径：`crates/ze/graph/ze-graph-eval`
 - 生产依赖（上游，dev-deps 不计）：`ze-node-core`
 - 被依赖（下游）：`ze-node`
-- 源文件：3 个 · 828 行
+- 源文件：3 个 · 831 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/context.rs` | 126 | Concrete [`ExecContext`] backing used by [`crate::LazyPullEval`]. |
-| `src/lazy_eval.rs` | 688 | Lazy pull evaluation strategy. |
+| `src/lazy_eval.rs` | 691 | Lazy pull evaluation strategy. |
 | `src/lib.rs` | 14 | `zela-graph-eval` — evaluation strategies for `zela-node`. |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

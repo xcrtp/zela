@@ -26,16 +26,17 @@
 
 use std::collections::BTreeMap;
 
+use crate::Point;
 use crate::hit::Rect;
 use crate::layout::Size;
 use crate::layout::{Constraints, LayoutId};
-use crate::Point;
 use ze_render_ir::{DrawCommand, Shape2D, Style2D, ZOrder};
 
 /// 控件在声明期的稳定 id（与 `Frame::geometry` 同口径；内容寻址，不是分配序）。
 pub type WidgetId = LayoutId;
 
 /// 控件规格（工厂表的键）。**独立命名空间**，不与 `ContentOriginKind` / `OpRef` 共用。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct WidgetSpecId(pub String);
 
@@ -51,48 +52,15 @@ impl std::fmt::Display for WidgetSpecId {
     }
 }
 
-/// 布局策略（本轮只留形状；默认两遍扫描，kasuari 将来只加一个工厂项）。
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct StrategyId(pub String);
-
-impl StrategyId {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self(name.into())
-    }
-}
+/// 布局策略（默认两遍扫描；`kasuari` 是同一接口下的第二个实现）。
+///
+/// CL-R 把定义搬到 [`crate::solver`]（那里也放 `LayoutTokens` 与约束形状），
+/// 这里保持原路径可用。
+pub use crate::solver::{LayoutTokens, StrategyId};
 
 /// 主题 id（进 `Diagnostics.environment`，不进 payload）。
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct ThemeId(pub String);
-
-/// **布局 token**：会改变 measure 结果（因此必须进 revision）。
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct LayoutTokens {
-    pub row_height: f64,
-    pub gap: f64,
-    pub padding: f64,
-    pub font_size: f64,
-    pub knob_radius: f64,
-}
-
-impl LayoutTokens {
-    pub fn revision(&self) -> u64 {
-        let mut hash = 0xcbf2_9ce4_8422_2325u64;
-        for value in [
-            self.row_height,
-            self.gap,
-            self.padding,
-            self.font_size,
-            self.knob_radius,
-        ] {
-            for byte in value.to_bits().to_le_bytes() {
-                hash ^= u64::from(byte);
-                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        }
-        hash
-    }
-}
 
 /// **绘制 token**：只改命令列表，不改 measure 结果（不进 revision）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -133,9 +101,21 @@ impl Theme {
 }
 
 /// 主题表：扁平 token 按 id 查表（不做层叠 / specificity）。
-#[derive(Debug, Clone, Default)]
+///
+/// 默认表**自带**默认主题 ⇒ `get_or_default` 一定能借出 `&Theme`（不 clone、不 Option 传染）。
+#[derive(Debug, Clone)]
 pub struct ThemeTable {
+    default: Theme,
     themes: BTreeMap<ThemeId, Theme>,
+}
+
+impl Default for ThemeTable {
+    fn default() -> Self {
+        let default = Theme::default_theme();
+        let mut themes = BTreeMap::new();
+        themes.insert(default.id.clone(), default.clone());
+        Self { default, themes }
+    }
 }
 
 impl ThemeTable {
@@ -144,9 +124,7 @@ impl ThemeTable {
     }
 
     pub fn with_default() -> Self {
-        let mut table = Self::default();
-        table.insert(Theme::default_theme());
-        table
+        Self::default()
     }
 
     pub fn insert(&mut self, theme: Theme) {
@@ -155,6 +133,11 @@ impl ThemeTable {
 
     pub fn get(&self, id: &ThemeId) -> Option<&Theme> {
         self.themes.get(id)
+    }
+
+    /// 查不到 ⇒ 默认主题（**不是**「没主题」：绘制永远有确定的 token）。
+    pub fn get_or_default(&self, id: &ThemeId) -> &Theme {
+        self.themes.get(id).unwrap_or(&self.default)
     }
 
     /// 主题表变化 ⇒ 命令列表可能变化（layout token 是否变化由 revision 判定）。
@@ -180,6 +163,57 @@ pub struct DrawEnv {
     pub faces: Vec<String>,
 }
 
+/// **宿主换算**：布局单位 → 世界单位（原点 + 缩放）。
+///
+/// 命中与绘制都走同一份换算：HUD 的 `HudMetrics::unit()` 就是这里的 `scale`。
+/// 它属于**宿主**，不进产物；进 `DrawCtx` 是因为绘制发生在世界坐标里。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Metrics {
+    /// 1 布局单位 = 多少世界单位。
+    pub scale: f64,
+    /// 布局原点在世界坐标中的位置。
+    pub origin: Point,
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            origin: Point::new(0.0, 0.0),
+        }
+    }
+}
+
+impl Metrics {
+    pub fn new(scale: f64, origin: Point) -> Self {
+        Self { scale, origin }
+    }
+
+    /// 布局矩形 → 世界矩形。
+    pub fn to_world(&self, rect: Rect) -> Rect {
+        Rect::new(
+            Point::new(
+                self.origin.x + rect.min.x * self.scale,
+                self.origin.y + rect.min.y * self.scale,
+            ),
+            Point::new(
+                self.origin.x + rect.max.x * self.scale,
+                self.origin.y + rect.max.y * self.scale,
+            ),
+        )
+    }
+
+    /// 布局单位 → 世界单位的仿射（字形轮廓整体映射，不再逐点搬）。
+    pub fn to_transform(&self) -> ze_notion::Transform2D {
+        ze_notion::Transform2D::scale(ze_notion::Vec2::splat(self.scale as f32)).compose(
+            ze_notion::Transform2D::translate(ze_notion::Vec2::new(
+                self.origin.x as f32,
+                self.origin.y as f32,
+            )),
+        )
+    }
+}
+
 /// 回溯阶段上下文：还没有 bounds。
 pub struct MeasureCtx<'a> {
     pub constraints: Constraints,
@@ -191,10 +225,30 @@ pub struct MeasureCtx<'a> {
 pub struct DrawCtx<'a> {
     pub bounds: Rect,
     pub clip: Option<Rect>,
-    pub theme: &'a Theme,
+    /// 本控件要用的主题 id —— 去 `themes` 里查（不做层叠）。
+    pub theme_id: &'a ThemeId,
+    pub themes: &'a ThemeTable,
+    pub metrics: &'a Metrics,
     pub env: &'a DrawEnv,
     pub z_base: ZOrder,
+    /// 指针是否悬停在本控件上（只改颜色，不改命令条数）。
+    pub hover: bool,
     /// 只读相位标签，禁跨相位副作用。
+    pub phase: WidgetPhase,
+}
+
+impl<'a> DrawCtx<'a> {
+    /// 解析后的主题（查不到 ⇒ 默认主题）。
+    pub fn theme(&self) -> &'a Theme {
+        self.themes.get_or_default(self.theme_id)
+    }
+}
+
+/// 意图处理上下文：命中部位 + 当前 bounds（控件自处理，不再按名字解析）。
+pub struct IntentCtx<'a> {
+    pub part: HitPart,
+    pub bounds: Rect,
+    pub metrics: &'a Metrics,
     pub phase: WidgetPhase,
 }
 
@@ -241,6 +295,10 @@ pub enum Verdict {
 }
 
 /// 一个控件的**声明**（纯值；本模块只定义形状，组件在场景层）。
+///
+/// CL-R：补 `strategy` / `constraints` 并派生 serde —— 声明**进产物**，
+/// 运行期 dyn 表与求解结果不进（见 `xtask` 的派生态门禁）。
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WidgetDecl {
     pub id: WidgetId,
@@ -249,18 +307,51 @@ pub struct WidgetDecl {
     pub label: String,
     pub role: String,
     pub value: f64,
+    /// 取值区间（滑块 / 单选组用；默认 0..0 = 无区间）。
+    pub value_min: f64,
+    pub value_max: f64,
+    /// 该控件所属布局策略（默认 `two-pass`；同一棵树里混用策略是显式错误）。
+    pub strategy: StrategyId,
+    /// 声明期约束（跨容器关系上浮到最近共同祖先，由布局驱动统一求解）。
+    pub constraints: crate::solver::ConstraintDecl,
 }
 
-/// 一段已烘焙的字形轮廓（纯 f64 折线；不引入 `Path2D`）。
+/// 一段已烘焙的字形轮廓（**布局单位**；绘制时按 `DrawCtx.metrics` 映射到世界）。
+///
+/// CL-R 由「折线 + closed」换成 `Path2D`：字形是曲线，退回折线会改观感（也就改了像素基线）。
+/// `Shape2D` 变体一个都没动 —— 仍然发 `Shape2D::Path`。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct GlyphOutline {
-    pub points: Vec<Point>,
-    pub closed: bool,
+    pub path: ze_notion::Path2D,
+}
+
+impl GlyphOutline {
+    pub fn from_polyline(points: &[Point], closed: bool) -> Self {
+        let points: Vec<ze_notion::Vec2> = points
+            .iter()
+            .map(|p| ze_notion::Vec2::new(p.x as f32, p.y as f32))
+            .collect();
+        Self {
+            path: ze_notion::Path2D::from_polyline(&points, closed),
+        }
+    }
+
+    /// 字符格（布局单位；由轮廓包围盒派生）。
+    pub fn cell(&self) -> Option<Rect> {
+        self.path.compute_bounds().map(|bounds| {
+            Rect::new(
+                Point::new(f64::from(bounds.min.x), f64::from(bounds.min.y)),
+                Point::new(f64::from(bounds.max.x), f64::from(bounds.max.y)),
+            )
+        })
+    }
 }
 
 /// 工厂入参（纯值；控件自己的 props）。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct WidgetProps {
+    /// 规格 id：**绘制按它分派**（不再看 `role` 字符串）。
+    pub spec: WidgetSpecId,
     pub label: String,
     pub role: String,
     pub value: f64,
@@ -288,8 +379,8 @@ pub trait Widget2D: Send + Sync + 'static {
     fn hit_part(&self, _point: Point) -> Option<HitPart> {
         None
     }
-    /// 控件自处理意图；默认继续冒泡。
-    fn on_intent(&mut self, _intent: &Intent) -> Verdict {
+    /// 控件自处理意图（按 `HitPart` + `IntentCtx`，不再 `parse(name)`）；默认继续冒泡。
+    fn on_intent(&mut self, _intent: &Intent, _ctx: &IntentCtx<'_>) -> Verdict {
         Verdict::Continue
     }
 }
@@ -312,10 +403,45 @@ pub trait Container2D: Send + Sync + 'static {
 pub type WidgetFactory = fn(&WidgetProps) -> Box<dyn Widget2D>;
 
 /// 运行期控件表（Resource；**零序列化**、不持编译索引）。
+///
+/// 存 `props` 是为了 `Clone`：`Box<dyn>` 不能克隆，但「用同一份 props 重跑工厂」可以
+/// （宿主每帧克隆 `Hud` 时走这条路）。
 #[derive(Default)]
 pub struct WidgetRuntime {
     widgets: BTreeMap<WidgetId, Box<dyn Widget2D>>,
     factories: BTreeMap<WidgetSpecId, WidgetFactory>,
+    props: BTreeMap<WidgetId, WidgetProps>,
+    /// 内容引擎按 id 注入的已烘焙字形（布局单位）。
+    glyphs: BTreeMap<WidgetId, Vec<GlyphOutline>>,
+}
+
+impl std::fmt::Debug for WidgetRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WidgetRuntime")
+            .field("widgets", &self.widgets.keys().collect::<Vec<_>>())
+            .field("factories", &self.factories.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+impl Clone for WidgetRuntime {
+    fn clone(&self) -> Self {
+        let widgets = self
+            .props
+            .iter()
+            .filter_map(|(&id, props)| {
+                self.factories
+                    .get(&props.spec)
+                    .map(|factory| (id, factory(props)))
+            })
+            .collect();
+        Self {
+            widgets,
+            factories: self.factories.clone(),
+            props: self.props.clone(),
+            glyphs: self.glyphs.clone(),
+        }
+    }
 }
 
 impl WidgetRuntime {
@@ -332,26 +458,62 @@ impl WidgetRuntime {
         self.factories.contains_key(spec)
     }
 
+    /// 注入一个控件已烘焙的字形（布局单位；由内容引擎在装配期给出）。
+    pub fn set_glyphs(&mut self, id: WidgetId, glyphs: Vec<GlyphOutline>) {
+        self.glyphs.insert(id, glyphs);
+    }
+
+    pub fn glyphs(&self, id: WidgetId) -> &[GlyphOutline] {
+        self.glyphs.get(&id).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    /// 把值写回控件：**props 与 dyn 实例同步**。
+    ///
+    /// 为什么必须同步 props：`Clone` 是用 props 重跑工厂实现的；只改实例不改 props，
+    /// 克隆出来的面板会退回旧值（宿主每帧克隆一次，症状是「拖了没反应」）。
+    pub fn apply_value(&mut self, id: WidgetId, value: f64) -> bool {
+        let Some(props) = self.props.get_mut(&id) else {
+            return false;
+        };
+        props.value = value.clamp(props.value_min, props.value_max);
+        let value = props.value;
+        if let Some(widget) = self.widgets.get_mut(&id) {
+            let metrics = Metrics::default();
+            let ctx = IntentCtx {
+                part: HitPart::Body,
+                bounds: widget.bounds(),
+                metrics: &metrics,
+                phase: WidgetPhase::FrameEnd,
+            };
+            widget.on_intent(&Intent::Value(value), &ctx);
+        }
+        true
+    }
+
     /// 由声明重建 dyn 表：**按 `WidgetId` 升序**，与插入 / 分配顺序无关。
     pub fn rebuild(&mut self, decls: &[WidgetDecl]) -> Result<(), String> {
         let mut sorted: Vec<&WidgetDecl> = decls.iter().collect();
         sorted.sort_by_key(|decl| decl.id);
         let mut widgets: BTreeMap<WidgetId, Box<dyn Widget2D>> = BTreeMap::new();
+        let mut props_by_id: BTreeMap<WidgetId, WidgetProps> = BTreeMap::new();
         for decl in sorted {
             let Some(factory) = self.factories.get(&decl.spec) else {
                 return Err(format!("未注册的控件规格：{}", decl.spec));
             };
             let props = WidgetProps {
+                spec: decl.spec.clone(),
                 label: decl.label.clone(),
                 role: decl.role.clone(),
                 value: decl.value,
-                value_min: 0.0,
-                value_max: 1.0,
-                glyphs: Vec::new(),
+                value_min: decl.value_min,
+                value_max: decl.value_max,
+                glyphs: self.glyphs.get(&decl.id).cloned().unwrap_or_default(),
             };
             widgets.insert(decl.id, factory(&props));
+            props_by_id.insert(decl.id, props);
         }
         self.widgets = widgets;
+        self.props = props_by_id;
         Ok(())
     }
 
@@ -383,8 +545,13 @@ impl WidgetRuntime {
             .collect()
     }
 
-    /// 按稳定序绘制（命令列表；派生态）。
-    pub fn draw_all(&self, bounds: &BTreeMap<WidgetId, Rect>, ctx: &DrawCtx<'_>) -> Vec<DrawCommand> {
+    /// 按稳定序绘制（命令列表；派生态）。`hover` 只改颜色。
+    pub fn draw_all(
+        &self,
+        bounds: &BTreeMap<WidgetId, Rect>,
+        ctx: &DrawCtx<'_>,
+        hover: Option<WidgetId>,
+    ) -> Vec<DrawCommand> {
         let mut out = Vec::new();
         for (&id, widget) in &self.widgets {
             let Some(rect) = bounds.get(&id).copied() else {
@@ -393,9 +560,12 @@ impl WidgetRuntime {
             let child = DrawCtx {
                 bounds: rect,
                 clip: ctx.clip,
-                theme: ctx.theme,
+                theme_id: ctx.theme_id,
+                themes: ctx.themes,
+                metrics: ctx.metrics,
                 env: ctx.env,
                 z_base: ctx.z_base,
+                hover: hover == Some(id),
                 phase: ctx.phase,
             };
             out.extend(widget.draw(&child));
@@ -404,7 +574,10 @@ impl WidgetRuntime {
     }
 }
 
-/// 命令列表的**纯值摘要**（只比 `(z, shape 变体, style)`；`DrawCommand` 的 `Ord` 只比 z）。
+/// 命令列表的**纯值摘要**（`z` + 变体名 + **几何** + style）。
+///
+/// CL 缺口 ②：此前只哈希 `z` / 变体名 / 颜色，两条 bounds 不同的 `Rect` 会得到同一摘要，
+/// 「逐位相同」的判据检不出几何错位。现在几何按 `to_bits()` 逐分量进哈希。
 pub fn command_digest(commands: &[DrawCommand]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     let mut eat = |byte: u8| {
@@ -418,6 +591,7 @@ pub fn command_digest(commands: &[DrawCommand]) -> u64 {
         for byte in command.shape.kind_name().bytes() {
             eat(byte);
         }
+        digest_geometry(&command.shape, &mut eat);
         if let Some(color) = command.style.fill {
             for byte in [color.r(), color.g(), color.b(), color.a()] {
                 eat(byte);
@@ -433,6 +607,45 @@ pub fn command_digest(commands: &[DrawCommand]) -> u64 {
         }
     }
     hash
+}
+
+/// 几何入摘要：包围盒 + 各变体的关键参数（全部 `f32::to_bits()`）。
+fn digest_geometry(shape: &Shape2D, eat: &mut impl FnMut(u8)) {
+    let mut eat_f32 = |value: f32| {
+        for byte in value.to_bits().to_le_bytes() {
+            eat(byte);
+        }
+    };
+    if let Some(bounds) = shape.bounds() {
+        for value in [bounds.min.x, bounds.min.y, bounds.max.x, bounds.max.y] {
+            eat_f32(value);
+        }
+    }
+    match shape {
+        Shape2D::Line { start, end } => {
+            for value in [start.x, start.y, end.x, end.y] {
+                eat_f32(value);
+            }
+        }
+        Shape2D::Polyline { points } | Shape2D::Polygon { points } => {
+            eat_f32(points.len() as f32);
+            for point in points {
+                eat_f32(point.x);
+                eat_f32(point.y);
+            }
+        }
+        Shape2D::Circle { center, radius } => {
+            for value in [center.x, center.y, *radius] {
+                eat_f32(value);
+            }
+        }
+        Shape2D::Ellipse { center, rx, ry } => {
+            for value in [center.x, center.y, *rx, *ry] {
+                eat_f32(value);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// 命令包围盒（用于 `⊆ ctx.clip` 判据）。
@@ -500,17 +713,20 @@ impl BuiltinWidget {
             bounds: Rect::default(),
         }
     }
-
-    fn track_color(&self, theme: &Theme) -> [u8; 4] {
-        theme.paint.track
-    }
 }
 
 impl Widget2D for BuiltinWidget {
     fn measure(&self, ctx: &MeasureCtx<'_>) -> Size {
+        // 固有高度由**控件种类**决定（与 `ControlKind::height` 逐位一致）；
+        // 宽度铺满可用空间（`LayoutTokens.row_height` 只作缺省控件的高度兜底）。
+        let height = self.kind().height();
         Size::new(
             ctx.constraints.max.width,
-            ctx.layout.row_height.max(1.0),
+            if height > 0.0 {
+                height
+            } else {
+                ctx.layout.row_height.max(1.0)
+            },
         )
     }
 
@@ -542,26 +758,26 @@ impl Widget2D for BuiltinWidget {
             let Some(ch) = chars.get(index).copied() else {
                 break;
             };
-            let mut min = Point::new(f64::INFINITY, f64::INFINITY);
-            let mut max = Point::new(f64::NEG_INFINITY, f64::NEG_INFINITY);
-            for point in &glyph.points {
-                min = Point::new(min.x.min(point.x), min.y.min(point.y));
-                max = Point::new(max.x.max(point.x), max.y.max(point.y));
-            }
-            if !min.x.is_finite() {
+            let Some(cell) = glyph.cell() else {
                 continue;
-            }
-            run.push(index, ch, min, (max.x - min.x).max(0.0));
+            };
+            run.push(index, ch, cell.min, cell.width().max(0.0));
         }
         Some(run)
     }
 
     fn draw(&self, ctx: &DrawCtx<'_>) -> Vec<DrawCommand> {
+        let theme = ctx.theme();
+        let track = if ctx.hover {
+            theme.paint.hover
+        } else {
+            theme.paint.track
+        };
         let mut commands = vec![DrawCommand::new(
             ctx.z_base,
-            Shape2D::Rect(rect_to_notion(ctx.bounds)),
+            Shape2D::Rect(world_rect(ctx.metrics.to_world(ctx.bounds))),
             Style2D {
-                fill: Some(color(self.track_color(ctx.theme))),
+                fill: Some(color(track)),
                 ..Style2D::default()
             },
         )];
@@ -572,48 +788,126 @@ impl Widget2D for BuiltinWidget {
                 / (self.props.value_max - self.props.value_min))
                 .clamp(0.0, 1.0)
         } as f32;
-        if self.props.role == "slider" || self.props.role == "radio" {
-            let center = ze_notion::Vec2::new(
-                ctx.bounds.min.x as f32 + ctx.bounds.width() as f32 * t,
-                ctx.bounds.center().y as f32,
+        // **按 SpecId 分派**（不再看 `role` 字符串）：只有滑块类画圆钮。
+        if self.kind().has_knob() {
+            let center = world_point(
+                ctx.metrics,
+                Point::new(
+                    ctx.bounds.min.x + ctx.bounds.width() * f64::from(t),
+                    ctx.bounds.center().y,
+                ),
             );
             commands.push(DrawCommand::new(
                 ZOrder(ctx.z_base.0 + 20),
                 Shape2D::Circle {
                     center,
-                    radius: ctx.theme.layout.knob_radius as f32,
+                    radius: (theme.layout.knob_radius * ctx.metrics.scale) as f32,
                 },
                 Style2D {
-                    fill: Some(color(ctx.theme.paint.knob)),
+                    fill: Some(color(theme.paint.knob)),
                     ..Style2D::default()
                 },
             ));
         }
         for outline in &self.props.glyphs {
-            let points: Vec<ze_notion::Vec2> = outline
-                .points
-                .iter()
-                .map(|p| ze_notion::Vec2::new(p.x as f32, p.y as f32))
-                .collect();
-            let shape = if outline.closed {
-                Shape2D::Polygon { points }
-            } else {
-                Shape2D::Polyline { points }
-            };
             commands.push(DrawCommand::new(
                 ZOrder(ctx.z_base.0 + 10),
-                shape,
+                Shape2D::Path(outline.path.transformed(&ctx.metrics.to_transform())),
                 Style2D {
-                    fill: Some(color(ctx.theme.paint.label)),
+                    fill: Some(color(theme.paint.label)),
                     ..Style2D::default()
                 },
             ));
         }
         commands
     }
+
+    /// 控件自处理意图（按 `SpecId` + `HitPart`，不再 `parse(name)`）：
+    /// - `Pointer`：可交互控件消费（标签不消费 ⇒ 冒泡给容器）；
+    /// - `Value`：滑块 / 单选组写回自己的 props 并消费。
+    fn on_intent(&mut self, intent: &Intent, ctx: &IntentCtx<'_>) -> Verdict {
+        match intent {
+            Intent::Pointer(_) => {
+                if self.kind().interactive() {
+                    Verdict::Consume
+                } else {
+                    Verdict::Continue
+                }
+            }
+            Intent::Value(value) => {
+                if self.kind().has_knob() {
+                    self.props.value = value.clamp(self.props.value_min, self.props.value_max);
+                    let _ = ctx;
+                    Verdict::Consume
+                } else {
+                    Verdict::Continue
+                }
+            }
+            Intent::Activate => {
+                if self.kind().interactive() {
+                    Verdict::Consume
+                } else {
+                    Verdict::Continue
+                }
+            }
+        }
+    }
 }
 
-fn rect_to_notion(rect: Rect) -> ze_notion::Rect2D {
+/// 内置控件的种类（**从 `SpecId` 派生**，不是从 `role` 字符串）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuiltinKind {
+    Slider,
+    Radio,
+    Button,
+    Label,
+}
+
+impl BuiltinKind {
+    fn of(spec: &WidgetSpecId) -> Self {
+        match spec.0.as_str() {
+            "slider" => Self::Slider,
+            "radio" => Self::Radio,
+            "button" => Self::Button,
+            _ => Self::Label,
+        }
+    }
+
+    fn has_knob(self) -> bool {
+        matches!(self, Self::Slider | Self::Radio)
+    }
+
+    /// 是否响应指针（标签只是文本）。
+    fn interactive(self) -> bool {
+        !matches!(self, Self::Label)
+    }
+
+    /// 固有高度（布局单位）。**必须与 `ControlKind::height` 逐位相同** ——
+    /// 否则 `ControlSet` 的命中矩形与 `ui_layout` 的 `Frame` 会错位
+    /// （用例 `builtin_heights_match_control_kind_heights` 守着这条）。
+    fn height(self) -> f64 {
+        match self {
+            Self::Slider | Self::Radio => 20.0,
+            Self::Button => 24.0,
+            Self::Label => 16.0,
+        }
+    }
+}
+
+impl BuiltinWidget {
+    fn kind(&self) -> BuiltinKind {
+        BuiltinKind::of(&self.props.spec)
+    }
+}
+
+fn world_point(metrics: &Metrics, point: Point) -> ze_notion::Vec2 {
+    ze_notion::Vec2::new(
+        (metrics.origin.x + point.x * metrics.scale) as f32,
+        (metrics.origin.y + point.y * metrics.scale) as f32,
+    )
+}
+
+fn world_rect(rect: Rect) -> ze_notion::Rect2D {
     ze_notion::Rect2D::new(
         ze_notion::Vec2::new(rect.min.x as f32, rect.min.y as f32),
         ze_notion::Vec2::new(rect.max.x as f32, rect.max.y as f32),
@@ -638,6 +932,7 @@ mod tests {
                 label: format!("row{id}"),
                 role: "slider".to_string(),
                 value: 0.5,
+                ..WidgetDecl::default()
             })
             .collect()
     }
@@ -650,25 +945,48 @@ mod tests {
         runtime
     }
 
-    /// **判据 6**：不同插入 / 分配顺序重建 ⇒ 命令列表逐位相同。
+    /// 绘制上下文：默认主题 + 恒等换算（测试只看布局单位）。
+    fn draw_ctx<'a>(
+        theme_id: &'a ThemeId,
+        themes: &'a ThemeTable,
+        metrics: &'a Metrics,
+        env: &'a DrawEnv,
+        clip: Option<Rect>,
+    ) -> DrawCtx<'a> {
+        DrawCtx {
+            bounds: Rect::default(),
+            clip,
+            theme_id,
+            themes,
+            metrics,
+            env,
+            z_base: ZOrder(100),
+            hover: false,
+            phase: WidgetPhase::FrameEnd,
+        }
+    }
+
+    fn default_theme_id() -> ThemeId {
+        Theme::default_theme().id
+    }
+
+    /// **判据 6 / 12**：不同插入顺序重建 ⇒ 命令列表逐位相同。
     #[test]
     fn rebuild_is_insertion_order_independent() {
         let mut forward = runtime();
         forward.rebuild(&decls(&[0, 1, 2])).unwrap();
         let mut reversed = runtime();
         reversed.rebuild(&decls(&[2, 0, 1])).unwrap();
-        assert_eq!(forward.ids().collect::<Vec<_>>(), reversed.ids().collect::<Vec<_>>());
+        assert_eq!(
+            forward.ids().collect::<Vec<_>>(),
+            reversed.ids().collect::<Vec<_>>()
+        );
 
-        let theme = Theme::default_theme();
+        let themes = ThemeTable::with_default();
+        let metrics = Metrics::default();
         let env = DrawEnv::default();
-        let ctx = DrawCtx {
-            bounds: Rect::default(),
-            clip: None,
-            theme: &theme,
-            env: &env,
-            z_base: ZOrder(100),
-            phase: WidgetPhase::FrameEnd,
-        };
+        let theme_id = default_theme_id();
+        let ctx = draw_ctx(&theme_id, &themes, &metrics, &env, None);
         let bounds: BTreeMap<WidgetId, Rect> = (0..3)
             .map(|id| {
                 (
@@ -678,8 +996,43 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            command_digest(&forward.draw_all(&bounds, &ctx)),
-            command_digest(&reversed.draw_all(&bounds, &ctx))
+            command_digest(&forward.draw_all(&bounds, &ctx, None)),
+            command_digest(&reversed.draw_all(&bounds, &ctx, None))
+        );
+    }
+
+    /// **判据 12**：`command_digest` 能区分几何（CL 缺口 ②）。
+    #[test]
+    fn command_digest_distinguishes_geometry() {
+        let style = Style2D {
+            fill: Some(color([10, 20, 30, 255])),
+            ..Style2D::default()
+        };
+        let left = DrawCommand::new(
+            ZOrder(1),
+            Shape2D::Rect(ze_notion::Rect2D::new(
+                ze_notion::Vec2::new(0.0, 0.0),
+                ze_notion::Vec2::new(10.0, 10.0),
+            )),
+            style.clone(),
+        );
+        let right = DrawCommand::new(
+            ZOrder(1),
+            Shape2D::Rect(ze_notion::Rect2D::new(
+                ze_notion::Vec2::new(5.0, 0.0),
+                ze_notion::Vec2::new(15.0, 10.0),
+            )),
+            style.clone(),
+        );
+        assert_ne!(
+            command_digest(&[left.clone()]),
+            command_digest(&[right.clone()]),
+            "bounds 不同的 Rect 必须摘要不同"
+        );
+        assert_eq!(
+            command_digest(&[left.clone()]),
+            command_digest(&[left]),
+            "同一条命令两次摘要必须相同"
         );
     }
 
@@ -687,13 +1040,18 @@ mod tests {
     #[test]
     fn paint_tokens_change_commands_but_not_layout_revision() {
         let theme = Theme::default_theme();
-        let mut repainted = theme.clone();
-        repainted.paint.track = [1, 2, 3, 255];
+        let mut repainted_theme = theme.clone();
+        repainted_theme.paint.track = [1, 2, 3, 255];
         assert_eq!(
             theme.layout.revision(),
-            repainted.layout.revision(),
+            repainted_theme.layout.revision(),
             "paint 不进 layout revision"
         );
+
+        let mut themes = ThemeTable::with_default();
+        themes.insert(theme.clone());
+        let mut repainted = ThemeTable::with_default();
+        repainted.insert(repainted_theme.clone());
 
         let runtime = {
             let mut runtime = runtime();
@@ -701,36 +1059,32 @@ mod tests {
             runtime
         };
         let env = DrawEnv::default();
+        let metrics = Metrics::default();
+        let theme_id = default_theme_id();
         let bounds: BTreeMap<WidgetId, Rect> = [(
             LayoutId(0),
             Rect::from_min_size(Point::new(0.0, 0.0), 100.0, 18.0),
         )]
         .into_iter()
         .collect();
-        let draw = |theme: &Theme| {
-            let ctx = DrawCtx {
-                bounds: Rect::default(),
-                clip: None,
-                theme,
-                env: &env,
-                z_base: ZOrder(100),
-                phase: WidgetPhase::FrameEnd,
-            };
-            command_digest(&runtime.draw_all(&bounds, &ctx))
+        let draw = |themes: &ThemeTable| {
+            let ctx = draw_ctx(&theme_id, themes, &metrics, &env, None);
+            command_digest(&runtime.draw_all(&bounds, &ctx, None))
         };
-        assert_ne!(draw(&theme), draw(&repainted), "换 paint token ⇒ 命令变");
+        assert_ne!(draw(&themes), draw(&repainted), "换 paint token ⇒ 命令变");
 
         let mut relaid = theme.clone();
         relaid.layout.row_height = 30.0;
         assert_ne!(theme.layout.revision(), relaid.layout.revision());
     }
 
-    /// **判据 8**：命令包围盒 ⊆ clip。
+    /// **判据 8 / 12**：命令包围盒 ⊆ clip。
     #[test]
     fn command_bounds_stay_inside_the_clip() {
         let mut runtime = runtime();
         runtime.rebuild(&decls(&[0])).unwrap();
-        let theme = Theme::default_theme();
+        let themes = ThemeTable::with_default();
+        let metrics = Metrics::default();
         let env = DrawEnv::default();
         let bounds: BTreeMap<WidgetId, Rect> = [(
             LayoutId(0),
@@ -739,18 +1093,94 @@ mod tests {
         .into_iter()
         .collect();
         let clip = Rect::from_min_size(Point::new(0.0, 0.0), 200.0, 200.0);
-        let ctx = DrawCtx {
-            bounds: Rect::default(),
-            clip: Some(clip),
-            theme: &theme,
-            env: &env,
-            z_base: ZOrder(100),
-            phase: WidgetPhase::FrameEnd,
-        };
-        let commands = runtime.draw_all(&bounds, &ctx);
+        let theme_id = default_theme_id();
+        let ctx = draw_ctx(&theme_id, &themes, &metrics, &env, Some(clip));
+        let commands = runtime.draw_all(&bounds, &ctx, None);
         let boxed = command_bounds(&commands).expect("有几何");
         assert!(boxed.min.x >= clip.min.x && boxed.max.x <= clip.max.x);
         assert!(boxed.min.y >= clip.min.y && boxed.max.y <= clip.max.y);
+    }
+
+    /// **判据 12**：世界换算进入命令（host 只给 metrics，不自己搬点）。
+    #[test]
+    fn metrics_map_layout_units_to_world() {
+        // 用 `label`（无圆钮）⇒ 包围盒就是轨道矩形，不受旋钮半径干扰。
+        let mut runtime = WidgetRuntime::new();
+        runtime.register("label", |props| Box::new(BuiltinWidget::new(props.clone())));
+        runtime
+            .rebuild(&[WidgetDecl {
+                id: LayoutId(0),
+                spec: WidgetSpecId::new("label"),
+                ..WidgetDecl::default()
+            }])
+            .unwrap();
+        let themes = ThemeTable::with_default();
+        let env = DrawEnv::default();
+        let bounds: BTreeMap<WidgetId, Rect> = [(
+            LayoutId(0),
+            Rect::from_min_size(Point::new(0.0, 0.0), 10.0, 10.0),
+        )]
+        .into_iter()
+        .collect();
+        let metrics = Metrics::new(2.0, Point::new(100.0, 50.0));
+        let theme_id = default_theme_id();
+        let ctx = draw_ctx(&theme_id, &themes, &metrics, &env, None);
+        let commands = runtime.draw_all(&bounds, &ctx, None);
+        let boxed = command_bounds(&commands).expect("有几何");
+        assert_eq!(boxed.min, Point::new(100.0, 50.0));
+        assert_eq!(boxed.max.x, 120.0);
+    }
+
+    /// 内置控件的固有高度必须与 `ControlKind::height` 逐位一致（命中和 `Frame` 同口径）。
+    #[test]
+    fn builtin_heights_match_control_kind_heights() {
+        use crate::control::ControlKind;
+        let cases = [
+            (
+                BuiltinKind::Slider,
+                ControlKind::Slider { min: 0.0, max: 1.0 },
+            ),
+            (
+                BuiltinKind::Radio,
+                ControlKind::RadioGroup {
+                    options: &["a", "b"],
+                },
+            ),
+            (BuiltinKind::Button, ControlKind::Button),
+            (BuiltinKind::Label, ControlKind::Label),
+        ];
+        for (builtin, control) in cases {
+            assert_eq!(
+                builtin.height(),
+                control.height(),
+                "{builtin:?} / {control:?}"
+            );
+        }
+    }
+
+    /// hover 只改轨道颜色、不改命令条数。
+    #[test]
+    fn hover_changes_only_colors() {
+        let mut runtime = runtime();
+        runtime.rebuild(&decls(&[0])).unwrap();
+        let themes = ThemeTable::with_default();
+        let metrics = Metrics::default();
+        let env = DrawEnv::default();
+        let theme_id = default_theme_id();
+        let bounds: BTreeMap<WidgetId, Rect> = [(
+            LayoutId(0),
+            Rect::from_min_size(Point::new(0.0, 0.0), 100.0, 18.0),
+        )]
+        .into_iter()
+        .collect();
+        let ctx = draw_ctx(&theme_id, &themes, &metrics, &env, None);
+        let normal = runtime.draw_all(&bounds, &ctx, None);
+        let hovered = runtime.draw_all(&bounds, &ctx, Some(LayoutId(0)));
+        assert_eq!(normal.len(), hovered.len(), "hover 不改命令条数");
+        assert_ne!(
+            normal[0].style.fill, hovered[0].style.fill,
+            "hover 必须改轨道颜色"
+        );
     }
 
     /// 未注册的规格必须显式报错（漏了会红）。

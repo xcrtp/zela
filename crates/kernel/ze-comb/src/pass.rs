@@ -197,9 +197,7 @@ impl ReferenceEval<'_> {
 /// 避免让 `ze-comb` 反向知道 pod / 场景的词汇。
 pub fn kernel_registry() -> PassRegistry {
     let mut registry = PassRegistry::new();
-    registry
-        .register(Validate::INFO)
-        .expect("内核 pass 名唯一");
+    registry.register(Validate::INFO).expect("内核 pass 名唯一");
     registry.register(Lower::INFO).expect("内核 pass 名唯一");
     registry
         .register(LoweredEval::INFO)

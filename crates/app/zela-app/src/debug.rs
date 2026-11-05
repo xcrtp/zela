@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 
 use ze_interact::Frame;
 use ze_scene_core::domain::{
-    FrameTag, InjectError, InjectSource, Injected, InjectedPayload, SceneInputContext, SceneEvent,
+    FrameTag, InjectError, InjectSource, Injected, InjectedPayload, SceneEvent, SceneInputContext,
     TagId, WindowInput,
 };
 use zela_scene_ecs::contract::WorldView;
@@ -540,7 +540,8 @@ pub fn diff_frames(before: Option<&Frame>, after: Option<&Frame>) -> FrameDiff {
     }
     for node in &before.semantics {
         if after.semantic(&node.role, &node.name).is_none() {
-            diff.disappeared.push(format!("{}:{}", node.role, node.name));
+            diff.disappeared
+                .push(format!("{}:{}", node.role, node.name));
         }
     }
 
@@ -772,7 +773,9 @@ pub fn inject_injected(driver: &DriverPod, injected: &Injected) -> Result<usize,
             events
         }
         InjectedPayload::Scene(event) => vec![event.clone()],
-        InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
+        InjectedPayload::External { .. } => {
+            unreachable!("validate 已拒绝 External")
+        }
     };
     let count = events.len();
     driver.with_scheduler_mut(|scheduler| {
@@ -812,7 +815,9 @@ pub fn trace_on(
             events
         }
         InjectedPayload::Scene(event) => vec![event.clone()],
-        InjectedPayload::External { .. } => unreachable!("validate 已拒绝 External"),
+        InjectedPayload::External { .. } => {
+            unreachable!("validate 已拒绝 External")
+        }
     };
     driver.with_scheduler_mut(|scheduler| {
         scheduler
@@ -1100,10 +1105,10 @@ mod tests {
     #[test]
     fn scene_event_records_keep_structure_and_serialize_stably() {
         use ze_notion::Vec2;
+        use ze_scene_core::domain::SceneEvent;
         use ze_scene_core::domain::event::{
             CommandInput, KeyInput, KeyModifiers, PointerInput, TextInput,
         };
-        use ze_scene_core::domain::SceneEvent;
 
         let events = vec![
             SceneEvent::Toggle {
@@ -1140,10 +1145,19 @@ mod tests {
         let first = serde_json::to_string(&records).expect("可序列化");
         let second = serde_json::to_string(&records).expect("可序列化");
         assert_eq!(first, second, "两次序列化必须逐字节相同");
-        for kind in ["toggle", "key_down", "text_commit", "pointer_wheel", "command_invoke"] {
+        for kind in [
+            "toggle",
+            "key_down",
+            "text_commit",
+            "pointer_wheel",
+            "command_invoke",
+        ] {
             assert!(first.contains(kind), "缺结构化变体 `{kind}`：{first}");
         }
-        assert!(!first.contains("debug"), "不得再落进 Debug 字符串兜底：{first}");
+        assert!(
+            !first.contains("debug"),
+            "不得再落进 Debug 字符串兜底：{first}"
+        );
         let back: Vec<SceneEventRecord> = serde_json::from_str(&first).expect("可反序列化");
         assert_eq!(records, back);
     }

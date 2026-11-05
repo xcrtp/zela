@@ -155,6 +155,8 @@ impl_resource_tuple!(A);
 impl_resource_tuple!(A, B);
 impl_resource_tuple!(A, B, C);
 impl_resource_tuple!(A, B, C, D);
+// CL-R：HUD 的写集是 5 个（状态 + 三份回写目标 + 本帧命令）。
+impl_resource_tuple!(A, B, C, D, E);
 impl_resource_tuple!(A, B, C, D, E, F);
 impl_resource_tuple!(A, B, C, D, E, F, G, H);
 impl_resource_tuple!(A, B, C, D, E, F, G, H, I, J, K, L);

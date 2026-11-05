@@ -3,7 +3,9 @@
 use std::any::Any;
 use std::cell::RefCell;
 
-use ze_pod_core::{Capability, Handle, HandleTable, QualifiedName, RegistryPod, Pod, PodError, PodId};
+use ze_pod_core::{
+    Capability, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod,
+};
 use ze_pod_macro::capability;
 
 /// 带不透明对象表的 Pod：方法调用的 receiver 是 `Handle`。
@@ -29,7 +31,11 @@ impl Pod for StorePod {
         self.funcs.resolve(name)
     }
 
-    fn call(&self, id: ze_pod_core::FunctionId, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
+    fn call(
+        &self,
+        id: ze_pod_core::FunctionId,
+        args: &[&dyn Any],
+    ) -> Result<Box<dyn Any>, PodError> {
         self.funcs.call(id, args)
     }
 }

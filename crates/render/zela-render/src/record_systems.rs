@@ -43,13 +43,13 @@
 
 use std::sync::Arc;
 
-use ze_scene_contract::SceneRead;
-use ze_scene_hecs::WorldView;
-use ze_scene_core::domain::{content_texture_handle, ContentTextureSpecs};
-use ze_scene_core::SurfaceTextureRef;
 use ze_render_ir::StrokeSolid;
-use ze_scene_core::components::{Light, LightKind, Material3D, MeshGeometry, MorphShape, Reveal};
+use ze_scene_contract::SceneRead;
+use ze_scene_core::SurfaceTextureRef;
 use ze_scene_core::WorldTransforms;
+use ze_scene_core::components::{Light, LightKind, Material3D, MeshGeometry, MorphShape, Reveal};
+use ze_scene_core::domain::{ContentTextureSpecs, content_texture_handle};
+use ze_scene_hecs::WorldView;
 use zela_schedule::context::ExecutorContext;
 use zela_schedule::system::System;
 
@@ -57,7 +57,8 @@ use ze_scene_core::{Camera2DHandle, Transform, ZOrder};
 
 use crate::draw::{
     ContentTextureQueue, DrawQueue, MorphQueue, RevealQueue, opacity_of, push_morph_item,
-    push_reveal_item, record_scene_for_surface, record_scene_tagged_with, visible_for,
+    push_reveal_item, record_scene_for_surface, record_scene_tagged_with, record_widget_commands,
+    visible_for,
 };
 use crate::draw_queue_3d::DrawQueue3D;
 use crate::light_queue::{DirectionalLightRecord, LightQueue, PointLightRecord};
@@ -85,7 +86,14 @@ pub struct SceneRecordSystem;
 impl System for SceneRecordSystem {
     // N5：`GroupVisibility` 进入 Read（组级开关；缺席 ⇒ 默认空 ⇒ 所有组可见）。
     // BC：样式继承随 `WorldTransforms` 一同派生（同一次父链遍历），故不用新资源。
-    type Reads = (ViewRect, Camera2DHandle, GroupVisibility, WorldTransforms);
+    // CL-R：`WidgetCommands` 是表达层本帧命令（派生态资源；缺席 ⇒ 没有自研面板）。
+    type Reads = (
+        ViewRect,
+        Camera2DHandle,
+        GroupVisibility,
+        WorldTransforms,
+        ze_scene_core::WidgetCommands,
+    );
     type Writes = (DrawQueue,);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
@@ -99,6 +107,10 @@ impl System for SceneRecordSystem {
         let groups = ctx.get::<GroupVisibility>().cloned().unwrap_or_default();
         // S5：父子累乘后的世界仿射（资源很小；clone 一次以解开与 world 的借用）。
         let worlds = ctx.get::<WorldTransforms>().cloned();
+        let widgets = ctx
+            .get::<ze_scene_core::WidgetCommands>()
+            .cloned()
+            .unwrap_or_default();
         let Some(camera) = resolve_camera(ctx, rect) else {
             return;
         };
@@ -117,6 +129,8 @@ impl System for SceneRecordSystem {
                 worlds.as_ref().map(|w| w.inherit()),
                 queue,
             );
+            // **CL-R**：表达层的命令列表（世界坐标）→ 屏幕空间（唯一换算点在渲染层）。
+            record_widget_commands(&widgets.commands, &camera, queue);
         });
     }
 }
@@ -220,10 +234,7 @@ impl System for RevealRecordSystem {
                 }
                 // S2（G4）+ S5：Reveal 消费**世界**变换（S1：2D 读投影视图；世界累乘优先，缺席回退 local）。
                 let local = scene.with::<ze_scene_core::Transform, _>(id, |tr| tr.to_affine2d());
-                let transform = worlds
-                    .as_ref()
-                    .and_then(|w| w.get2d(id))
-                    .or(local);
+                let transform = worlds.as_ref().and_then(|w| w.get2d(id)).or(local);
                 let path = match transform {
                     Some(transform) => reveal.path.transformed(&transform),
                     None => reveal.path.clone(),
@@ -352,9 +363,7 @@ impl System for SceneRecord3DSystem {
                     material.texture = Some(content_texture_handle(surface));
                 }
                 // B2-1：统一层序（缺席 ⇒ 默认层 0），与 2D 共用同一个 ZOrder 概念。
-                let z = scene
-                    .with::<ZOrder, _>(id, |z| *z)
-                    .unwrap_or_default();
+                let z = scene.with::<ZOrder, _>(id, |z| *z).unwrap_or_default();
                 // S1：世界矩阵优先（父子累乘结果）；缺席该对象 / WorldTransforms ⇒ local，
                 // 逐位等于旧行为（`transform.matrix()`）。
                 let model = worlds
@@ -384,7 +393,13 @@ impl System for SceneRecord3DSystem {
 /// （测试与自定义调度可用），但调度注册只放这一个。
 pub struct SceneRecordAllSystem;
 impl System for SceneRecordAllSystem {
-    type Reads = (ViewRect, Camera2DHandle, GroupVisibility, WorldTransforms);
+    type Reads = (
+        ViewRect,
+        Camera2DHandle,
+        GroupVisibility,
+        WorldTransforms,
+        ze_scene_core::WidgetCommands,
+    );
     type Writes = (DrawQueue, LightQueue);
 
     fn run(&mut self, ctx: &mut ExecutorContext<'_>) {
@@ -413,12 +428,12 @@ mod tests {
     // 库本体（M3-7 纪律：本 crate 不认识 hecs）不受影响。
     use hecs::World;
     use ze_notion::{Path2D, PathCommand, Rect2D};
-    use ze_scene_core::{Circle, Framing2D, Path};
     use ze_render_ir::Opacity;
     use ze_scene_contract::{GroupId, Visibility};
-    use ze_scene_hecs::object_id_of;
     use ze_scene_core::domain::ContentTextureSpec;
     use ze_scene_core::types::Vec2;
+    use ze_scene_core::{Circle, Framing2D, Path};
+    use ze_scene_hecs::object_id_of;
     use zela_schedule::resource::Resources;
     use zela_schedule::scheduler::{Phase, Scheduler};
 
@@ -568,7 +583,11 @@ mod tests {
                 Vec2::new(0.5, 0.5),
             ),
             ze_scene_core::SurfaceRenderer::Renderer2D,
-            ze_scene_core::SurfaceTexture::new([512, 512], ze_scene_core::TextureFilter::Linear, false),
+            ze_scene_core::SurfaceTexture::new(
+                [512, 512],
+                ze_scene_core::TextureFilter::Linear,
+                false,
+            ),
         )));
         world.spawn((
             Path::new(Path2D::from_polyline(
@@ -624,32 +643,38 @@ mod tests {
     fn two_surfaces_record_into_independent_layers() {
         let mut world = World::new();
 
-        let surface_a = object_id_of(world.spawn((
-            ze_scene_core::Surface::new(
-                Rect2D::new(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0)),
-                ze_scene_core::SurfaceMapping::World,
-                Vec2::new(0.5, 0.5),
-            ),
-            ze_scene_core::SurfaceRenderer::Renderer2D,
-            ze_scene_core::SurfaceTexture::new(
-                [256, 256],
-                ze_scene_core::TextureFilter::Linear,
-                false,
-            ).with_composite(true),
-        )));
-        let surface_b = object_id_of(world.spawn((
-            ze_scene_core::Surface::new(
-                Rect2D::new(Vec2::new(2.0, -1.0), Vec2::new(4.0, 1.0)),
-                ze_scene_core::SurfaceMapping::World,
-                Vec2::new(0.5, 0.5),
-            ),
-            ze_scene_core::SurfaceRenderer::Renderer2D,
-            ze_scene_core::SurfaceTexture::new(
-                [256, 256],
-                ze_scene_core::TextureFilter::Linear,
-                false,
-            ).with_composite(true),
-        )));
+        let surface_a = object_id_of(
+            world.spawn((
+                ze_scene_core::Surface::new(
+                    Rect2D::new(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0)),
+                    ze_scene_core::SurfaceMapping::World,
+                    Vec2::new(0.5, 0.5),
+                ),
+                ze_scene_core::SurfaceRenderer::Renderer2D,
+                ze_scene_core::SurfaceTexture::new(
+                    [256, 256],
+                    ze_scene_core::TextureFilter::Linear,
+                    false,
+                )
+                .with_composite(true),
+            )),
+        );
+        let surface_b = object_id_of(
+            world.spawn((
+                ze_scene_core::Surface::new(
+                    Rect2D::new(Vec2::new(2.0, -1.0), Vec2::new(4.0, 1.0)),
+                    ze_scene_core::SurfaceMapping::World,
+                    Vec2::new(0.5, 0.5),
+                ),
+                ze_scene_core::SurfaceRenderer::Renderer2D,
+                ze_scene_core::SurfaceTexture::new(
+                    [256, 256],
+                    ze_scene_core::TextureFilter::Linear,
+                    false,
+                )
+                .with_composite(true),
+            )),
+        );
 
         // A：1 世界单位长的线（屏幕跨度 ≈ 128px）；B：0.2 单位（≈ 25.6px）。
         world.spawn((
@@ -669,8 +694,7 @@ mod tests {
             ze_scene_contract::Parent(surface_b),
         ));
 
-        let specs =
-            ze_scene_core::domain::content_texture_specs(&WorldView::new(&world)).unwrap();
+        let specs = ze_scene_core::domain::content_texture_specs(&WorldView::new(&world)).unwrap();
         assert_eq!(specs.0.len(), 2, "两个 Surface ⇒ 两个内容层");
         assert_ne!(
             specs.0[0].texture_handle(),
@@ -999,16 +1023,16 @@ mod tests {
         use ze_notion::Color32;
 
         let mut world = World::new();
-        world.spawn((
-            Light::directional_with(ze_notion::Vec3::new(0.0, 0.0, 1.0), Color32::WHITE, 1.0),
-        ));
-        world.spawn((
-            Light::directional_with(
-                ze_notion::Vec3::new(-1.0, 0.5, 0.2),
-                Color32::new(255, 128, 0, 255),
-                2.0,
-            ),
-        ));
+        world.spawn((Light::directional_with(
+            ze_notion::Vec3::new(0.0, 0.0, 1.0),
+            Color32::WHITE,
+            1.0,
+        ),));
+        world.spawn((Light::directional_with(
+            ze_notion::Vec3::new(-1.0, 0.5, 0.2),
+            Color32::new(255, 128, 0, 255),
+            2.0,
+        ),));
 
         let mut res = Resources::new();
         res.insert(DrawQueue3D::new());
@@ -1046,12 +1070,10 @@ mod tests {
         let mut world = World::new();
         // 父平移 (10, 0, 0)；点光挂在父下，local 平移 (0, 5, 0)
         // ⇒ 世界位置 = (10, 5, 0)。
-        let parent = world.spawn((
-            ze_scene_core::Transform {
-                position: ze_notion::Vec3::new(10.0, 0.0, 0.0),
-                ..ze_scene_core::Transform::default()
-            },
-        ));
+        let parent = world.spawn((ze_scene_core::Transform {
+            position: ze_notion::Vec3::new(10.0, 0.0, 0.0),
+            ..ze_scene_core::Transform::default()
+        },));
         let parent_id = object_id_of(parent);
         let light = world.spawn((
             Light::point_with(3.0, Color32::new(255, 128, 0, 255), 2.0),

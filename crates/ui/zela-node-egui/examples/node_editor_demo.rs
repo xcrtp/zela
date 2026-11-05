@@ -12,7 +12,6 @@
 //! `propagate_values` O(n²) chain is gone).
 
 use eframe::egui;
-use zela_node_editor::NodePos;
 use ze_graph_algo::KahnSorter;
 use ze_graph_eval::LazyPullEval;
 use ze_node_core::{
@@ -20,6 +19,7 @@ use ze_node_core::{
     NodeId, OutputSocketId, SimpleGraph,
 };
 use ze_node_schema::{NodeRegistry, Property};
+use zela_node_editor::NodePos;
 use zela_node_editor::{BezierGeometry, Command, Editor, EditorEvent, FreeLayout};
 use zela_node_egui::{BezierRenderer, NodeGraphApp};
 use zela_node_egui_ui::{PropertyNodeView, spawn_menu};

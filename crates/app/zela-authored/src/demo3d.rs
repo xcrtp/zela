@@ -6,16 +6,16 @@
 use std::sync::Arc;
 
 use ze_notion::{Rect2D, SurfaceFn};
+use ze_prerender::InMemoryEngine;
+use ze_render_ir::StrokeSolid;
 use ze_scene_core::domain::content_texture_handle;
 use ze_scene_core::{
     CONTENT_TEXTURE_HEIGHT, CONTENT_TEXTURE_WIDTH, Camera3D, Camera3DHandle, Path, Projection,
     Surface, SurfaceRenderer, SurfaceTexture, TextureFilter, Transform,
 };
-use ze_prerender::InMemoryEngine;
-use ze_render_ir::StrokeSolid;
 
 use zela_scene_ecs::content;
-use zela_scene_ecs::contract::{object_id_of, Parent};
+use zela_scene_ecs::contract::{Parent, object_id_of};
 use zela_scene_ecs::domain::CameraMode;
 use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene::components::Material3D;
@@ -52,10 +52,19 @@ pub fn build(scene: &mut Scene, engine: &InMemoryEngine) -> Demo3D {
         .iter_mut()
         .map(|outline| outline.path.bounds())
         .reduce(|acc, b| acc.union(&b))
-        .unwrap_or_else(|| Rect2D::new(ze_notion::Vec2::new(-1.0, -1.0), ze_notion::Vec2::new(1.0, 1.0)));
+        .unwrap_or_else(|| {
+            Rect2D::new(
+                ze_notion::Vec2::new(-1.0, -1.0),
+                ze_notion::Vec2::new(1.0, 1.0),
+            )
+        });
 
     let surface_entity = scene.spawn((
-        Surface::new(bounds, ze_scene_core::SurfaceMapping::World, ze_notion::Vec2::new(0.5, 0.5)),
+        Surface::new(
+            bounds,
+            ze_scene_core::SurfaceMapping::World,
+            ze_notion::Vec2::new(0.5, 0.5),
+        ),
         SurfaceRenderer::Renderer2D,
         // Fixed 尺寸与 `CONTENT_TEXTURE_*` 同值；fit_margin 0.8 复刻 demo3d 原取景
         // （`camera_for` 直接调用 `Camera2D::fit_bounds`，逐位一致）。

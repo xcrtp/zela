@@ -161,7 +161,10 @@ mod tests {
         let frame = sample_frame();
         let json = serde_json::to_string(&frame).expect("可序列化");
         for forbidden in ["ObjectId", "handle", "entity", "ptr"] {
-            assert!(!json.contains(forbidden), "Frame 不得含 `{forbidden}`：{json}");
+            assert!(
+                !json.contains(forbidden),
+                "Frame 不得含 `{forbidden}`：{json}"
+            );
         }
         let back: Frame = serde_json::from_str(&json).expect("可反序列化");
         assert_eq!(frame, back, "JSON 往返必须逐位相同");

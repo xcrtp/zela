@@ -11,13 +11,13 @@
 - 路径：`crates/ze/pod/ze-pod-macro`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-pod`、`ze-pod-func`、`ze-pod-py`、`ze-pod-tests`、`ze-scene-api`、`zela-scene-ecs`
-- 源文件：1 个 · 962 行
+- 源文件：1 个 · 959 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 962 | `#[capability]`：把一个"函数集合" struct 变成运行时协商出的 typed 句柄。 |
+| `src/lib.rs` | 959 | `#[capability]`：把一个"函数集合" struct 变成运行时协商出的 typed 句柄。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

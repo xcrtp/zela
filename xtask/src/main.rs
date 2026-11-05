@@ -1725,6 +1725,42 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
         "Response",
         "zela-app 的 debug RPC 回执 vs zela-commands 的 CLI 响应",
     ),
+    (
+        "SceneRead",
+        "ze-scene-contract 的只读场景视图（对象/句柄层）vs ze-scene-core 的类型擦除组件读接口（组件层）",
+    ),
+    (
+        "Capability",
+        "ze-pod-core 的 Pod 能力声明（trait）vs zela-scene-bundle 的产物能力协商表（struct）",
+    ),
+    (
+        "Field",
+        "ze-alg 的数值域字段（trait）vs ze-type 的类型字段（trait）",
+    ),
+    (
+        "Layout",
+        "ze-interact 的布局策略（trait）vs ze-type 的内存布局（trait）",
+    ),
+    (
+        "Node",
+        "ze-comb 的表达式节点（trait）vs ze-node-core 的图节点（trait）",
+    ),
+    (
+        "Pod",
+        "ze-pod-core 的 Pod 接口（trait）vs zela-scene-bundle 的 Pod 段落（struct）",
+    ),
+    (
+        "Scene",
+        "ze-scene-contract 的场景读写契约（trait）vs zela-scene-ecs 的 ECS 场景实现（struct）",
+    ),
+    (
+        "Target",
+        "ze-scene-core 的动画写入目标（struct）vs ze-type 的类型检查目标（trait）",
+    ),
+    (
+        "Transform2D",
+        "ze-notion 的数学变换 vs ze-scene-core 的 2D 变换组件",
+    ),
     ("SecondPaint", "render-ir 的绘制参数 vs scene-api 的组件视图"),
     ("ShaderVariant", "render-ir 的着色参数 vs scene-api 的组件视图"),
     ("Surface", "scene-api 的 Pod 侧包装 vs scene-core 的组件定义"),
@@ -1738,7 +1774,11 @@ const DUPLICATE_PUB_NAME_ALLOWLIST: &[(&str, &str)] = &[
 /// 测试专用 crate 不参与跨 crate 重名门禁（ publish = false，不进生产图）。
 const DUPLICATE_SCAN_EXCLUDED_CRATES: &[&str] = &["ze-pod-tests"];
 
-/// **门禁 2（阶段 0.5）**：跨 crate 同名 `pub struct/enum` 必须在白名单里。
+/// **门禁 2（阶段 0.5）**：跨 crate 同名 `pub struct/enum/trait` 必须在白名单里。
+///
+/// CL-R 扩到 `pub trait`：CL 交付时 `ze-interact` 的 `Widget2D`（trait）与
+/// `ze-scene-core` 的 `Widget2D`（struct）同名却无人报错——扫描面漏了一类定义，
+/// 等于门禁只挡住了三分之二。
 fn check_duplicate_public_names(root: &Path) -> Result<(), String> {
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -1761,7 +1801,8 @@ fn check_duplicate_public_names(root: &Path) -> Result<(), String> {
                 let trimmed = line.trim_start();
                 let rest = trimmed
                     .strip_prefix("pub struct ")
-                    .or_else(|| trimmed.strip_prefix("pub enum "));
+                    .or_else(|| trimmed.strip_prefix("pub enum "))
+                    .or_else(|| trimmed.strip_prefix("pub trait "));
                 let Some(rest) = rest else { continue };
                 let name: String = rest
                     .chars()
@@ -1791,7 +1832,7 @@ fn check_duplicate_public_names(root: &Path) -> Result<(), String> {
     if !conflicts.is_empty() {
         conflicts.sort();
         return Err(format!(
-            "跨 crate 同名 `pub struct/enum`（一个概念只允许一处定义；确属不同角色请登记白名单）：\n  {}",
+            "跨 crate 同名 `pub struct/enum/trait`（一个概念只允许一处定义；确属不同角色请登记白名单）：\n  {}",
             conflicts.join("\n  ")
         ));
     }
@@ -2015,7 +2056,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## BK.", "## BL.", "## BM.", "## BN.", "## BO.", "## BP.", "## BQ.", "## BR.", "## BS.",
         "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.", "## BZ.", "## CA.", "## CB.",
         "## CC.", "## CD.", "## CE.", "## CF.", "## CG.", "## CH.", "## CI.", "## CJ.", "## CK.",
-        "## CL.",
+        "## CL.", "## CL-R.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -2111,7 +2152,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("CI-")
                     || id.starts_with("CJ-")
                     || id.starts_with("CK-")
-                    || id.starts_with("CL-"));
+                    || id.starts_with("CL-")
+                    || id.starts_with("CL-R-"));
             if !is_item {
                 continue;
             }
@@ -2693,6 +2735,12 @@ fn check_derived_state_not_persisted(root: &Path) -> Result<(), String> {
         "RouteState",
         "TreeIndex",
         "DagIndex",
+        // CL-R：表达层 / 布局求解的派生态（声明进产物，dyn 表与求解结果不进）。
+        "WidgetRuntime",
+        "DrawCtx",
+        "MeasureCtx",
+        "Theme",
+        "LayoutSolver",
     ];
     const PAYLOAD_PATHS: &[&str] = &[
         "crates/scene/ze-scene-core/src/registry.rs",

@@ -33,8 +33,12 @@ pub const SPEC: CommandSpec = CommandSpec {
 
 /// 参数 → 渲染请求（强制走序列帧）。
 pub fn options_from_args(args: &CommandArgs) -> Result<RenderOptions, String> {
-    let script = args.path("script").filter(|path| !path.as_os_str().is_empty());
-    let bundle = args.path("bundle").filter(|path| !path.as_os_str().is_empty());
+    let script = args
+        .path("script")
+        .filter(|path| !path.as_os_str().is_empty());
+    let bundle = args
+        .path("bundle")
+        .filter(|path| !path.as_os_str().is_empty());
     if script.is_some() && bundle.is_some() {
         return Err("脚本路径与 --bundle 只能给一个".to_string());
     }

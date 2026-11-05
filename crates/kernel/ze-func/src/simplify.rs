@@ -15,7 +15,9 @@
 //! 折叠只调用同一个算子实现；展开只重放同一个 `NatRec` 语义。因此结果与
 //! 参考求值器**逐位一致**（不是容差内），并且不需要进指纹的"语义改变"集合。
 
-use ze_comb::{Expr, Literal, Node, PassInfo, PassKind, PassRegistry, Semantics, TransformPass, Value};
+use ze_comb::{
+    Expr, Literal, Node, PassInfo, PassKind, PassRegistry, Semantics, TransformPass, Value,
+};
 
 use crate::ops;
 
@@ -104,27 +106,29 @@ fn neutralize(op: &ze_comb::OpRef, args: &[Expr], id: &Option<ze_comb::Id>) -> O
     if id.is_some() {
         return None;
     }
-    let one = |expr: &Expr| matches!(
-        &expr.node,
-        Node::Pure {
-            value: Literal::F64(value)
-        } if *value == 1.0
-    ) || matches!(
-        &expr.node,
-        Node::Pure {
-            value: Literal::F32(value)
-        } if *value == 1.0
-    ) || matches!(
-        &expr.node,
-        Node::Pure {
-            value: Literal::I32(value)
-        } if *value == 1
-    ) || matches!(
-        &expr.node,
-        Node::Pure {
-            value: Literal::I64(value)
-        } if *value == 1
-    );
+    let one = |expr: &Expr| {
+        matches!(
+            &expr.node,
+            Node::Pure {
+                value: Literal::F64(value)
+            } if *value == 1.0
+        ) || matches!(
+            &expr.node,
+            Node::Pure {
+                value: Literal::F32(value)
+            } if *value == 1.0
+        ) || matches!(
+            &expr.node,
+            Node::Pure {
+                value: Literal::I32(value)
+            } if *value == 1
+        ) || matches!(
+            &expr.node,
+            Node::Pure {
+                value: Literal::I64(value)
+            } if *value == 1
+        )
+    };
     match (op.name.as_str(), args) {
         ("mul", [a, b]) if one(b) => Some(a.clone()),
         ("mul", [a, b]) if one(a) => Some(b.clone()),
@@ -154,7 +158,9 @@ fn eval_closed(expr: &Expr, rec: Option<(&Value, i64)>) -> Option<Value> {
     let value = match &expr.node {
         Node::Pure { value } => literal_to_value(value)?,
         // 方法读对象状态 ⇒ 不是闭合表达式（与通道 / 组件读同一口径）。
-        Node::Channel { .. } | Node::Read { .. } | Node::Method { .. } => return None,
+        Node::Channel { .. } | Node::Read { .. } | Node::Method { .. } => {
+            return None;
+        }
         Node::Call { op, args } => {
             let mut values = Vec::with_capacity(args.len());
             for arg in args {
@@ -283,10 +289,18 @@ mod tests {
     fn constant_calls_fold_to_pure() {
         let expr = Expr::call(
             math("add"),
-            [pure_f64(1.0), Expr::call(math("mul"), [pure_f64(2.0), pure_f64(3.0)])],
+            [
+                pure_f64(1.0),
+                Expr::call(math("mul"), [pure_f64(2.0), pure_f64(3.0)]),
+            ],
         );
         let simplified = simplify(&expr);
-        assert_eq!(simplified.node, Node::Pure { value: Literal::F64(7.0) });
+        assert_eq!(
+            simplified.node,
+            Node::Pure {
+                value: Literal::F64(7.0)
+            }
+        );
     }
 
     /// **BY-c**：`mul(x,1)` / `mul(1,x)` / `scale(1,x)` 消去（类型无关）。
@@ -372,11 +386,7 @@ mod tests {
                     channel: channel.clone(),
                 })
             }
-            fn call(
-                &self,
-                op: &OpRef,
-                args: &[Value],
-            ) -> Result<Value, ze_comb::EvalError> {
+            fn call(&self, op: &OpRef, args: &[Value]) -> Result<Value, ze_comb::EvalError> {
                 ops::eval(op, args)
             }
         }

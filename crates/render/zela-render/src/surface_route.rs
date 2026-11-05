@@ -22,13 +22,13 @@ use ze_render_ir::{ResolveStyle, ToShape2D, ZOrder};
 use ze_scene_contract::{ObjectId, SceneRead};
 use ze_scene_core::components::{ContentTextureItem, MorphShape, Reveal};
 use ze_scene_core::{
-    resolve_surface, Surface, SurfaceError, SurfaceMapping, SurfaceOwner, SurfaceRenderer, Transform,
-    WorldInherit, WorldTransforms,
+    Surface, SurfaceError, SurfaceMapping, SurfaceOwner, SurfaceRenderer, Transform, WorldInherit,
+    WorldTransforms, resolve_surface,
 };
 
-use crate::draw::{apply_inherit, apply_opacity, opacity_of, DrawItem, DrawQueue};
+use crate::draw::{DrawItem, DrawQueue, apply_inherit, apply_opacity, opacity_of};
 use crate::draw_queue_3d::MeshDraw;
-use crate::shape_to_mesh::{derive_mesh, ShapeMeshError};
+use crate::shape_to_mesh::{ShapeMeshError, derive_mesh};
 
 /// Surface 路由结论。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,14 +49,14 @@ pub enum SurfaceRecordError {
     #[error("Direct 路径要求 SurfaceMapping::World（对象 {id:?}）；Screen 映射的 3D 语义未定义")]
     ScreenMappingUnsupported { id: ObjectId },
     #[error("Direct 路径派生失败（对象 {id:?}）：{source}")]
-    Derive { id: ObjectId, source: ShapeMeshError },
+    Derive {
+        id: ObjectId,
+        source: ShapeMeshError,
+    },
 }
 
 /// 解析某对象的 Surface 路由（纯查询，不写队列）。
-pub fn surface_route<S: SceneRead>(
-    scene: &S,
-    id: ObjectId,
-) -> Result<SurfaceRoute, SurfaceError> {
+pub fn surface_route<S: SceneRead>(scene: &S, id: ObjectId) -> Result<SurfaceRoute, SurfaceError> {
     match resolve_surface(scene, id)? {
         Some(owner) if owner.renderer == SurfaceRenderer::Renderer3D => {
             Ok(SurfaceRoute::Direct(owner))
@@ -97,10 +97,7 @@ where
 
     // Direct 不支持的能力：显式报错，不静默降级。
     if scene.with::<Reveal, _>(id, |_| ()).is_some() {
-        queue.push_surface_error(SurfaceRecordError::UnsupportedCapability {
-            id,
-            kind: "Reveal",
-        });
+        queue.push_surface_error(SurfaceRecordError::UnsupportedCapability { id, kind: "Reveal" });
         return true;
     }
     if scene.with::<MorphShape, _>(id, |_| ()).is_some() {
@@ -167,7 +164,7 @@ mod tests {
     use ze_render_ir::{FillSolid, StrokeSolid};
     use ze_scene_contract::Parent;
     use ze_scene_core::{Camera2D, Circle};
-    use ze_scene_hecs::{object_id_of, WorldView};
+    use ze_scene_hecs::{WorldView, object_id_of};
 
     use crate::draw::record_scene;
 
@@ -332,10 +329,7 @@ mod tests {
 
         assert!(matches!(
             queue.surface_errors(),
-            [SurfaceRecordError::UnsupportedCapability {
-                kind: "Reveal",
-                ..
-            }]
+            [SurfaceRecordError::UnsupportedCapability { kind: "Reveal", .. }]
         ));
         assert_eq!(queue.meshes().count(), 0);
     }

@@ -98,8 +98,12 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
     };
     let adapter = ctx.adapter().expect("headless 上下文应带 adapter").clone();
     let mut registry = BackendRegistry::with_standard();
-    registry.register(BackendKind::Vector).expect("注册矢量后端");
-    let features = registry.required_device_features(&adapter).expect("能力并集");
+    registry
+        .register(BackendKind::Vector)
+        .expect("注册矢量后端");
+    let features = registry
+        .required_device_features(&adapter)
+        .expect("能力并集");
     let limits = registry.required_device_limits(&adapter);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("codegen-fill"),
@@ -127,7 +131,11 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
     let [r, g, b, a] = center(&first);
     assert_eq!(a, 255, "alpha 应保持记录原值");
     let expect = expected.map(|value| (value * 255.0).round() as i32);
-    for (got, want) in [(r as i32, expect[0]), (g as i32, expect[1]), (b as i32, expect[2])] {
+    for (got, want) in [
+        (r as i32, expect[0]),
+        (g as i32, expect[1]),
+        (b as i32, expect[2]),
+    ] {
         assert!(
             (got - want).abs() <= 4,
             "GPU 求值与 CPU 参考差超出容差：得到 {got}，期望 {want}（整帧中心 {r},{g},{b}）"
@@ -138,9 +146,8 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
     // 画布铺满、记录矩形就是整幅 ⇒ 中心像素的颜色应为 `center / canvas`。
     use ze_comb::{ChannelRef, ChannelType, Expr, OpRef};
     let math = |name: &str| OpRef::new("zela.math", name);
-    let center_channel = Expr::channel(
-        ChannelRef::new("zela.shader", "center").with_type(ChannelType::Vec2),
-    );
+    let center_channel =
+        Expr::channel(ChannelRef::new("zela.shader", "center").with_type(ChannelType::Vec2));
     let expr = Expr::call(
         math("vec3"),
         [
@@ -153,7 +160,10 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
             ),
             Expr::call(
                 math("mul"),
-                [Expr::call(math("y"), [center_channel]), Expr::pure(1.0 / HEIGHT as f64)],
+                [
+                    Expr::call(math("y"), [center_channel]),
+                    Expr::pure(1.0 / HEIGHT as f64),
+                ],
             ),
             Expr::pure(0.5),
         ],
@@ -180,9 +190,8 @@ fn generated_wgsl_paints_the_fill_on_the_gpu() {
 
     // ④ **逐片元内建**：`zela.shader::fragment.uv` 让颜色随像素变
     // （画布铺满 ⇒ 中心像素的 uv ≈ (0.508, 0.508)）。
-    let uv_channel = Expr::channel(
-        ChannelRef::new("zela.shader", "fragment.uv").with_type(ChannelType::Vec2),
-    );
+    let uv_channel =
+        Expr::channel(ChannelRef::new("zela.shader", "fragment.uv").with_type(ChannelType::Vec2));
     let expr = Expr::call(
         math("vec3"),
         [

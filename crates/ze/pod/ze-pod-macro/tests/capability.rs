@@ -4,7 +4,7 @@
 
 use std::any::Any;
 
-use ze_pod_core::{Capability, QualifiedName, RegistryPod, Pod};
+use ze_pod_core::{Capability, Pod, QualifiedName, RegistryPod};
 use ze_pod_macro::capability;
 
 #[capability(namespace = "math")]

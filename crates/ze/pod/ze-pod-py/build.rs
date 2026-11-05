@@ -21,7 +21,9 @@ fn main() {
     for (key, value) in config {
         match key.as_str() {
             // `sys.executable`：链接时用的那个解释器。
-            "executable" => println!("cargo:rustc-env=ZELA_PYO3_EXECUTABLE={value}"),
+            "executable" => {
+                println!("cargo:rustc-env=ZELA_PYO3_EXECUTABLE={value}")
+            }
             // `X.Y`：用来滤掉本机**另一个版本**的解释器（否则前缀会指错）。
             "version" => println!("cargo:rustc-env=ZELA_PYO3_VERSION={value}"),
             _ => {}

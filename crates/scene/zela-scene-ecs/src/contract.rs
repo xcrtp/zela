@@ -72,7 +72,7 @@ use crate::scene::components::{
     ContentOrigin, ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
 };
 use ze_scene_core::View;
-use ze_scene_core::widget::Widget2D;
+use ze_scene_core::widget::WidgetDecl;
 
 // B3-1 收尾：hecs 只读适配器与身份互转已抽到 `ze-scene-hecs`
 // （渲染层需要它，但不应依赖本 ECS 实现 crate）。
@@ -576,10 +576,7 @@ mod tests {
         );
         assert_eq!(known_type_name::<Reveal>(), Some("Reveal"));
         assert_eq!(known_type_name::<Parent>(), Some("Parent"));
-        assert_eq!(
-            known_type_name::<ParentInherit>(),
-            Some("ParentInherit")
-        );
+        assert_eq!(known_type_name::<ParentInherit>(), Some("ParentInherit"));
         assert_eq!(
             known_type_name::<LifetimeTracked>(),
             Some("LifetimeTracked")

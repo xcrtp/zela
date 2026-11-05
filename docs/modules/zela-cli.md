@@ -11,13 +11,13 @@
 - 路径：`crates/app/zela-cli`
 - 生产依赖（上游，dev-deps 不计）：`zela-app`、`zela-commands`、`zela-gui`、`zela-render-backends`、`zela-scene-bundle`
 - 被依赖（下游）：（无）
-- 源文件：2 个 · 596 行
+- 源文件：2 个 · 608 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 580 | `zela` 伞命令的宿主实现（clap 适配 + CLI 帧 sink）。 |
+| `src/lib.rs` | 592 | `zela` 伞命令的宿主实现（clap 适配 + CLI 帧 sink）。 |
 | `src/main.rs` | 16 | `zela` 可执行入口：宿主实现全在 `zela_cli`（lib），这里只做退出码映射。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -29,7 +29,7 @@
 | 文件 | 项 |
 |---|---|
 | `src/lib.rs` | `pub fn spec_to_clap(spec: &CommandSpec) -> clap::Command` |
-| `src/lib.rs` | `pub fn collect_args(` |
+| `src/lib.rs` | `pub fn collect_args(spec: &CommandSpec, matches: &clap::ArgMatches) -> Result<CommandArgs, String>` |
 | `src/lib.rs` | `pub struct CliHost` |
 | `src/lib.rs` | `pub struct CliSinkFactory` |
 | `src/lib.rs` | `pub fn root() -> clap::Command` |

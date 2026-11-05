@@ -19,15 +19,17 @@ pub mod target;
 pub mod timeline;
 
 pub use affine::{AffineError, AffineMap, init_width, recognize as recognize_affine};
-pub use params::{PARAM_WIDGET_BASE, ParamError, apply as apply_param, build_registry, widget_id, widget_index};
-pub use resolve::{FieldWinners, SuppressedWrite, WriteResolution, field_winners, wins_all};
-pub use scope::{ScopeId, ScopeSpec};
 pub use binding::{
     Binding, BindingDriver, BindingTable, LibraryRef, ReplayUnsupported, ResetBehavior, SeekKind,
+};
+pub use params::{
+    PARAM_WIDGET_BASE, ParamError, apply as apply_param, build_registry, widget_id, widget_index,
 };
 pub use predicate::{
     Interval, IntervalSet, MultiIntervalSet, TIME_VARIABLE, analyze as analyze_predicate,
 };
+pub use resolve::{FieldWinners, SuppressedWrite, WriteResolution, field_winners, wins_all};
+pub use scope::{ScopeId, ScopeSpec};
 pub use target::{
     Camera2DFraming, CameraEye, CircleRadius, FieldSpec, FieldTarget, METHODS, MethodSpec, MorphT,
     OpacityValue, Phase, REVEAL_CURRENT_POS_METHOD, RevealRange, TARGETS, Target, TargetCtor,

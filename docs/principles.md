@@ -162,6 +162,28 @@ theme 拆 `LayoutTokens` / `PaintTokens`：前者进 revision（字号 / 间距�
 后者只改命令列表。整块 theme 进 revision 会导致「换颜色也重排」，只让 paint 进
 revision 会导致「换字号但 bounds 还是旧的」—— 两种都是「错了不报错」。
 
+### ⑨ 每一条形状必须有生产消费者；顺延不是收尾动作（CL-R）
+
+CL 验收写的那句「表达层定型 ✅、实体归一 ❌」是症状而不是结论。回头看
+`OpResolver` / `View` / `External` / `SeekKind` / `CurveHitTester` / 五个直通策略 trait /
+`WidgetRuntime` / `SpecId` / `StrategyId` / `StructureDelta`——全是「形状齐了、生产路径没切」。
+更该认的是论述侧的误用：元规则 A（零消费者只约束实现、不约束形状）被用成了
+「永远不创造消费者」的许可证，每批结尾一行「kasuari 顺延下一批」，代号改一次、账又活一批。
+
+⇒ 本表起，A 的用法收窄为：**形状留对了就该兑现；不兑现，留形状就白留了。**
+
+三条判据：
+
+1. 交付说明里每条形状逐条指出生产消费路径；出现「已定义 / 待接线」就是又顺延了一批。
+2. 求得解要**必要**，不是「能跑」：默认策略必须对该声明显式给不出解，求解器给出唯一确定解
+   （`two-pass` 对跨容器约束 `Unsupported`，kasuari 满秩求解）。
+3. 失败显式：不支持的声明 / 不可满足 / 欠定 / 越界 / 未注册策略都返回 `SolveError`
+   （带冲突项路径），**不静默降级回两遍扫描**；求解只在 revision 变化时跑。
+
+同源的四个落点：`Frame.text` 与几何**同下标**（空 run 占位，`diff_frames` 不误报）、
+`HitChain::visit` 是命中冒泡的唯一实现、结构 delta 在帧边界生效且拖拽中删控件
+必须显式取消 capture、一个 `StrategyId` 只允许一条 revision 来源。
+
 ## 四、一个提交前怎么用这张表
 
 1. 五条判据逐条过：值 / 可重建 / 危险标记 / 派生量 / 未知时是否给默认值；

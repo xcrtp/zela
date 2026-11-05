@@ -97,9 +97,7 @@ impl Rect {
 }
 
 /// 命中目标的稳定 id（由宿主分配；与场景 `ObjectId` 解耦）。
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct HitId(pub u32);
 
 /// 命中区域。

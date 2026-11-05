@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use ze_pod_core::{
     Broker, BrokerError, CommandQueue, FlushBoundary, FlushBuffer, OrderedCommand, OrderedEvent,
-    Pod, PodHandle, PodId, PodNode, PublishReport, Receipt, SeqKey, Sequenced, publish_topic,
-    negotiate_dyn,
+    Pod, PodHandle, PodId, PodNode, PublishReport, Receipt, SeqKey, Sequenced, negotiate_dyn,
+    publish_topic,
 };
 use ze_pod_tests::{ClockCmd, ClockEvent, ClockPod, ControllerPod, LogPod, StatsPod};
 
@@ -43,8 +43,7 @@ fn tick_batch_equals_repeated_single_ticks() {
     // 逻辑键（frame, source, seq）逐条相同。
     assert_eq!(batch_log, repeated_log, "逻辑键序列必须完全相同");
     // 负载值也逐条相同（`Sequenced` 的相等性只看键，这里显式比较值）。
-    let batch_values: Vec<ClockEvent> =
-        batch_log.iter().map(|item| item.value().clone()).collect();
+    let batch_values: Vec<ClockEvent> = batch_log.iter().map(|item| item.value().clone()).collect();
     let repeated_values: Vec<ClockEvent> = repeated_log
         .iter()
         .map(|item| item.value().clone())
@@ -111,8 +110,7 @@ fn topic_fanout_is_query_driven_and_sorted() {
 
         let events = vec![ticked(1), ticked(2)];
         for event in &events {
-            let report: PublishReport =
-                publish_topic(&broker, "clock", event).expect("扇出成功");
+            let report: PublishReport = publish_topic(&broker, "clock", event).expect("扇出成功");
             assert_eq!(report.delivered, 2);
             assert_eq!(report.order, expected_order, "扇出顺序 = 查询顺序");
         }
@@ -225,7 +223,10 @@ fn routing_errors_are_explicit() {
             providers,
         }) => {
             assert!(capability.contains("submit"));
-            assert_eq!(providers, vec!["clock-1".to_string(), "clock-2".to_string()]);
+            assert_eq!(
+                providers,
+                vec!["clock-1".to_string(), "clock-2".to_string()]
+            );
             eprintln!("[P6-5] 多 provider ⇒ AmbiguousProvider({providers:?})");
         }
         other => panic!("期望 AmbiguousProvider，实际 {:?}", other.err()),

@@ -84,7 +84,9 @@ pub enum ExportError {
 impl fmt::Display for ExportError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io { path, message } => write!(f, "I/O 错误（{}）：{message}", path.display()),
+            Self::Io { path, message } => {
+                write!(f, "I/O 错误（{}）：{message}", path.display())
+            }
             Self::Png { path, message } => {
                 write!(f, "PNG 编码错误（{}）：{message}", path.display())
             }

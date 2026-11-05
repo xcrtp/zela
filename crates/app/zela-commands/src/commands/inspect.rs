@@ -22,8 +22,8 @@ pub fn file_from_args(args: &CommandArgs) -> Result<PathBuf, String> {
 
 pub fn run(host: &dyn CommandHost, file: &std::path::Path) -> Result<Response, String> {
     let bytes = std::fs::read(file).map_err(|e| format!("读取 {} 失败：{e}", file.display()))?;
-    let bundle =
-        Bundle::from_bytes(&bytes).map_err(|e| format!("ZSB 解析失败（{}）：{e}", file.display()))?;
+    let bundle = Bundle::from_bytes(&bytes)
+        .map_err(|e| format!("ZSB 解析失败（{}）：{e}", file.display()))?;
     let meta = bundle.meta();
 
     let restorable = bundle.check_restorable(&zela_app::available_runtime_caps());
@@ -47,10 +47,7 @@ pub fn run(host: &dyn CommandHost, file: &std::path::Path) -> Result<Response, S
                 "payload_format".to_string(),
                 Fact::Text(meta.payload_format.clone()),
             ),
-            (
-                "objects".to_string(),
-                Fact::Count(meta.object_count as u64),
-            ),
+            ("objects".to_string(), Fact::Count(meta.object_count as u64)),
             (
                 "required_capabilities".to_string(),
                 Fact::Text(
@@ -77,16 +74,17 @@ pub fn run(host: &dyn CommandHost, file: &std::path::Path) -> Result<Response, S
             ),
             (
                 "source_sha256".to_string(),
-                Fact::Text(meta.source_sha256.clone().unwrap_or_else(|| "—".to_string())),
+                Fact::Text(
+                    meta.source_sha256
+                        .clone()
+                        .unwrap_or_else(|| "—".to_string()),
+                ),
             ),
             (
                 "payload_sha256".to_string(),
                 Fact::Text(meta.payload_sha256.clone()),
             ),
-            (
-                "restorable".to_string(),
-                Fact::Flag(restorable.is_ok()),
-            ),
+            ("restorable".to_string(), Fact::Flag(restorable.is_ok())),
         ],
     ))
 }

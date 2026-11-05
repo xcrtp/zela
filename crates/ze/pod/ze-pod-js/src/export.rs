@@ -11,9 +11,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use ze_pod_binding::{
-    CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
-};
+use ze_pod_binding::{CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name};
 use ze_pod_core::{Field, Kind, OpDef, RetType, ScalarKind, TypeSpec};
 
 /// JS 侧类型名（TypeScript 声明用）。
@@ -24,19 +22,17 @@ pub fn ts_type_name(spec: &'static TypeSpec) -> String {
     match spec {
         TypeSpec::Scalar(kind) => match kind {
             ScalarKind::F32 | ScalarKind::F64 => "number".to_string(),
-            ScalarKind::I32 | ScalarKind::I64 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => {
-                "number".to_string()
-            }
+            ScalarKind::I32
+            | ScalarKind::I64
+            | ScalarKind::U32
+            | ScalarKind::U64
+            | ScalarKind::U8 => "number".to_string(),
             ScalarKind::Bool => "boolean".to_string(),
             ScalarKind::String => "string".to_string(),
         },
         // 通道常量的值形状：T 由组件字段给出；`Bind.target` 不限定值类型。
-        TypeSpec::Struct { name, .. } if *name == "zela.math.Channel" => {
-            "Channel<any>".to_string()
-        }
-        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => {
-            short_name(name).to_string()
-        }
+        TypeSpec::Struct { name, .. } if *name == "zela.math.Channel" => "Channel<any>".to_string(),
+        TypeSpec::Struct { name, .. } | TypeSpec::Enum { name, .. } => short_name(name).to_string(),
         TypeSpec::Array { elem, .. } => format!("{}[]", ts_type_name(elem)),
         TypeSpec::Opaque(_) => "Handle".to_string(),
         TypeSpec::App { ty, args } => {
@@ -75,7 +71,11 @@ pub fn d_ts(capabilities: &[CapabilityDocs]) -> String {
     for (&full_name, &spec) in &types {
         let name = short_name(full_name);
         match spec {
-            TypeSpec::Struct { name: type_name, fields, .. } => {
+            TypeSpec::Struct {
+                name: type_name,
+                fields,
+                ..
+            } => {
                 let is_channel = full_name == "zela.math.Channel";
                 if is_channel {
                     out.push_str("export interface Channel<T = unknown> {\n");
@@ -291,7 +291,9 @@ fn ts_call_return(capabilities: &[CapabilityDocs], item: &ze_pod_core::ErasedFn)
         "exists" => "Expr<boolean>".to_string(),
         "clock_range" | "clock_range_of" => "Expr<boolean>".to_string(),
         "rec_index" => "Expr<number>".to_string(),
-        "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr<any>".to_string(),
+        "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => {
+            "Expr<any>".to_string()
+        }
         _ => ts_type_name(item.io.ret),
     }
 }

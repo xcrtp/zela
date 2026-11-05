@@ -39,7 +39,9 @@ use crate::object::camera::Camera2D;
 /// 本批消费的按键（FPS 相机用）。
 ///
 /// 只列**有消费者**的键：多列一个键就要多一份「为什么它在这里」的理由。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Key {
     W,
@@ -179,7 +181,8 @@ pub fn collect_events(input: &WindowInput, ctx: &SceneInputContext) -> Vec<Scene
                 });
             }
             if let Some((_, camera)) = ctx.layer2d {
-                if inside && (pointer.secondary_down || pointer.middle_down)
+                if inside
+                    && (pointer.secondary_down || pointer.middle_down)
                     && pointer.delta != Vec2::ZERO
                 {
                     events.push(SceneEvent::Camera {
@@ -200,8 +203,7 @@ pub fn collect_events(input: &WindowInput, ctx: &SceneInputContext) -> Vec<Scene
                     },
                 });
             }
-            let dragging =
-                pointer.primary_down || pointer.secondary_down || pointer.middle_down;
+            let dragging = pointer.primary_down || pointer.secondary_down || pointer.middle_down;
             if inside && dragging && pointer.delta != Vec2::ZERO {
                 events.push(SceneEvent::Camera {
                     layer,
@@ -213,8 +215,7 @@ pub fn collect_events(input: &WindowInput, ctx: &SceneInputContext) -> Vec<Scene
             }
         }
         ViewportCamera::ThreeDFps => {
-            let dragging =
-                pointer.primary_down || pointer.secondary_down || pointer.middle_down;
+            let dragging = pointer.primary_down || pointer.secondary_down || pointer.middle_down;
             if inside && dragging && pointer.delta != Vec2::ZERO {
                 events.push(SceneEvent::Camera {
                     layer,
@@ -377,7 +378,10 @@ mod tests {
             },
         }));
 
-        let typing = WindowInput { typing: true, ..input };
+        let typing = WindowInput {
+            typing: true,
+            ..input
+        };
         assert!(collect_events(&typing, &ctx(ViewportCamera::ThreeDFps, false)).is_empty());
     }
 
@@ -391,4 +395,3 @@ mod tests {
         assert_eq!(ctx.target, ViewportCamera::TwoD);
     }
 }
-

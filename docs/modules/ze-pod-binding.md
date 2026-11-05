@@ -11,17 +11,17 @@
 - 路径：`crates/ze/pod/ze-pod-binding`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-core`
 - 被依赖（下游）：`ze-pod`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`ze-pod-tests`、`zela-app`、`zela-commands`
-- 源文件：5 个 · 747 行
+- 源文件：5 个 · 728 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/codec.rs` | 56 | 值与语言对象的双向转换 + 一次调用的通用编排。 |
-| `src/defaults.rs` | 155 | 构造器参数的**默认值白名单**（提案 #6 C）。 |
-| `src/docs.rs` | 351 | **语言无关**的文档导出：JSON 是唯一来源。 |
+| `src/codec.rs` | 53 | 值与语言对象的双向转换 + 一次调用的通用编排。 |
+| `src/defaults.rs` | 145 | 构造器参数的**默认值白名单**（提案 #6 C）。 |
+| `src/docs.rs` | 348 | **语言无关**的文档导出：JSON 是唯一来源。 |
 | `src/lib.rs` | 60 | ze-pod-binding：**语言无关**的绑定驱动。 |
-| `src/plan.rs` | 125 | 能力计划：把 `C::calls()` 摊平成"函数 + 可达类型"，供任意语言适配器消费。 |
+| `src/plan.rs` | 122 | 能力计划：把 `C::calls()` 摊平成"函数 + 可达类型"，供任意语言适配器消费。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -49,7 +49,7 @@ graph LR
 | `src/docs.rs` | `pub fn has_ops(capabilities: &[CapabilityDocs]) -> bool` |
 | `src/lib.rs` | `pub fn channel_type_variant(spec: &ze_pod_core::TypeSpec) -> &'static str` |
 | `src/plan.rs` | `pub struct BindingPlan` |
-| `src/plan.rs` | `pub fn collect_types(` |
+| `src/plan.rs` | `pub fn collect_types(spec: &'static TypeSpec, out: &mut BTreeMap<&'static str, &'static TypeSpec>)` |
 | `src/plan.rs` | `pub fn short_name(full: &'static str) -> &'static str` |
 <!-- AUTO:END -->
 

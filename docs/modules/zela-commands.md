@@ -11,30 +11,30 @@
 - 路径：`crates/app/zela-commands`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-func`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-py`、`zela-app`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-schedule`
 - 被依赖（下游）：`zela-cli`
-- 源文件：18 个 · 4004 行
+- 源文件：18 个 · 4062 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/bin/zela-compile-batch.rs` | 132 | `zela-compile-batch`：一次进程编完一组脚本（门禁 demo 步骤与批量出片共用的壳）。 |
-| `src/bin/zela-verify.rs` | 264 | `zela-verify`：批量对拍的**命令行壳**（参数解析 + GPU 上下文 + 退出码）。 |
+| `src/bin/zela-compile-batch.rs` | 136 | `zela-compile-batch`：一次进程编完一组脚本（门禁 demo 步骤与批量出片共用的壳）。 |
+| `src/bin/zela-verify.rs` | 269 | `zela-verify`：批量对拍的**命令行壳**（参数解析 + GPU 上下文 + 退出码）。 |
 | `src/commands/api.rs` | 141 | `api`：导出 domain 能力的机器可读文档（JSON 唯一来源 + LuaLS + TypeScript + `.pyi`）。 |
-| `src/commands/batch.rs` | 864 | `batch`：**批量渲染 + 对拍**（门禁用；也是批量出片的一等能力）。 |
-| `src/commands/check.rs` | 56 | `check`：只做装配期检查、不渲染。 |
-| `src/commands/compile.rs` | 256 | `compile`：脚本 → ZSB 装配产物（不渲染、不需要 GPU）。 |
-| `src/commands/doctor.rs` | 141 | `doctor`：环境自检（本批最值钱的发现之一）。 |
-| `src/commands/fingerprint.rs` | 458 | `fingerprint`：跨运行时对拍的指纹工具（单帧 / 结构清单 / 目录对拍）。 |
+| `src/commands/batch.rs` | 868 | `batch`：**批量渲染 + 对拍**（门禁用；也是批量出片的一等能力）。 |
+| `src/commands/check.rs` | 59 | `check`：只做装配期检查、不渲染。 |
+| `src/commands/compile.rs` | 267 | `compile`：脚本 → ZSB 装配产物（不渲染、不需要 GPU）。 |
+| `src/commands/doctor.rs` | 144 | `doctor`：环境自检（本批最值钱的发现之一）。 |
+| `src/commands/fingerprint.rs` | 475 | `fingerprint`：跨运行时对拍的指纹工具（单帧 / 结构清单 / 目录对拍）。 |
 | `src/commands/fonts.rs` | 100 | 确定字体（`fonts`）：下载 + SHA-256 校验 `tools/typst-fonts.txt` 的清单。 |
-| `src/commands/frames.rs` | 76 | `frames`：PNG 序列帧导出（`render --frames` 的一等入口）。 |
-| `src/commands/inspect.rs` | 92 | `inspect`：读取 `.zsb` 的 Meta（container 版本 / payload 格式 / 能力 / 降级 / 来源）。 |
+| `src/commands/frames.rs` | 80 | `frames`：PNG 序列帧导出（`render --frames` 的一等入口）。 |
+| `src/commands/inspect.rs` | 90 | `inspect`：读取 `.zsb` 的 Meta（container 版本 / payload 格式 / 能力 / 降级 / 来源）。 |
 | `src/commands/list.rs` | 54 | `list`：内置作品清单（GUI 下拉与 CLI 共用同一份定义）。 |
 | `src/commands/mod.rs` | 16 | 命令帧体（每条命令一个模块）。 |
-| `src/commands/render.rs` | 565 | `render`：脚本 / ZSB → 帧（唯一帧体）。 |
+| `src/commands/render.rs` | 567 | `render`：脚本 / ZSB → 帧（唯一帧体）。 |
 | `src/host.rs` | 134 | 宿主接缝：进度 / 取消 / 诊断 + 帧 sink。 |
 | `src/lib.rs` | 30 | `zela-commands`：**命令帧体（唯一实现）**。 |
 | `src/response.rs` | 180 | 结构化返回值。 |
-| `src/spec.rs` | 445 | 声明式命令描述：`CommandSpec` / `ArgSpec`。 |
+| `src/spec.rs` | 452 | 声明式命令描述：`CommandSpec` / `ArgSpec`。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -88,7 +88,7 @@ graph LR
 | `src/commands/compile.rs` | `pub fn compile(source: &str, language: ScriptLanguage) -> Result<Compiled, String>` |
 | `src/commands/compile.rs` | `pub fn read_script(script: &std::path::Path) -> Result<(String, ScriptLanguage), String>` |
 | `src/commands/compile.rs` | `pub struct CompileJob` |
-| `src/commands/compile.rs` | `pub fn run_many(out_dir: &std::path::Path, jobs: &[CompileJob]) -> Result<Vec<(String, String)>, String>` |
+| `src/commands/compile.rs` | `pub fn run_many(` |
 | `src/commands/compile.rs` | `pub fn run(host: &dyn CommandHost, options: &CompileOptions) -> Result<Response, String>` |
 | `src/commands/doctor.rs` | `pub fn run(host: &dyn CommandHost) -> Result<Response, String>` |
 | `src/commands/fingerprint.rs` | `pub enum Invocation` |

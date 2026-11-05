@@ -25,21 +25,89 @@ use ze_comb::{
     ChannelRef, ChannelType, ClockLinkShape, ClockShape, CompiledExpr, Expr, Literal, MethodRef,
     OpRef,
 };
-use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
+use ze_pod_core::{
+    FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod,
+};
 
 use crate::api::{
-    AddSpec, AndSpec, BindSpec, ChannelSpec, ChannelTypeSpec, ClampSpec, ClockLinkSpec, ClockSpec,
-    ComponentSpec, CosSpec, DistanceSpec, EqSpec, FractSpec, GeSpec, GtSpec, LeSpec, LengthSpec,
-    LtSpec, MixSpec, MulSpec, SmoothstepSpec,
-    BindEachSpec, ExistsSpec, MethodCallSpec, NatRecSpec, NeSpec, NormalizeSpec, NotSpec, OrSpec,
-    PlotSpec, PredicateSpec, ReadSpec, ResetSpec, Rotate3Spec, RoundF32Spec, ScaleSpec, SelectSpec,
-    ShaderSourceSpec, ShaderSpec, SinSpec, SplatSpec, StateSpec, SumSpec, Vec2FromVec3Spec,
-    Vec2OfSpec, Vec3FromVec2Spec, Vec3OfSpec, Vec4OfSpec,
     // 第 BB 批（算子扩充）：WGSL 标准库算子
-    AbsSpec, AcosSpec, AsinSpec, Atan2Spec, AtanSpec, CeilSpec, CrossSpec, DegreesSpec, DotSpec,
-    Exp2Spec, ExpSpec, FaceforwardSpec, FloorSpec, InverseSqrtSpec, Log2Spec, LogSpec, MaxSpec,
-    MinSpec, ModuloSpec, NarrowF32Spec, PowSpec, RadiansSpec, ReflectSpec, RoundSpec, SignSpec,
-    SqrtSpec, StepSpec, TanSpec, TruncSpec,
+    AbsSpec,
+    AcosSpec,
+    AddSpec,
+    AndSpec,
+    AsinSpec,
+    Atan2Spec,
+    AtanSpec,
+    BindEachSpec,
+    BindSpec,
+    CeilSpec,
+    ChannelSpec,
+    ChannelTypeSpec,
+    ClampSpec,
+    ClockLinkSpec,
+    ClockSpec,
+    ComponentSpec,
+    CosSpec,
+    CrossSpec,
+    DegreesSpec,
+    DistanceSpec,
+    DotSpec,
+    EqSpec,
+    ExistsSpec,
+    Exp2Spec,
+    ExpSpec,
+    FaceforwardSpec,
+    FloorSpec,
+    FractSpec,
+    GeSpec,
+    GtSpec,
+    InverseSqrtSpec,
+    LeSpec,
+    LengthSpec,
+    Log2Spec,
+    LogSpec,
+    LtSpec,
+    MaxSpec,
+    MethodCallSpec,
+    MinSpec,
+    MixSpec,
+    ModuloSpec,
+    MulSpec,
+    NarrowF32Spec,
+    NatRecSpec,
+    NeSpec,
+    NormalizeSpec,
+    NotSpec,
+    OrSpec,
+    PlotSpec,
+    PowSpec,
+    PredicateSpec,
+    RadiansSpec,
+    ReadSpec,
+    ReflectSpec,
+    ResetSpec,
+    Rotate3Spec,
+    RoundF32Spec,
+    RoundSpec,
+    ScaleSpec,
+    SelectSpec,
+    ShaderSourceSpec,
+    ShaderSpec,
+    SignSpec,
+    SinSpec,
+    SmoothstepSpec,
+    SplatSpec,
+    SqrtSpec,
+    StateSpec,
+    StepSpec,
+    SumSpec,
+    TanSpec,
+    TruncSpec,
+    Vec2FromVec3Spec,
+    Vec2OfSpec,
+    Vec3FromVec2Spec,
+    Vec3OfSpec,
+    Vec4OfSpec,
 };
 use crate::infer::{infer_predicate, infer_root};
 
@@ -187,33 +255,59 @@ impl ExprPod {
 
         registry.register_fn0_named("zela.math::frame", HANDLE, frame);
         registry.register_fn0_named("zela.math::event", HANDLE, event);
-        registry.register_fn0_named(
-            "zela.math::component_state",
-            HANDLE,
-            component_state,
-        );
+        registry.register_fn0_named("zela.math::component_state", HANDLE, component_state);
         registry.register_fn0_named("zela.math::env", HANDLE, env);
 
         registry.register_fn1_named::<f64, Handle>("zela.math::pure", "f64", HANDLE, pure);
-        registry.register_fn1_named::<SinSpec, Handle>("zela.math::sin", "zela.math.Sin", HANDLE, sin_ctor);
-        registry.register_fn1_named::<CosSpec, Handle>("zela.math::cos", "zela.math.Cos", HANDLE, cos_ctor);
+        registry.register_fn1_named::<SinSpec, Handle>(
+            "zela.math::sin",
+            "zela.math.Sin",
+            HANDLE,
+            sin_ctor,
+        );
+        registry.register_fn1_named::<CosSpec, Handle>(
+            "zela.math::cos",
+            "zela.math.Cos",
+            HANDLE,
+            cos_ctor,
+        );
         registry.register_fn1_named::<Handle, String>(
             "zela.math::expression",
             HANDLE,
             "String",
             expression,
         );
-        registry.register_fn1_named::<AddSpec, Handle>("zela.math::add", "zela.math.Add", HANDLE, add_ctor);
-        registry.register_fn1_named::<MulSpec, Handle>("zela.math::mul", "zela.math.Mul", HANDLE, mul_ctor);
+        registry.register_fn1_named::<AddSpec, Handle>(
+            "zela.math::add",
+            "zela.math.Add",
+            HANDLE,
+            add_ctor,
+        );
+        registry.register_fn1_named::<MulSpec, Handle>(
+            "zela.math::mul",
+            "zela.math.Mul",
+            HANDLE,
+            mul_ctor,
+        );
         registry.register_fn1_named::<ScaleSpec, Handle>(
             "zela.math::scale",
             "zela.math.Scale",
             HANDLE,
             scale_ctor,
         );
-        registry.register_fn1_named::<SumSpec, Handle>("zela.math::sum", "zela.math.Sum", HANDLE, sum_ctor);
+        registry.register_fn1_named::<SumSpec, Handle>(
+            "zela.math::sum",
+            "zela.math.Sum",
+            HANDLE,
+            sum_ctor,
+        );
         // 第 1 批（算子补齐）：插值 / 钳制 / 向量构造 / 分量 / 旋转。
-        registry.register_fn1_named::<MixSpec, Handle>("zela.math::mix", "zela.math.Mix", HANDLE, mix_ctor);
+        registry.register_fn1_named::<MixSpec, Handle>(
+            "zela.math::mix",
+            "zela.math.Mix",
+            HANDLE,
+            mix_ctor,
+        );
         registry.register_fn1_named::<ClampSpec, Handle>(
             "zela.math::clamp",
             "zela.math.Clamp",
@@ -326,15 +420,60 @@ impl ExprPod {
             fract_ctor,
         );
         // 比较 / 布尔组合子（predicate 的原料；值语义，Bool 不进 `anim_value`）。
-        registry.register_fn1_named::<LtSpec, Handle>("zela.math::lt", "zela.math.Lt", HANDLE, lt_ctor);
-        registry.register_fn1_named::<GtSpec, Handle>("zela.math::gt", "zela.math.Gt", HANDLE, gt_ctor);
-        registry.register_fn1_named::<LeSpec, Handle>("zela.math::le", "zela.math.Le", HANDLE, le_ctor);
-        registry.register_fn1_named::<GeSpec, Handle>("zela.math::ge", "zela.math.Ge", HANDLE, ge_ctor);
-        registry.register_fn1_named::<EqSpec, Handle>("zela.math::eq", "zela.math.Eq", HANDLE, eq_ctor);
-        registry.register_fn1_named::<NeSpec, Handle>("zela.math::ne", "zela.math.Ne", HANDLE, ne_ctor);
-        registry.register_fn1_named::<AndSpec, Handle>("zela.math::and", "zela.math.And", HANDLE, and_ctor);
-        registry.register_fn1_named::<OrSpec, Handle>("zela.math::or", "zela.math.Or", HANDLE, or_ctor);
-        registry.register_fn1_named::<NotSpec, Handle>("zela.math::not", "zela.math.Not", HANDLE, not_ctor);
+        registry.register_fn1_named::<LtSpec, Handle>(
+            "zela.math::lt",
+            "zela.math.Lt",
+            HANDLE,
+            lt_ctor,
+        );
+        registry.register_fn1_named::<GtSpec, Handle>(
+            "zela.math::gt",
+            "zela.math.Gt",
+            HANDLE,
+            gt_ctor,
+        );
+        registry.register_fn1_named::<LeSpec, Handle>(
+            "zela.math::le",
+            "zela.math.Le",
+            HANDLE,
+            le_ctor,
+        );
+        registry.register_fn1_named::<GeSpec, Handle>(
+            "zela.math::ge",
+            "zela.math.Ge",
+            HANDLE,
+            ge_ctor,
+        );
+        registry.register_fn1_named::<EqSpec, Handle>(
+            "zela.math::eq",
+            "zela.math.Eq",
+            HANDLE,
+            eq_ctor,
+        );
+        registry.register_fn1_named::<NeSpec, Handle>(
+            "zela.math::ne",
+            "zela.math.Ne",
+            HANDLE,
+            ne_ctor,
+        );
+        registry.register_fn1_named::<AndSpec, Handle>(
+            "zela.math::and",
+            "zela.math.And",
+            HANDLE,
+            and_ctor,
+        );
+        registry.register_fn1_named::<OrSpec, Handle>(
+            "zela.math::or",
+            "zela.math.Or",
+            HANDLE,
+            or_ctor,
+        );
+        registry.register_fn1_named::<NotSpec, Handle>(
+            "zela.math::not",
+            "zela.math.Not",
+            HANDLE,
+            not_ctor,
+        );
         // 离散层（B5）：合法递归的唯一入口。
         registry.register_fn1_named::<NatRecSpec, Handle>(
             "zela.math::nat_rec",
@@ -646,10 +785,22 @@ impl Pod for ExprPod {
             "vec3" => Box::new(vec3_ctor(self, arg::<Vec3OfSpec>(args, 0)?.clone())),
             // **BT-1**：四维构造器与第四分量（名派发与注册表同源）。
             "vec4" => Box::new(vec4_ctor(self, arg::<Vec4OfSpec>(args, 0)?.clone())),
-            "w" => Box::new(component_w_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
-            "x" => Box::new(component_x_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
-            "y" => Box::new(component_y_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
-            "z" => Box::new(component_z_ctor(self, arg::<ComponentSpec>(args, 0)?.clone())),
+            "w" => Box::new(component_w_ctor(
+                self,
+                arg::<ComponentSpec>(args, 0)?.clone(),
+            )),
+            "x" => Box::new(component_x_ctor(
+                self,
+                arg::<ComponentSpec>(args, 0)?.clone(),
+            )),
+            "y" => Box::new(component_y_ctor(
+                self,
+                arg::<ComponentSpec>(args, 0)?.clone(),
+            )),
+            "z" => Box::new(component_z_ctor(
+                self,
+                arg::<ComponentSpec>(args, 0)?.clone(),
+            )),
             "rotate3" => Box::new(rotate3_ctor(self, arg::<Rotate3Spec>(args, 0)?.clone())),
             "splat" => Box::new(splat_ctor(self, arg::<SplatSpec>(args, 0)?.clone())),
             "vec3_from_vec2" => Box::new(vec3_from_vec2_ctor(
@@ -708,11 +859,11 @@ impl Pod for ExprPod {
             "expression" => Box::new(expression(self, *arg::<Handle>(args, 0)?)),
             "bind" => Box::new(bind(self, arg::<BindSpec>(args, 0)?.clone())),
             // **BT-3**：手写 WGSL 的慢路径分派（与注册表同源）。
-            "shader_source" => Box::new(shader_source(self, arg::<ShaderSourceSpec>(args, 0)?.clone())),
-            "query_self" => Box::new(query_self_ctor(
+            "shader_source" => Box::new(shader_source(
                 self,
-                arg::<ChannelSpec>(args, 0)?.clone(),
+                arg::<ShaderSourceSpec>(args, 0)?.clone(),
             )),
+            "query_self" => Box::new(query_self_ctor(self, arg::<ChannelSpec>(args, 0)?.clone())),
             "bind_each" => Box::new(bind_each(self, arg::<BindEachSpec>(args, 0)?.clone())),
             "exists" => Box::new(exists_ctor(self, arg::<ExistsSpec>(args, 0)?.clone())),
             // 糖层（第 BB 批）：短名与 `zela.math` 不重名，直接在这里分派。
@@ -898,11 +1049,7 @@ numeric_ops! {
 
 /// `clamp(t / dur, 0, 1)`：`ramp` / `ramp2` 共用的进度量（`t` = 绑定时钟局部时间）。
 fn sugar_progress(pod: &dyn Pod, dur: f64) -> Handle {
-    let scaled = call_args(
-        pod,
-        "scale",
-        &[pure(pod, 1.0 / dur), clock_time(pod)],
-    );
+    let scaled = call_args(pod, "scale", &[pure(pod, 1.0 / dur), clock_time(pod)]);
     call_args(pod, "clamp", &[scaled, pure(pod, 0.0), pure(pod, 1.0)])
 }
 
@@ -944,11 +1091,7 @@ fn sugar_wave(pod: &dyn Pod, base: f64, amp: f64, omega: f64) -> Handle {
     );
     sugar_narrow(
         pod,
-        call_args(
-            pod,
-            "add",
-            &[sugar_narrow(pod, pure(pod, base)), product],
-        ),
+        call_args(pod, "add", &[sugar_narrow(pod, pure(pod, base)), product]),
     )
 }
 
@@ -970,7 +1113,11 @@ fn sugar_orbit2d(pod: &dyn Pod, radius: f64, speed: f64, phase: f64) -> Handle {
     let axis = |op: &str| {
         sugar_narrow(
             pod,
-            call_args(pod, "mul", &[radius, sugar_narrow(pod, call_args(pod, op, &[angle]))]),
+            call_args(
+                pod,
+                "mul",
+                &[radius, sugar_narrow(pod, call_args(pod, op, &[angle]))],
+            ),
         )
     };
     let xy = call_args(pod, "vec2", &[axis("cos"), axis("sin")]);
@@ -1029,7 +1176,10 @@ fn sum(pod: &dyn Pod, terms: Vec<Handle>) -> Handle {
     if terms.is_empty() {
         return this.intern(Expr::pure(Literal::F64(0.0)));
     }
-    let terms: Vec<Expr> = terms.into_iter().map(|handle| child(this, handle)).collect();
+    let terms: Vec<Expr> = terms
+        .into_iter()
+        .map(|handle| child(this, handle))
+        .collect();
     this.intern(Expr::call(op("sum"), terms))
 }
 
@@ -1185,7 +1335,11 @@ fn not_ctor(pod: &dyn Pod, spec: NotSpec) -> Handle {
 /// Pod 侧只负责把它们编进树（类型由 `infer` 的方法签名目录给）。
 fn method_ctor(pod: &dyn Pod, spec: MethodCallSpec) -> Handle {
     let this = expr_pod(pod);
-    let args: Vec<Expr> = spec.args.iter().map(|handle| child(this, *handle)).collect();
+    let args: Vec<Expr> = spec
+        .args
+        .iter()
+        .map(|handle| child(this, *handle))
+        .collect();
     this.intern(Expr::method(
         MethodRef::new("zela.scene", spec.name),
         spec.object.slot() as u64,
@@ -1227,9 +1381,7 @@ fn state_ctor(pod: &dyn Pod, spec: StateSpec) -> Handle {
     let step = child(this, spec.step);
     let expression = match spec.predicate {
         crate::api::PredicateSpec::Always => Expr::state(init, step),
-        crate::api::PredicateSpec::Of { expr } => {
-            Expr::state_gated(init, step, child(this, expr))
-        }
+        crate::api::PredicateSpec::Of { expr } => Expr::state_gated(init, step, child(this, expr)),
     };
     this.intern(expression)
 }
@@ -1296,9 +1448,7 @@ fn clock_time_of(pod: &dyn Pod, clock: ClockSpec) -> Handle {
 /// 窗口 `[lo, hi)`：`And(Ge(t, lo), Lt(t, hi))`（`clock` 为 `None` ⇒ 绑定时钟）。
 fn window(pod: &dyn Pod, clock: Option<&ClockSpec>, lo: f64, hi: f64) -> Handle {
     let leaf = || match clock {
-        Some(clock) => {
-            Expr::channel(ChannelRef::builtin("time").with_clock(clock_shape(clock)))
-        }
+        Some(clock) => Expr::channel(ChannelRef::builtin("time").with_clock(clock_shape(clock))),
         None => Expr::channel(ChannelRef::builtin("time")),
     };
     let ge = Expr::call(op("ge"), [leaf(), Expr::pure(Literal::F64(lo))]);
@@ -1440,7 +1590,11 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
     let mangle = |qualified: &str| {
         let mut name = String::from("c_");
         for byte in qualified.bytes() {
-            name.push(if byte.is_ascii_alphanumeric() { byte as char } else { '_' });
+            name.push(if byte.is_ascii_alphanumeric() {
+                byte as char
+            } else {
+                '_'
+            });
         }
         name
     };
@@ -1465,12 +1619,19 @@ fn shader(pod: &dyn Pod, spec: ShaderSpec) {
             // **BT-1**：四维参数（std140：对齐 16、大小 16）。
             ze_comb::SlotType::Vec4 => (ze_comb::SlotType::Vec4, 16, 16),
             ze_comb::SlotType::Bool => {
-                push_binding_error(this, "着色 codegen 不支持 Bool 参数（uniform 里没有 bool）".to_string());
+                push_binding_error(
+                    this,
+                    "着色 codegen 不支持 Bool 参数（uniform 里没有 bool）".to_string(),
+                );
                 return;
             }
         };
         offset = offset.div_ceil(align) * align;
-        params.push(PendingShaderParam { channel: channel.clone(), kind, offset });
+        params.push(PendingShaderParam {
+            channel: channel.clone(),
+            kind,
+            offset,
+        });
         offset += size;
     }
     let size = offset.div_ceil(16) * 16;
@@ -1766,7 +1927,10 @@ fn bind(pod: &dyn Pod, spec: BindSpec) {
     // `still_time` 的语义要重新定义 ⇒ 装配期显式拒绝。
     if let Some(tree) = &predicate {
         if let Err(message) = reject_clock_scoped_time(tree) {
-            push_binding_error(this, format!("predicate 绑定 `{}` 非法：{message}", spec.object));
+            push_binding_error(
+                this,
+                format!("predicate 绑定 `{}` 非法：{message}", spec.object),
+            );
             return;
         }
     }
@@ -1947,14 +2111,22 @@ mod tests {
         };
         assert_eq!(op, &OpRef::new(LIBRARY_NAMESPACE, "scale"));
         assert_eq!(args.len(), 2);
-        assert_eq!(args[0].node, Node::Pure { value: Literal::F64(4.0 / std::f64::consts::PI) });
+        assert_eq!(
+            args[0].node,
+            Node::Pure {
+                value: Literal::F64(4.0 / std::f64::consts::PI)
+            }
+        );
         assert_eq!(
             args[1].node,
             Node::Call {
                 op: OpRef::new(LIBRARY_NAMESPACE, "sin"),
                 args: vec![Expr::call(
                     OpRef::new(LIBRARY_NAMESPACE, "mul"),
-                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(Literal::F64(1.0))]
+                    [
+                        Expr::channel(ChannelRef::builtin("time")),
+                        Expr::pure(Literal::F64(1.0))
+                    ]
                 )],
             }
         );
@@ -1999,9 +2171,19 @@ mod tests {
             panic!("期望 Select 节点");
         };
         assert!(matches!(cond.node, Node::Call { ref op, .. } if op.name == "gt"));
-        assert!(matches!(then.node, Node::Pure { value: Literal::F64(1.0) }));
+        assert!(matches!(
+            then.node,
+            Node::Pure {
+                value: Literal::F64(1.0)
+            }
+        ));
         assert!(
-            matches!(r#else.node, Node::Pure { value: Literal::F64(0.0) }),
+            matches!(
+                r#else.node,
+                Node::Pure {
+                    value: Literal::F64(0.0)
+                }
+            ),
             "otherwise → 产物字段 else"
         );
     }
@@ -2036,7 +2218,11 @@ mod tests {
                 object,
             },
         );
-        let Node::Read { channel, object: read_object } = &this.tree(h).unwrap().node else {
+        let Node::Read {
+            channel,
+            object: read_object,
+        } = &this.tree(h).unwrap().node
+        else {
             panic!("期望 Read 节点");
         };
         assert_eq!(channel.namespace, SCENE_NAMESPACE);
@@ -2076,7 +2262,12 @@ mod tests {
     fn empty_sum_is_a_literal_zero() {
         let this = pod();
         let h = sum(&this, Vec::new());
-        assert_eq!(this.tree(h).unwrap().node, Node::Pure { value: Literal::F64(0.0) });
+        assert_eq!(
+            this.tree(h).unwrap().node,
+            Node::Pure {
+                value: Literal::F64(0.0)
+            }
+        );
     }
 
     /// **本批 A**：比较算子建出 `call` 节点，结果类型是 Bool（不经过 `anim_value`）。
@@ -2085,13 +2276,7 @@ mod tests {
         let this = pod();
         let t = time(&this);
         let two = pure(&this, 2.0);
-        let lt = lt_ctor(
-            &this,
-            LtSpec {
-                a: t,
-                b: two,
-            },
-        );
+        let lt = lt_ctor(&this, LtSpec { a: t, b: two });
         let Node::Call { op, args } = &this.tree(lt).unwrap().node else {
             panic!("期望 call 节点");
         };
@@ -2099,13 +2284,7 @@ mod tests {
         assert_eq!(args.len(), 2);
 
         // `And` / `Not` 也是值算子：结构上只是 call。
-        let and = and_ctor(
-            &this,
-            AndSpec {
-                a: lt,
-                b: lt,
-            },
-        );
+        let and = and_ctor(&this, AndSpec { a: lt, b: lt });
         let not = not_ctor(&this, NotSpec { of: and });
         assert!(matches!(
             this.tree(not).unwrap().node,
@@ -2164,14 +2343,15 @@ mod tests {
         assert_eq!(shape.links[0].rate, 0.5);
         assert_eq!(shape.links[1].shift, 2.0);
         // 无身份的 `clock.time()` 仍是 `None`（读绑定时钟）。
-        assert!(this
-            .tree(clock_time(&this))
-            .unwrap()
-            .node
-            .channel()
-            .unwrap()
-            .clock
-            .is_none());
+        assert!(
+            this.tree(clock_time(&this))
+                .unwrap()
+                .node
+                .channel()
+                .unwrap()
+                .clock
+                .is_none()
+        );
     }
 
     /// **B1 窗口函子**：`clock.range(lo, hi)` ≡ `And(Ge(t, lo), Lt(t, hi))`。
@@ -2191,12 +2371,22 @@ mod tests {
             panic!("期望 Ge 调用");
         };
         assert_eq!(op.name, "ge");
-        assert_eq!(ge[1].node, Node::Pure { value: Literal::F64(0.0) });
+        assert_eq!(
+            ge[1].node,
+            Node::Pure {
+                value: Literal::F64(0.0)
+            }
+        );
         let Node::Call { op, args: lt } = &args[1].node else {
             panic!("期望 Lt 调用");
         };
         assert_eq!(op.name, "lt");
-        assert_eq!(lt[1].node, Node::Pure { value: Literal::F64(2.0) });
+        assert_eq!(
+            lt[1].node,
+            Node::Pure {
+                value: Literal::F64(2.0)
+            }
+        );
     }
 
     /// **B1 硬约束**：predicate 里出现带时钟身份的时间 ⇒ 装配期显式拒绝。
@@ -2233,7 +2423,12 @@ mod tests {
         let Node::NatRec { count, .. } = &this.tree(ok).unwrap().node else {
             panic!("期望 NatRec 节点");
         };
-        assert_eq!(count.node, Node::Pure { value: Literal::I64(4) });
+        assert_eq!(
+            count.node,
+            Node::Pure {
+                value: Literal::I64(4)
+            }
+        );
 
         let bad = nat_rec_ctor(
             &this,
@@ -2270,7 +2465,10 @@ mod tests {
             "期望 State 节点：{:?}",
             tree.node
         );
-        assert!(!tree.requires_replay(), "State 是帧号的纯函数，不应触发 Replay");
+        assert!(
+            !tree.requires_replay(),
+            "State 是帧号的纯函数，不应触发 Replay"
+        );
     }
 
     /// 快慢路径调用同一组 helper ⇒ 结果一致（结构可序列化对比）。
@@ -2402,19 +2600,32 @@ mod tests {
         let pending = this.take_shaders();
         assert_eq!(pending.len(), 1);
         assert!(pending[0].rgba, "vec4 返回必须带 rgba");
-        assert!(pending[0].fragment, "vec4 出口必须走逐片元通道（派生，不是开关）");
+        assert!(
+            pending[0].fragment,
+            "vec4 出口必须走逐片元通道（派生，不是开关）"
+        );
     }
 
     /// **BT-3** 契约：缺 `struct Params` / 缺 `fn eval` / 声明了参数 ⇒ 显式报错。
     #[test]
     fn handwritten_shader_contract_is_enforced() {
         let eval_only = "fn eval(p: Params, index: u32) -> vec3<f32> { return vec3<f32>(0.0); }";
-        assert!(validate_handwritten(eval_only).unwrap_err().contains("Params"));
+        assert!(
+            validate_handwritten(eval_only)
+                .unwrap_err()
+                .contains("Params")
+        );
         let params_only = "struct Params {\n    _unused: u32,\n}\n";
-        assert!(validate_handwritten(params_only).unwrap_err().contains("fn eval"));
+        assert!(
+            validate_handwritten(params_only)
+                .unwrap_err()
+                .contains("fn eval")
+        );
         let with_param = "struct Params {\n    a: vec4<f32>,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> { return vec3<f32>(0.0); }";
         assert!(
-            validate_handwritten(with_param).unwrap_err().contains("_unused: u32"),
+            validate_handwritten(with_param)
+                .unwrap_err()
+                .contains("_unused: u32"),
             "声明参数必须显式拒绝（否则读到的是零）"
         );
         let ok = "struct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> { return vec3<f32>(0.0); }";

@@ -11,13 +11,13 @@
 - 路径：`crates/web/zela-web`
 - 生产依赖（上游，dev-deps 不计）：`ze-render-ir`、`zela-playback`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`
 - 被依赖（下游）：（无）
-- 源文件：1 个 · 1052 行
+- 源文件：1 个 · 1065 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 1052 | `zela-web` — 浏览器薄壳（**唯一**允许碰 DOM / WebGPU 初始化的地方）。 |
+| `src/lib.rs` | 1065 | `zela-web` — 浏览器薄壳（**唯一**允许碰 DOM / WebGPU 初始化的地方）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

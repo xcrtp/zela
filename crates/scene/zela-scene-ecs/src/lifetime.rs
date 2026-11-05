@@ -211,8 +211,8 @@ mod tests {
     use super::*;
     use crate::deferred::{DeferredApplySystem, DeferredCommands};
     use crate::scene::Scene as SceneStruct;
-    use ze_scene_core::Circle;
     use ze_scene_contract::Scene as _;
+    use ze_scene_core::Circle;
     use zela_schedule::resource::Resources;
     use zela_schedule::scheduler::{Phase, Scheduler};
 

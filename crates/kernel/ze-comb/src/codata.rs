@@ -117,7 +117,9 @@ pub fn observe<U: Unfold>(
     seed: U::State,
     spec: CodataSpec,
 ) -> Result<Vec<U::State>, CodataError> {
-    Ok(expand(unfold, seed, spec)?.levels.swap_remove(spec.depth as usize))
+    Ok(expand(unfold, seed, spec)?
+        .levels
+        .swap_remove(spec.depth as usize))
 }
 
 #[cfg(test)]

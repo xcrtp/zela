@@ -38,7 +38,11 @@ pub fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     let mut at = 0;
     let line = |at: &mut usize| -> Result<&[u8], String> {
         let start = *at;
-        let end = data[start..].iter().position(|&b| b == b'\n').ok_or("a Radiance file ends in its header")? + start;
+        let end = data[start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .ok_or("a Radiance file ends in its header")?
+            + start;
         *at = end + 1;
         Ok(&data[start..end])
     };
@@ -50,19 +54,33 @@ pub fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     let size = String::from_utf8_lossy(line(&mut at)?).to_string();
     let words: Vec<&str> = size.split_whitespace().collect();
     let (height, width) = match words.as_slice() {
-        ["-Y", h, "+X", w] => (h.parse::<u32>().map_err(|e| e.to_string())?, w.parse::<u32>().map_err(|e| e.to_string())?),
-        _ => return Err(format!("a Radiance file's orientation that is not \"-Y height +X width\": {size}")),
+        ["-Y", h, "+X", w] => (
+            h.parse::<u32>().map_err(|e| e.to_string())?,
+            w.parse::<u32>().map_err(|e| e.to_string())?,
+        ),
+        _ => {
+            return Err(format!(
+                "a Radiance file's orientation that is not \"-Y height +X width\": {size}"
+            ));
+        }
     };
     if width == 0 || height == 0 {
         return Err("a Radiance picture's dimensions must be positive".into());
     }
-    let length = (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(4))
-        .filter(|&n| n <= isize::MAX as usize).ok_or("a Radiance picture is too large to address")?;
+    let length = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(4))
+        .filter(|&n| n <= isize::MAX as usize)
+        .ok_or("a Radiance picture is too large to address")?;
     let row_bytes = length / height as usize;
     // A header is not evidence that its pixels exist. A flat picture needs all its
     // bytes; an RLE row needs its four-byte header and, for each of four components,
     // at least two encoded bytes per 127 decoded bytes (the longest repeated run).
-    let minimum = if (8..0x8000).contains(&width) { (4 + 8 * width.div_ceil(127)) as usize * height as usize } else { length };
+    let minimum = if (8..0x8000).contains(&width) {
+        (4 + 8 * width.div_ceil(127)) as usize * height as usize
+    } else {
+        length
+    };
     if data.len() - at < minimum {
         return Err("a Radiance file ends early".into());
     }
@@ -74,10 +92,21 @@ pub fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     };
     for y in 0..height as usize {
         let row = &mut out[y * row_bytes..(y + 1) * row_bytes];
-        let head = [data.get(at).copied(), data.get(at + 1).copied(), data.get(at + 2).copied()];
-        if (8..0x8000).contains(&width) && head[0] == Some(2) && head[1] == Some(2) && head[2].is_some_and(|b| b & 0x80 == 0) {
+        let head = [
+            data.get(at).copied(),
+            data.get(at + 1).copied(),
+            data.get(at + 2).copied(),
+        ];
+        if (8..0x8000).contains(&width)
+            && head[0] == Some(2)
+            && head[1] == Some(2)
+            && head[2].is_some_and(|b| b & 0x80 == 0)
+        {
             // run-length encoded: four header bytes, then each component's runs across the row
-            let scanline = data.get(at..).and_then(|rest| rest.get(..4)).ok_or("a Radiance file ends early")?;
+            let scanline = data
+                .get(at..)
+                .and_then(|rest| rest.get(..4))
+                .ok_or("a Radiance file ends early")?;
             if u16::from_be_bytes([scanline[2], scanline[3]]) as u32 != width {
                 return Err("a Radiance scanline's width does not match its picture".into());
             }
@@ -89,12 +118,14 @@ pub fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
                     if count > 128 {
                         let value = byte(&mut at)?;
                         for _ in 0..count - 128 {
-                            *row.get_mut(4 * x + c).ok_or("a Radiance run past its row")? = value;
+                            *row.get_mut(4 * x + c)
+                                .ok_or("a Radiance run past its row")? = value;
                             x += 1;
                         }
                     } else {
                         for _ in 0..count {
-                            *row.get_mut(4 * x + c).ok_or("a Radiance run past its row")? = byte(&mut at)?;
+                            *row.get_mut(4 * x + c)
+                                .ok_or("a Radiance run past its row")? = byte(&mut at)?;
                             x += 1;
                         }
                     }
@@ -102,7 +133,10 @@ pub fn read_hdr(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
             }
         } else {
             // flat: four bytes a pixel
-            let bytes = data.get(at..).and_then(|rest| rest.get(..row_bytes)).ok_or("a Radiance file ends early")?;
+            let bytes = data
+                .get(at..)
+                .and_then(|rest| rest.get(..row_bytes))
+                .ok_or("a Radiance file ends early")?;
             row.copy_from_slice(bytes);
             at += row_bytes;
         }
@@ -116,7 +150,11 @@ fn light(p: &[u8]) -> [f64; 3] {
         return [0.0; 3];
     }
     let scale = 2f64.powi(p[3] as i32 - 136);
-    [p[0] as f64 * scale, p[1] as f64 * scale, p[2] as f64 * scale]
+    [
+        p[0] as f64 * scale,
+        p[1] as f64 * scale,
+        p[2] as f64 * scale,
+    ]
 }
 
 /// Light as an RGBE pixel: each channel's mantissa against the brightest's exponent, truncated (as Radiance writes it).
@@ -127,7 +165,12 @@ fn rgbe(c: [f64; 3]) -> [u8; 4] {
     }
     let exponent = top.log2().floor() as i32 + 1; // top = m 2^exponent, m in [0.5, 1)
     let scale = 256.0 / 2f64.powi(exponent);
-    [(c[0] * scale) as u8, (c[1] * scale) as u8, (c[2] * scale) as u8, (exponent + 128) as u8]
+    [
+        (c[0] * scale) as u8,
+        (c[1] * scale) as u8,
+        (c[2] * scale) as u8,
+        (exponent + 128) as u8,
+    ]
 }
 
 #[cfg(any(feature = "python", test))]
@@ -138,7 +181,11 @@ pub(crate) const WIDEST: u32 = 4096;
 #[cfg(any(feature = "python", test))]
 /// A picture no wider than `WIDEST`: each halving averages the available pixels' light
 /// in each 2x2 block, including an odd edge or a picture only one pixel high.
-pub(crate) fn narrowed(mut width: u32, mut height: u32, mut pixels: Vec<u8>) -> (u32, u32, Vec<u8>) {
+pub(crate) fn narrowed(
+    mut width: u32,
+    mut height: u32,
+    mut pixels: Vec<u8>,
+) -> (u32, u32, Vec<u8>) {
     while width > WIDEST {
         let (w, h) = (width.div_ceil(2), height.div_ceil(2));
         let mut out = Vec::with_capacity(w as usize * h as usize * 4);
@@ -148,7 +195,9 @@ pub(crate) fn narrowed(mut width: u32, mut height: u32, mut pixels: Vec<u8>) -> 
                 let (columns, rows) = ((width - 2 * x).min(2), (height - 2 * y).min(2));
                 let weight = 1.0 / (columns * rows) as f64;
                 for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    if dx >= columns || dy >= rows { continue; }
+                    if dx >= columns || dy >= rows {
+                        continue;
+                    }
                     let at = ((2 * y + dy) as usize * width as usize + (2 * x + dx) as usize) * 4;
                     let l = light(&pixels[at..at + 4]);
                     (0..3).for_each(|c| sum[c] += l[c] * weight);
@@ -167,7 +216,11 @@ pub(crate) fn narrowed(mut width: u32, mut height: u32, mut pixels: Vec<u8>) -> 
 /// the right is turning right (clockwise from above: as it shows to someone inside it; Blender's convention).
 pub(crate) fn direction(u: f64, v: f64) -> [f64; 3] {
     let (phi, theta) = ((0.5 - u) * std::f64::consts::TAU, v * std::f64::consts::PI);
-    [theta.sin() * phi.cos(), theta.sin() * phi.sin(), theta.cos()]
+    [
+        theta.sin() * phi.cos(),
+        theta.sin() * phi.sin(),
+        theta.cos(),
+    ]
 }
 
 #[cfg(feature = "render")]
@@ -181,12 +234,24 @@ pub(crate) fn harmonics(width: u32, height: u32, rgbe: &[u8]) -> [[f32; 4]; 9] {
     let step = (width / 1024).max(1);
     for y in (0..height).step_by(step as usize) {
         let v = (y as f64 + 0.5) / height as f64;
-        let solid = (std::f64::consts::TAU / width as f64 * step as f64) * (std::f64::consts::PI / height as f64 * step as f64) * (v * std::f64::consts::PI).sin();
+        let solid = (std::f64::consts::TAU / width as f64 * step as f64)
+            * (std::f64::consts::PI / height as f64 * step as f64)
+            * (v * std::f64::consts::PI).sin();
         for x in (0..width).step_by(step as usize) {
             let at = ((y * width + x) * 4) as usize;
             let l = light(&rgbe[at..at + 4]);
             let [dx, dy, dz] = direction((x as f64 + 0.5) / width as f64, v);
-            let basis = [0.282095, 0.488603 * dy, 0.488603 * dz, 0.488603 * dx, 1.092548 * dx * dy, 1.092548 * dy * dz, 0.315392 * (3.0 * dz * dz - 1.0), 1.092548 * dx * dz, 0.546274 * (dx * dx - dy * dy)];
+            let basis = [
+                0.282095,
+                0.488603 * dy,
+                0.488603 * dz,
+                0.488603 * dx,
+                1.092548 * dx * dy,
+                1.092548 * dy * dz,
+                0.315392 * (3.0 * dz * dz - 1.0),
+                1.092548 * dx * dz,
+                0.546274 * (dx * dx - dy * dy),
+            ];
             for (k, b) in basis.iter().enumerate() {
                 for c in 0..3 {
                     sum[k][c] += l[c] * b * solid;
@@ -195,8 +260,25 @@ pub(crate) fn harmonics(width: u32, height: u32, rgbe: &[u8]) -> [[f32; 4]; 9] {
         }
     }
     // the convolution with the cosine lobe over pi, and each basis function's constant (applied to its monomial)
-    let scale = [0.282095 * 1.0, 0.488603 * 2.0 / 3.0, 0.488603 * 2.0 / 3.0, 0.488603 * 2.0 / 3.0, 1.092548 * 0.25, 1.092548 * 0.25, 0.315392 * 0.25, 1.092548 * 0.25, 0.546274 * 0.25];
-    std::array::from_fn(|k| [(sum[k][0] * scale[k]) as f32, (sum[k][1] * scale[k]) as f32, (sum[k][2] * scale[k]) as f32, 0.0])
+    let scale = [
+        0.282095 * 1.0,
+        0.488603 * 2.0 / 3.0,
+        0.488603 * 2.0 / 3.0,
+        0.488603 * 2.0 / 3.0,
+        1.092548 * 0.25,
+        1.092548 * 0.25,
+        0.315392 * 0.25,
+        1.092548 * 0.25,
+        0.546274 * 0.25,
+    ];
+    std::array::from_fn(|k| {
+        [
+            (sum[k][0] * scale[k]) as f32,
+            (sum[k][1] * scale[k]) as f32,
+            (sum[k][2] * scale[k]) as f32,
+            0.0,
+        ]
+    })
 }
 
 #[cfg(feature = "render")]
@@ -232,14 +314,19 @@ pub(crate) fn studio() -> (u32, u32, Vec<u8>) {
         let el = PI / 2.0 - (y as f64 + 0.5) / h as f64 * PI;
         for x in 0..w {
             let az = (0.5 - (x as f64 + 0.5) / w as f64) * TAU;
-            let room = if el < 0.0 { 0.12 } else { 0.1 - 0.07 * el.sin() };
+            let room = if el < 0.0 {
+                0.12
+            } else {
+                0.1 - 0.07 * el.sin()
+            };
             let mut c = [room; 3];
             for (at, up, wide, tall, radiance, color) in SOFTBOXES {
                 let d = az - at.to_radians();
                 let across = (d - TAU * (d / TAU).round()).abs() * el.cos();
                 let above = (el - up.to_radians()).abs();
                 let (half_w, half_h) = (wide.to_radians() / 2.0, tall.to_radians() / 2.0);
-                let shown = smooth(half_w + soft, half_w - soft, across) * smooth(half_h + soft, half_h - soft, above);
+                let shown = smooth(half_w + soft, half_w - soft, across)
+                    * smooth(half_h + soft, half_h - soft, above);
                 (0..3).for_each(|k| c[k] += shown * radiance * color[k]);
             }
             out.extend(rgbe(c));
@@ -265,7 +352,10 @@ pub(crate) struct Sun {
 /// must stand (a fraction of the peak's); and the least share of the picture's light it holds.
 const SUN_REACH: f64 = 8.0 * std::f64::consts::PI / 180.0;
 #[cfg(feature = "render")]
-const SUN_SKY: (f64, f64) = (8.0 * std::f64::consts::PI / 180.0, 12.0 * std::f64::consts::PI / 180.0);
+const SUN_SKY: (f64, f64) = (
+    8.0 * std::f64::consts::PI / 180.0,
+    12.0 * std::f64::consts::PI / 180.0,
+);
 #[cfg(feature = "render")]
 const SUN_EDGE: f64 = 0.02;
 #[cfg(feature = "render")]
@@ -281,8 +371,10 @@ fn lift_sun(width: u32, height: u32, pixels: &mut [u8]) -> Option<Sun> {
     use std::f64::consts::{PI, TAU};
     let (w, h) = (width as usize, height as usize);
     let luma = |c: [f64; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-    let solid = |y: usize| TAU / w as f64 * PI / h as f64 * ((y as f64 + 0.5) / h as f64 * PI).sin();
-    let toward_of = |x: usize, y: usize| direction((x as f64 + 0.5) / w as f64, (y as f64 + 0.5) / h as f64);
+    let solid =
+        |y: usize| TAU / w as f64 * PI / h as f64 * ((y as f64 + 0.5) / h as f64 * PI).sin();
+    let toward_of =
+        |x: usize, y: usize| direction((x as f64 + 0.5) / w as f64, (y as f64 + 0.5) / h as f64);
     let lit = |x: usize, y: usize| light(&pixels[(y * w + x) * 4..][..4]);
     let (mut peak, mut brightest, mut total) = ((0, 0), 0.0, 0.0);
     for y in 0..h {
@@ -300,7 +392,9 @@ fn lift_sun(width: u32, height: u32, pixels: &mut [u8]) -> Option<Sun> {
     let toward = toward_of(peak.0, peak.1);
     let angle = |x: usize, y: usize| {
         let d = toward_of(x, y);
-        (d[0] * toward[0] + d[1] * toward[1] + d[2] * toward[2]).clamp(-1.0, 1.0).acos()
+        (d[0] * toward[0] + d[1] * toward[1] + d[2] * toward[2])
+            .clamp(-1.0, 1.0)
+            .acos()
     };
     // the sky around it: each channel's median over the ring (the rows it can reach, every column)
     let span = (SUN_SKY.1 / PI * h as f64).ceil() as usize + 1;
@@ -327,8 +421,16 @@ fn lift_sun(width: u32, height: u32, pixels: &mut [u8]) -> Option<Sun> {
     let mut stack = vec![peak];
     while let Some((x, y)) = stack.pop() {
         let mut next = vec![((x + 1) % w, y), ((x + w - 1) % w, y)];
-        next.push(if y == 0 { ((x + w / 2) % w, 0) } else { (x, y - 1) });
-        next.push(if y == h - 1 { ((x + w / 2) % w, h - 1) } else { (x, y + 1) });
+        next.push(if y == 0 {
+            ((x + w / 2) % w, 0)
+        } else {
+            (x, y - 1)
+        });
+        next.push(if y == h - 1 {
+            ((x + w / 2) % w, h - 1)
+        } else {
+            (x, y + 1)
+        });
         for n in next {
             if region.contains(&n) || luma(lit(n.0, n.1)) <= edge {
                 continue;
@@ -354,12 +456,18 @@ fn lift_sun(width: u32, height: u32, pixels: &mut [u8]) -> Option<Sun> {
     if luma(excess) < SUN_SHARE * total {
         return None;
     }
-    let length = (centroid[0] * centroid[0] + centroid[1] * centroid[1] + centroid[2] * centroid[2]).sqrt().max(1e-12);
+    let length =
+        (centroid[0] * centroid[0] + centroid[1] * centroid[1] + centroid[2] * centroid[2])
+            .sqrt()
+            .max(1e-12);
     let shown = rgbe(sky);
     for &(x, y) in &region {
         pixels[(y * w + x) * 4..][..4].copy_from_slice(&shown);
     }
-    Some(Sun { toward: centroid.map(|c| (c / length) as f32), light: excess.map(|c| (c / PI) as f32) })
+    Some(Sun {
+        toward: centroid.map(|c| (c / length) as f32),
+        light: excess.map(|c| (c / PI) as f32),
+    })
 }
 
 #[cfg(feature = "render")]
@@ -389,9 +497,20 @@ impl Environment {
         let harmonics = harmonics(width, height, &rgbe);
         // the brightest channel of any pixel (a texel, a mip and a level average them: none is brighter), at half the
         // range's top
-        let brightest = rgbe.chunks_exact(4).map(|p| light(p).into_iter().fold(0.0, f64::max)).fold(0.0, f64::max);
+        let brightest = rgbe
+            .chunks_exact(4)
+            .map(|p| light(p).into_iter().fold(0.0, f64::max))
+            .fold(0.0, f64::max);
         let unit = (brightest / 32768.0).max(1.0) as f32;
-        Self { width, height, rgbe, harmonics, cube: None, unit, sun }
+        Self {
+            width,
+            height,
+            rgbe,
+            harmonics,
+            cube: None,
+            unit,
+            sun,
+        }
     }
 }
 
@@ -410,26 +529,94 @@ pub(crate) struct Prefilter {
 #[cfg(feature = "render")]
 impl Prefilter {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("environment"), source: wgpu::ShaderSource::Wgsl(include_str!("environment.wgsl").into()) });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("environment"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("environment.wgsl").into()),
+        });
         let compute = wgpu::ShaderStages::COMPUTE;
-        let entry = |binding, ty| wgpu::BindGroupLayoutEntry { binding, visibility: compute, ty, count: None };
-        let out = |binding| entry(binding, wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: wgpu::TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2Array });
+        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: compute,
+            ty,
+            count: None,
+        };
+        let out = |binding| {
+            entry(
+                binding,
+                wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                },
+            )
+        };
         let make = |label: &str, entries: &[wgpu::BindGroupLayoutEntry]| {
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries });
-            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor { label: Some(label), layout: Some(&pipeline_layout), module: &shader, entry_point: Some(label), compilation_options: Default::default(), cache: None });
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries,
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(label),
+                compilation_options: Default::default(),
+                cache: None,
+            });
             (layout, pipeline)
         };
-        let picture = entry(0, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Uint, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false });
-        let level = entry(4, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2Array, multisampled: false });
-        let cube = entry(5, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::Cube, multisampled: false });
-        let sampler = entry(2, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering));
-        let params = entry(3, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None });
+        let picture = entry(
+            0,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Uint,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+        );
+        let level = entry(
+            4,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            },
+        );
+        let cube = entry(
+            5,
+            wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::Cube,
+                multisampled: false,
+            },
+        );
+        let sampler = entry(
+            2,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        );
+        let params = entry(
+            3,
+            wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+        );
         Self {
             to_cube: make("to_cube", &[picture, out(1), params]),
             halve: make("halve", &[level, out(1)]),
             prefilter: make("prefilter", &[cube, out(1), sampler, params]),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor { label: Some("environment"), mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, mipmap_filter: wgpu::MipmapFilterMode::Linear, ..Default::default() }),
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("environment"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                ..Default::default()
+            }),
             targets: crate::render::TargetPool::new(),
         }
     }
@@ -441,7 +628,12 @@ impl Prefilter {
     ///
     /// **BR-3**：拆成 prepare（建纹理 / 组 / 参数、写图片，见 [`Prefilter::prepare`]）与 execute
     /// （按步设管线 / 组 / 派发，见 [`Prefilter::record`]）。
-    pub(crate) fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, env: &Environment) -> Prefiltered {
+    pub(crate) fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        env: &Environment,
+    ) -> Prefiltered {
         // BV-1：源图 / 两级立方体 / 每级 mip 视图都按描述符从目标池申请（同一尺寸复用；租约由池持有）。
         let picture = crate::render::TargetDesc::new(
             "environment picture",
@@ -455,8 +647,16 @@ impl Prefilter {
             queue.write_texture(
                 texture.as_image_copy(),
                 &env.rgbe,
-                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * env.width), rows_per_image: Some(env.height) },
-                wgpu::Extent3d { width: env.width, height: env.height, depth_or_array_layers: 1 },
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * env.width),
+                    rows_per_image: Some(env.height),
+                },
+                wgpu::Extent3d {
+                    width: env.width,
+                    height: env.height,
+                    depth_or_array_layers: 1,
+                },
             );
         }
         let mips = SIDE.ilog2() + 1;
@@ -468,17 +668,44 @@ impl Prefilter {
             mips,
             samples: 1,
             format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
         };
-        let (source, out) = (cube_desc("environment source", mips), cube_desc("environment", LEVELS));
+        let (source, out) = (
+            cube_desc("environment source", mips),
+            cube_desc("environment", LEVELS),
+        );
         let bind = |layout: &wgpu::BindGroupLayout, entries: &[(u32, wgpu::BindingResource)]| {
-            let entries: Vec<wgpu::BindGroupEntry> = entries.iter().map(|(binding, resource)| wgpu::BindGroupEntry { binding: *binding, resource: resource.clone() }).collect();
-            device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
+            let entries: Vec<wgpu::BindGroupEntry> = entries
+                .iter()
+                .map(|(binding, resource)| wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: resource.clone(),
+                })
+                .collect();
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout,
+                entries: &entries,
+            })
         };
         let view = wgpu::BindingResource::TextureView;
-        let picture_view = self.targets.view(device, picture, crate::render::TargetView::default());
-        let sources: Vec<crate::render::TrackedView> = (0..mips).map(|mip| self.targets.view(device, source, crate::render::TargetView::array_mip(mip))).collect();
-        let outs: Vec<crate::render::TrackedView> = (0..LEVELS).map(|l| self.targets.view(device, out, crate::render::TargetView::array_mip(l))).collect();
+        let picture_view = self
+            .targets
+            .view(device, picture, crate::render::TargetView::default());
+        let sources: Vec<crate::render::TrackedView> = (0..mips)
+            .map(|mip| {
+                self.targets
+                    .view(device, source, crate::render::TargetView::array_mip(mip))
+            })
+            .collect();
+        let outs: Vec<crate::render::TrackedView> = (0..LEVELS)
+            .map(|l| {
+                self.targets
+                    .view(device, out, crate::render::TargetView::array_mip(l))
+            })
+            .collect();
         let mut steps = Vec::with_capacity(1 + (mips - 1) as usize + LEVELS as usize);
         // BO-2：每个 entry 的除数由 `@workgroup_size` 查表给出（三个 entry 都是 8×8×1，六面）。
         let cube = |side: u32, entry: &'static str| {
@@ -492,30 +719,88 @@ impl Prefilter {
         };
         // the source: level 0 from the picture, then each mip the average of the one before
         let uniform = |params: [f32; 8]| {
-            let buffer = crate::render::counted_buffer(device, &wgpu::BufferDescriptor { label: Some("prefilter"), size: 32, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+            let buffer = crate::render::counted_buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("prefilter"),
+                    size: 32,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            );
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&params));
             buffer
         };
         // BU-1：这些参数缓冲只被 steps 的组引用 —— 租金跟着 `Prefiltered` 走。
         let mut held_buffers: Vec<crate::render::TrackedBuffer> = Vec::new();
         let scale = uniform([0.0, 0.0, 0.0, 0.0, 1.0 / env.unit, 0.0, 0.0, 0.0]);
-        steps.push((0, bind(&self.to_cube.0, &[(0, view(&picture_view)), (1, view(&sources[0])), (3, scale.as_entire_binding())]), cube(SIDE, "to_cube")));
+        steps.push((
+            0,
+            bind(
+                &self.to_cube.0,
+                &[
+                    (0, view(&picture_view)),
+                    (1, view(&sources[0])),
+                    (3, scale.as_entire_binding()),
+                ],
+            ),
+            cube(SIDE, "to_cube"),
+        ));
         held_buffers.push(scale);
         for mip in 1..mips {
-            steps.push((1, bind(&self.halve.0, &[(4, view(&sources[mip as usize - 1])), (1, view(&sources[mip as usize]))]), cube(SIDE >> mip, "halve")));
+            steps.push((
+                1,
+                bind(
+                    &self.halve.0,
+                    &[
+                        (4, view(&sources[mip as usize - 1])),
+                        (1, view(&sources[mip as usize])),
+                    ],
+                ),
+                cube(SIDE >> mip, "halve"),
+            ));
         }
         // the levels: the GGX lobe's average of the source
-        let source_cube = self.targets.view(device, source, crate::render::TargetView::cube());
+        let source_cube = self
+            .targets
+            .view(device, source, crate::render::TargetView::cube());
         for l in 0..LEVELS {
             let t = l as f32 / (LEVELS - 1) as f32;
             let perceptual = 1.0 - (1.0 - t).sqrt(); // l = (LEVELS - 1) r (2 - r)
             let samples: u32 = if l == 0 { 1 } else { SAMPLES };
-            let buffer = uniform([perceptual * perceptual, samples as f32, (SIDE * SIDE) as f32, (SIDE / COARSEST).ilog2() as f32, 1.0, 0.0, 0.0, 0.0]);
-            steps.push((2, bind(&self.prefilter.0, &[(5, view(&source_cube)), (1, view(&outs[l as usize])), (2, wgpu::BindingResource::Sampler(&self.sampler)), (3, buffer.as_entire_binding())]), cube(SIDE >> l, "prefilter")));
+            let buffer = uniform([
+                perceptual * perceptual,
+                samples as f32,
+                (SIDE * SIDE) as f32,
+                (SIDE / COARSEST).ilog2() as f32,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+            ]);
+            steps.push((
+                2,
+                bind(
+                    &self.prefilter.0,
+                    &[
+                        (5, view(&source_cube)),
+                        (1, view(&outs[l as usize])),
+                        (2, wgpu::BindingResource::Sampler(&self.sampler)),
+                        (3, buffer.as_entire_binding()),
+                    ],
+                ),
+                cube(SIDE >> l, "prefilter"),
+            ));
             held_buffers.push(buffer);
         }
-        let cube = self.targets.view(device, out, crate::render::TargetView::cube());
-        Prefiltered { steps, cube, _held: held_buffers }
+        let cube = self
+            .targets
+            .view(device, out, crate::render::TargetView::cube());
+        Prefiltered {
+            steps,
+            cube,
+            _held: held_buffers,
+        }
     }
 
     /// **BR-3**：录制 prepare 给出的每一步（顺序即 `steps` 的顺序）。
@@ -548,7 +833,13 @@ mod tests {
 
     #[test]
     fn malformed_radiance_shapes_fail_without_panicking_or_allocating_the_header() {
-        for (width, height) in [(0, 1), (1, 0), (65536, 16384), (8, 1 << 29), (u32::MAX, u32::MAX)] {
+        for (width, height) in [
+            (0, 1),
+            (1, 0),
+            (65536, 16384),
+            (8, 1 << 29),
+            (u32::MAX, u32::MAX),
+        ] {
             let header = format!("#?RADIANCE\n\n-Y {height} +X {width}\n");
             assert!(read_hdr(header.as_bytes()).is_err(), "{width} x {height}");
         }
@@ -591,8 +882,14 @@ mod tests {
                     }
                 }
             }
-            assert_eq!(file.len() - header, (4 + 8 * width.div_ceil(127)) as usize * 2);
-            assert_eq!(read_hdr(&file).unwrap(), (width, 2, [128, 64, 32, 129].repeat(width as usize * 2)));
+            assert_eq!(
+                file.len() - header,
+                (4 + 8 * width.div_ceil(127)) as usize * 2
+            );
+            assert_eq!(
+                read_hdr(&file).unwrap(),
+                (width, 2, [128, 64, 32, 129].repeat(width as usize * 2))
+            );
         }
     }
 
@@ -649,29 +946,64 @@ mod tests {
             let start = std::time::Instant::now();
             // BR-3：与生产路径同一形态 —— prepare 建资源，record 录制。
             let prepared = prefilter.prepare(&gpu.device, &gpu.queue, env);
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("environment"), timestamp_writes: None });
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("environment"),
+                timestamp_writes: None,
+            });
             prefilter.record(&mut pass, &prepared);
             drop(pass);
             let Prefiltered { cube, .. } = prepared;
             gpu.queue.submit(Some(encoder.finish()));
-            gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            gpu.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll");
             let took = start.elapsed();
             let levels = (0..LEVELS)
                 .map(|level| {
                     let side = SIDE >> level;
                     let row = (8 * side).next_multiple_of(256);
-                    let buffer = crate::render::counted_buffer(&gpu.device, &wgpu::BufferDescriptor { label: None, size: (row * side * 6) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+                    let buffer = crate::render::counted_buffer(
+                        &gpu.device,
+                        &wgpu::BufferDescriptor {
+                            label: None,
+                            size: (row * side * 6) as u64,
+                            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                            mapped_at_creation: false,
+                        },
+                    );
                     let mut encoder = gpu.device.create_command_encoder(&Default::default());
                     encoder.copy_texture_to_buffer(
-                        wgpu::TexelCopyTextureInfo { texture: cube.texture(), mip_level: level, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-                        wgpu::TexelCopyBufferInfo { buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(side) } },
-                        wgpu::Extent3d { width: side, height: side, depth_or_array_layers: 6 },
+                        wgpu::TexelCopyTextureInfo {
+                            texture: cube.texture(),
+                            mip_level: level,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: &buffer,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(row),
+                                rows_per_image: Some(side),
+                            },
+                        },
+                        wgpu::Extent3d {
+                            width: side,
+                            height: side,
+                            depth_or_array_layers: 6,
+                        },
                     );
                     gpu.queue.submit(Some(encoder.finish()));
-                    buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
-                    gpu.device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+                    buffer
+                        .slice(..)
+                        .map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+                    gpu.device
+                        .poll(wgpu::PollType::wait_indefinitely())
+                        .expect("poll");
                     let data = buffer.slice(..).get_mapped_range().expect("mapped");
-                    (0..(side * 6) as usize).flat_map(|r| data[r * row as usize..][..8 * side as usize].to_vec()).collect()
+                    (0..(side * 6) as usize)
+                        .flat_map(|r| data[r * row as usize..][..8 * side as usize].to_vec())
+                        .collect()
                 })
                 .collect();
             (levels, took)
@@ -683,7 +1015,11 @@ mod tests {
     #[cfg(feature = "render")]
     fn half(bits: u16) -> f32 {
         let (exponent, mantissa) = (((bits >> 10) & 0x1f) as i32, (bits & 0x3ff) as f32);
-        let size = if exponent == 0 { mantissa * 2f32.powi(-24) } else { (1.0 + mantissa / 1024.0) * 2f32.powi(exponent - 15) };
+        let size = if exponent == 0 {
+            mantissa * 2f32.powi(-24)
+        } else {
+            (1.0 + mantissa / 1024.0) * 2f32.powi(exponent - 15)
+        };
         if bits >> 15 == 1 { -size } else { size }
     }
 
@@ -694,7 +1030,15 @@ mod tests {
     #[test]
     fn a_dark_floor_reflects_no_sky_at_any_roughness() {
         let (width, height) = (256u32, 128u32);
-        let rgbe: Vec<u8> = (0..width * height).flat_map(|i| if i < width * height / 2 { [128, 128, 128, 129] } else { [0; 4] }).collect();
+        let rgbe: Vec<u8> = (0..width * height)
+            .flat_map(|i| {
+                if i < width * height / 2 {
+                    [128, 128, 128, 129]
+                } else {
+                    [0; 4]
+                }
+            })
+            .collect();
         let (levels, _) = prefiltered(&Environment::new(width, height, rgbe));
         for (level, bytes) in levels.iter().enumerate() {
             let side = (SIDE >> level) as usize;
@@ -704,10 +1048,17 @@ mod tests {
                 let at = 8 * ((face * side + row) * side + side / 2);
                 half(u16::from_le_bytes([bytes[at], bytes[at + 1]]))
             };
-            let (up, down, horizon) = (red(4, side / 2), red(5, side / 2), (red(2, side / 2 - 1) + red(2, side / 2)) / 2.0);
+            let (up, down, horizon) = (
+                red(4, side / 2),
+                red(5, side / 2),
+                (red(2, side / 2 - 1) + red(2, side / 2)) / 2.0,
+            );
             assert!(up > 0.99, "level {level}: up {up}");
             assert!(down < 0.003, "level {level}: down {down}");
-            assert!((horizon - 0.5).abs() < 0.03, "level {level}: the horizon {horizon}");
+            assert!(
+                (horizon - 0.5).abs() < 0.03,
+                "level {level}: the horizon {horizon}"
+            );
         }
     }
 
@@ -715,18 +1066,31 @@ mod tests {
     /// angular radius `radius` (degrees) and light `glow` (each pixel's share of the disc found by 8 x 8 points), and
     /// the light the disc sends a surface facing it, over pi (what a white matte one shows).
     #[cfg(feature = "render")]
-    fn sunny(width: u32, height: u32, sky: f64, sun: (f64, f64), radius: f64, glow: f64) -> (Vec<u8>, f64) {
+    fn sunny(
+        width: u32,
+        height: u32,
+        sky: f64,
+        sun: (f64, f64),
+        radius: f64,
+        glow: f64,
+    ) -> (Vec<u8>, f64) {
         use std::f64::consts::PI;
         let (az, el) = (sun.0.to_radians(), sun.1.to_radians());
         let toward = [el.cos() * az.cos(), el.cos() * az.sin(), el.sin()];
         let (mut pixels, mut sent) = (Vec::new(), 0.0);
         for y in 0..height {
-            let solid = 2.0 * PI / width as f64 * PI / height as f64 * ((y as f64 + 0.5) / height as f64 * PI).sin();
+            let solid = 2.0 * PI / width as f64 * PI / height as f64
+                * ((y as f64 + 0.5) / height as f64 * PI).sin();
             for x in 0..width {
                 let mut inside = 0.0;
                 for k in 0..64 {
-                    let d = direction((x as f64 + ((k % 8) as f64 + 0.5) / 8.0) / width as f64, (y as f64 + ((k / 8) as f64 + 0.5) / 8.0) / height as f64);
-                    if d[0] * toward[0] + d[1] * toward[1] + d[2] * toward[2] > radius.to_radians().cos() {
+                    let d = direction(
+                        (x as f64 + ((k % 8) as f64 + 0.5) / 8.0) / width as f64,
+                        (y as f64 + ((k / 8) as f64 + 0.5) / 8.0) / height as f64,
+                    );
+                    if d[0] * toward[0] + d[1] * toward[1] + d[2] * toward[2]
+                        > radius.to_radians().cos()
+                    {
                         inside += 1.0 / 64.0;
                     }
                 }
@@ -748,9 +1112,21 @@ mod tests {
         let (az, el) = ((-60f64).to_radians(), 35f64.to_radians());
         let truth = [el.cos() * az.cos(), el.cos() * az.sin(), el.sin()];
         let cos = (0..3).map(|k| sun.toward[k] as f64 * truth[k]).sum::<f64>();
-        assert!(cos.acos().to_degrees() < 0.1, "{} degrees off", cos.acos().to_degrees());
-        assert!((sun.light[0] as f64 / shown - 1.0).abs() < 0.01, "{:?} vs {shown}", sun.light);
-        let brightest = env.rgbe.chunks_exact(4).map(|p| light(p)[0]).fold(0.0, f64::max);
+        assert!(
+            cos.acos().to_degrees() < 0.1,
+            "{} degrees off",
+            cos.acos().to_degrees()
+        );
+        assert!(
+            (sun.light[0] as f64 / shown - 1.0).abs() < 0.01,
+            "{:?} vs {shown}",
+            sun.light
+        );
+        let brightest = env
+            .rgbe
+            .chunks_exact(4)
+            .map(|p| light(p)[0])
+            .fold(0.0, f64::max);
         assert!(brightest < 0.51, "{brightest}");
     }
 
@@ -763,17 +1139,33 @@ mod tests {
         assert!(env.sun.is_none());
         assert_eq!(env.rgbe, pixels);
         let (width, height, studio) = studio();
-        assert!(Environment::new(width, height, studio).sun.is_none(), "the studio's softboxes are not suns");
+        assert!(
+            Environment::new(width, height, studio).sun.is_none(),
+            "the studio's softboxes are not suns"
+        );
     }
 
     /// A picture wider than an environment keeps is halved until it is not, its light kept.
     #[test]
     fn a_wide_picture_is_halved() {
         let (width, height) = (8200u32, 4u32);
-        let pixels: Vec<u8> = (0..width * height).flat_map(|i| if i % 2 == 0 { [128, 128, 128, 130] } else { [0; 4] }).collect();
+        let pixels: Vec<u8> = (0..width * height)
+            .flat_map(|i| {
+                if i % 2 == 0 {
+                    [128, 128, 128, 130]
+                } else {
+                    [0; 4]
+                }
+            })
+            .collect();
         let (w, h, out) = narrowed(width, height, pixels);
         assert_eq!((w, h), (2050, 1));
-        assert!(out.chunks_exact(4).all(|p| (light(p)[0] - 1.0).abs() < 1e-6), "{:?}", &out[..8]); // half of 2, on average
+        assert!(
+            out.chunks_exact(4)
+                .all(|p| (light(p)[0] - 1.0).abs() < 1e-6),
+            "{:?}",
+            &out[..8]
+        ); // half of 2, on average
     }
 
     /// A picture brighter than a half float can hold (an unclipped sun's light: here 2^17 everywhere) keeps its light:
@@ -788,7 +1180,10 @@ mod tests {
         for (level, bytes) in levels.iter().enumerate() {
             for texel in bytes.chunks_exact(8) {
                 let shown = half(u16::from_le_bytes([texel[0], texel[1]])) * env.unit;
-                assert!((shown / 131072.0 - 1.0).abs() < 0.002, "level {level}: {shown}");
+                assert!(
+                    (shown / 131072.0 - 1.0).abs() < 0.002,
+                    "level {level}: {shown}"
+                );
             }
         }
     }
@@ -801,19 +1196,47 @@ mod tests {
     #[test]
     #[ignore]
     fn dump_prefiltered() {
-        let (Ok(path), Ok(dump)) = (std::env::var("MANIMGX_HDR"), std::env::var("MANIMGX_DUMP")) else { return };
-        let (width, height, rgbe) = read_hdr(&std::fs::read(path).expect("read")).expect("a Radiance file");
+        let (Ok(path), Ok(dump)) = (std::env::var("MANIMGX_HDR"), std::env::var("MANIMGX_DUMP"))
+        else {
+            return;
+        };
+        let (width, height, rgbe) =
+            read_hdr(&std::fs::read(path).expect("read")).expect("a Radiance file");
         // (MANIMGX_KEEP_SUN: the picture as it is, its sun in it)
         let start = std::time::Instant::now();
-        let env = if std::env::var("MANIMGX_KEEP_SUN").is_ok() { Environment::of(width, height, rgbe, None) } else { Environment::new(width, height, rgbe) };
-        eprintln!("made in {:.1} ms (its sun, harmonics and unit, on the CPU)", start.elapsed().as_secs_f64() * 1e3);
-        let mut bytes: Vec<u8> = env.harmonics.iter().flat_map(|c| c[..3].iter().flat_map(|x| x.to_le_bytes())).collect();
+        let env = if std::env::var("MANIMGX_KEEP_SUN").is_ok() {
+            Environment::of(width, height, rgbe, None)
+        } else {
+            Environment::new(width, height, rgbe)
+        };
+        eprintln!(
+            "made in {:.1} ms (its sun, harmonics and unit, on the CPU)",
+            start.elapsed().as_secs_f64() * 1e3
+        );
+        let mut bytes: Vec<u8> = env
+            .harmonics
+            .iter()
+            .flat_map(|c| c[..3].iter().flat_map(|x| x.to_le_bytes()))
+            .collect();
         bytes.extend(env.unit.to_le_bytes());
-        let sun = env.sun.map_or([0.0; 6], |s| [s.toward[0], s.toward[1], s.toward[2], s.light[0], s.light[1], s.light[2]]);
+        let sun = env.sun.map_or([0.0; 6], |s| {
+            [
+                s.toward[0],
+                s.toward[1],
+                s.toward[2],
+                s.light[0],
+                s.light[1],
+                s.light[2],
+            ]
+        });
         bytes.extend(sun.iter().flat_map(|x| x.to_le_bytes()));
         let (_, cold) = prefiltered(&env);
         let (levels, warm) = prefiltered(&env);
-        eprintln!("prefiltered {width}x{height} in {:.1} ms, again {:.1} ms (the picture's upload in each)", cold.as_secs_f64() * 1e3, warm.as_secs_f64() * 1e3);
+        eprintln!(
+            "prefiltered {width}x{height} in {:.1} ms, again {:.1} ms (the picture's upload in each)",
+            cold.as_secs_f64() * 1e3,
+            warm.as_secs_f64() * 1e3
+        );
         bytes.extend(levels.concat());
         std::fs::write(dump, bytes).expect("write");
     }
@@ -833,6 +1256,9 @@ mod tests {
         let (width, height, rgbe) = read_hdr(&file).expect("read");
         assert_eq!((width, height), (w, h));
         assert_eq!(&rgbe[..4], &[0, 1, 2, 3]);
-        assert_eq!(&rgbe[(16 * 4) as usize..(16 * 4 + 4) as usize], &[10, 11, 12, 13]);
+        assert_eq!(
+            &rgbe[(16 * 4) as usize..(16 * 4 + 4) as usize],
+            &[10, 11, 12, 13]
+        );
     }
 }

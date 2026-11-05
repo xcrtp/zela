@@ -12,12 +12,12 @@
 // 依赖方向：`zela-scene` → `zela-render`；本模块只读场景契约与渲染队列。
 
 use ze_notion::Rect2D;
-use ze_scene_core::{Camera2DHandle, Camera3D, LayerKind};
 use ze_scene_contract::SceneRead;
 use ze_scene_core::domain::{
-    ContentHandle, ContentTextureSpecs, LayerBlend, LayerDescriptor, LayerId, SceneView,
-    LAYER_ID_VIEWPORT_2D, LAYER_ID_VIEWPORT_3D,
+    ContentHandle, ContentTextureSpecs, LAYER_ID_VIEWPORT_2D, LAYER_ID_VIEWPORT_3D, LayerBlend,
+    LayerDescriptor, LayerId, SceneView,
 };
+use ze_scene_core::{Camera2DHandle, Camera3D, LayerKind};
 use zela_schedule::resource::Resources;
 
 use crate::{
@@ -241,8 +241,7 @@ pub fn build_frame_inputs<'a>(
 ///
 /// B2-1 起 2D / 3D 共处同一个 [`DrawQueue`]，故只统计一次（避免重复计入）。
 pub fn draw_call_count(res: &Resources) -> usize {
-    res.get::<DrawQueue>()
-        .map_or(0, |q| q.len())
+    res.get::<DrawQueue>().map_or(0, |q| q.len())
 }
 
 #[cfg(test)]

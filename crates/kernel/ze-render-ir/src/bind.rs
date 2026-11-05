@@ -38,7 +38,9 @@ pub enum BindSymbolError {
     DuplicateGroup { group: u32 },
     #[error("绑定组名重复：{name:?}")]
     DuplicateName { name: &'static str },
-    #[error("资源名 {resource:?} 同时出现在组 {first:?} 与组 {again:?}（一个资源只能绑在一个组里）")]
+    #[error(
+        "资源名 {resource:?} 同时出现在组 {first:?} 与组 {again:?}（一个资源只能绑在一个组里）"
+    )]
     DuplicateResource {
         resource: &'static str,
         first: &'static str,
@@ -100,9 +102,7 @@ impl BindSymbols {
 
     /// 资源名 → 组符号。
     pub fn symbol_of_resource(&self, resource: &str) -> Option<&'static GroupSymbol> {
-        self.groups
-            .iter()
-            .find(|s| s.resources.contains(&resource))
+        self.groups.iter().find(|s| s.resources.contains(&resource))
     }
 
     /// 资源名 → 组号。
@@ -169,7 +169,10 @@ mod tests {
     #[test]
     fn unknown_names_are_named() {
         assert_eq!(TABLE.unknown(&["atlas", "rows"]), None);
-        assert_eq!(TABLE.unknown(&["atlas", "not_a_thing"]), Some("not_a_thing"));
+        assert_eq!(
+            TABLE.unknown(&["atlas", "not_a_thing"]),
+            Some("not_a_thing")
+        );
         let all: Vec<&str> = TABLE.resources().collect();
         assert_eq!(all.len(), 10);
         assert_eq!(all[0], "instances");

@@ -121,7 +121,7 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hit::{HitId, Point, Rect, HitRegion};
+    use crate::hit::{HitId, HitRegion, Point, Rect};
 
     fn key(scope: &str, id: u32) -> RouteKey {
         RouteKey::new(scope, HitId(id))
@@ -151,7 +151,11 @@ mod tests {
         router.released();
         router.pointer_moved(None);
         assert_eq!(router.focus(), Some(&key("panel_a", 1)));
-        assert_eq!(router.dispatch(), Some(&key("panel_a", 1)), "focus 优先于 hover");
+        assert_eq!(
+            router.dispatch(),
+            Some(&key("panel_a", 1)),
+            "focus 优先于 hover"
+        );
 
         router.pressed(Some(key("panel_b", 2)));
         assert_eq!(router.focus(), Some(&key("panel_b", 2)));

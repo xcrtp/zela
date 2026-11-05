@@ -156,7 +156,9 @@ impl MeshGeometry {
 /// assert_eq!(m.roughness, 0.5);
 /// assert!(m.normal_map.is_none());
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize,
+)]
 // F 批：metallic / roughness 全量注册（缺省名 = 规范地址 "Material3D.metallic" 等）。
 #[channel(metallic: f32)]
 #[channel(roughness: f32)]
@@ -227,7 +229,9 @@ impl Material3D {
 ///
 /// 光照计算在渲染层统一消费：`SceneRecord3DSystem` 每帧把它录进
 /// `LightQueue`，后端据此上传**场景级** light uniform buffer。
-#[derive(Debug, Clone, Copy, PartialEq, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, ze_scene_macros::Channels, serde::Serialize, serde::Deserialize,
+)]
 // F 批：intensity 全量注册（缺省名 = 规范地址 "Light.intensity"）。
 #[channel(intensity: f32)]
 pub struct Light {
@@ -356,13 +360,20 @@ mod tests {
         let left = serde_json::to_string(&first).expect("可序列化");
         let right = serde_json::to_string(&second).expect("可序列化");
         assert_eq!(left, right, "产物不得含运行态 id");
-        assert!(!left.contains("\"id\""), "payload 里不应再有 id 字段：{left}");
+        assert!(
+            !left.contains("\"id\""),
+            "payload 里不应再有 id 字段：{left}"
+        );
     }
 
     /// 解码后**重新分配** id（计数器推进）：不得出现"解码体 id 全 0 撞号"。
     #[test]
     fn decoded_geometry_gets_a_fresh_id() {
-        let source = MeshGeometry::new(vec![Vec3::ZERO, Vec3::X, Vec3::Y], None, PrimitiveTopology::Triangles);
+        let source = MeshGeometry::new(
+            vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+            None,
+            PrimitiveTopology::Triangles,
+        );
         let json = serde_json::to_string(&source).expect("可序列化");
 
         let first: MeshGeometry = serde_json::from_str(&json).expect("可反序列化");

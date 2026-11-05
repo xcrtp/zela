@@ -11,8 +11,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use zela_render_vector::{
-    FilledPath, Light, MeshRecord, PathRecord, View3, render_2d, render_3d,
-    start_command_flow, take_command_flow,
+    FilledPath, Light, MeshRecord, PathRecord, View3, render_2d, render_3d, start_command_flow,
+    take_command_flow,
 };
 
 /// 跑一次渲染并取回命令流（每次调用都清空旧记录）。
@@ -94,12 +94,21 @@ fn vector_plan_flow_is_pinned() {
 #[test]
 fn raster_plan_flow_is_pinned() {
     let mesh = MeshRecord {
-        positions: vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]],
+        positions: vec![
+            [-1.0, -1.0, 0.0],
+            [1.0, -1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [-1.0, 1.0, 0.0],
+        ],
         uvs: None,
         normals: Some(vec![[0.0, 0.0, 1.0]; 4]),
         triangles: vec![0, 1, 2, 0, 2, 3],
         fill: [0.8, 0.8, 0.8, 1.0],
-        model: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+        model: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
         material: Some([0.0, 0.9, 0.0]),
         colors: None,
         second: None,

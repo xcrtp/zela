@@ -125,7 +125,8 @@ impl BackendKind {
                 // 只请求 adapter 自述的 feature：请求它没有的会让 request_device 直接失败。
                 required: wgpu::Features::DEPTH32FLOAT_STENCIL8
                     | (facts.features & wgpu::Features::FLOAT32_BLENDABLE),
-                preferred: facts.features & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                preferred: facts.features
+                    & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             },
         }
     }
@@ -192,7 +193,6 @@ impl BackendKind {
             }
         }
     }
-
 }
 
 /// 选择 / 注册失败（显式，不静默）。
@@ -482,16 +482,22 @@ mod tests {
         let features = BackendKind::Vector.required_features_for(facts);
         assert!(facts.features.contains(features.required));
         assert!(facts.features.contains(features.preferred));
-        assert!(features.required.contains(wgpu::Features::DEPTH32FLOAT_STENCIL8));
+        assert!(
+            features
+                .required
+                .contains(wgpu::Features::DEPTH32FLOAT_STENCIL8)
+        );
         // 缺 float32 混合能力的 adapter：required 里不得出现它（否则 request_device 直接失败）。
         let weak = AdapterFacts {
             features: wgpu::Features::DEPTH32FLOAT_STENCIL8,
             blends_float32: false,
         };
         let weak_features = BackendKind::Vector.required_features_for(weak);
-        assert!(!weak_features
-            .required
-            .contains(wgpu::Features::FLOAT32_BLENDABLE));
+        assert!(
+            !weak_features
+                .required
+                .contains(wgpu::Features::FLOAT32_BLENDABLE)
+        );
         assert!(weak.features.contains(weak_features.required));
     }
 
@@ -521,7 +527,9 @@ mod tests {
             "矢量不可用时不得请求它的 features"
         );
 
-        let strong = registry.required_device_features_for(capable_facts()).unwrap();
+        let strong = registry
+            .required_device_features_for(capable_facts())
+            .unwrap();
         assert!(strong.contains(wgpu::Features::DEPTH32FLOAT_STENCIL8));
     }
 
@@ -558,20 +566,26 @@ mod tests {
             registry.register(BackendKind::Vector).unwrap_err(),
             BackendRegistryError::AlreadyRegistered { .. }
         ));
-        assert!(registry
-            .select_on_facts(BackendKind::Vector, capable_facts())
-            .is_ok());
+        assert!(
+            registry
+                .select_on_facts(BackendKind::Vector, capable_facts())
+                .is_ok()
+        );
 
         registry.register(BackendKind::Wgpu).unwrap();
-        assert!(registry
-            .select_on_facts(BackendKind::Wgpu, capable_facts())
-            .is_ok());
+        assert!(
+            registry
+                .select_on_facts(BackendKind::Wgpu, capable_facts())
+                .is_ok()
+        );
 
         let mut with_vector = BackendRegistry::with_standard();
         with_vector.register(BackendKind::Vector).unwrap();
-        assert!(with_vector
-            .select_on_facts(BackendKind::Vector, capable_facts())
-            .is_ok());
+        assert!(
+            with_vector
+                .select_on_facts(BackendKind::Vector, capable_facts())
+                .is_ok()
+        );
         let weak = AdapterFacts {
             features: wgpu::Features::empty(),
             blends_float32: false,
@@ -603,7 +617,8 @@ mod tests {
         };
         let wgpu = ze_render_ir::RenderParams::default_for(&caps(BackendKind::Wgpu.post_caps()));
         assert!(wgpu.tone.is_none() && wgpu.bloom.is_none() && wgpu.ao.is_none());
-        let vector = ze_render_ir::RenderParams::default_for(&caps(BackendKind::Vector.post_caps()));
+        let vector =
+            ze_render_ir::RenderParams::default_for(&caps(BackendKind::Vector.post_caps()));
         assert!(vector.tone.is_some() && vector.bloom.is_some() && vector.ao.is_some());
     }
 }

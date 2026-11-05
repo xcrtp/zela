@@ -28,7 +28,7 @@ use ze_notion::{Path2D, Rect2D, Vec2};
 use ze_property::{ParameterRegistry, PropertyValue};
 use ze_render_ir::{FillSolid, StrokeSolid};
 
-use crate::animation::{params, BindingTable};
+use crate::animation::{BindingTable, params};
 use crate::domain::SceneEvent;
 use crate::scene::Scene;
 use ze_scene_contract::Scene as _;
@@ -85,10 +85,7 @@ impl PanelSpec {
     pub fn track(&self, index: usize) -> Rect2D {
         let y = self.row_y(index);
         Rect2D::from_min_size(
-            Vec2::new(
-                self.origin.x + self.padding + self.label_width,
-                y,
-            ),
+            Vec2::new(self.origin.x + self.padding + self.label_width, y),
             Vec2::new(
                 self.width - self.padding * 2.0 - self.label_width,
                 self.row_height,
@@ -208,7 +205,9 @@ impl InteractSet {
             sliders
                 .iter()
                 .enumerate()
-                .map(|(order, slider)| HitTarget::rect(slider.target, slider.hit_rect(), order as i32))
+                .map(|(order, slider)| {
+                    HitTarget::rect(slider.target, slider.hit_rect(), order as i32)
+                })
                 .collect(),
         );
         Self { sliders, index }
@@ -263,7 +262,12 @@ pub fn apply_viewport_events(
                 state.router.pressed(key);
                 if let Some(slider) = hit {
                     let value = slider.value_at(scene_pos.x);
-                    writes.push((slider.knob, slider.x_at(value), slider.address.clone(), value));
+                    writes.push((
+                        slider.knob,
+                        slider.x_at(value),
+                        slider.address.clone(),
+                        value,
+                    ));
                 }
             }
             SceneEvent::ViewportHover { scene_pos, .. } => {
@@ -487,11 +491,13 @@ mod tests {
         assert_eq!(a.sliders().len(), 1);
         assert_eq!(b.sliders().len(), 1);
         assert_ne!(
-            a.sliders()[0].target, b.sliders()[0].target,
+            a.sliders()[0].target,
+            b.sliders()[0].target,
             "两个面板的滑块必须是不同目标（HitId 取场景对象 id）"
         );
         assert_ne!(
-            a.sliders()[0].address, b.sliders()[0].address,
+            a.sliders()[0].address,
+            b.sliders()[0].address,
             "两个面板的地址必须在各自作用域下"
         );
 
@@ -550,14 +556,14 @@ mod tests {
     /// **端到端**：`ParamPanelSystem` 只写被按下的那个面板。
     #[test]
     fn interact_system_writes_only_the_captured_panel() {
-        use crate::animation::{params as param_ops, Binding, BindingDriver, CircleRadius};
-        use crate::animation::ResetBehavior;
         use crate::Curve;
+        use crate::animation::ResetBehavior;
+        use crate::animation::{Binding, BindingDriver, CircleRadius, params as param_ops};
+        use std::sync::Arc;
         use ze_scene_contract::ObjectId;
         use ze_time::{ClockForest, ClockNode};
         use zela_schedule::resource::Resources;
         use zela_schedule::scheduler::{Phase, Scheduler};
-        use std::sync::Arc;
 
         let mut table = BindingTable::default();
         let scope_a = table.declare_scope("panel_a");
@@ -625,7 +631,10 @@ mod tests {
 
         // 按 A 的 75% 位置（B 完全在别处）。
         let track = a.sliders()[0].track;
-        let press = Vec2::new(track.min.x + (track.max.x - track.min.x) * 0.75, track.center().y);
+        let press = Vec2::new(
+            track.min.x + (track.max.x - track.min.x) * 0.75,
+            track.center().y,
+        );
         let mut resources = Resources::new();
         resources.insert(InputEvents::from_events(vec![SceneEvent::ViewportClick {
             layer: ze_render_ir::LayerId(0),

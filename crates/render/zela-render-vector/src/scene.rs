@@ -22,9 +22,9 @@
 use ze_notion::{Color32, Path2D, PathCommand, Transform2D, Vec2};
 use ze_render_ir::{Shape2D, Style2D};
 
-use crate::api::{FilledPath, ParamGeometry, ParamKind, PathRecord, StrokedPath};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::api::render_2d;
+use crate::api::{FilledPath, ParamGeometry, ParamKind, PathRecord, StrokedPath};
 
 /// 一条待映射的图元（与后端的 `DrawItem` 同构，但不依赖 `zela-render`）。
 #[derive(Debug, Clone)]
@@ -119,11 +119,7 @@ fn arc_curves(
 }
 
 /// 收集一条路径的全部子路径（曲线段 + `[首曲线, 末曲线, 是否闭合, 0]`）。
-fn path_subpaths(
-    path: &Path2D,
-    m: &Transform2D,
-    center: Vec2,
-) -> (Vec<[f64; 3]>, Vec<[u32; 4]>) {
+fn path_subpaths(path: &Path2D, m: &Transform2D, center: Vec2) -> (Vec<[f64; 3]>, Vec<[u32; 4]>) {
     let mut points: Vec<[f64; 3]> = Vec::new();
     let mut ranges: Vec<[u32; 4]> = Vec::new();
     let push = |curve: [[f64; 3]; 4], points: &mut Vec<[f64; 3]>| {
@@ -455,7 +451,11 @@ fn path_options(
 ) -> crate::api::PathOptions {
     let mut options = paint.clone();
     if let Some(gradient) = &paint.gradient {
-        let from = to_world(Vec2::new(gradient.from[0], gradient.from[1]), transform, center);
+        let from = to_world(
+            Vec2::new(gradient.from[0], gradient.from[1]),
+            transform,
+            center,
+        );
         let to = to_world(Vec2::new(gradient.to[0], gradient.to[1]), transform, center);
         let float3 = |p: [f64; 3]| [p[0] as f32, p[1] as f32, p[2] as f32];
         options.gradient = Some(crate::api::Gradient {
@@ -513,12 +513,14 @@ pub fn scene_records(
                 path.options = options.clone();
                 // **阶段 2**：装饰性着色 codegen —— 填充槽交给 GPU 求值（参数先清零，
                 // 宿主每帧按参数表填入外部注入）。
-                path.shader = options.shader.as_ref().map(|shader| crate::render::ShaderFill {
-                    source: shader.source.clone(),
-                    params: vec![0u8; shader.size as usize],
-                    fragment: shader.fragment,
-                    // **BT-4**：vec4 出口（w = 着色器给的透明度）。
-                    rgba: shader.rgba,
+                path.shader = options.shader.as_ref().map(|shader| {
+                    crate::render::ShaderFill {
+                        source: shader.source.clone(),
+                        params: vec![0u8; shader.size as usize],
+                        fragment: shader.fragment,
+                        // **BT-4**：vec4 出口（w = 着色器给的透明度）。
+                        rgba: shader.rgba,
+                    }
                 });
                 out.push(PathRecord::Fill(path));
             }
@@ -749,9 +751,17 @@ mod tests {
         let paths = fill_paths(&[item], CANVAS).unwrap();
         assert_eq!(paths[0].points.len(), 16);
         // 画布中心的圆 ⇒ 世界坐标原点为中心的半径 10。
-        let max_x = paths[0].points.iter().map(|p| p[0]).fold(f64::MIN, f64::max);
+        let max_x = paths[0]
+            .points
+            .iter()
+            .map(|p| p[0])
+            .fold(f64::MIN, f64::max);
         assert!((max_x - 10.0).abs() < 1e-3, "最右点应为 10：{max_x}");
-        let min_y = paths[0].points.iter().map(|p| p[1]).fold(f64::MAX, f64::min);
+        let min_y = paths[0]
+            .points
+            .iter()
+            .map(|p| p[1])
+            .fold(f64::MAX, f64::min);
         assert!((min_y - -10.0).abs() < 1e-3, "最下点应为 -10：{min_y}");
     }
 
@@ -798,9 +808,16 @@ mod tests {
             style: style(Color32::RED),
         };
         let paths = fill_paths(&[item], CANVAS).unwrap();
-        let max_x = paths[0].points.iter().map(|p| p[0]).fold(f64::MIN, f64::max);
+        let max_x = paths[0]
+            .points
+            .iter()
+            .map(|p| p[0])
+            .fold(f64::MIN, f64::max);
         // 100 − 64（中心）+ 5 = 41。
-        assert!((max_x - 41.0).abs() < 1e-3, "平移 + 居中应烘进控制点：{max_x}");
+        assert!(
+            (max_x - 41.0).abs() < 1e-3,
+            "平移 + 居中应烘进控制点：{max_x}"
+        );
         // model 保持单位阵（不用上游的 GPU 插值路径，见 GAPS V2-03）。
         assert_eq!(paths[0].model, IDENTITY);
     }
@@ -903,8 +920,8 @@ mod tests {
                 paint: Default::default(),
             },
         };
-        let frame = render_scene_2d(128, 128, 1, [0.0, 0.0, 0.0, 1.0], &[item])
-            .expect("矢量后端起不来");
+        let frame =
+            render_scene_2d(128, 128, 1, [0.0, 0.0, 0.0, 1.0], &[item]).expect("矢量后端起不来");
         let at = ((64 * 128 + 64) * 4) as usize;
         assert!(
             frame[at] > 200,
@@ -1057,10 +1074,18 @@ mod tests {
         };
         let gradient = path.options.gradient.as_ref().expect("渐变应透传");
         // 屏幕 (0,0) ⇒ 世界 (-64, 0)；屏幕 (128,0) ⇒ 世界 (64, 0)。
-        assert!((gradient.from[0] + 64.0).abs() < 1e-3, "{:?}", gradient.from);
+        assert!(
+            (gradient.from[0] + 64.0).abs() < 1e-3,
+            "{:?}",
+            gradient.from
+        );
         assert!((gradient.to[0] - 64.0).abs() < 1e-3, "{:?}", gradient.to);
         // y 取负：屏幕 y = 0（顶边）⇒ 世界 y = +64。
-        assert!((gradient.from[1] - 64.0).abs() < 1e-3, "{:?}", gradient.from);
+        assert!(
+            (gradient.from[1] - 64.0).abs() < 1e-3,
+            "{:?}",
+            gradient.from
+        );
     }
 
     #[test]

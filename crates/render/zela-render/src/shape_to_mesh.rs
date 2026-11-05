@@ -23,10 +23,10 @@
 use std::sync::Arc;
 
 use ze_notion::{Color32, Transform2D, Vec2, Vec3};
-use ze_render_ir::{CustomSpecs, Shape2D, ShaderVariant, Style2D};
+use ze_render_ir::{CustomSpecs, ShaderVariant, Shape2D, Style2D};
 use ze_scene_core::components::{Material3D, MeshGeometry, PrimitiveTopology};
 
-use crate::tessellate::{tessellate_with, tolerance_for_scale, TessKind};
+use crate::tessellate::{TessKind, tessellate_with, tolerance_for_scale};
 
 /// 2D → 3D 派生失败的原因（显式错误）。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -36,10 +36,7 @@ pub enum ShapeMeshError {
     #[error("2D 图元 {kind} 的几何退化（点数/半径/宽度不足）")]
     Degenerate { kind: &'static str },
     #[error("2D 图元 {kind} 三角化失败：{message}")]
-    Tessellate {
-        kind: &'static str,
-        message: String,
-    },
+    Tessellate { kind: &'static str, message: String },
 }
 
 /// 派生结果：平面网格 + 意图化材质 + 是否透明。
@@ -53,17 +50,18 @@ pub struct DerivedMesh {
 ///
 /// 返回**多份**网格：填充一份、描边一份（各自带自己的材质颜色）。
 /// 单份材质的旧行为（`fill` 优先）已由 [`Vec`] 取代 —— 不再静默丢描边。
-pub fn derive_mesh(
-    shape: &Shape2D,
-    style: &Style2D,
-) -> Result<Vec<DerivedMesh>, ShapeMeshError> {
+pub fn derive_mesh(shape: &Shape2D, style: &Style2D) -> Result<Vec<DerivedMesh>, ShapeMeshError> {
     // Direct 路径未声明支持的两类：显式拒绝。
     match shape {
         Shape2D::Polyline { .. } => {
-            return Err(ShapeMeshError::Unsupported { kind: "Polyline" })
+            return Err(ShapeMeshError::Unsupported { kind: "Polyline" });
         }
-        Shape2D::Custom(_) => return Err(ShapeMeshError::Unsupported { kind: "Custom" }),
-        Shape2D::Empty => return Err(ShapeMeshError::Degenerate { kind: "Empty" }),
+        Shape2D::Custom(_) => {
+            return Err(ShapeMeshError::Unsupported { kind: "Custom" });
+        }
+        Shape2D::Empty => {
+            return Err(ShapeMeshError::Degenerate { kind: "Empty" });
+        }
         _ => {}
     }
 
@@ -81,7 +79,9 @@ pub fn derive_mesh(
     })?;
 
     if parts.is_empty() {
-        return Err(ShapeMeshError::Degenerate { kind: kind_of(shape) });
+        return Err(ShapeMeshError::Degenerate {
+            kind: kind_of(shape),
+        });
     }
 
     let mut meshes = Vec::with_capacity(parts.len());
@@ -91,7 +91,9 @@ pub fn derive_mesh(
             TessKind::Stroke => style.stroke.unwrap_or(Color32::WHITE),
         };
         if part.vertices.is_empty() || part.indices.is_empty() {
-            return Err(ShapeMeshError::Degenerate { kind: kind_of(shape) });
+            return Err(ShapeMeshError::Degenerate {
+                kind: kind_of(shape),
+            });
         }
 
         let mut positions = Vec::with_capacity(part.vertices.len());
@@ -104,8 +106,11 @@ pub fn derive_mesh(
         }
         // 2D 的 `attrib0`（边法线）在这里**丢弃**：着色法线恒 +Z。
         let normals = vec![Vec3::new(0.0, 0.0, 1.0); positions.len()];
-        let mut geometry =
-            MeshGeometry::new(positions, Some(part.indices.clone()), PrimitiveTopology::Triangles);
+        let mut geometry = MeshGeometry::new(
+            positions,
+            Some(part.indices.clone()),
+            PrimitiveTopology::Triangles,
+        );
         geometry.normals = Some(normals);
         geometry.uvs = Some(uvs);
 
@@ -163,13 +168,15 @@ mod tests {
         assert!(!indices.is_empty());
         assert_eq!(indices.len() % 3, 0, "必须输出三角形列表");
         // 着色法线恒 +Z；2D 边法线已被丢弃。
-        assert!(derived
-            .geometry
-            .normals
-            .as_ref()
-            .unwrap()
-            .iter()
-            .all(|n| *n == Vec3::new(0.0, 0.0, 1.0)));
+        assert!(
+            derived
+                .geometry
+                .normals
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|n| *n == Vec3::new(0.0, 0.0, 1.0))
+        );
         // UV = XY（无 2D 槽语义）。
         let uvs = derived.geometry.uvs.as_ref().unwrap();
         assert_eq!(uvs.len(), derived.geometry.positions.len());

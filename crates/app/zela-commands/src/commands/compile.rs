@@ -17,7 +17,12 @@ pub const SPEC: CommandSpec = CommandSpec {
     args: &[
         ArgSpec::positional("script", ArgType::Path, "脚本路径（.lua / .py / .js）"),
         ArgSpec::required("out", ArgType::Path, "输出的 .zsb 路径"),
-        ArgSpec::option("json", ArgType::Path, "", "额外写出 payload 明文（调试 diff）"),
+        ArgSpec::option(
+            "json",
+            ArgType::Path,
+            "",
+            "额外写出 payload 明文（调试 diff）",
+        ),
     ],
 };
 
@@ -34,7 +39,9 @@ impl CompileOptions {
         Ok(Self {
             script: args.path("script").ok_or("缺少脚本路径")?,
             out: args.path("out").ok_or("缺少 --out")?,
-            json: args.path("json").filter(|path| !path.as_os_str().is_empty()),
+            json: args
+                .path("json")
+                .filter(|path| !path.as_os_str().is_empty()),
         })
     }
 }
@@ -82,8 +89,7 @@ pub fn read_script(script: &std::path::Path) -> Result<(String, ScriptLanguage),
     }
     if language == ScriptLanguage::JavaScript && !cfg!(feature = "js") {
         return Err(
-            "脚本是 .js，但本二进制编译时未启用 `js` feature（请重新构建或改用 .lua）"
-                .to_string(),
+            "脚本是 .js，但本二进制编译时未启用 `js` feature（请重新构建或改用 .lua）".to_string(),
         );
     }
     Ok((source, language))
@@ -115,7 +121,10 @@ pub struct CompileJob {
 ///
 /// 与 [`crate::commands::batch::run_batch`] 一致：单件失败不影响其余，全部跑完后
 /// 汇总，错误逐件指出 id 与脚本路径。
-pub fn run_many(out_dir: &std::path::Path, jobs: &[CompileJob]) -> Result<Vec<(String, String)>, String> {
+pub fn run_many(
+    out_dir: &std::path::Path,
+    jobs: &[CompileJob],
+) -> Result<Vec<(String, String)>, String> {
     let _ = crate::commands::fonts::ensure_font_dir();
     std::fs::create_dir_all(out_dir)
         .map_err(|e| format!("创建目录 {} 失败：{e}", out_dir.display()))?;
@@ -191,10 +200,9 @@ pub fn run(host: &dyn CommandHost, options: &CompileOptions) -> Result<Response,
             options.script.display(),
             options.out.display(),
             meta.object_count,
-            compiled.still_time.map_or_else(
-                || "不可推导".to_string(),
-                |value| format!("≈ {value:.3}s")
-            )
+            compiled
+                .still_time
+                .map_or_else(|| "不可推导".to_string(), |value| format!("≈ {value:.3}s"))
         ),
     );
 
@@ -226,7 +234,10 @@ pub fn run(host: &dyn CommandHost, options: &CompileOptions) -> Result<Response,
                         .join(","),
                 ),
             ),
-            ("out".to_string(), Fact::Text(options.out.display().to_string())),
+            (
+                "out".to_string(),
+                Fact::Text(options.out.display().to_string()),
+            ),
         ],
     ))
 }

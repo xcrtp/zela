@@ -34,7 +34,8 @@ ze-time = { path = "../../kernel/ze-time" }
 ze-property = { path = "../../kernel/ze-property" }
 # CE-a：命中 / 布局 / 路由骨架（参数面板进场景的真消费者）。
 # CL-b：表达层（`Widget2D` / `WidgetRuntime`）需要 `widgets` feature。
-ze-interact = { path = "../../kernel/ze-interact", features = ["widgets"] }
+# CL-R：`layout-kasuari` 让 `StrategyId("kasuari")` 有真实现供 `ui_layout` 分派。
+ze-interact = { path = "../../kernel/ze-interact", features = ["widgets", "layout-kasuari"] }
 # CK-a：关系契约（树 / DAG 的编译期纯值索引；本层用它编译 `Parent` 树）。
 ze-graph-algo = { path = "../../ze/graph/ze-graph-algo" }
 # 脚本 Pod 的 domain 侧（B2）：内容编译能力经 Injector 提供，不再住在解释器里。

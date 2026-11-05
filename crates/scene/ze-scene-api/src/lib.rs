@@ -89,9 +89,6 @@ pub fn scene_service(paths: PathStore) -> Arc<SceneServicePod> {
 }
 
 /// 构造内容 Service（返回具体类型，理由同上）。
-pub fn content_service(
-    engine: Arc<InMemoryEngine>,
-    paths: PathStore,
-) -> Arc<ContentServicePod> {
+pub fn content_service(engine: Arc<InMemoryEngine>, paths: PathStore) -> Arc<ContentServicePod> {
     Arc::new(ContentServicePod::new(engine, paths))
 }

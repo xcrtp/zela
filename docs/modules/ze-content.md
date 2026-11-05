@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-content`
 - 生产依赖（上游，dev-deps 不计）：`ze-interact`、`ze-notion`
 - 被依赖（下游）：`ze-prerender`、`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-render`、`zela-scene-ecs`
-- 源文件：9 个 · 1815 行
+- 源文件：9 个 · 1816 行
 
 ### 文件清单
 
@@ -24,7 +24,7 @@
 | `src/placeholder.rs` | 169 | — |
 | `src/stroke.rs` | 297 | — |
 | `src/svg.rs` | 267 | — |
-| `src/text_metrics.rs` | 312 | 字体度量表（装配期烘焙的**纯值**）。 |
+| `src/text_metrics.rs` | 313 | 字体度量表（装配期烘焙的**纯值**）。 |
 | `src/text_ops.rs` | 138 | **CI-d 口子④**：文字能力的策略形状。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）

@@ -5,10 +5,10 @@
 //   `TypeSpec` + 双向转换 + `IntoPodTypeName`；
 // - 宿主侧 Service 把它们的值转成场景原语（`ze_object` / `ze_time` …）。
 
-use ze_time::Interp as NativeInterp;
 use ze_pod_core::Handle;
 use ze_pod_macro::PodType;
 use ze_scene_macros::SceneComponent;
+use ze_time::Interp as NativeInterp;
 
 /// 颜色（取代旧的 `rgba: u32` 打包）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PodType)]
@@ -130,7 +130,9 @@ pub struct Material3D {
 pub enum Texture {
     None,
     /// 引用某 Surface 的内容纹理（句柄由 `ObjectId → LayerId → TextureHandle` 派生）。
-    Surface { surface: Handle },
+    Surface {
+        surface: Handle,
+    },
 }
 
 /// Surface 的坐标映射语义。
@@ -563,5 +565,4 @@ mod tests {
         check::<PathShape>("path_shape", "zela.PathShape");
         check::<PathFollow>("path_follow", "zela.PathFollow");
     }
-
 }

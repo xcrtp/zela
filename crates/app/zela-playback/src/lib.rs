@@ -35,18 +35,18 @@ pub fn init_tracing() {
 }
 
 use ze_notion::Vec3;
+use ze_scene_core::{Camera2DHandle, Camera3DHandle};
 use zela_render::{
     ContentTextureQueue, DrawQueue, DrawQueue3D, LightQueue, MorphQueue, RevealQueue, ViewRect,
 };
+#[cfg(feature = "blocking")]
+use zela_render_backends::render_frame_headless;
 use zela_render_backends::{
     RenderContext, SceneCompositorCallback, ScreenParams, StandardBackends,
     render_frame_headless_async, render_frame_to_view,
 };
-#[cfg(feature = "blocking")]
-use zela_render_backends::render_frame_headless;
-use zela_scene_ecs::animation::{
-    Binding, BindingDriver, BindingTable, CameraEye, ResetBehavior,
-};
+use zela_scene_bundle::{Available, Bundle, BundleError, Capability, Pairing, Pod, RestoreError};
+use zela_scene_ecs::animation::{Binding, BindingDriver, BindingTable, CameraEye, ResetBehavior};
 use zela_scene_ecs::contract::{GroupVisibility, ObjectId, SceneRead, WorldView};
 use zela_scene_ecs::director_state::DirectorState;
 use zela_scene_ecs::domain::{ContentTextureSpecs, InputEvents, UiConfig};
@@ -55,12 +55,8 @@ use zela_scene_ecs::{
     ClockForest, ClockNode, Curve, DeferredCommands, DriverCommand, DriverPod, DynamicObjects,
     LifetimeEvents, LifetimeTracker, SeekKind, TimeState,
 };
-use zela_scene_bundle::{
-    Available, Bundle, BundleError, Capability, Pairing, Pod, RestoreError,
-};
 use zela_schedule::resource::Resources;
 use zela_schedule::scheduler::Scheduler;
-use ze_scene_core::{Camera2DHandle, Camera3DHandle};
 
 /// 回放装配失败（全部显式，不静默降级）。
 #[derive(Debug, thiserror::Error)]
@@ -136,10 +132,11 @@ fn scene_pod() -> Pod {
 
 fn scene_capability() -> Capability {
     let meta = <zela_scene_ecs::pod::SceneApi<'static> as ze_pod_core::Capability<'static>>::meta();
-    let name = <zela_scene_ecs::pod::SceneApi<'static> as ze_pod_core::Capability<'static>>::signatures()
-        .first()
-        .map(|signature| signature.namespace)
-        .unwrap_or("");
+    let name =
+        <zela_scene_ecs::pod::SceneApi<'static> as ze_pod_core::Capability<'static>>::signatures()
+            .first()
+            .map(|signature| signature.namespace)
+            .unwrap_or("");
     Capability::new(name, meta.version)
 }
 
@@ -172,8 +169,7 @@ pub fn rebuild_script_content(
 }
 
 /// **CE-e**：把标签文字烘成轮廓（由宿主提供；浏览器没有排版引擎 ⇒ 不传）。
-pub type LabelBake<'a> =
-    dyn Fn(&str, ze_notion::Vec2, f32) -> Vec<ze_notion::Path2D> + 'a;
+pub type LabelBake<'a> = dyn Fn(&str, ze_notion::Vec2, f32) -> Vec<ze_notion::Path2D> + 'a;
 
 /// **ZSB → Runtime**（无内容重建钩子）：等价于 restore。
 pub fn build_bundle_runtime(render_ctx: RenderContext, bundle: &Bundle) -> Result<Runtime> {
@@ -201,8 +197,7 @@ pub fn build_bundle_runtime_with(
     // **第 4 批**：产物记录的算子 revision vs 当前库 —— 不符即**点名算子**失败
     // （不是笼统的库版本不符）。老 payload 没有记录 ⇒ 空表，直接通过。
     for library in script.libraries() {
-        ze_pod_func::check_op_revisions(&library.op_revisions)
-            .map_err(PlaybackError::Assembly)?;
+        ze_pod_func::check_op_revisions(&library.op_revisions).map_err(PlaybackError::Assembly)?;
     }
     // 静止时刻是**派生量**（可能不可推导）；录多长仍由调用方的 frames 决定。
     let record_hint = script.still_time();
@@ -218,9 +213,7 @@ pub fn build_bundle_runtime_with(
     let view_scopes: Vec<(zela_scene_ecs::Handle, String)> = script
         .views()
         .into_iter()
-        .filter_map(|handle| {
-            Some((handle, script.object_scope(handle)?.path.clone()))
-        })
+        .filter_map(|handle| Some((handle, script.object_scope(handle)?.path.clone())))
         .collect();
 
     let mut scene = Scene::new();
@@ -558,10 +551,7 @@ pub fn find_camera2d(scene: &Scene) -> Result<Option<Camera2DHandle>> {
     let probe = ze_scene_core::Camera2D {
         center: ze_notion::Vec2::ZERO,
         scale: 55.0,
-        rect: ze_notion::Rect2D::new(
-            ze_notion::Vec2::ZERO,
-            ze_notion::Vec2::new(640.0, 480.0),
-        ),
+        rect: ze_notion::Rect2D::new(ze_notion::Vec2::ZERO, ze_notion::Vec2::new(640.0, 480.0)),
     };
     let mut queue = DrawQueue::new();
     zela_render::draw::record_scene(scene, &probe, &mut queue);
@@ -603,10 +593,7 @@ pub fn set_view_rect(runtime: &Runtime, width: f32, height: f32) {
 
 /// **帧循环一步**：推进一帧并构造本帧回调；无图层时返回 `None`。
 pub fn step_frame(runtime: &Runtime, dt: f32) -> Option<SceneCompositorCallback> {
-    runtime
-        .driver
-        .submit(DriverCommand::Advance { dt })
-        .wait();
+    runtime.driver.submit(DriverCommand::Advance { dt }).wait();
 
     runtime.driver.with_scheduler(|scheduler| {
         let options = zela_render::FrameOptions::default();
@@ -816,8 +803,8 @@ mod tests {
             assert_eq!(origin.text, "Hi");
             Some(rebuilt())
         };
-        let mode = rebuild_script_content(&bundle, &with_content(), &mut script, &rebuild)
-            .expect("重建");
+        let mode =
+            rebuild_script_content(&bundle, &with_content(), &mut script, &rebuild).expect("重建");
 
         assert_eq!(mode, ContentMode::Rebuild);
         assert_ne!(
@@ -852,8 +839,8 @@ mod tests {
         let rebuild = |_: &ContentOrigin| -> Option<Path2D> {
             panic!("没有内容能力时不得调用重建钩子")
         };
-        let mode = rebuild_script_content(&bundle, &scene_only, &mut script, &rebuild)
-            .expect("restore");
+        let mode =
+            rebuild_script_content(&bundle, &scene_only, &mut script, &rebuild).expect("restore");
         assert_eq!(mode, ContentMode::Restore);
     }
 }

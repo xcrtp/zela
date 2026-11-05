@@ -18,8 +18,8 @@
 use std::sync::OnceLock;
 
 use ze_reflect::{Blame, SymbolTable};
-pub use ze_type::{OpDef, Target};
 use ze_type::{Kind, OpSig, ScalarKind, TypeSpec};
+pub use ze_type::{OpDef, Target};
 
 /// 本函子库的 namespace（进产物）。
 pub const LIBRARY_NAMESPACE: &str = "zela.math";
@@ -612,10 +612,16 @@ mod tests {
         }
         assert_eq!(super::EVALS.len(), super::DEFS.len());
         assert_eq!(
-            super::EVALS.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            super::EVALS
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>(),
             super::OPS
         );
-        assert!(super::eval_entry("warp").is_none(), "未知算子不静默查表命中");
+        assert!(
+            super::eval_entry("warp").is_none(),
+            "未知算子不静默查表命中"
+        );
     }
 
     /// 每条目录条目都带签名与构造器名（不再是"半张表"）。
@@ -640,7 +646,11 @@ mod tests {
         assert_eq!(super::op_revision("mul"), Some((1, 18)));
         assert_eq!(super::op_revision("scale"), Some((1, 18)));
         assert_eq!(super::op_revision("sum"), Some((1, 18)));
-        assert_eq!(super::op_revision("sin"), Some((1, 1)), "未改语义的算子不 bump");
+        assert_eq!(
+            super::op_revision("sin"),
+            Some((1, 1)),
+            "未改语义的算子不 bump"
+        );
     }
 
     /// 既有算子的 revision 与批次对应（1 = 追踪开始前、9 = 第 1 批、11 = 第 3 批、12 = 第 5a 批）。

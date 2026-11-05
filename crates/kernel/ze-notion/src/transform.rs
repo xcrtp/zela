@@ -213,13 +213,15 @@ mod tests {
     /// （glam 的 `Mat3::from_rotation_z` / `Mat4::from_rotation_z` 共用 `sin_cos`）。
     #[test]
     fn test_3d_to_affine2d_rotation_z_matches_2d_rotate() {
-        for theta in [0.0, 0.1, 2.7, std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
+        for theta in [
+            0.0,
+            0.1,
+            2.7,
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::PI,
+        ] {
             let t3 = Transform3D::from_matrix(Mat4::from_rotation_z(theta));
-            assert_eq!(
-                t3.to_affine2d(),
-                Transform2D::rotate(theta),
-                "θ = {theta}"
-            );
+            assert_eq!(t3.to_affine2d(), Transform2D::rotate(theta), "θ = {theta}");
         }
     }
 

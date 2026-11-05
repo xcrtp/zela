@@ -406,15 +406,27 @@ impl PropField {
     /// The success-match pattern for this field's `PropertyValue` variant.
     fn ok_pattern(&self) -> TokenStream2 {
         match &self.kind {
-            FieldKind::ScalarF32 => quote! { ::ze_node_schema::PropertyValue::Scalar(v) },
-            FieldKind::ScalarF64 => quote! { ::ze_node_schema::PropertyValue::Double(v) },
-            FieldKind::Integer => quote! { ::ze_node_schema::PropertyValue::Integer(v) },
-            FieldKind::Bool => quote! { ::ze_node_schema::PropertyValue::Bool(v) },
-            FieldKind::String => quote! { ::ze_node_schema::PropertyValue::String(v) },
+            FieldKind::ScalarF32 => {
+                quote! { ::ze_node_schema::PropertyValue::Scalar(v) }
+            }
+            FieldKind::ScalarF64 => {
+                quote! { ::ze_node_schema::PropertyValue::Double(v) }
+            }
+            FieldKind::Integer => {
+                quote! { ::ze_node_schema::PropertyValue::Integer(v) }
+            }
+            FieldKind::Bool => {
+                quote! { ::ze_node_schema::PropertyValue::Bool(v) }
+            }
+            FieldKind::String => {
+                quote! { ::ze_node_schema::PropertyValue::String(v) }
+            }
             FieldKind::VecN(_) => {
                 quote! { ::ze_node_schema::PropertyValue::VecN { components: v, .. } }
             }
-            FieldKind::Color => quote! { ::ze_node_schema::PropertyValue::Color(v) },
+            FieldKind::Color => {
+                quote! { ::ze_node_schema::PropertyValue::Color(v) }
+            }
         }
     }
 
@@ -640,7 +652,9 @@ fn step_opt(step: &Option<Expr>) -> TokenStream2 {
 
 fn unit_opt(unit: &Option<String>) -> TokenStream2 {
     match unit {
-        Some(s) => quote! { ::core::option::Option::Some(::std::string::String::from(#s)) },
+        Some(s) => {
+            quote! { ::core::option::Option::Some(::std::string::String::from(#s)) }
+        }
         None => quote! { ::core::option::Option::None },
     }
 }

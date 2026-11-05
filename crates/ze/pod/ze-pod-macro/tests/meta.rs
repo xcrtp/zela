@@ -1,7 +1,7 @@
 //! Y0 验收：`CapabilityMeta` 可查询、缺省为"无"、**version 不参与协商匹配**。
 #![allow(dead_code)] // 版本用例只关心 meta 与协商结果，不调用函数字段。
 
-use ze_pod_core::{Capability, CapabilityMeta, RegistryPod, Pod};
+use ze_pod_core::{Capability, CapabilityMeta, Pod, RegistryPod};
 use ze_pod_macro::capability;
 
 #[capability(namespace = "meta", version = "1.0")]
@@ -56,7 +56,9 @@ fn version_does_not_participate_in_negotiation() {
     let pod = registry();
 
     let a: Version1<'_> = pod.negotiate().expect("v1.0 协商成功");
-    let b: Version2<'_> = pod.negotiate().expect("v2.0 协商成功（version 不参与匹配）");
+    let b: Version2<'_> = pod
+        .negotiate()
+        .expect("v2.0 协商成功（version 不参与匹配）");
 
     assert_eq!(a.f(3.0), 3.0);
     assert_eq!(b.f(4.0), 4.0);

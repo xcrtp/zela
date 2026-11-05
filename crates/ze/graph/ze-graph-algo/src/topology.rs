@@ -33,7 +33,10 @@ impl Topology for GraphTopology<'_> {
     fn successors(&self, node: NodeId) -> Vec<NodeId> {
         let mut out: BTreeSet<NodeId> = BTreeSet::new();
         for index in 0..self.graph.output_count(node).unwrap_or(0) {
-            for input in self.graph.downstream(OutputSocketId::new(node, index as u32)) {
+            for input in self
+                .graph
+                .downstream(OutputSocketId::new(node, index as u32))
+            {
                 out.insert(input.node());
             }
         }

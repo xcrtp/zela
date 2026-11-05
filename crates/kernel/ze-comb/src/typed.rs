@@ -195,8 +195,10 @@ impl TypedOp {
                 slots.f64[out.index as usize] = f(slots.f64[args[0].index as usize]);
             }
             Self::F64xF64ToF64(f) => {
-                slots.f64[out.index as usize] =
-                    f(slots.f64[args[0].index as usize], slots.f64[args[1].index as usize]);
+                slots.f64[out.index as usize] = f(
+                    slots.f64[args[0].index as usize],
+                    slots.f64[args[1].index as usize],
+                );
             }
             Self::F64x3ToF64(f) => {
                 slots.f64[out.index as usize] = f(
@@ -227,8 +229,10 @@ impl TypedOp {
                 slots.vec3[out.index as usize] = f(&values);
             }
             Self::F64xF64ToBool(f) => {
-                slots.bools[out.index as usize] =
-                    f(slots.f64[args[0].index as usize], slots.f64[args[1].index as usize]);
+                slots.bools[out.index as usize] = f(
+                    slots.f64[args[0].index as usize],
+                    slots.f64[args[1].index as usize],
+                );
             }
             Self::BoolToBool(f) => {
                 slots.bools[out.index as usize] = f(slots.bools[args[0].index as usize]);
@@ -300,8 +304,10 @@ impl TypedOp {
                 );
             }
             Self::F64xF64ToVec2(f) => {
-                slots.vec2[out.index as usize] =
-                    f(slots.f64[args[0].index as usize], slots.f64[args[1].index as usize]);
+                slots.vec2[out.index as usize] = f(
+                    slots.f64[args[0].index as usize],
+                    slots.f64[args[1].index as usize],
+                );
             }
             Self::F64x3ToVec3(f) => {
                 slots.vec3[out.index as usize] = f(

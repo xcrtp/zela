@@ -59,8 +59,8 @@
 //! ```
 
 pub mod analysis;
-pub mod codegen;
 pub mod codata;
+pub mod codegen;
 pub mod compiled;
 pub mod expr;
 pub mod graph_view;
@@ -72,10 +72,10 @@ pub mod typed;
 pub mod walk;
 
 pub use analysis::{affected_consumers, reference_groups, shared_definitions, unreachable};
+pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use codegen::{
     CodegenError, WgslBackend, WgslFunction, WgslParam, emit_wgsl, slot_of_channel, wgsl_type,
 };
-pub use codata::{CodataError, CodataSpec, Expanded, Unfold, expand, observe};
 pub use compiled::{ExprProgram, NoMonomorphizer};
 pub use expr::{
     ChannelClass, ChannelRef, ChannelType, ClockLinkShape, ClockShape, Expr, ExprError, Id,
@@ -88,11 +88,13 @@ pub use pass::{
     ReferenceEval, Semantics, TransformPass, Validate, kernel_registry,
 };
 pub use program::{
-    CompiledExpr, EvalError, Mono, RecCache, SCALAR_MAX_DIM, Scalar, Step, TEXT_TYPE, Value,
-    ValueBytes, REC_MAX_STEPS, hash_values,
+    CompiledExpr, EvalError, Mono, REC_MAX_STEPS, RecCache, SCALAR_MAX_DIM, Scalar, Step,
+    TEXT_TYPE, Value, ValueBytes, hash_values,
 };
 pub use reference::{ReferenceEvaluator, eval_reference, eval_reference_elements};
-pub use typed::{OpResolver, SlotLayout, SlotRef, SlotType, Slots, TypedCall, TypedOp, TypedProgram, TypedStep};
+pub use typed::{
+    OpResolver, SlotLayout, SlotRef, SlotType, Slots, TypedCall, TypedOp, TypedProgram, TypedStep,
+};
 pub use walk::ExprVisitor;
 
 /// 表达式 payload 的 schema 版本。

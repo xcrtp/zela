@@ -146,7 +146,7 @@ mod tests {
     /// 索引越界 ⇒ 显式错误。
     #[test]
     fn index_out_of_bounds_is_explicit_error() {
-        let layout = VertexLayout::standard( AaModel::None, CacheStrategy::Static);
+        let layout = VertexLayout::standard(AaModel::None, CacheStrategy::Static);
         let vertices = bytes_of(&[0u32; 6]).to_vec(); // 24 字节 = 1 个 2D 顶点
         let err = VertexBufferData::new(layout, vertices, vec![0, 1]).unwrap_err();
         assert!(matches!(

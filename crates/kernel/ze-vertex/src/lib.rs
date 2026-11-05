@@ -33,7 +33,9 @@ pub mod semantic;
 pub use aa::{AaModel, AaSlotSemantics, AttribSemantic};
 pub use buffer::{VertexBufferData, VertexBufferError, bytes_of};
 pub use cache::CacheStrategy;
-pub use check::{hash_bytes, hash_bytes_sampled, StaticConsistencyChecker};
+pub use check::{StaticConsistencyChecker, hash_bytes, hash_bytes_sampled};
+pub use layout::{
+    AttribType, StepMode, VertexAttrib, VertexInputDesc, VertexLayout, VertexLayoutError,
+};
 pub use reconcile::{Padding, ReconcileError, ReconcilePlan, reconcile};
 pub use semantic::Semantic;
-pub use layout::{AttribType, StepMode, VertexAttrib, VertexInputDesc, VertexLayout, VertexLayoutError};

@@ -11,17 +11,17 @@
 - 路径：`crates/scene/ze-scene-api`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-pod-core`、`ze-pod-macro`、`ze-prerender`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`zela-scene-ecs`
-- 源文件：5 个 · 2313 行
+- 源文件：5 个 · 2322 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
 | `src/api.rs` | 246 | — |
-| `src/content_service.rs` | 336 | — |
-| `src/lib.rs` | 97 | 脚本 Pod 的 **domain 侧**：能力定义 + `scene` / `content` 两个 Service。 |
+| `src/content_service.rs` | 347 | — |
+| `src/lib.rs` | 94 | 脚本 Pod 的 **domain 侧**：能力定义 + `scene` / `content` 两个 Service。 |
 | `src/scene_service.rs` | 1067 | — |
-| `src/types.rs` | 567 | — |
+| `src/types.rs` | 568 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -43,7 +43,7 @@ graph LR
 | `src/lib.rs` | `pub trait SceneComponent: ze_pod_core::PodType` |
 | `src/lib.rs` | `pub trait RegisterSceneComponent` |
 | `src/lib.rs` | `pub fn scene_service(paths: PathStore) -> Arc<SceneServicePod>` |
-| `src/lib.rs` | `pub fn content_service(` |
+| `src/lib.rs` | `pub fn content_service(engine: Arc<InMemoryEngine>, paths: PathStore) -> Arc<ContentServicePod>` |
 | `src/scene_service.rs` | `pub struct SceneServicePod` |
 | `src/scene_service.rs` | `pub fn channels() -> &'static [ze_pod_core::ChannelDecl]` |
 | `src/scene_service.rs` | `pub fn methods() -> &'static [ze_pod_core::MethodDecl]` |

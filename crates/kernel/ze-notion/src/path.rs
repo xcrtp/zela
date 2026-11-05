@@ -1066,7 +1066,11 @@ mod tests {
     #[test]
     fn tangent_at_is_the_unit_direction_of_the_segment() {
         let path = Path2D::from_polyline(
-            &[Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 2.0)],
+            &[
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1.0, 0.0),
+                Vec2::new(1.0, 2.0),
+            ],
             false,
         );
         // 总长 3：t=0.5 → 弧长 1.5 ⇒ 第二段（0,1）→（1,2）的方向 (0,1)。

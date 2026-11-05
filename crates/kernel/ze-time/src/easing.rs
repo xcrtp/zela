@@ -106,7 +106,10 @@ mod tests {
             let mut prev = e.apply(0.0);
             for i in 1..=100 {
                 let v = e.apply(i as f32 / 100.0);
-                assert!(v + 1e-6 >= prev, "{e:?} not monotonic at i={i}: {prev} -> {v}");
+                assert!(
+                    v + 1e-6 >= prev,
+                    "{e:?} not monotonic at i={i}: {prev} -> {v}"
+                );
                 prev = v;
             }
         }

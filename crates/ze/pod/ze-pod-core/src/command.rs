@@ -243,10 +243,7 @@ where
     fn from_negotiated(pod: &'a dyn Pod, resolved: &[Resolved<'_>]) -> Option<Self> {
         Some(Self {
             pod,
-            submit: *resolved
-                .first()?
-                .callable
-                .downcast_ref::<SubmitFn<C>>()?,
+            submit: *resolved.first()?.callable.downcast_ref::<SubmitFn<C>>()?,
         })
     }
 }

@@ -92,8 +92,8 @@ pub fn run(host: &dyn CommandHost, dir: &std::path::Path) -> Result<Response, St
         },
     ];
 
-    let [json, lua] = ze_pod_lua::export_docs(dir, &capabilities)
-        .map_err(|e| format!("写导出文件失败：{e}"))?;
+    let [json, lua] =
+        ze_pod_lua::export_docs(dir, &capabilities).map_err(|e| format!("写导出文件失败：{e}"))?;
     host.diagnostic(Level::Info, &format!("JSON  : {}", json.display()));
     host.diagnostic(Level::Info, &format!("LuaLS : {}", lua.display()));
 

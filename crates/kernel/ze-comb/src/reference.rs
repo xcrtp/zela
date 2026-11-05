@@ -17,10 +17,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::expr::{definitions, ChannelClass, Expr, Node};
-use crate::program::{
-    literal_value, value_kind, EvalError, Mono, Value, REC_MAX_STEPS,
-};
+use crate::expr::{ChannelClass, Expr, Node, definitions};
+use crate::program::{EvalError, Mono, REC_MAX_STEPS, Value, literal_value, value_kind};
 
 /// 参考求值：`expr` 在宿主 `mono` 下的值。
 ///
@@ -80,11 +78,9 @@ fn eval_node<'a>(
         Node::Pure { value } => literal_value(value),
         Node::Channel { channel } => match channel.class() {
             ChannelClass::Element => {
-                let element = context
-                    .element
-                    .ok_or_else(|| EvalError::ElementContext {
-                        channel: channel.clone(),
-                    })?;
+                let element = context.element.ok_or_else(|| EvalError::ElementContext {
+                    channel: channel.clone(),
+                })?;
                 mono.read_element(channel, element)?
             }
             ChannelClass::Frame | ChannelClass::HostState => mono.read(channel)?,
@@ -123,7 +119,7 @@ fn eval_node<'a>(
                 None => {
                     return Err(EvalError::SelectCondition {
                         actual: value_kind(&condition),
-                    })
+                    });
                 }
             }
         }
@@ -134,7 +130,7 @@ fn eval_node<'a>(
                 _ => {
                     return Err(EvalError::RecCount {
                         actual: value_kind(&raw),
-                    })
+                    });
                 }
             };
             if count > REC_MAX_STEPS {
@@ -179,7 +175,9 @@ fn eval_node<'a>(
             // **BX**：轮数 = 宿主帧号（与 lowered 求值器同源）。
             let count = match mono.frame_index() {
                 Some(value) if value >= 0 => value,
-                Some(value) => return Err(EvalError::FrameIndex { actual: value }),
+                Some(value) => {
+                    return Err(EvalError::FrameIndex { actual: value });
+                }
                 None => return Err(EvalError::FrameContext),
             };
             if count > REC_MAX_STEPS {
@@ -287,16 +285,10 @@ mod tests {
     fn shared_nodes_are_evaluated_once() {
         let h1 = Expr::call(
             math("sin"),
-            [
-                Expr::channel(ChannelRef::builtin("time")),
-                Expr::pure(1.0),
-            ],
+            [Expr::channel(ChannelRef::builtin("time")), Expr::pure(1.0)],
         )
         .with_id("h1");
-        let root = Expr::call(
-            math("add"),
-            [h1.clone(), Expr::reference("h1")],
-        );
+        let root = Expr::call(math("add"), [h1.clone(), Expr::reference("h1")]);
         let mono = ScalarMono {
             time: 1.0,
             calls: Cell::new(0),

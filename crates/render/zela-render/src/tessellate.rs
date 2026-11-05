@@ -718,15 +718,10 @@ mod tests {
             )
         }
 
-        static SPECS: &[CustomSpec] =
-            &[CustomSpec::new("test.triangle").with_path(custom_path)];
+        static SPECS: &[CustomSpec] = &[CustomSpec::new("test.triangle").with_path(custom_path)];
         let specs = CustomSpecs::new(SPECS);
 
-        let poly = vec![
-            Vec2::ZERO,
-            Vec2::new(1.0, 0.0),
-            Vec2::new(1.0, 1.0),
-        ];
+        let poly = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0)];
         let custom = CustomShapeData::new(
             SpecId::new("test.triangle"),
             Rect2D::new(Vec2::ZERO, Vec2::new(1.0, 1.0)),
@@ -770,7 +765,13 @@ mod tests {
                 },
                 false,
             ),
-            ("Polygon", Shape2D::Polygon { points: poly.clone() }, true),
+            (
+                "Polygon",
+                Shape2D::Polygon {
+                    points: poly.clone(),
+                },
+                true,
+            ),
             (
                 "Path",
                 Shape2D::Path(Path2D::from_polyline(&poly, true)),

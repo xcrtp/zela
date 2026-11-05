@@ -69,7 +69,11 @@ fn probe() -> Result<(), String> {
                     return Ok(());
                 }
             },
-            None => failed.push(format!("{program} {}", prefix_args.join(" ")).trim().to_string()),
+            None => failed.push(
+                format!("{program} {}", prefix_args.join(" "))
+                    .trim()
+                    .to_string(),
+            ),
         }
     }
 
@@ -134,7 +138,10 @@ fn python_home(program: &str, prefix_args: &[&str]) -> Option<(PathBuf, String)>
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut lines = stdout.lines().map(str::trim).filter(|line| !line.is_empty());
+    let mut lines = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
     let home = PathBuf::from(lines.next()?);
     let version = lines.next()?.to_string();
     home.is_dir().then_some((home, version))

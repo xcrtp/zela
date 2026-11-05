@@ -12,12 +12,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use ze_pod_core::{Broker, Capability, Pod, PodNode};
 use ze_pod_binding::CapabilityDocs;
+use ze_pod_core::{Broker, Capability, Pod, PodNode};
+use ze_pod_js::{JsPod, RUN_ENTRY as JS_RUN_ENTRY};
 use ze_pod_lua::{LuaPod, RUN_ENTRY, lua_ls};
 #[cfg(feature = "python")]
 use ze_pod_py::PyPod;
-use ze_pod_js::{JsPod, RUN_ENTRY as JS_RUN_ENTRY};
 use ze_pod_tests::{MiniApi, MiniOutput, MiniRecorderPod};
 
 /// Lua 版：与 Python / JS 版逐项等价。
@@ -76,7 +76,8 @@ fn run_lua(source: &str) -> MiniOutput {
 fn run_python(source: &str) -> MiniOutput {
     let recorder = Arc::new(MiniRecorderPod::new());
     // Python 解释器由 PYO3_PYTHON / PYTHONHOME 指定（见交付说明）。
-    let py = Arc::new(PyPod::new().expect("Python 解释器初始化失败（检查 PYO3_PYTHON / PYTHONHOME）"));
+    let py =
+        Arc::new(PyPod::new().expect("Python 解释器初始化失败（检查 PYO3_PYTHON / PYTHONHOME）"));
     py.register_capability::<MiniApi>("scene", true);
     let broker = Broker::new(vec![
         PodNode::new_sync("scene", recorder, &["scene"]),
@@ -170,7 +171,10 @@ fn all_languages_generate_docs_from_the_same_calls() {
             "`.d.ts` 缺少 `{function}`：\n{ts_text}"
         );
     }
-    assert!(ts_text.contains("export interface Dot"), "`.d.ts` 缺少类型 Dot");
+    assert!(
+        ts_text.contains("export interface Dot"),
+        "`.d.ts` 缺少类型 Dot"
+    );
 
     // Python：`.pyi` 文件树。
     let pyi = ze_pod_py::pyi_files(&capabilities);
@@ -187,8 +191,7 @@ fn all_languages_generate_docs_from_the_same_calls() {
 
     // 两侧都来自同一份 JSON 定义。
     let json: serde_json::Value =
-        serde_json::from_str(&ze_pod_binding::capabilities_json(&capabilities))
-            .expect("合法 JSON");
+        serde_json::from_str(&ze_pod_binding::capabilities_json(&capabilities)).expect("合法 JSON");
     let functions = json["capabilities"]["mini"]["functions"]
         .as_array()
         .expect("mini functions");

@@ -7,17 +7,19 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use ze_pod_binding::{CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name};
 use ze_pod_core::{Field, Kind, RetType, ScalarKind, TypeSpec};
-use ze_pod_binding::{
-    CapabilityDocs, has_ops, op_by_name, op_by_spec, short_name,
-};
 
 /// Lua 侧类型名（LuaLS 注解用）。
 pub fn lua_type_name(spec: &'static TypeSpec) -> &'static str {
     match spec {
         TypeSpec::Scalar(kind) => match kind {
             ScalarKind::F32 | ScalarKind::F64 => "number",
-            ScalarKind::I32 | ScalarKind::I64 | ScalarKind::U32 | ScalarKind::U64 | ScalarKind::U8 => "integer",
+            ScalarKind::I32
+            | ScalarKind::I64
+            | ScalarKind::U32
+            | ScalarKind::U64
+            | ScalarKind::U8 => "integer",
             ScalarKind::Bool => "boolean",
             ScalarKind::String => "string",
         },
@@ -149,7 +151,9 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     lua_expr_returns(op)
                 } else if is_channel {
                     "Channel<any>".to_string()
-                } else if let Some(ctor) = ze_pod_binding::component_ctor_of(capabilities, full_name) {
+                } else if let Some(ctor) =
+                    ze_pod_binding::component_ctor_of(capabilities, full_name)
+                {
                     // 非算子构造器（`Exists { … }` 这类）也按同一张表给返回值：
                     // 否则 `Predicate.Of { expr = Exists { … } }` 在编辑器里是类型错。
                     lua_call_return(capabilities, &ctor).unwrap_or_else(|| "Handle".to_string())
@@ -165,9 +169,8 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     .map(|(index, field)| {
                         // 阶段 5：算子 spec 的参数按签名表展开（向量 ⇒ Vec2 | Vec3）。
                         let ty = if spec_op {
-                            lua_op_param(capabilities, full_name, index).unwrap_or_else(|| {
-                                lua_field_type(full_name, field, typed_expr)
-                            })
+                            lua_op_param(capabilities, full_name, index)
+                                .unwrap_or_else(|| lua_field_type(full_name, field, typed_expr))
                         } else {
                             lua_field_type(full_name, field, typed_expr)
                         };
@@ -285,7 +288,10 @@ pub fn lua_ls(capabilities: &[CapabilityDocs]) -> String {
                     out.push_str(&format!("---@return {returns}\n"));
                 }
                 let names: Vec<&str> = item.io.params.iter().map(|param| param.name).collect();
-                out.push_str(&format!("function clock.{short}({}) end\n\n", names.join(", ")));
+                out.push_str(&format!(
+                    "function clock.{short}({}) end\n\n",
+                    names.join(", ")
+                ));
             }
         }
     }
@@ -379,7 +385,9 @@ fn lua_call_return(
         "exists" => "Expr<boolean>".to_string(),
         "clock_range" | "clock_range_of" => "Expr<boolean>".to_string(),
         "rec_index" => "Expr<number>".to_string(),
-        "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => "Expr<any>".to_string(),
+        "query_self" | "method" | "nat_rec" | "rec_prev" | "event" | "component_state" | "env" => {
+            "Expr<any>".to_string()
+        }
         _ => lua_type_name(item.io.ret).to_string(),
     })
 }

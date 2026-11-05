@@ -2,9 +2,9 @@
 //
 // 全部 Curve::sample 为纯函数，输入 t，输出 AnimValue。
 
-use ze_notion::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use ze_notion::{DEFAULT_MORPH_SAMPLES, Path2D};
+use ze_notion::{Vec2, Vec3};
 
 use crate::easing::Easing;
 
@@ -188,9 +188,8 @@ impl Curve {
                 let cos_a = angle.cos() as f32;
                 let sin_a = angle.sin() as f32;
                 let base = Vec3::new(0.0, 0.0, *radius);
-                let rotated = base * cos_a
-                    + axis.cross(base) * sin_a
-                    + axis * axis.dot(base) * (1.0 - cos_a);
+                let rotated =
+                    base * cos_a + axis.cross(base) * sin_a + axis * axis.dot(base) * (1.0 - cos_a);
                 AnimValue::Vec3(rotated)
             }
             Curve::Orbit2D {
@@ -205,9 +204,7 @@ impl Curve {
                     0.0,
                 ))
             }
-            Curve::Phase { omega } => {
-                AnimValue::Scalar((*omega as f32) * t as f32)
-            }
+            Curve::Phase { omega } => AnimValue::Scalar((*omega as f32) * t as f32),
             Curve::Sampled {
                 points,
                 interpolation,
@@ -246,11 +243,7 @@ impl Curve {
         }
     }
 
-    fn sample_sampled(
-        points: &[(f64, AnimValue)],
-        t: f64,
-        interpolation: Interp,
-    ) -> AnimValue {
+    fn sample_sampled(points: &[(f64, AnimValue)], t: f64, interpolation: Interp) -> AnimValue {
         if points.is_empty() {
             return AnimValue::Scalar(0.0);
         }
@@ -320,7 +313,10 @@ mod tests {
             let t = (i as f64) * 0.01;
             let expected = 1.0 + 0.4 * (2.0_f64 * t).sin() as f32;
             let actual = curve.sample(t).scalar();
-            assert!((actual - expected).abs() < 1e-5, "t={t}: {actual} vs {expected}");
+            assert!(
+                (actual - expected).abs() < 1e-5,
+                "t={t}: {actual} vs {expected}"
+            );
         }
     }
 
@@ -530,8 +526,16 @@ mod tests {
 
         let bnd = |v: &AnimValue| v.try_path().unwrap().compute_bounds().unwrap();
         // t=0 → from（±1），t=1 → to（±2）。
-        assert!((bnd(&p0).max.x - 1.0).abs() < 1e-3, "t=0 max.x={}", bnd(&p0).max.x);
-        assert!((bnd(&p1).max.x - 2.0).abs() < 1e-3, "t=1 max.x={}", bnd(&p1).max.x);
+        assert!(
+            (bnd(&p0).max.x - 1.0).abs() < 1e-3,
+            "t=0 max.x={}",
+            bnd(&p0).max.x
+        );
+        assert!(
+            (bnd(&p1).max.x - 2.0).abs() < 1e-3,
+            "t=1 max.x={}",
+            bnd(&p1).max.x
+        );
 
         // 输出顶点数恒为 samples，与输入复杂度无关：from/to 一个 4 点、一个 512 点。
         let circle_poly: Vec<ze_notion::Vec2> = (0..512)
@@ -546,9 +550,18 @@ mod tests {
             easing: Easing::Linear,
             samples,
         };
-        assert_eq!(distinct_len(curve2.sample(0.0).try_path().unwrap()), samples as usize);
-        assert_eq!(distinct_len(curve2.sample(0.37).try_path().unwrap()), samples as usize);
-        assert_eq!(distinct_len(curve2.sample(1.0).try_path().unwrap()), samples as usize);
+        assert_eq!(
+            distinct_len(curve2.sample(0.0).try_path().unwrap()),
+            samples as usize
+        );
+        assert_eq!(
+            distinct_len(curve2.sample(0.37).try_path().unwrap()),
+            samples as usize
+        );
+        assert_eq!(
+            distinct_len(curve2.sample(1.0).try_path().unwrap()),
+            samples as usize
+        );
     }
 
     #[test]

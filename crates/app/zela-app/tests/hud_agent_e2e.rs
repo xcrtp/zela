@@ -11,10 +11,10 @@
 
 use std::collections::BTreeMap;
 
-use zela_app::headless;
-use zela_app::SceneChoice;
-use zela_scene_ecs::domain::SceneEvent;
 use ze_scene_core::domain::LayerId;
+use zela_app::SceneChoice;
+use zela_app::headless;
+use zela_scene_ecs::domain::SceneEvent;
 
 /// 把一组事件编码成**跨进程格式**（tagged JSON），再交给 headless 入口。
 fn inject(scene: &headless::HeadlessScene, events: Vec<SceneEvent>) {
@@ -32,12 +32,7 @@ fn param_scopes(frame: &ze_interact::Frame) -> BTreeMap<String, Vec<String>> {
         if node.role != "slider" || !node.name.contains(":curve:") {
             continue;
         }
-        let scope = node
-            .name
-            .split(':')
-            .next()
-            .unwrap_or_default()
-            .to_string();
+        let scope = node.name.split(':').next().unwrap_or_default().to_string();
         groups.entry(scope).or_default().push(node.name.clone());
     }
     groups
@@ -200,11 +195,8 @@ fn trace_reports_derived_outcomes_diff_and_diagnostics() {
         let first = &report.frames[0];
         assert!(!first.derived.is_empty(), "派生事件必须有 hover / click");
         assert!(
-            first
-                .outcomes
-                .iter()
-                .any(|outcome| outcome.name == name
-                    && matches!(outcome.kind, OutcomeKind::ValueChanged { .. })),
+            first.outcomes.iter().any(|outcome| outcome.name == name
+                && matches!(outcome.kind, OutcomeKind::ValueChanged { .. })),
             "状态机意图必须出现在回执里：{:?}",
             first.outcomes
         );
@@ -275,7 +267,10 @@ fn diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit() {
 
     let (frame_1x, diagnostics, name) = play(1.0);
     let (frame_2x, _, _) = play(2.0);
-    assert_eq!(frame_1x, frame_2x, "DPI 不参与换算 ⇒ 同一条轨迹、逐位相同的帧");
+    assert_eq!(
+        frame_1x, frame_2x,
+        "DPI 不参与换算 ⇒ 同一条轨迹、逐位相同的帧"
+    );
     assert_eq!(diagnostics.routed.as_deref(), Some(name.as_str()));
 
     let environment = diagnostics.environment;
@@ -376,7 +371,10 @@ fn recorded_window_stream_replays_the_same_trajectory() {
     // 纯值：JSON 往返逐字节相同。
     let text = stream.to_json().expect("规范化");
     assert_eq!(
-        WindowStream::from_json(&text).expect("读回").to_json().expect("再写"),
+        WindowStream::from_json(&text)
+            .expect("读回")
+            .to_json()
+            .expect("再写"),
         text
     );
 
@@ -428,7 +426,9 @@ fn layer_and_camera_switches_are_radio_group_scene_controls() {
     }
 
     // 点 `viewport_camera` 的第二段（3 个选项 ⇒ t = 0.55 落在第 1 项）。
-    let (x, y) = scene.slider_point("viewport_camera", 0.55).expect("世界坐标");
+    let (x, y) = scene
+        .slider_point("viewport_camera", 0.55)
+        .expect("世界坐标");
     inject(
         &scene,
         vec![

@@ -5,11 +5,11 @@ use egui::Color32;
 use zela_node_editor::NodePos;
 
 use ze_node_core::Node;
+use ze_node_schema::NodeRegistry;
 use zela_node_egui::NodeView;
 use zela_node_egui::socket_layout::{
     CARD_HEADER_HEIGHT, SOCKET_BOTTOM_GAP, SOCKET_ROW_HEIGHT, SOCKET_TOP_MARGIN,
 };
-use ze_node_schema::NodeRegistry;
 
 use crate::draw::draw_property;
 

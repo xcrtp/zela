@@ -177,8 +177,8 @@ mod tests {
 
     use ze_comb::{Expr, OpRef};
     use ze_node_core::{
-        DirtyPolicy, Graph, InputSocket, Node, NodeMeta, OutputSocket, SimpleGraph, TypeTag,
-        NamedTypeTag,
+        DirtyPolicy, Graph, InputSocket, NamedTypeTag, Node, NodeMeta, OutputSocket, SimpleGraph,
+        TypeTag,
     };
     use ze_node_lower::{Lowering, RuleError};
 
@@ -197,9 +197,7 @@ mod tests {
         fn new(meta: &str, state: &'static str, stateful: bool) -> Self {
             Self {
                 meta: NodeMeta::new(meta, 1),
-                outputs: vec![
-                    OutputSocket::new(Box::new(NamedTypeTag::new("Vec2"))).with_index(0)
-                ],
+                outputs: vec![OutputSocket::new(Box::new(NamedTypeTag::new("Vec2"))).with_index(0)],
                 state,
                 stateful,
             }
@@ -252,10 +250,7 @@ mod tests {
                 Expr::call(
                     OpRef::new("zela.math", "add"),
                     [
-                        Expr::call(
-                            OpRef::new("zela.math", "scale"),
-                            [Expr::pure(0.9f32), v()],
-                        ),
+                        Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(0.9f32), v()]),
                         Expr::call(
                             OpRef::new("zela.math", "scale"),
                             [Expr::pure(-0.05f32), x()],
@@ -408,10 +403,7 @@ mod tests {
                     Expr::call(
                         OpRef::new("zela.math", "add"),
                         [
-                            Expr::call(
-                                OpRef::new("zela.math", "scale"),
-                                [Expr::pure(0.9f32), v()],
-                            ),
+                            Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(0.9f32), v()]),
                             Expr::call(
                                 OpRef::new("zela.math", "scale"),
                                 [Expr::pure(-0.2f32), x()],

@@ -9,11 +9,9 @@ use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ze_pod_core::{
-    Broker, CommandQueue, Pod, PodId, PodNode, QualifiedName, publish_topic, negotiate_dyn,
+    Broker, CommandQueue, Pod, PodId, PodNode, QualifiedName, negotiate_dyn, publish_topic,
 };
-use ze_pod_tests::{
-    ClockEvent, CounterCmd, CounterPod, LogPod, MathApi, math_registry,
-};
+use ze_pod_tests::{ClockEvent, CounterCmd, CounterPod, LogPod, MathApi, math_registry};
 
 /// 1. `submit`（typed fn 指针 + 同步执行）vs `Vec::push`（原生容器）。
 fn submit_vs_push(c: &mut Criterion) {
@@ -32,8 +30,7 @@ fn submit_vs_push(c: &mut Criterion) {
     });
 
     let pod = Arc::new(CounterPod::new());
-    let queue: CommandQueue<'_, CounterCmd> =
-        negotiate_dyn(pod.as_ref()).expect("CounterPod");
+    let queue: CommandQueue<'_, CounterCmd> = negotiate_dyn(pod.as_ref()).expect("CounterPod");
     group.bench_function("submit_noop_1000", |b| {
         b.iter(|| {
             for _ in 0..N {
@@ -48,8 +45,7 @@ fn submit_vs_push(c: &mut Criterion) {
 /// 2. `tick(1000)` vs `tick(1)` + 999 no-op（批处理收益来自哪里）。
 fn batch_vs_single(c: &mut Criterion) {
     let pod = Arc::new(CounterPod::new());
-    let queue: CommandQueue<'_, CounterCmd> =
-        negotiate_dyn(pod.as_ref()).expect("CounterPod");
+    let queue: CommandQueue<'_, CounterCmd> = negotiate_dyn(pod.as_ref()).expect("CounterPod");
     let mut group = c.benchmark_group("batch");
 
     group.bench_function("tick(1000)_one_command", |b| {
@@ -105,9 +101,7 @@ fn typed_vs_erased(c: &mut Criterion) {
             let mut acc = 0.0f32;
             for i in 0..N {
                 let argument = i as f32;
-                let out = pod
-                    .call(id, &[&argument])
-                    .expect("慢路径调用成功");
+                let out = pod.call(id, &[&argument]).expect("慢路径调用成功");
                 acc += *out.downcast::<f32>().expect("f32");
             }
             black_box(acc)
@@ -140,9 +134,7 @@ fn fanout_curve(c: &mut Criterion) {
             &subscribers,
             |b, _| {
                 b.iter(|| {
-                    black_box(
-                        publish_topic(&broker, "clock", &event).expect("扇出成功"),
-                    );
+                    black_box(publish_topic(&broker, "clock", &event).expect("扇出成功"));
                 });
             },
         );

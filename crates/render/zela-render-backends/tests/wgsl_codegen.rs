@@ -9,8 +9,8 @@
 //! 为什么放在渲染后端 crate：内核（`ze-comb` / `ze-func`）不依赖 wgpu；
 //! 这里是"能真的跑 shader"的最低层，且 wgpu 已是它的依赖。
 
-use ze_comb::{ChannelRef, Expr, OpRef, Value, emit_wgsl};
 use ze_comb::program::{EvalError, Mono};
+use ze_comb::{ChannelRef, Expr, OpRef, Value, emit_wgsl};
 
 fn math(name: &str) -> OpRef {
     OpRef::new("zela.math", name)
@@ -34,7 +34,10 @@ fn expressions() -> Vec<(&'static str, Expr)> {
     vec![
         (
             "sin(t) * 2 + 0.5",
-            call("add", [call("mul", [call("sin", [time()]), f(2.0)]), f(0.5)]),
+            call(
+                "add",
+                [call("mul", [call("sin", [time()]), f(2.0)]), f(0.5)],
+            ),
         ),
         (
             "clamp(t * 3 - 1, 0, 1)",
@@ -74,10 +77,7 @@ fn expressions() -> Vec<(&'static str, Expr)> {
         ),
         (
             "normalize(vec3(1, 2, 2)).x",
-            x_of(call(
-                "normalize",
-                [call("vec3", [f(1.0), f(2.0), f(2.0)])],
-            )),
+            x_of(call("normalize", [call("vec3", [f(1.0), f(2.0), f(2.0)])])),
         ),
         (
             "rotate3((1,0,0), (0,1,0), t).z",
@@ -92,7 +92,10 @@ fn expressions() -> Vec<(&'static str, Expr)> {
         ),
         (
             "sum(sin t, cos t, 0.25)",
-            call("sum", [call("sin", [time()]), call("cos", [time()]), f(0.25)]),
+            call(
+                "sum",
+                [call("sin", [time()]), call("cos", [time()]), f(0.25)],
+            ),
         ),
         (
             "distance(vec2(sin t, cos t), vec2(1, 2))",
@@ -106,12 +109,12 @@ fn expressions() -> Vec<(&'static str, Expr)> {
         ),
         (
             "smoothstep(0, 1, fract(t))",
-            call(
-                "smoothstep",
-                [f(0.0), f(1.0), call("fract", [time()])],
-            ),
+            call("smoothstep", [f(0.0), f(1.0), call("fract", [time()])]),
         ),
-        ("fract(t * 3)", call("fract", [call("mul", [time(), f(3.0)])])),
+        (
+            "fract(t * 3)",
+            call("fract", [call("mul", [time(), f(3.0)])]),
+        ),
     ]
 }
 
@@ -267,10 +270,7 @@ fn run_on_gpu(
     device
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("等待 GPU");
-    let mapped = readback
-        .slice(..)
-        .get_mapped_range()
-        .expect("映射读回缓冲");
+    let mapped = readback.slice(..).get_mapped_range().expect("映射读回缓冲");
     let value = f32::from_le_bytes(mapped[0..4].try_into().expect("4 字节"));
     drop(mapped);
     readback.unmap();
@@ -300,10 +300,8 @@ fn generated_wgsl_matches_the_reference_within_tolerance() {
 
     for time in [0.0f64, 0.7, 2.3] {
         for (label, expr) in expressions() {
-            let generated =
-                emit_wgsl(&expr, ze_func::wgsl_backend()).unwrap_or_else(|error| {
-                    panic!("`{label}` 生成失败：{error}")
-                });
+            let generated = emit_wgsl(&expr, ze_func::wgsl_backend())
+                .unwrap_or_else(|error| panic!("`{label}` 生成失败：{error}"));
             assert_eq!(
                 generated.ret,
                 ze_comb::SlotType::F64,

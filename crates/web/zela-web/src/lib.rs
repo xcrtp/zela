@@ -21,22 +21,21 @@
 //!   两者共用 [`run_with`]，忙标志保证同一时刻只有一个有限帧循环。
 #![cfg(target_arch = "wasm32")]
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Document, HtmlCanvasElement, Response, UrlSearchParams, Window};
 
-use zela_playback::{
-    build_bundle_runtime, end_frame, set_view_rect, step_frame, to_rgba,
-};
 use zela_playback::vector_frame::VectorFrame;
+use zela_playback::{build_bundle_runtime, end_frame, set_view_rect, step_frame, to_rgba};
 use zela_render_backends::{
     AdapterFacts, BackendKind, BackendRegistry, DEFAULT_TARGET_FORMAT, RenderContext,
     RoutingDecision, ScreenParams, StandardBackends, render_frame_headless_async,
-    render_frame_to_view, routing::{LoopBackend, route},
+    render_frame_to_view,
+    routing::{LoopBackend, route},
 };
 use zela_scene_bundle::Bundle;
 use zela_scene_bundle::frame_hash::FrameSequenceHash;
@@ -224,9 +223,7 @@ fn current_texture(surface: &wgpu::Surface<'_>) -> Result<wgpu::SurfaceTexture, 
 }
 
 fn show_error(error: &JsValue) {
-    let message = error
-        .as_string()
-        .unwrap_or_else(|| format!("{error:?}"));
+    let message = error.as_string().unwrap_or_else(|| format!("{error:?}"));
     if let Some(document) = web_sys::window().and_then(|window| window.document()) {
         set_status(&document, &format!("错误：{message}"));
     }
@@ -278,9 +275,7 @@ pub fn set_speed(speed: f32) {
 /// window / document / WebGPU 能力检测（两条入口共用）。
 fn prepare() -> Result<(Window, Document), JsValue> {
     let window = web_sys::window().ok_or_else(|| js_err("没有 window"))?;
-    let document = window
-        .document()
-        .ok_or_else(|| js_err("没有 document"))?;
+    let document = window.document().ok_or_else(|| js_err("没有 document"))?;
 
     // ── 4. 能力检测：无 WebGPU ⇒ 显式提示 ──────────────────────────────
     let gpu = js_sys::Reflect::get(&window.navigator(), &JsValue::from_str("gpu"))
@@ -366,7 +361,8 @@ async fn create_display(document: &Document) -> Result<Display, JsValue> {
         .await
         .map_err(|e| js_err(e.to_string()))?;
     // B11 Step 5.3：adapter 必须随注入一起带上（否则能力校验静默消失）。
-    let ctx = RenderContext::new(device.clone(), queue.clone(), format).with_adapter(adapter.clone());
+    let ctx =
+        RenderContext::new(device.clone(), queue.clone(), format).with_adapter(adapter.clone());
     if registry.select_on(BackendKind::Vector, &adapter).is_ok() {
         zela_render_vector::init_gpu(device, queue, &adapter)
             .map_err(|e| js_err(format!("矢量后端注入失败：{e}")))?;
@@ -402,7 +398,10 @@ async fn run() -> Result<(), JsValue> {
         .unwrap_or_else(|| "./fourier.zsb".to_string());
     let compare = params.get("compare").as_deref() == Some("1");
     // B18 Step 0（判别实验）：?msaa=1 强制 1x、?msaa=4 恢复；0 或省略 = 不覆盖。
-    if let Some(samples) = params.get("msaa").and_then(|value| value.parse::<u32>().ok()) {
+    if let Some(samples) = params
+        .get("msaa")
+        .and_then(|value| value.parse::<u32>().ok())
+    {
         zela_render_vector::set_sample_override(samples);
         web_sys::console::log_1(&JsValue::from_str(&format!(
             "[msaa] override={samples}（0 = 关闭）"
@@ -434,7 +433,9 @@ async fn run() -> Result<(), JsValue> {
     // B18 排查：?copy=1 绕过呈现侧的全屏 blit。
     if params.get("copy").as_deref() == Some("1") {
         PRESENT_COPY.store(true, Ordering::Relaxed);
-        web_sys::console::log_1(&JsValue::from_str("[copy] 呈现改用 copy_texture_to_texture"));
+        web_sys::console::log_1(&JsValue::from_str(
+            "[copy] 呈现改用 copy_texture_to_texture",
+        ));
     }
     // PB Step 1（V-01）：?shadows=1 / 0 显式开关阴影（默认开，PI-3 按 M-3 实测拍板）。
     if let Some(value) = params.get("shadows") {
@@ -488,8 +489,8 @@ async fn run_with(
     let bundle = Bundle::from_bytes(&bytes).map_err(|e| js_err(e.to_string()))?;
     let payload = bundle.payload_hash_hex();
     let payload_short = short_hash(&payload);
-    let runtime = build_bundle_runtime(display_ctx.clone(), &bundle)
-        .map_err(|e| js_err(e.to_string()))?;
+    let runtime =
+        build_bundle_runtime(display_ctx.clone(), &bundle).map_err(|e| js_err(e.to_string()))?;
     set_view_rect(&runtime, WIDTH as f32, HEIGHT as f32);
     set_status(
         &document,
@@ -569,14 +570,13 @@ async fn run_with(
     // 状态栏常驻的后端决策行（B11 §7.4：选了谁、为什么、谁被拒）。
     let mut backend_line = String::new();
     // 矢量后端的默认渲染参数（`PostCaps::all()` ⇒ 着色栈默认开，与 native 同口径）。
-    let mut vector_params = zela_scene_bundle::RenderParams::default_for(
-        &ze_render_ir::Capabilities {
+    let mut vector_params =
+        zela_scene_bundle::RenderParams::default_for(&ze_render_ir::Capabilities {
             max_sample_count: 4,
             color_format: ze_render_ir::ColorFormat::Rgba8UnormSrgb,
             depth_format: ze_render_ir::DepthFormat::Depth32Float,
             post: BackendKind::Vector.post_caps(),
-        },
-    );
+        });
     vector_params.size = (WIDTH, HEIGHT);
 
     while index < frames {
@@ -842,14 +842,21 @@ impl VectorTarget {
 
     fn present(&self, ctx: &RenderContext, output: &wgpu::SurfaceTexture) {
         // B18 排查：?copy=1 且格式相同 ⇒ 直接拷贝（不经过 blit 渲染通道）。
-        if PRESENT_COPY.load(Ordering::Relaxed) && self.texture.format() == output.texture.format() {
-            let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("zela-vector-copy"),
-            });
+        if PRESENT_COPY.load(Ordering::Relaxed) && self.texture.format() == output.texture.format()
+        {
+            let mut encoder = ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("zela-vector-copy"),
+                });
             encoder.copy_texture_to_texture(
                 self.texture.as_image_copy(),
                 output.texture.as_image_copy(),
-                wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width: WIDTH,
+                    height: HEIGHT,
+                    depth_or_array_layers: 1,
+                },
             );
             ctx.queue.submit([encoder.finish()]);
         } else {
@@ -1016,10 +1023,16 @@ fn present_vector_frame(
         },
         extent,
     );
-    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("zela-vector-copy"),
-    });
-    encoder.copy_texture_to_texture(texture.as_image_copy(), output.texture.as_image_copy(), extent);
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("zela-vector-copy"),
+        });
+    encoder.copy_texture_to_texture(
+        texture.as_image_copy(),
+        output.texture.as_image_copy(),
+        extent,
+    );
     ctx.queue.submit([encoder.finish()]);
     Ok(())
 }

@@ -43,7 +43,10 @@ pub fn build_scene_callback(input: FrameInputs<'_>) -> Option<SceneCompositorCal
         })
         .unwrap_or_default();
 
-    let morphs = input.morphs.map(|queue| queue.0.clone()).unwrap_or_default();
+    let morphs = input
+        .morphs
+        .map(|queue| queue.0.clone())
+        .unwrap_or_default();
     let reveals = input
         .reveals
         .map(|queue| queue.0.clone())

@@ -201,7 +201,11 @@ impl OpSig {
         if self.variadic {
             params.push("...".to_string());
         }
-        format!("({}) -> {}", params.join(", "), render_type(self.ret, self.vars))
+        format!(
+            "({}) -> {}",
+            params.join(", "),
+            render_type(self.ret, self.vars)
+        )
     }
 
     /// 返回类型的候选（`Var` 按 kind 展开；语言侧再把 kind 映射成具体类型）。

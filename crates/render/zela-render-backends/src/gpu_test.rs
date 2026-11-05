@@ -93,13 +93,7 @@ pub fn require_gpu_named(name: impl Into<String>) -> Option<(GpuGuard, RenderCon
     }
 
     match RenderContext::headless() {
-        Ok(ctx) => Some((
-            GpuGuard {
-                name,
-                ran: true,
-            },
-            ctx,
-        )),
+        Ok(ctx) => Some((GpuGuard { name, ran: true }, ctx)),
         Err(_) => skip(name),
     }
 }
@@ -110,15 +104,14 @@ fn skip(name: String) -> Option<(GpuGuard, RenderContext)> {
         panic!("ZELA_REQUIRE_GPU=1 但创建 headless GPU 上下文失败（{name}）");
     }
     // 守卫在这里 Drop：打印跳过行 + 维护计数。
-    drop(GpuGuard {
-        name,
-        ran: false,
-    });
+    drop(GpuGuard { name, ran: false });
     None
 }
 
 fn strict() -> bool {
-    env::var("ZELA_REQUIRE_GPU").map(|v| v == "1").unwrap_or(false)
+    env::var("ZELA_REQUIRE_GPU")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 fn simulated_unavailable() -> bool {
@@ -157,7 +150,13 @@ fn report(line: String) {
 
     if let Ok(tx) = tx.lock() {
         let (done_tx, done_rx) = sync_channel(0);
-        if tx.send(Job { line, done: done_tx }).is_ok() {
+        if tx
+            .send(Job {
+                line,
+                done: done_tx,
+            })
+            .is_ok()
+        {
             let _ = done_rx.recv();
         }
     }

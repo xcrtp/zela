@@ -3,14 +3,14 @@
 // 验收 1：headless 结构断言（N1 / N3 / N2 / N4）；
 // 验收 2：GPU 像素级（组控制与不透明度真的作用到光栅化结果）。
 
-use zela_render::{DrawQueue, SceneRecordSystem, ViewRect, record_scene_tagged};
-use zela_render_backends::{RenderContext, WgpuBackend2D};
-use zela_scene_ecs::TimeState;
-use zela_scene_ecs::animation::BindingApplySystem;
 use zela_authored::capability_demo::{
     COLOR_CONTROL, COLOR_COS, COLOR_SIN, COS_OFFSET, CapabilityDemo, FADE_SECONDS, GROUP_COS,
     NAME_CONTROL, NAME_COS, NAME_SIN, build,
 };
+use zela_render::{DrawQueue, SceneRecordSystem, ViewRect, record_scene_tagged};
+use zela_render_backends::{RenderContext, WgpuBackend2D};
+use zela_scene_ecs::TimeState;
+use zela_scene_ecs::animation::BindingApplySystem;
 use zela_scene_ecs::contract::{SceneRead, WorldView, entity_of, find_by_name};
 use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::types::Rect2D;
@@ -73,7 +73,8 @@ fn find_by_name_returns_the_named_objects() {
     assert_ne!(cos, ctl);
 
     // 取回的对象确实**就是这个名字、且真有几何**（不是只对上名字的空壳）。
-    let name_of = |id| scene.with::<zela_scene_ecs::contract::Name, _>(id, |n| n.as_str().to_string());
+    let name_of =
+        |id| scene.with::<zela_scene_ecs::contract::Name, _>(id, |n| n.as_str().to_string());
     assert_eq!(name_of(sin).as_deref(), Some(NAME_SIN));
     assert_eq!(name_of(cos).as_deref(), Some(NAME_COS));
     assert_eq!(name_of(ctl).as_deref(), Some(NAME_CONTROL));

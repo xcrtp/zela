@@ -3,8 +3,8 @@
 #![allow(dead_code)] // capability 的 inherent 方法不全部调用。
 
 use ze_pod_core::{
-    Capability, ErasedFn, Field, Handle, RegistryPod, ScalarKind, TypeSpec, Variant, Pod, PodId,
-    PodType, PodValue, PodValueError,
+    Capability, ErasedFn, Field, Handle, Pod, PodId, PodType, PodValue, PodValueError, RegistryPod,
+    ScalarKind, TypeSpec, Variant,
 };
 use ze_pod_macro::{PodType, capability};
 
@@ -78,7 +78,13 @@ fn type_spec_is_reflective() {
     };
     assert_eq!(*name, "test.Style");
     assert_eq!(fields.len(), 2);
-    assert_eq!(fields[0], Field { name: "width", ty: <f32 as PodType>::SPEC });
+    assert_eq!(
+        fields[0],
+        Field {
+            name: "width",
+            ty: <f32 as PodType>::SPEC
+        }
+    );
     assert_eq!(fields[1].name, "color");
     assert_eq!(fields[1].ty, <Color as PodType>::SPEC);
 
@@ -103,13 +109,22 @@ fn type_spec_is_reflective() {
         &[
             Variant {
                 name: "Phase",
-                fields: &[Field { name: "omega", ty: <f32 as PodType>::SPEC }],
+                fields: &[Field {
+                    name: "omega",
+                    ty: <f32 as PodType>::SPEC
+                }],
             },
             Variant {
                 name: "Const",
-                fields: &[Field { name: "value", ty: <f32 as PodType>::SPEC }],
+                fields: &[Field {
+                    name: "value",
+                    ty: <f32 as PodType>::SPEC
+                }],
             },
-            Variant { name: "Unit", fields: &[] },
+            Variant {
+                name: "Unit",
+                fields: &[]
+            },
         ]
     );
 
@@ -137,7 +152,10 @@ fn pod_type_round_trips_nested_structs_and_enums() {
         PodValue::Struct(
             "test.Style",
             vec![
-                ("width", PodValue::Scalar(ze_pod_core::ScalarValue::F32(3.5))),
+                (
+                    "width",
+                    PodValue::Scalar(ze_pod_core::ScalarValue::F32(3.5))
+                ),
                 (
                     "color",
                     PodValue::Struct(
@@ -171,7 +189,10 @@ fn pod_type_round_trips_nested_structs_and_enums() {
                     ],
                 ),
             ),
-            ("width", PodValue::Scalar(ze_pod_core::ScalarValue::F32(3.5))),
+            (
+                "width",
+                PodValue::Scalar(ze_pod_core::ScalarValue::F32(3.5)),
+            ),
         ],
     );
     assert_eq!(Style::from_pod_value(&shuffled).unwrap(), style);
@@ -220,8 +241,8 @@ fn generated_calls_convert_values() {
 
     let curve_fn = &BoundApi::calls()[1];
     assert_eq!(curve_fn.io.params[0].name, "curve");
-    let out = (curve_fn.call)(&pod, &[(Curve::Phase { omega: 0.25 }).to_pod_value()])
-        .expect("调用成功");
+    let out =
+        (curve_fn.call)(&pod, &[(Curve::Phase { omega: 0.25 }).to_pod_value()]).expect("调用成功");
     let PodValue::Opaque(handle) = out else {
         panic!("返回值必须是句柄");
     };

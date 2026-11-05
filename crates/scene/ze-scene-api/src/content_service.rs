@@ -23,7 +23,9 @@ use std::sync::{Arc, Mutex};
 
 use ze_content::StrokeOutline;
 use ze_notion::{Color32 as NotionColor, Path2D, Vec2 as NotionVec2};
-use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod};
+use ze_pod_core::{
+    FunctionId, Handle, HandleTable, Pod, PodError, PodId, QualifiedName, RegistryPod,
+};
 use ze_prerender::InMemoryEngine;
 use ze_scene_core::components::{ContentOrigin, ContentOriginKind};
 
@@ -69,11 +71,7 @@ impl PathStore {
         })))
     }
 
-    pub(crate) fn insert(
-        &self,
-        path: Path2D,
-        origin: Option<ContentOrigin>,
-    ) -> Handle {
+    pub(crate) fn insert(&self, path: Path2D, origin: Option<ContentOrigin>) -> Handle {
         self.0
             .lock()
             .expect("路径表锁中毒")
@@ -187,14 +185,27 @@ fn content_formula(pod: &dyn Pod, spec: Formula) -> PathList {
         spec.x,
         spec.y,
     );
-    compile(pod, &spec.source, spec.font_size, spec.x, spec.y, true, Some(origin))
+    compile(
+        pod,
+        &spec.source,
+        spec.font_size,
+        spec.x,
+        spec.y,
+        true,
+        Some(origin),
+    )
 }
 
 fn content_text(pod: &dyn Pod, spec: Text) -> PathList {
     let source = ze_content::text_literal_source(&spec.source);
     // **CD-b**：烘焙轮廓 + 原始文本**同时**进产物（后者供 rebuild）。
-    let origin =
-        content_origin_meta(ContentOriginKind::Text, &spec.source, spec.font_size, spec.x, spec.y);
+    let origin = content_origin_meta(
+        ContentOriginKind::Text,
+        &spec.source,
+        spec.font_size,
+        spec.x,
+        spec.y,
+    );
     compile(
         pod,
         &source,

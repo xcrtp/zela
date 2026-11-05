@@ -94,10 +94,7 @@ pub enum CodegenError {
     #[error("`Ref` 指向尚未生成的节点（只支持后序 / 后向引用）")]
     ForwardReference,
     #[error("`Select` 两支类型不一致：{then:?} vs {otherwise:?}")]
-    SelectTypeMismatch {
-        then: SlotType,
-        otherwise: SlotType,
-    },
+    SelectTypeMismatch { then: SlotType, otherwise: SlotType },
 }
 
 impl CodegenError {
@@ -209,20 +206,15 @@ impl Emitter<'_> {
                     rendered.push(text);
                     types.push(ty);
                 }
-                let (ret, text) =
-                    self.backend
-                        .op(op, &types, &rendered)
-                        .ok_or_else(|| CodegenError::UnsupportedOp {
-                            op: op.qualified(),
-                            args: types,
-                        })?;
+                let (ret, text) = self.backend.op(op, &types, &rendered).ok_or_else(|| {
+                    CodegenError::UnsupportedOp {
+                        op: op.qualified(),
+                        args: types,
+                    }
+                })?;
                 (text, ret)
             }
-            Node::Select {
-                cond,
-                then,
-                r#else,
-            } => {
+            Node::Select { cond, then, r#else } => {
                 let (cond, cond_ty) = self.value(cond)?;
                 if cond_ty != SlotType::Bool {
                     return Err(CodegenError::UnsupportedOp {
@@ -238,10 +230,7 @@ impl Emitter<'_> {
                         otherwise: else_ty,
                     });
                 }
-                (
-                    format!("select({then_text}, {else_text}, {cond})"),
-                    then_ty,
-                )
+                (format!("select({then_text}, {else_text}, {cond})"), then_ty)
             }
             Node::Ref { to } => {
                 return self
@@ -420,10 +409,7 @@ mod tests {
     fn forward_references_are_rejected() {
         // `Ref` 在定义之前出现：validate 允许（DAG 只看有无定义），emitter 只做后序 ⇒ 显式失败。
         let defined = Expr::call(math("sin"), [Expr::pure(1.0)]).with_id("t");
-        let expr = Expr::call(
-            math("add"),
-            [Expr::reference("t"), defined],
-        );
+        let expr = Expr::call(math("add"), [Expr::reference("t"), defined]);
         let error = emit_wgsl(&expr, &TestBackend).unwrap_err();
         assert!(matches!(error, CodegenError::ForwardReference), "{error}");
     }
@@ -452,7 +438,10 @@ mod tests {
     fn unknown_operators_fail_explicitly() {
         let expr = Expr::call(math("cos"), [Expr::pure(0.5)]);
         let error = emit_wgsl(&expr, &TestBackend).unwrap_err();
-        assert!(matches!(error, CodegenError::UnsupportedOp { .. }), "{error}");
+        assert!(
+            matches!(error, CodegenError::UnsupportedOp { .. }),
+            "{error}"
+        );
     }
 
     #[test]
@@ -465,11 +454,7 @@ mod tests {
         let emitted = emit_wgsl(&ok, &TestBackend).expect("同型两支可生成");
         assert!(emitted.source.contains("select("), "{}", emitted.source);
 
-        let mismatched = Expr::select(
-            Expr::pure(true),
-            Expr::pure(1.0),
-            Expr::pure(true),
-        );
+        let mismatched = Expr::select(Expr::pure(true), Expr::pure(1.0), Expr::pure(true));
         let error = emit_wgsl(&mismatched, &TestBackend).unwrap_err();
         assert!(
             matches!(error, CodegenError::SelectTypeMismatch { .. }),

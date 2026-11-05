@@ -123,8 +123,7 @@ impl ClockPod {
     pub fn with_id(id: PodId) -> Self {
         let source = PodHandle::new(id);
         let functions = vec![
-            <CommandQueue<'static, ClockCmd> as Capability<'static>>::signatures()[0]
-                .qualified(),
+            <CommandQueue<'static, ClockCmd> as Capability<'static>>::signatures()[0].qualified(),
             <Broadcast<'static, ClockEvent> as Capability<'static>>::signatures()[0].qualified(),
         ];
         Self {
@@ -425,11 +424,13 @@ impl ControllerPod {
 
     /// 经注入的 clock 提交 `Tick`（**真实的跨 Pod 泛型 capability 使用**）。
     pub fn tick(&self, frames: u32) -> Result<Receipt, PodError> {
-        let clock = self.clock.borrow().clone().ok_or_else(|| {
-            PodError::CallFailed("ControllerPod 尚未注入 clock 服务".to_string())
+        let clock =
+            self.clock.borrow().clone().ok_or_else(|| {
+                PodError::CallFailed("ControllerPod 尚未注入 clock 服务".to_string())
+            })?;
+        let queue: CommandQueue<'_, ClockCmd> = negotiate_dyn(&*clock).ok_or_else(|| {
+            PodError::CallFailed("clock 未提供 CommandQueue<ClockCmd>".to_string())
         })?;
-        let queue: CommandQueue<'_, ClockCmd> = negotiate_dyn(&*clock)
-            .ok_or_else(|| PodError::CallFailed("clock 未提供 CommandQueue<ClockCmd>".to_string()))?;
         Ok(queue.submit(ClockCmd::Tick { frames }))
     }
 }
@@ -443,7 +444,9 @@ impl Default for ControllerPod {
 fn controller_requirements(_: &dyn Pod) -> Vec<ServiceRequirement> {
     vec![ServiceRequirement::required(
         "clock",
-        &CommandQueue::<ClockCmd>::signatures()[0].qualified().to_string(),
+        &CommandQueue::<ClockCmd>::signatures()[0]
+            .qualified()
+            .to_string(),
     )]
 }
 
@@ -570,7 +573,11 @@ impl MiniRecorderPod {
             ze_pod_lua::FINISH_PATH,
             &[],
             "Result<Box<dyn Any>, String>",
-            |pod, _| Ok(Box::new(mini(pod).finish().map(|out| Box::new(out) as Box<dyn Any>))),
+            |pod, _| {
+                Ok(Box::new(
+                    mini(pod).finish().map(|out| Box::new(out) as Box<dyn Any>),
+                ))
+            },
         );
         Self {
             id,

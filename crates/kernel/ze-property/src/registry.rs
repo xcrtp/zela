@@ -76,11 +76,7 @@ impl ParameterRegistry {
     }
 
     /// Type-checked value write (delegates to [`Property::set_value`]).
-    pub fn set_value(
-        &mut self,
-        address: &str,
-        value: PropertyValue,
-    ) -> Result<(), PropertyError> {
+    pub fn set_value(&mut self, address: &str, value: PropertyValue) -> Result<(), PropertyError> {
         let property = self
             .entries
             .get_mut(address)
@@ -168,9 +164,7 @@ mod tests {
     #[test]
     fn duplicate_address_is_rejected() {
         let mut registry = ParameterRegistry::new();
-        registry
-            .insert("a", scalar("a", 0.0, 0.0, 1.0))
-            .unwrap();
+        registry.insert("a", scalar("a", 0.0, 0.0, 1.0)).unwrap();
         assert!(matches!(
             registry.insert("a", scalar("a", 0.5, 0.0, 1.0)),
             Err(PropertyError::DuplicateField(_))
@@ -180,23 +174,21 @@ mod tests {
     #[test]
     fn set_value_is_type_checked_and_clamped() {
         let mut registry = ParameterRegistry::new();
-        registry
-            .insert("a", scalar("a", 0.0, 0.0, 1.0))
-            .unwrap();
+        registry.insert("a", scalar("a", 0.0, 0.0, 1.0)).unwrap();
         assert!(registry.set_value("a", PropertyValue::Bool(true)).is_err());
-        registry
-            .set_value("a", PropertyValue::Scalar(9.0))
-            .unwrap();
+        registry.set_value("a", PropertyValue::Scalar(9.0)).unwrap();
         assert_eq!(registry.value("a"), Some(PropertyValue::Scalar(1.0)));
-        assert!(registry.set_value("missing", PropertyValue::Scalar(0.0)).is_err());
+        assert!(
+            registry
+                .set_value("missing", PropertyValue::Scalar(0.0))
+                .is_err()
+        );
     }
 
     #[test]
     fn serde_round_trip() {
         let mut registry = ParameterRegistry::new();
-        registry
-            .insert("a", scalar("a", 0.25, 0.0, 1.0))
-            .unwrap();
+        registry.insert("a", scalar("a", 0.25, 0.0, 1.0)).unwrap();
         let json = serde_json::to_string(&registry).unwrap();
         let back: ParameterRegistry = serde_json::from_str(&json).unwrap();
         assert_eq!(registry, back);

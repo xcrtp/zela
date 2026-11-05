@@ -43,6 +43,9 @@ pub mod frame;
 pub mod hit;
 pub mod layout;
 pub mod route;
+/// **CL-R**：布局策略（`two-pass` 默认 / `kasuari` feature 后）+ 约束声明 + 唯一 revision。
+/// 默认零依赖：`kasuari` 只在 `layout-kasuari` feature 后编译。
+pub mod solver;
 pub mod text;
 /// **CL-b**：表达层（`Widget2D` / `Container2D` / `WidgetRuntime` / ctx / theme）。
 /// 需要 `widgets` feature（`DrawCommand` 会间接引入 glam；默认构建不受影响）。
@@ -54,12 +57,12 @@ pub use control::{
 };
 pub use frame::{Frame, SemanticNode};
 pub use hit::{
-    CurveHitTester, HitChain, HitFlow, HitId, HitIndex, HitRegion, HitTarget, LinearHitIndex, Point,
-    Rect,
+    CurveHitTester, HitChain, HitFlow, HitId, HitIndex, HitRegion, HitTarget, LinearHitIndex,
+    Point, Rect,
 };
 pub use layout::{
-    apply_layout, BoxLayout, ConstraintSet, Constraints, FlowLayout, Layout, LayoutCache, LayoutId,
-    LayoutItem, PlacedRect, Size, layout_for_constraints,
+    BoxLayout, ConstraintSet, Constraints, FlowLayout, Layout, LayoutCache, LayoutId, LayoutItem,
+    PlacedRect, Size, apply_layout, layout_for_constraints,
 };
 pub use route::{RouteKey, RoutePhase, Router};
 pub use text::{CharBox, TextRun, TextRunMarker};

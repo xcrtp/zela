@@ -17,22 +17,22 @@
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/broker.rs` | 1161 | Broker：把「解释器 / 执行器 / 能力提供者」撮合成一张有向图。 |
+| `src/broker.rs` | 1166 | Broker：把「解释器 / 执行器 / 能力提供者」撮合成一张有向图。 |
 | `src/capability.rs` | 228 | capability：运行时协商出的（typed）接口。 |
-| `src/command.rs` | 403 | 命令队列 / 事件总线：**泛型 capability**（命令枚举与事件枚举由实现方注入）。 |
-| `src/error.rs` | 52 | Pod 抽象的错误类型（手写，不引入 thiserror —— 零依赖）。 |
-| `src/handle.rs` | 266 | 不透明句柄：大类型只在 Pod 内部存数据，跨边界只传"号"。 |
+| `src/command.rs` | 400 | 命令队列 / 事件总线：**泛型 capability**（命令枚举与事件枚举由实现方注入）。 |
+| `src/error.rs` | 58 | Pod 抽象的错误类型（手写，不引入 thiserror —— 零依赖）。 |
+| `src/handle.rs` | 264 | 不透明句柄：大类型只在 Pod 内部存数据，跨边界只传"号"。 |
 | `src/inject.rs` | 295 | 反向能力：宿主把能力注入 Pod（`Injector` / `Service`）。 |
-| `src/lib.rs` | 122 | — |
+| `src/lib.rs` | 120 | — |
 | `src/lifecycle.rs` | 80 | 生命周期：**普通 capability**（不在 `Injector` 里），由宿主调用。 |
-| `src/ordering.rs` | 327 | 逻辑时序（Ord）与显式 flush 边界。 |
+| `src/ordering.rs` | 323 | 逻辑时序（Ord）与显式 flush 边界。 |
 | `src/pod.rs` | 279 | Pod trait：不透明状态机 + 函数集合 + 协商 + 快慢双路径。 |
 | `src/qualified.rs` | 177 | 完整函数名（内部链接器）：`"ns::path::name(A, B) -> R"`。 |
-| `src/registry.rs` | 478 | 第一 Pod：闭包注册表（内置小 Pod）。 |
+| `src/registry.rs` | 468 | 第一 Pod：闭包注册表（内置小 Pod）。 |
 | `src/topic.rs` | 60 | topic 机制：**广播降级为「查询 + 迭代单播」**。 |
 | `src/type_name.rs` | 85 | 稳定类型名（与 `ze-node-core::TypeTag::type_name()` 形态同构）。 |
 | `src/typespec.rs` | 49 | 类型描述（IDL schema）：**实现已迁至 `ze-type`**，本模块只做 re-export + |
-| `src/value.rs` | 332 | 跨语言值（`PodValue`）与类型转换（`PodType`）。 |
+| `src/value.rs` | 342 | 跨语言值（`PodValue`）与类型转换（`PodType`）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

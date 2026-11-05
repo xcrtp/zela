@@ -541,10 +541,7 @@ impl PlotMono {
 }
 
 impl ze_comb::Mono for PlotMono {
-    fn read(
-        &self,
-        channel: &ze_comb::ChannelRef,
-    ) -> Result<ze_comb::Value, ze_comb::EvalError> {
+    fn read(&self, channel: &ze_comb::ChannelRef) -> Result<ze_comb::Value, ze_comb::EvalError> {
         Err(ze_comb::EvalError::MissingChannel {
             channel: channel.clone(),
         })
@@ -852,7 +849,8 @@ mod tests {
         use zela_scene_ecs::fingerprint_world;
         use zela_scene_ecs::scene::Scene;
 
-        let assembly = assemble(Arc::new(crate::formula::build_engine())).expect("脚本 Pod 装配成功");
+        let assembly =
+            assemble(Arc::new(crate::formula::build_engine())).expect("脚本 Pod 装配成功");
         let handwritten = r#"
 scene.spawn({ Camera2D { scale = 40.0 } })
 local group = scene.spawn({

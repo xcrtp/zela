@@ -9,62 +9,62 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/ze-scene-core`
-- 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
+- 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：50 个 · 14424 行
+- 源文件：50 个 · 14355 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/affine.rs` | 1246 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
-| `src/animation/binding.rs` | 480 | — |
-| `src/animation/mod.rs` | 37 | — |
-| `src/animation/params.rs` | 700 | params.rs — 参数注册表 side table（CA-b）与参数地址回写（CA-c）。 |
-| `src/animation/predicate.rs` | 893 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
-| `src/animation/resolve.rs` | 192 | resolve.rs — **字段级**写入仲裁（CC-c）。 |
+| `src/animation/affine.rs` | 1232 | **仿射识别**（BX Step 1）：判定 `State.step` 是否关于 `prev` 仿射，并提取 `(A, b)`。 |
+| `src/animation/binding.rs` | 492 | — |
+| `src/animation/mod.rs` | 39 | — |
+| `src/animation/params.rs` | 715 | params.rs — 参数注册表 side table（CA-b）与参数地址回写（CA-c）。 |
+| `src/animation/predicate.rs` | 886 | predicate → **区间集合**（AH-06）+ `last_active` 反算（AH-07）。 |
+| `src/animation/resolve.rs` | 195 | resolve.rs — **字段级**写入仲裁（CC-c）。 |
 | `src/animation/scope.rs` | 61 | 作用域（CC-a）：给绑定表与时钟一个**声明式**的归属维度。 |
-| `src/animation/target.rs` | 1380 | — |
-| `src/animation/timeline.rs` | 749 | — |
-| `src/bounds.rs` | 204 | — |
+| `src/animation/target.rs` | 1403 | — |
+| `src/animation/timeline.rs` | 755 | — |
+| `src/bounds.rs` | 205 | — |
 | `src/camera_input.rs` | 168 | — |
-| `src/components/3d.rs` | 402 | — |
+| `src/components/3d.rs` | 413 | — |
 | `src/components.rs` | 274 | — |
 | `src/composer.rs` | 191 | — |
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
 | `src/domain/config.rs` | 76 | — |
 | `src/domain/event.rs` | 404 | — |
-| `src/domain/inject.rs` | 223 | **CH-a**：`Injected` envelope —— 给每一次注入打标记。 |
-| `src/domain/input_window.rs` | 394 | **CH-a**：窗口输入 —— `collect_events` 的纯函数形态。 |
-| `src/domain/mod.rs` | 30 | — |
+| `src/domain/inject.rs` | 230 | **CH-a**：`Injected` envelope —— 给每一次注入打标记。 |
+| `src/domain/input_window.rs` | 397 | **CH-a**：窗口输入 —— `collect_events` 的纯函数形态。 |
+| `src/domain/mod.rs` | 28 | — |
 | `src/domain/view.rs` | 263 | — |
 | `src/domain/view_rect.rs` | 38 | — |
-| `src/lib.rs` | 80 | — |
+| `src/lib.rs` | 83 | — |
 | `src/math_pod.rs` | 107 | — |
 | `src/mesh_primitives/cube.rs` | 196 | — |
 | `src/mesh_primitives/parametric_surface.rs` | 193 | — |
 | `src/mesh_primitives.rs` | 12 | 内置 3D 图元生成器。 |
-| `src/object/affine.rs` | 135 | — |
+| `src/object/affine.rs` | 141 | — |
 | `src/object/axes.rs` | 422 | — |
-| `src/object/camera.rs` | 637 | — |
+| `src/object/camera.rs` | 630 | — |
 | `src/object/content_texture.rs` | 21 | — |
-| `src/object/graph.rs` | 291 | — |
+| `src/object/graph.rs` | 287 | — |
 | `src/object/layer.rs` | 36 | — |
 | `src/object/mod.rs` | 33 | — |
-| `src/object/placement.rs` | 195 | — |
-| `src/object/primitives.rs` | 475 | — |
+| `src/object/placement.rs` | 192 | — |
+| `src/object/primitives.rs` | 477 | — |
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
-| `src/registry.rs` | 228 | — |
-| `src/scene_script.rs` | 1224 | — |
-| `src/scene_write.rs` | 77 | — |
-| `src/surface.rs` | 585 | — |
+| `src/registry.rs` | 230 | — |
+| `src/scene_script.rs` | 1231 | — |
+| `src/scene_write.rs` | 81 | — |
+| `src/surface.rs` | 586 | — |
 | `src/time_state.rs` | 34 | — |
 | `src/transform.rs` | 221 | — |
 | `src/types.rs` | 14 | — |
-| `src/view.rs` | 129 | View（CE-d）：给 UI 面一个**空间**与**映射**的声明。 |
-| `src/widget.rs` | 182 | **CK-g**：`Widget2D` —— 一等控件实体，绘制走 `Vec<DrawCommand>`。 |
+| `src/view.rs` | 132 | View（CE-d）：给 UI 面一个**空间**与**映射**的声明。 |
+| `src/widget.rs` | 39 | **CL-R**：控件的**声明**进产物，**命令列表**是派生态资源。 |
 | `src/world_inherit.rs` | 84 | — |
 | `src/world_transforms.rs` | 73 | — |
 
@@ -342,7 +342,7 @@ graph LR
 | `src/scene_write.rs` | `pub trait SceneWrite` |
 | `src/scene_write.rs` | `pub trait SceneRead` |
 | `src/scene_write.rs` | `pub fn with_component<T, F>(scene: &mut dyn SceneWrite, id: ObjectId, f: F) -> bool` |
-| `src/scene_write.rs` | `pub fn read_component<T, R>(scene: &dyn SceneRead, id: ObjectId, f: impl FnOnce(&T) -> R) -> Option<R>` |
+| `src/scene_write.rs` | `pub fn read_component<T, R>(` |
 | `src/surface.rs` | `pub struct Surface` |
 | `src/surface.rs` | `pub enum SurfaceMapping` |
 | `src/surface.rs` | `pub enum SurfaceRenderer` |
@@ -357,9 +357,7 @@ graph LR
 | `src/transform.rs` | `pub trait Transform2DInto` |
 | `src/view.rs` | `pub enum ViewMapping` |
 | `src/view.rs` | `pub struct View` |
-| `src/widget.rs` | `pub struct Widget2D` |
-| `src/widget.rs` | `pub struct WidgetDrawContext` |
-| `src/widget.rs` | `pub struct Theme2D` |
+| `src/widget.rs` | `pub struct WidgetCommands` |
 | `src/world_inherit.rs` | `pub struct WorldInherit` |
 | `src/world_transforms.rs` | `pub struct WorldTransforms` |
 <!-- AUTO:END -->

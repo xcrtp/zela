@@ -24,8 +24,8 @@ pub use ze_notion::{
 };
 pub use ze_scene_core::components::{PathMesh, PhaseAnim, QuadMesh, TriangleMesh, mesh};
 // 图元对象与摆放组件（M3-4/M3-5：定义在场景对象层 `ze-object`，此处转发）。
-pub use ze_scene_core::{Arrow, Circle, Line, Path, Rect, Transform};
 pub use ze_render_ir::{FillSolid, FillStyle, StrokeSolid, StrokeStyle};
+pub use ze_scene_core::{Arrow, Circle, Line, Path, Rect, Transform};
 
 #[cfg(test)]
 mod tests {

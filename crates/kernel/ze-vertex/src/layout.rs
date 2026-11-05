@@ -187,9 +187,7 @@ pub enum VertexLayoutError {
     Empty,
     #[error("属性语义为空字符串（下标 {index}）")]
     EmptySemantic { index: usize },
-    #[error(
-        "属性 {semantic}（下标 {index}）offset {offset} 未对齐到自身大小 {align}"
-    )]
+    #[error("属性 {semantic}（下标 {index}）offset {offset} 未对齐到自身大小 {align}")]
     Misaligned {
         semantic: &'static str,
         index: usize,
@@ -209,7 +207,9 @@ pub enum VertexLayoutError {
         needed: u32,
     },
     // ── 实例化扩展 ──
-    #[error("Vertex 步进 buffer 的属性（下标 {index}）语义 {semantic:?} 不在契约词汇表 [\"position\", \"uv\", \"shading_normal\", \"attrib0\", \"attrib1\", \"attrib2\", \"joints0\", \"weights0\"] 内（宿主自定义语义请放 Instance 步进 buffer）")]
+    #[error(
+        "Vertex 步进 buffer 的属性（下标 {index}）语义 {semantic:?} 不在契约词汇表 [\"position\", \"uv\", \"shading_normal\", \"attrib0\", \"attrib1\", \"attrib2\", \"joints0\", \"weights0\"] 内（宿主自定义语义请放 Instance 步进 buffer）"
+    )]
     IllegalSemantic { index: usize, semantic: String },
     #[error("顶点输入描述至少需要一个 buffer")]
     EmptyInput,
@@ -491,7 +491,11 @@ mod tests {
         assert_eq!(l.attribs[2].offset, 20);
         assert_eq!(l.stride, 32);
         assert_eq!(l.aa_model, AaModel::None);
-        assert_eq!(l.cache, CacheStrategy::Static, "R-E 实测：3D mesh/line 按版本/内容寻址跨帧复用");
+        assert_eq!(
+            l.cache,
+            CacheStrategy::Static,
+            "R-E 实测：3D mesh/line 按版本/内容寻址跨帧复用"
+        );
         l.validate().unwrap();
     }
 
@@ -509,11 +513,9 @@ mod tests {
         assert_eq!(l.stride, 12);
         l.validate().unwrap();
 
-        let reconciled = crate::reconcile::reconcile(
-            &[Semantic::Position],
-            &VertexLayout::standard_3d(),
-        )
-        .unwrap();
+        let reconciled =
+            crate::reconcile::reconcile(&[Semantic::Position], &VertexLayout::standard_3d())
+                .unwrap();
         assert_eq!(
             reconciled.layout.attribs, l.attribs,
             "线段布局必须等于 [Position] 的调和结果"

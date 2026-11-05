@@ -4,19 +4,19 @@
 use ze_scene_core::scene_script::*;
 mod tests {
     use super::*;
+    use crate::animation::Target;
+    use crate::scene::Scene as SceneStruct;
+    use std::collections::HashMap;
+    use ze_scene_contract::Name;
+    use ze_scene_contract::SceneRead;
     use ze_scene_contract::{
         Components, ObjectId, Scene as SceneContract, Visibility, VisibilityTag,
     };
-    use ze_time::ClockForest;
-    use crate::animation::Target;
     use ze_scene_core::animation::BindingTable;
-    use ze_scene_core::scene_write::SceneWrite;
-    use ze_scene_contract::SceneRead;
-    use crate::scene::Scene as SceneStruct;
-    use std::collections::HashMap;
     use ze_scene_core::object::Circle;
-    use ze_scene_contract::Name;
+    use ze_scene_core::scene_write::SceneWrite;
     use ze_time::AnimValue;
+    use ze_time::ClockForest;
 
     /// **编译期断言**（§7.2.6）：`SceneScript` 必须是 `Send + Sync`。
     ///
@@ -68,17 +68,11 @@ mod tests {
             [
                 Expr::call(
                     OpRef::new("zela.math", "ge"),
-                    [
-                        Expr::channel(ChannelRef::builtin("time")),
-                        Expr::pure(0.0),
-                    ],
+                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(0.0)],
                 ),
                 Expr::call(
                     OpRef::new("zela.math", "lt"),
-                    [
-                        Expr::channel(ChannelRef::builtin("time")),
-                        Expr::pure(dur),
-                    ],
+                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(dur)],
                 ),
             ],
         );
@@ -195,13 +189,13 @@ mod tests {
                 scene: &mut dyn SceneWrite,
                 v: &AnimValue,
             ) -> Result<(), crate::animation::TargetError> {
-                let v = v.try_scalar().ok_or(
-                    crate::animation::TargetError::TypeMismatch {
+                let v = v
+                    .try_scalar()
+                    .ok_or(crate::animation::TargetError::TypeMismatch {
                         target: "TestOpacity",
                         expected: "scalar",
                         actual: "其它",
-                    },
-                )?;
+                    })?;
                 ze_scene_core::scene_write::with_component::<Opacity, _>(scene, self.id, |o| {
                     o.0 = v
                 });
@@ -230,7 +224,9 @@ mod tests {
             .expect("组件均已登记");
 
         let mut forest = ClockForest::new();
-        let clock = forest.insert(ze_time::ClockNode::new(None)).expect("插入节点");
+        let clock = forest
+            .insert(ze_time::ClockNode::new(None))
+            .expect("插入节点");
         let program = ze_comb::CompiledExpr::compile(&ze_comb::Expr::pure(1.0)).expect("可编译");
         let mut table = BindingTable::new();
         table.bind_expr(clock, program, Arc::new(TestOpacity { id }));
@@ -429,10 +425,7 @@ mod tests {
         for (enc_b, h_b) in recipe.bindings.bindings.iter().zip(&h_bindings.bindings) {
             let e_node = recipe.forest.get(enc_b.clock).expect("节点在");
             let h_node = h_forest.get(h_b.clock).expect("节点在");
-            assert_eq!(
-                e_node.local_offset, h_node.local_offset,
-                "时钟起点必须一致"
-            );
+            assert_eq!(e_node.local_offset, h_node.local_offset, "时钟起点必须一致");
             assert_eq!(e_node.span, h_node.span, "区间语义必须一致");
             assert_eq!(e_node.mode, h_node.mode);
             // 比较**语义基准**（lowered）：typed 快路径是否启用不影响绑定语义。
@@ -501,9 +494,9 @@ mod tests {
     /// **B2**：方法在装配期解析 —— 未知方法显式失败；已注册方法可绑定并提交。
     #[test]
     fn methods_are_resolved_at_assembly() {
+        use crate::scene::components::Reveal;
         use ze_comb::{Expr, MethodRef};
         use ze_scene_core::animation::{LibraryRef, ResetBehavior};
-        use crate::scene::components::Reveal;
         use ze_time::ClockProgram;
 
         let lib = LibraryRef {
@@ -645,7 +638,10 @@ mod tests {
         .expect("State 绑定装配成功");
 
         let mut scene = SceneStruct::new();
-        let recipe = enc.finish().commit(&mut scene).expect("State 不应触发 AI-07 拒绝");
+        let recipe = enc
+            .finish()
+            .commit(&mut scene)
+            .expect("State 不应触发 AI-07 拒绝");
         assert_eq!(recipe.bindings.bindings.len(), 1);
         assert_eq!(recipe.state_analyses.len(), 1);
         let map = recipe.state_analyses[0].plan.map();
@@ -697,10 +693,7 @@ mod tests {
             .finish()
             .commit(&mut scene)
             .expect("事件 predicate 不应触发 AI-07 拒绝");
-        assert_eq!(
-            recipe.bindings.bindings[0].seek_kind,
-            SeekKind::EventReplay
-        );
+        assert_eq!(recipe.bindings.bindings[0].seek_kind, SeekKind::EventReplay);
         let dependencies = recipe.state_dependencies();
         let keys: Vec<&str> = dependencies
             .get("CircleRadius")
@@ -811,10 +804,7 @@ mod tests {
         // `frame` 不是时间变量 ⇒ 区间代数分析不出可用于 Hold 反算的集合。
         let predicate = Expr::call(
             OpRef::new("zela.math", "lt"),
-            [
-                Expr::channel(ChannelRef::builtin("frame")),
-                Expr::pure(2.0),
-            ],
+            [Expr::channel(ChannelRef::builtin("frame")), Expr::pure(2.0)],
         );
         let program = CompiledExpr::compile(&Expr::pure(1.0)).expect("常量可编译");
         let predicate = CompiledExpr::compile(&predicate).expect("predicate 可编译");
@@ -891,7 +881,10 @@ mod tests {
         )
         .expect("读者绑定装配成功");
         let mut scene = SceneStruct::new();
-        let recipe = good.finish().commit(&mut scene).expect("写者先于读者 ⇒ 无冲突");
+        let recipe = good
+            .finish()
+            .commit(&mut scene)
+            .expect("写者先于读者 ⇒ 无冲突");
         assert_eq!(recipe.bindings.bindings.len(), 2);
 
         // ── 颠倒顺序：读者（root，start=0）在前；写者（root+1，start=1）在后 ⇒ 冲突 ──
@@ -921,7 +914,10 @@ mod tests {
         )
         .expect("写者绑定装配成功");
         let mut scene2 = SceneStruct::new();
-        let err = bad.finish().commit(&mut scene2).expect_err("读先于写 ⇒ 装配期显式报错");
+        let err = bad
+            .finish()
+            .commit(&mut scene2)
+            .expect_err("读先于写 ⇒ 装配期显式报错");
         assert!(
             matches!(
                 err,

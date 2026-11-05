@@ -28,7 +28,9 @@ use boa_engine::{
     property::Attribute,
 };
 use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, short_name};
-use ze_pod_core::{Capability, ErasedFn, Field, Pod, PodError, PodValue, ScalarKind, ScalarValue, TypeSpec};
+use ze_pod_core::{
+    Capability, ErasedFn, Field, Pod, PodError, PodValue, ScalarKind, ScalarValue, TypeSpec,
+};
 
 /// JS 侧令牌的隐藏属性名（不参与用户可见 API）。
 const TOKEN_KEY: &str = "__zela_pod";
@@ -93,13 +95,11 @@ pub(crate) fn bind<C: Capability<'static>>(
         let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
             dispatch(index, item, args, ctx)
         };
-        let function = FunctionObjectBuilder::new(
-            ctx.realm(),
-            NativeFunction::from_copy_closure(closure),
-        )
-        .name(item.signature.name)
-        .length(item.io.params.len())
-        .build();
+        let function =
+            FunctionObjectBuilder::new(ctx.realm(), NativeFunction::from_copy_closure(closure))
+                .name(item.signature.name)
+                .length(item.io.params.len())
+                .build();
         namespace
             .set(JsString::from(item.signature.name), function, false, ctx)
             .map_err(js_err_to_pod)?;
@@ -122,7 +122,10 @@ fn install_clock_alias(
     namespace: &JsObject,
     calls: &'static [ErasedFn],
 ) -> Result<(), PodError> {
-    if !calls.iter().any(|item| item.signature.name.starts_with("clock_")) {
+    if !calls
+        .iter()
+        .any(|item| item.signature.name.starts_with("clock_"))
+    {
         return Ok(());
     }
     let clock = ObjectInitializer::new(ctx).build();
@@ -158,9 +161,8 @@ fn dispatch(
     let codec = JsCodec {
         ctx: RefCell::new(ctx),
     };
-    ze_pod_binding::invoke(&codec, &*service, item, args).map_err(|e| {
-        JsError::from_native(JsNativeError::typ().with_message(e.to_string()))
-    })
+    ze_pod_binding::invoke(&codec, &*service, item, args)
+        .map_err(|e| JsError::from_native(JsNativeError::typ().with_message(e.to_string())))
 }
 
 /// JS 值 ↔ `PodValue`（**本文件唯一的语言特定逻辑**）。
@@ -202,17 +204,19 @@ fn register_types(
                 match plan.component_ctor(type_name) {
                     // 组件：`Circle({...})` / `Circle(0, 0, 0.5)` ⇒ 调用宿主构造函数 ⇒ 句柄令牌。
                     Some(ctor) => {
-                        let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                            let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
-                            let service = host_state(ctx).service(service_index).ok_or_else(|| {
-                                JsError::from_native(
-                                    JsNativeError::typ().with_message("能力未注册"),
-                                )
-                            })?;
-                            let out = (ctor.call)(&*service, &[value])
-                                .map_err(|e| js_native(e.to_string()))?;
-                            pod_to_js_result(ctx, &out)
-                        };
+                        let closure =
+                            move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+                                let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
+                                let service =
+                                    host_state(ctx).service(service_index).ok_or_else(|| {
+                                        JsError::from_native(
+                                            JsNativeError::typ().with_message("能力未注册"),
+                                        )
+                                    })?;
+                                let out = (ctor.call)(&*service, &[value])
+                                    .map_err(|e| js_native(e.to_string()))?;
+                                pod_to_js_result(ctx, &out)
+                            };
                         let function = FunctionObjectBuilder::new(
                             ctx.realm(),
                             NativeFunction::from_copy_closure(closure),
@@ -226,10 +230,11 @@ fn register_types(
                     }
                     // 纯值结构体：`Color({...})` / `Color(96, 196, 255)` ⇒ 值令牌。
                     None => {
-                        let closure = move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                            let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
-                            pod_to_js_result(ctx, &value)
-                        };
+                        let closure =
+                            move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+                                let value = js_args_to_pod(ctx, args, fields, type_name, None)?;
+                                pod_to_js_result(ctx, &value)
+                            };
                         let function = FunctionObjectBuilder::new(
                             ctx.realm(),
                             NativeFunction::from_copy_closure(closure),
@@ -321,12 +326,14 @@ fn attach_methods(ctx: &mut Context, service_index: usize) -> Result<(), PodErro
                     args.len()
                 )));
             }
-            let expr = ctx
-                .global_object()
-                .get(JsString::from("expr"), ctx)?;
+            let expr = ctx.global_object().get(JsString::from("expr"), ctx)?;
             let call_args = array_of(ctx, &args[1..])?;
             let spec = ObjectInitializer::new(ctx)
-                .property(JsString::from("name"), JsString::from(qualified), Attribute::all())
+                .property(
+                    JsString::from("name"),
+                    JsString::from(qualified),
+                    Attribute::all(),
+                )
                 .property(JsString::from("object"), args[0].clone(), Attribute::all())
                 .property(JsString::from("args"), call_args, Attribute::all())
                 .build();
@@ -339,13 +346,11 @@ fn attach_methods(ctx: &mut Context, service_index: usize) -> Result<(), PodErro
                 .ok_or_else(|| js_native("`expr.method` 尚未注册".to_string()))?
                 .call(&JsValue::undefined(), &[spec.into()], ctx)
         };
-        let function = FunctionObjectBuilder::new(
-            ctx.realm(),
-            NativeFunction::from_copy_closure(closure),
-        )
-        .name(method.name)
-        .length(arity + 1)
-        .build();
+        let function =
+            FunctionObjectBuilder::new(ctx.realm(), NativeFunction::from_copy_closure(closure))
+                .name(method.name)
+                .length(arity + 1)
+                .build();
         ctor.set(JsString::from(method.name), function, false, ctx)
             .map_err(js_err_to_pod)?;
     }
@@ -508,12 +513,10 @@ fn object_to_pod(
             .map_err(js_err_to_pod)?;
         if value.is_undefined() {
             // 默认值白名单（`Color.a = 255`）；不在白名单里 ⇒ 显式报错。
-            let default = ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
-                PodError::CallFailed(format!(
-                    "`{type_name}` 缺少字段 `{}`",
-                    field.name
-                ))
-            })?;
+            let default =
+                ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
+                    PodError::CallFailed(format!("`{type_name}` 缺少字段 `{}`", field.name))
+                })?;
             values.push((field.name, default));
             continue;
         }
@@ -633,12 +636,11 @@ fn scalar_from_js(value: &JsValue, kind: ScalarKind) -> Result<PodValue, PodErro
             ScalarValue::I32(exact_integer(value, "i32", i32::MIN as f64, i32::MAX as f64)? as i32)
         }
         // JS 只有 f64：i64 与 u64 同口径 —— 只接受**可精确表示**的整数。
-        ScalarKind::I64 => ScalarValue::I64(exact_integer(
-            value,
-            "i64",
-            -MAX_EXACT_INTEGER,
-            MAX_EXACT_INTEGER,
-        )? as i64),
+        ScalarKind::I64 => {
+            ScalarValue::I64(
+                exact_integer(value, "i64", -MAX_EXACT_INTEGER, MAX_EXACT_INTEGER)? as i64,
+            )
+        }
         ScalarKind::U32 => {
             ScalarValue::U32(exact_integer(value, "u32", 0.0, u32::MAX as f64)? as u32)
         }
@@ -663,18 +665,11 @@ fn scalar_from_js(value: &JsValue, kind: ScalarKind) -> Result<PodValue, PodErro
 const MAX_EXACT_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 fn number(value: &JsValue) -> Result<f64, PodError> {
-    value
-        .as_number()
-        .ok_or_else(|| type_error("number", value))
+    value.as_number().ok_or_else(|| type_error("number", value))
 }
 
 /// **显式整数映射**（B3-Pb）：必须是整值、在范围内，否则报错（不静默截断）。
-fn exact_integer(
-    value: &JsValue,
-    label: &str,
-    min: f64,
-    max: f64,
-) -> Result<f64, PodError> {
+fn exact_integer(value: &JsValue, label: &str, min: f64, max: f64) -> Result<f64, PodError> {
     let value_number = number(value)?;
     if !value_number.is_finite() || value_number.fract() != 0.0 {
         return Err(PodError::CallFailed(format!(
@@ -715,8 +710,7 @@ fn pod_to_js(ctx: &mut Context, value: &PodValue) -> Result<JsValue, PodError> {
             Ok(token_object(ctx, id))
         }
         PodValue::Array(items) => {
-            let array = JsArray::new(ctx)
-                .map_err(|e| PodError::CallFailed(format!("JS：{e}")))?;
+            let array = JsArray::new(ctx).map_err(|e| PodError::CallFailed(format!("JS：{e}")))?;
             for item in items {
                 let value = pod_to_js(ctx, item)?;
                 array

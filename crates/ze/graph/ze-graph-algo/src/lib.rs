@@ -17,8 +17,8 @@ mod topology;
 pub use bfs_dirty::BfsDirtyTracker;
 pub use kahn_sort::KahnSorter;
 pub use relation::{
-    DagIndex, RelationPhase, RelationError, RelationSource, TreeIndex, check, check_dag, check_tree,
-    compile_dag, compile_tree, revision,
+    DagIndex, RelationError, RelationPhase, RelationSource, TreeIndex, check, check_dag,
+    check_tree, compile_dag, compile_tree, revision,
 };
 pub use tarjan_scc::TarjanSccDetector;
 pub use topology::GraphTopology;

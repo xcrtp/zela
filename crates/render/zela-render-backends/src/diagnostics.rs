@@ -138,8 +138,16 @@ mod tests {
         assert_eq!(totals.morph_misses, 0);
         assert_eq!(totals.reveal_requests, 5);
         assert_eq!(totals.reveal_misses, 4);
-        assert!(totals.json().contains("\"geom\":{\"requests\":3,\"misses\":1}"));
-        assert_eq!(take_cache_totals(), CacheTotals::default(), "取走后必须清零");
+        assert!(
+            totals
+                .json()
+                .contains("\"geom\":{\"requests\":3,\"misses\":1}")
+        );
+        assert_eq!(
+            take_cache_totals(),
+            CacheTotals::default(),
+            "取走后必须清零"
+        );
     }
 
     #[test]

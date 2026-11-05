@@ -37,9 +37,7 @@ const LAYER_ORDER: &[&str] = &["正常", "翻转"];
 ///
 /// `param_sliders`：`(语义名 / 参数地址, 最小值, 最大值, 当前值)`。空 = 本场景没有
 /// 可调参数（面板只剩 control + time 两组）。
-pub fn hud_specs(
-    param_sliders: &[(String, f64, f64, f64)],
-) -> Vec<ControlSpec> {
+pub fn hud_specs(param_sliders: &[(String, f64, f64, f64)]) -> Vec<ControlSpec> {
     let mut specs = Vec::new();
     let mut next = 0u32;
     let mut id = || {
@@ -57,9 +55,24 @@ pub fn hud_specs(
     // **CI-b / CG-08**：图层与相机开关从宿主侧搬进场景图元（单选组描述）。
     specs.push(ControlSpec::radio_group(id(), "show_2d", ON_OFF, 0));
     specs.push(ControlSpec::radio_group(id(), "show_3d", ON_OFF, 0));
-    specs.push(ControlSpec::radio_group(id(), "viewport_camera", CAMERA_MODES, 0));
-    specs.push(ControlSpec::radio_group(id(), "free_2d_camera", CAMERA_DRIVE, 0));
-    specs.push(ControlSpec::radio_group(id(), "flip_layer_order", LAYER_ORDER, 0));
+    specs.push(ControlSpec::radio_group(
+        id(),
+        "viewport_camera",
+        CAMERA_MODES,
+        0,
+    ));
+    specs.push(ControlSpec::radio_group(
+        id(),
+        "free_2d_camera",
+        CAMERA_DRIVE,
+        0,
+    ));
+    specs.push(ControlSpec::radio_group(
+        id(),
+        "flip_layer_order",
+        LAYER_ORDER,
+        0,
+    ));
 
     // ── 时间 ──
     specs.push(ControlSpec::button(id(), "play_pause"));
@@ -69,23 +82,28 @@ pub fn hud_specs(
 
     // ── 参数（地址即语义名；HUD System 用 `contains(':')` 分流到 params::apply）──
     for (address, min, max, value) in param_sliders {
-        specs.push(ControlSpec::slider(id(), address.clone(), *min, *max, *value));
+        specs.push(ControlSpec::slider(
+            id(),
+            address.clone(),
+            *min,
+            *max,
+            *value,
+        ));
     }
     specs
 }
 
 /// 面板的世界坐标口径（比 CE-e 的面板更紧凑：20 行也要落进取景框）。
 ///
-/// # 为什么这么小（**CI-b** 的硬约束）
+/// # 位置是**录制期派生量**（CL-R 删掉了相机耦合补丁）
 ///
-/// 观测口径是 `Framing2D::new(Vec2::ZERO, 34.0)` + 默认 `ViewRect`（800×600）：
-/// 可见世界范围只有 `y ∈ [-8.82, 8.82]`。面板从 [`HUD_ORIGIN`] 向上排，
-/// 20 行（5 按钮 + 5 单选 + 4 时间 + 6 参数）的总高度
-/// `padding + 21.4·row_height + 19·gap` 必须 ≤ 8.8 —— 否则参数滑块落到视口外，
-/// 窗口输入（`collect_events` 的视口判定）就再也点不到它们了。
+/// 旧版这里写死了一条不等式（`padding + 21.4·row_height + 19·gap ≤ 8.8`），
+/// 把「默认取景能看见 20 行」变成布局的硬前提 —— 那是宿主覆盖层时代的补丁。
+/// 现在面板是场景内的声明实体：位置由 `HudMetrics` 给出，取景看清与否是**录制期**
+/// 的事，不进产物、也不反向约束布局。
 ///
-/// `gap` 必须容得下标签文字（约 `label_font_size * 1.3`）：标签画在两行之间，
-/// 行距不够就会压到上一行的轨道。
+/// 仍保留的只有一条观感要求：`gap` 必须容得下标签文字（约 `label_font_size * 1.3`），
+/// 否则标签会压到上一行的轨道。
 pub fn hud_metrics() -> HudMetrics {
     HudMetrics {
         origin: HUD_ORIGIN,
@@ -125,15 +143,20 @@ pub fn build(
             }
         }
     };
-    HudState::new(build_hud(scene, hud_specs(param_sliders), metrics, &mut bake))
+    HudState::new(build_hud(
+        scene,
+        hud_specs(param_sliders),
+        metrics,
+        &mut bake,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use ze_interact::{ControlOutcome, Point};
-    use zela_scene_ecs::domain::SceneEvent;
     use ze_render_ir::LayerId;
+    use zela_scene_ecs::domain::SceneEvent;
 
     fn engine() -> Option<Arc<DirectTextEngine>> {
         match DirectTextEngine::from_env() {
@@ -212,7 +235,10 @@ mod tests {
                 metrics.origin.y + p.y as f32 * unit,
             )
         };
-        let press = world(Point::new(rect.min.x + rect.width() * 0.75, rect.center().y));
+        let press = world(Point::new(
+            rect.min.x + rect.width() * 0.75,
+            rect.center().y,
+        ));
         let outcomes = hud.handle_world(SceneEvent::ViewportClick {
             layer: LayerId(0),
             scene_pos: press,
@@ -226,13 +252,36 @@ mod tests {
             (value - 1.5).abs() < 0.05,
             "speed 在 75% 处应约 1.5，实际 {value}"
         );
-        // 圆心已跟随（世界 x 落在轨道 75% 附近）。
-        let knob_x = hud
-            .knob_xs()
-            .into_iter()
-            .find(|(_, _)| true)
-            .map(|(_, x)| x)
-            .expect("有滑块");
+        // 圆钮已跟随（世界 x 落在轨道 75% 附近）—— 不再有需要逐帧搬的圆实体，
+        // 位置由命令列表里的 `Shape2D::Circle` 直接给出。单选组也有圆钮，
+        // 所以按行高挑出 speed 那一行的圆。
+        hud.sync_from_set();
+        let world_rect = hud.world_rect(id).expect("有世界矩形");
+        let commands = hud.commands();
+        let circle = commands
+            .iter()
+            .find_map(|command| match &command.shape {
+                ze_render_ir::Shape2D::Circle { center, .. }
+                    if center.y > world_rect.min.y && center.y < world_rect.max.y =>
+                {
+                    Some(*center)
+                }
+                _ => None,
+            })
+            .expect("有 speed 的滑块圆钮");
+        let knob_x = circle.x;
         assert!(knob_x.is_finite());
+        assert!(
+            knob_x > world_rect.min.x && knob_x < world_rect.max.x,
+            "圆心必须落在轨道内：{knob_x} ∉ ({}, {})",
+            world_rect.min.x,
+            world_rect.max.x
+        );
+        // 75% 处：圆心应明显偏右（> 半宽）。
+        assert!(
+            knob_x > world_rect.center().x,
+            "圆心应偏右：{knob_x} vs {}",
+            world_rect.center().x
+        );
     }
 }

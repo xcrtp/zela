@@ -97,8 +97,14 @@ mod tests {
         p.move_to(Vec2::new(1.0, 0.0)).line_to(Vec2::new(0.0, 1.0));
         let t = camera_like(10.0, 100.0, 200.0);
         let out = map_path_affine(&p, &t);
-        assert_eq!(out.commands[0], PathCommand::MoveTo(Vec2::new(110.0, 200.0)));
-        assert_eq!(out.commands[1], PathCommand::LineTo(Vec2::new(100.0, 190.0)));
+        assert_eq!(
+            out.commands[0],
+            PathCommand::MoveTo(Vec2::new(110.0, 200.0))
+        );
+        assert_eq!(
+            out.commands[1],
+            PathCommand::LineTo(Vec2::new(100.0, 190.0))
+        );
     }
 
     /// `Close` 保留（闭合语义不丢）。

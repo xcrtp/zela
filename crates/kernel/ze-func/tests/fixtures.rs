@@ -13,7 +13,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::Deserialize;
-use ze_comb::{ChannelRef, CompiledExpr, EvalError, Expr, Mono, OpRef, Value, eval_reference, hash_values};
+use ze_comb::{
+    ChannelRef, CompiledExpr, EvalError, Expr, Mono, OpRef, Value, eval_reference, hash_values,
+};
 
 #[derive(Debug, Deserialize)]
 struct Fixture {
@@ -110,8 +112,8 @@ fn fixtures_match_both_evaluators_and_the_expected_hash() {
 
     for path in files {
         let raw = fs::read_to_string(&path).expect("fixture 可读");
-        let fixture: Fixture =
-            serde_json::from_str(&raw).unwrap_or_else(|error| panic!("{} 解析失败：{error}", path.display()));
+        let fixture: Fixture = serde_json::from_str(&raw)
+            .unwrap_or_else(|error| panic!("{} 解析失败：{error}", path.display()));
 
         let samples = fixture
             .channels
@@ -129,9 +131,10 @@ fn fixtures_match_both_evaluators_and_the_expected_hash() {
             );
         }
 
-        fixture.expr.validate().unwrap_or_else(|error| {
-            panic!("fixture `{}` 的表达式非法：{error}", fixture.name)
-        });
+        fixture
+            .expr
+            .validate()
+            .unwrap_or_else(|error| panic!("fixture `{}` 的表达式非法：{error}", fixture.name));
         let program = CompiledExpr::compile(&fixture.expr)
             .unwrap_or_else(|error| panic!("fixture `{}` 无法 lowering：{error}", fixture.name));
 
@@ -142,11 +145,17 @@ fn fixtures_match_both_evaluators_and_the_expected_hash() {
                 channels: &fixture.channels,
                 objects: &fixture.objects,
             };
-            let lowered = program
-                .eval(&mono)
-                .unwrap_or_else(|error| panic!("fixture `{}` 第 {sample} 帧 lowered 失败：{error}", fixture.name));
+            let lowered = program.eval(&mono).unwrap_or_else(|error| {
+                panic!(
+                    "fixture `{}` 第 {sample} 帧 lowered 失败：{error}",
+                    fixture.name
+                )
+            });
             let reference = eval_reference(&fixture.expr, &mono).unwrap_or_else(|error| {
-                panic!("fixture `{}` 第 {sample} 帧参考求值失败：{error}", fixture.name)
+                panic!(
+                    "fixture `{}` 第 {sample} 帧参考求值失败：{error}",
+                    fixture.name
+                )
             });
             assert_eq!(
                 lowered, reference,

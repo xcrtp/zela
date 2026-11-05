@@ -28,8 +28,8 @@ use std::sync::Arc;
 
 use crate::capability::{Capability, CapabilityMeta, FnSig, Resolved};
 use crate::error::PodError;
-use crate::qualified::QualifiedName;
 use crate::pod::{Pod, SyncPod};
+use crate::qualified::QualifiedName;
 
 /// `Injector` 占用的保留 namespace。
 pub const INJECTOR_NAMESPACE: &str = "ze_pod_core::injector";

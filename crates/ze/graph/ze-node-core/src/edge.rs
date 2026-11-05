@@ -19,9 +19,7 @@ use crate::id::{InputSocketId, OutputSocketId};
 ///
 /// `Ord`：边的**顺序**也是确定产物的一部分（`source` 先行、再按插槽下标），
 /// 供需要排序的调用方（命中表 / 诊断）直接比较。
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct EdgeId {
     pub source: OutputSocketId,
     pub target: InputSocketId,

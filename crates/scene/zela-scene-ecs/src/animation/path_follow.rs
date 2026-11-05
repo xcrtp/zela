@@ -9,8 +9,8 @@
 // 与「Transform 只存归档值」的口径一致。
 
 use ze_notion::Quat;
-use ze_scene_core::components::PathFollow;
 use ze_scene_core::Transform;
+use ze_scene_core::components::PathFollow;
 use zela_schedule::context::ExecutorContext;
 use zela_schedule::system::System;
 

@@ -13,11 +13,8 @@ pub trait ValueCodec {
     type Error;
 
     /// 语言值 → `PodValue`（按 schema）。
-    fn to_pod(
-        &self,
-        value: &Self::Value,
-        spec: &'static TypeSpec,
-    ) -> Result<PodValue, Self::Error>;
+    fn to_pod(&self, value: &Self::Value, spec: &'static TypeSpec)
+    -> Result<PodValue, Self::Error>;
 
     /// `PodValue` → 语言值。
     fn from_pod(&self, value: &PodValue) -> Result<Self::Value, Self::Error>;

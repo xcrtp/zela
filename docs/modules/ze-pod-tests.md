@@ -11,13 +11,13 @@
 - 路径：`crates/ze/pod/ze-pod-tests`
 - 生产依赖（上游，dev-deps 不计）：`ze-pod-binding`、`ze-pod-core`、`ze-pod-js`、`ze-pod-lua`、`ze-pod-macro`、`ze-pod-py`
 - 被依赖（下游）：（无）
-- 源文件：1 个 · 773 行
+- 源文件：1 个 · 780 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 773 | Pod 层集成测试与基准的**共用设施**（mini pod，领域无关）。 |
+| `src/lib.rs` | 780 | Pod 层集成测试与基准的**共用设施**（mini pod，领域无关）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

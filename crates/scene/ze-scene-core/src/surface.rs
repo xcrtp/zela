@@ -113,10 +113,7 @@ impl SurfaceTexture {
     pub fn camera_for(&self, bounds: Rect2D) -> Result<Camera2D, SurfaceError> {
         let [width, height] = self.texel_size;
         if width == 0 || height == 0 {
-            return Err(SurfaceError::InvalidTexelSize {
-                width,
-                height,
-            });
+            return Err(SurfaceError::InvalidTexelSize { width, height });
         }
         let size = bounds.size();
         if !(size.x > 0.0 && size.y > 0.0) || !size.x.is_finite() || !size.y.is_finite() {
@@ -424,11 +421,7 @@ mod tests {
     fn missing_renderer_errors_explicitly() {
         let mut scene = MockScene::default();
         let s = id(1);
-        scene.spawn(s).surface = Some(Surface::new(
-            bounds(),
-            SurfaceMapping::Screen,
-            Vec2::ZERO,
-        ));
+        scene.spawn(s).surface = Some(Surface::new(bounds(), SurfaceMapping::Screen, Vec2::ZERO));
         assert_eq!(
             resolve_surface(&scene, s),
             Err(SurfaceError::MissingRenderer(s))
@@ -473,8 +466,8 @@ mod tests {
     /// `fit_margin = Some(m)` 与原 `fit_bounds` **逐分量**一致（Step 4c-3 / 零差异前提）。
     #[test]
     fn fit_margin_matches_fit_bounds_exactly() {
-        let texture = SurfaceTexture::new([512, 512], TextureFilter::Linear, false)
-            .with_fit_margin(0.8);
+        let texture =
+            SurfaceTexture::new([512, 512], TextureFilter::Linear, false).with_fit_margin(0.8);
         let bounds = Rect2D::new(Vec2::new(-2.8, -1.2), Vec2::new(3.0, 2.4));
         let camera = texture.camera_for(bounds).unwrap();
 
@@ -537,7 +530,11 @@ mod tests {
             let node = scene.spawn(s);
             node.surface = Some(Surface::new(bounds(), SurfaceMapping::World, Vec2::ZERO));
             node.renderer = Some(SurfaceRenderer::Renderer2D);
-            node.texture = Some(SurfaceTexture::new([100, 100], TextureFilter::Linear, false));
+            node.texture = Some(SurfaceTexture::new(
+                [100, 100],
+                TextureFilter::Linear,
+                false,
+            ));
         }
         // 没有任何 Material3D 引用 ⇒ 内容彻底不可见，必须报错。
         assert_eq!(
@@ -553,8 +550,9 @@ mod tests {
 
         // `composite=true` ⇒ 参与屏幕合成，即使无人引用也可见。
         scene.materials.clear();
-        scene.nodes.get_mut(&s).unwrap().texture =
-            Some(SurfaceTexture::new([100, 100], TextureFilter::Linear, false).with_composite(true));
+        scene.nodes.get_mut(&s).unwrap().texture = Some(
+            SurfaceTexture::new([100, 100], TextureFilter::Linear, false).with_composite(true),
+        );
         assert_eq!(content_texture_specs(&scene).unwrap().0.len(), 1);
     }
 
@@ -574,8 +572,11 @@ mod tests {
             Err(SurfaceError::MissingTexture(s))
         );
 
-        scene.nodes.get_mut(&s).unwrap().texture =
-            Some(SurfaceTexture::new([100, 100], TextureFilter::Linear, false));
+        scene.nodes.get_mut(&s).unwrap().texture = Some(SurfaceTexture::new(
+            [100, 100],
+            TextureFilter::Linear,
+            false,
+        ));
         let owner = resolve_surface(&scene, s).unwrap().unwrap();
         assert_eq!(
             resolve_surface_texture(&scene, owner).unwrap().texel_size,

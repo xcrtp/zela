@@ -11,26 +11,26 @@
 - 路径：`crates/kernel/ze-render-ir`
 - 生产依赖（上游，dev-deps 不计）：`ze-notion`、`ze-pod-core`、`ze-vertex`
 - 被依赖（下游）：`ze-interact`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-bundle`、`zela-scene-ecs`、`zela-web`
-- 源文件：14 个 · 3336 行
+- 源文件：14 个 · 3377 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/bind.rs` | 263 | — |
-| `src/caps.rs` | 425 | — |
+| `src/bind.rs` | 266 | — |
+| `src/caps.rs` | 444 | — |
 | `src/degrade.rs` | 40 | — |
 | `src/draw.rs` | 111 | — |
 | `src/layer.rs` | 30 | — |
 | `src/lib.rs` | 77 | — |
 | `src/mesh.rs` | 64 | — |
-| `src/paint.rs` | 393 | — |
-| `src/params.rs` | 417 | — |
-| `src/pipeline.rs` | 383 | — |
-| `src/shape.rs` | 400 | — |
+| `src/paint.rs` | 399 | — |
+| `src/params.rs` | 424 | — |
+| `src/pipeline.rs` | 380 | — |
+| `src/shape.rs` | 397 | — |
 | `src/style.rs` | 344 | — |
-| `src/target.rs` | 114 | — |
-| `src/uniform.rs` | 275 | — |
+| `src/target.rs` | 123 | — |
+| `src/uniform.rs` | 278 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

@@ -234,7 +234,6 @@ impl ParamGeometry {
     }
 }
 
-
 /// **PE Step 1**：绘制参数类型的唯一来源在 `ze-render-ir`（场景层与后端共用一份）。
 ///
 /// 它们原先定义在本 crate 里 ⇒ 场景层（不依赖本 crate）**无法引用**，能力没有入口。
@@ -1084,7 +1083,9 @@ fn render_with_view(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    crate::render::with_gpu(|gpu| render_with_view_on(gpu, view, width, height, samples, cameras, records))?
+    crate::render::with_gpu(|gpu| {
+        render_with_view_on(gpu, view, width, height, samples, cameras, records)
+    })?
 }
 
 /// 同 [`render_with_view`]，但 GPU 由调用方给（BQ：注入形态）。
@@ -1102,7 +1103,13 @@ fn render_with_view_on(
     let result = (|| {
         let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
         let cameras = prepare_cameras(&mut player, cameras)?;
-        let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
+        let frames = player.views(
+            &prepared.view,
+            &prepared.records,
+            cameras,
+            prepared.fills,
+            prepared.programs,
+        )?;
         let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
         player.pixels(gpu, &frames, &mut out)?;
         Ok(out)
@@ -1141,7 +1148,13 @@ async fn frame_pixels_async(
 ) -> Result<Vec<u8>, String> {
     let prepared = prepare_view(player, view, width, height, records, 0)?;
     let cameras = prepare_cameras(player, cameras)?;
-    let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
+    let frames = player.views(
+        &prepared.view,
+        &prepared.records,
+        cameras,
+        prepared.fills,
+        prepared.programs,
+    )?;
     let mut out = vec![0u8; (width as usize) * (height as usize) * 4];
     player.pixels_async(gpu, &frames, &mut out).await?;
     Ok(out)
@@ -1188,7 +1201,9 @@ fn render_to_texture(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    crate::render::with_gpu(|gpu| render_to_texture_on(gpu, view, target, width, height, samples, cameras, records))?
+    crate::render::with_gpu(|gpu| {
+        render_to_texture_on(gpu, view, target, width, height, samples, cameras, records)
+    })?
 }
 
 /// 同 [`render_to_texture`]，但 GPU 由调用方给（BQ：注入形态）。
@@ -1209,7 +1224,13 @@ fn render_to_texture_on(
     let result = (|| {
         let prepared = prepare_view(&mut player, view, width, height, records, 0)?;
         let cameras = prepare_cameras(&mut player, cameras)?;
-        let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
+        let frames = player.views(
+            &prepared.view,
+            &prepared.records,
+            cameras,
+            prepared.fills,
+            prepared.programs,
+        )?;
         player.render_to(gpu, &frames, &target_view)
     })();
     gpu.put_player(width, height, samples, player);
@@ -1260,7 +1281,13 @@ async fn frame_to_texture_async(
 ) -> Result<(), String> {
     let prepared = prepare_view(player, view, width, height, records, 0)?;
     let cameras = prepare_cameras(player, cameras)?;
-    let frames = player.views(&prepared.view, &prepared.records, cameras, prepared.fills, prepared.programs)?;
+    let frames = player.views(
+        &prepared.view,
+        &prepared.records,
+        cameras,
+        prepared.fills,
+        prepared.programs,
+    )?;
     player.render_to_async(gpu, &frames, target).await
 }
 
@@ -1286,7 +1313,9 @@ fn attach_param(
     records: usize,
     key_base: u64,
 ) -> Result<crate::render::Record, String> {
-    let Some(param) = param else { return Ok(record) };
+    let Some(param) = param else {
+        return Ok(record);
+    };
     match param.kind {
         ParamKind::Lerp => {
             let delta = &param.delta;
@@ -1299,7 +1328,9 @@ fn attach_param(
                 ));
             }
             if !mix.is_finite() {
-                return Err(format!("record {index}: 形变权重必须是有限数（收到 {mix}）"));
+                return Err(format!(
+                    "record {index}: 形变权重必须是有限数（收到 {mix}）"
+                ));
             }
             if mix <= 0.0 {
                 return Ok(record);
@@ -1350,7 +1381,9 @@ fn upload_path(
     ranges: &[[u32; 4]],
 ) -> Result<u32, String> {
     if points.len() % 4 != 0 || points.is_empty() {
-        return Err(format!("record {index}: control points are not whole curves"));
+        return Err(format!(
+            "record {index}: control points are not whole curves"
+        ));
     }
     player.upload(Upload::path(
         key,
@@ -1602,7 +1635,15 @@ pub fn render_2d_on(
     background: [f32; 4],
     records: &[PathRecord],
 ) -> Result<Vec<u8>, String> {
-    render_2d_with_on(gpu, width, height, samples, background, ViewOptions::default(), records)
+    render_2d_with_on(
+        gpu,
+        width,
+        height,
+        samples,
+        background,
+        ViewOptions::default(),
+        records,
+    )
 }
 
 /// **BQ**：同 [`render_2d_with`]，GPU 由调用方给（注入形态）。
@@ -1757,7 +1798,15 @@ pub fn render_3d_to_texture(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    render_to_texture(view_3d(view), target, width, height, samples, cameras, records)
+    render_to_texture(
+        view_3d(view),
+        target,
+        width,
+        height,
+        samples,
+        cameras,
+        records,
+    )
 }
 
 /// **BQ**：同 [`render_3d_to_texture`]，GPU 由调用方给（注入形态）。
@@ -1772,7 +1821,16 @@ pub fn render_3d_to_texture_on(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    render_to_texture_on(gpu, view_3d(view), target, width, height, samples, cameras, records)
+    render_to_texture_on(
+        gpu,
+        view_3d(view),
+        target,
+        width,
+        height,
+        samples,
+        cameras,
+        records,
+    )
 }
 
 /// **B15（乙）**：2D 一帧直接合成进 `target`（浏览器异步版）。
@@ -1786,8 +1844,16 @@ pub async fn render_2d_to_texture_async(
     records: &[PathRecord],
 ) -> Result<(), String> {
     let mut slot = crate::render::GpuSlot::take()?;
-    render_2d_to_texture_async_on(slot.get(), target, width, height, samples, background, records)
-        .await
+    render_2d_to_texture_async_on(
+        slot.get(),
+        target,
+        width,
+        height,
+        samples,
+        background,
+        records,
+    )
+    .await
 }
 
 /// **BQ**：同 [`render_2d_to_texture_async`]，GPU 由调用方给（注入形态）。
@@ -1829,8 +1895,17 @@ pub async fn render_3d_to_texture_async(
     records: &[PathRecord],
 ) -> Result<(), String> {
     let mut slot = crate::render::GpuSlot::take()?;
-    render_3d_to_texture_async_on(slot.get(), target, width, height, samples, view, cameras, records)
-        .await
+    render_3d_to_texture_async_on(
+        slot.get(),
+        target,
+        width,
+        height,
+        samples,
+        view,
+        cameras,
+        records,
+    )
+    .await
 }
 
 /// **BQ**：同 [`render_3d_to_texture_async`]，GPU 由调用方给（注入形态）。
@@ -1845,8 +1920,17 @@ pub async fn render_3d_to_texture_async_on(
     cameras: &[CameraView],
     records: &[PathRecord],
 ) -> Result<(), String> {
-    render_to_texture_async_on(gpu, view_3d(view), target, width, height, samples, cameras, records)
-        .await
+    render_to_texture_async_on(
+        gpu,
+        view_3d(view),
+        target,
+        width,
+        height,
+        samples,
+        cameras,
+        records,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -1860,15 +1944,23 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn injected_entry_point_matches_the_default_path() {
-        let records: Vec<PathRecord> = vec![FilledPath::polygon(
-            &[[-8.0, -8.0, 0.0], [8.0, -8.0, 0.0], [8.0, 8.0, 0.0], [-8.0, 8.0, 0.0]],
-            [1.0, 0.5, 0.0, 1.0],
-        )
-        .into()];
+        let records: Vec<PathRecord> = vec![
+            FilledPath::polygon(
+                &[
+                    [-8.0, -8.0, 0.0],
+                    [8.0, -8.0, 0.0],
+                    [8.0, 8.0, 0.0],
+                    [-8.0, 8.0, 0.0],
+                ],
+                [1.0, 0.5, 0.0, 1.0],
+            )
+            .into(),
+        ];
         let background = [0.0, 0.0, 0.0, 1.0];
         let default = render_2d(32, 32, 1, background, &records).expect("默认路径");
         let mut lease = crate::render::Gpu::take().expect("GPU");
-        let injected = render_2d_on(lease.get(), 32, 32, 1, background, &records).expect("注入路径");
+        let injected =
+            render_2d_on(lease.get(), 32, 32, 1, background, &records).expect("注入路径");
         assert_eq!(default, injected, "注入路径必须与默认路径逐位相同");
     }
 
@@ -2048,7 +2140,12 @@ mod tests {
             let source = format!(
                 "struct Params {{\n    _unused: u32,\n}}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {{\n    return vec3<f32>({color});\n}}\n"
             );
-            ShaderFill { source, params: Vec::new(), fragment: true, rgba: false }
+            ShaderFill {
+                source,
+                params: Vec::new(),
+                fragment: true,
+                rgba: false,
+            }
         };
         let blue = [0.0, 0.0, 1.0, 1.0];
         let mut left = FilledPath::polygon(
@@ -2071,13 +2168,7 @@ mod tests {
             blue,
         );
         right.shader = Some(program("0.0, 1.0, 0.0"));
-        let frame = match render_2d(
-            w,
-            h,
-            1,
-            [0.0, 0.0, 0.0, 1.0],
-            &[left.into(), right.into()],
-        ) {
+        let frame = match render_2d(w, h, 1, [0.0, 0.0, 0.0, 1.0], &[left.into(), right.into()]) {
             Ok(frame) => frame,
             Err(error) => panic!("矢量后端起不来：{error}"),
         };
@@ -2125,16 +2216,18 @@ mod tests {
                 None
             }
         }
-        let generated =
-            ze_comb::emit_wgsl(&ze_comb::Expr::pure([1.0f32, 0.0, 0.0]), &Bare)
-                .expect("表达式产物")
-                .source;
+        let generated = ze_comb::emit_wgsl(&ze_comb::Expr::pure([1.0f32, 0.0, 0.0]), &Bare)
+            .expect("表达式产物")
+            .source;
         assert!(
             generated.contains("struct Params") && generated.contains("fn eval("),
             "产物的契约与手写入口一致：\n{generated}"
         );
         let handwritten = "// hand-written\nstruct Params {\n    _unused: u32,\n}\n\nfn eval(p: Params, index: u32) -> vec3<f32> {\n    let red = 1.0;\n    return vec3<f32>(red, 0.0, 0.0);\n}\n";
-        assert_ne!(generated, handwritten, "两段源码必须真的不同（否则不算对拍）");
+        assert_ne!(
+            generated, handwritten,
+            "两段源码必须真的不同（否则不算对拍）"
+        );
         let render = |source: &str| {
             let mut square = FilledPath::polygon(
                 &[
@@ -2310,7 +2403,8 @@ mod tests {
     /// 投影矩阵（列主序）、`three_d`、`toward`/bias、eye、灯数、tone、bloom、AO、灯槽。
     #[test]
     fn view3_lays_out_the_same_slots_as_the_upstream_packer() {
-        let view = View3 { raytrace: false,
+        let view = View3 {
+            raytrace: false,
             frame: (8.0, 6.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -2344,7 +2438,11 @@ mod tests {
         assert_eq!(v[39], 1.0, "three_d");
         assert_eq!([v[40], v[41], v[42]], [0.0, 0.0, 1.0], "toward = 相机 z 轴");
         assert_eq!(v[43], super::ON_3D, "3D 路径的深度偏置");
-        assert_eq!([v[48], v[49], v[50], v[51]], [0.0, 0.0, 8.0, 1.0], "eye = center + f·z");
+        assert_eq!(
+            [v[48], v[49], v[50], v[51]],
+            [0.0, 0.0, 8.0, 1.0],
+            "eye = center + f·z"
+        );
         assert_eq!(v[super::VIEW_LIGHTING + 4], 2.0, "灯数");
         assert_eq!(v[super::VIEW_LIGHTING + 5], 2.0, "曝光");
         assert_eq!(v[super::VIEW_LIGHTING + 6], 1.0, "tone = AgX");
@@ -2529,8 +2627,8 @@ mod tests {
         .expect("首帧");
         let uploaded = crate::take_store_upload_bytes();
         assert!(uploaded > 0, "首帧必须上传几何（实测 {uploaded} B）");
-        let second = render_2d(64, 64, 1, [0.0, 0.0, 0.0, 1.0], &[PathRecord::Mesh(mesh)])
-            .expect("第二帧");
+        let second =
+            render_2d(64, 64, 1, [0.0, 0.0, 0.0, 1.0], &[PathRecord::Mesh(mesh)]).expect("第二帧");
         assert_eq!(crate::take_store_upload_bytes(), 0, "第二帧不应再传几何");
         assert_eq!(first, second, "持久前缀不改像素");
     }
@@ -2553,7 +2651,8 @@ mod tests {
                 intensity: 1.0,
             });
         }
-        View3 { raytrace: false,
+        View3 {
+            raytrace: false,
             frame: (4.0, 4.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -2593,7 +2692,10 @@ mod tests {
         let agx = lit_frame(Some(ze_render_ir::ToneCurve::AgX), 1.0, None, true);
         let at = pixel(&clip, 64, 32, 32);
         let bt = pixel(&agx, 64, 32, 32);
-        assert_ne!(at, bt, "有 3D 计划时 AgX 必须与 clip 不同：{at:?} vs {bt:?}");
+        assert_ne!(
+            at, bt,
+            "有 3D 计划时 AgX 必须与 clip 不同：{at:?} vs {bt:?}"
+        );
         assert!(
             at[..3].iter().all(|c| *c >= 250),
             "clip 下高光应死白：{at:?}"
@@ -2676,7 +2778,8 @@ mod tests {
             second: None,
             texture: None,
         };
-        let view = |tone: ze_render_ir::ToneCurve| View3 { raytrace: false,
+        let view = |tone: ze_render_ir::ToneCurve| View3 {
+            raytrace: false,
             frame: (4.0, 4.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -2791,13 +2894,8 @@ mod tests {
             [1.0, 0.0, 0.0, 1.0],
         );
         // 相机视图铺满画布（2D 视图 1 世界单位 = 1 px ⇒ ±40 覆盖 64×64 还有余）。
-        let camera = CameraView::content_2d(
-            7,
-            64,
-            64,
-            [0.0, 0.0, 0.0, 0.0],
-            vec![PathRecord::Fill(red)],
-        );
+        let camera =
+            CameraView::content_2d(7, 64, 64, [0.0, 0.0, 0.0, 0.0], vec![PathRecord::Fill(red)]);
         // 主帧：一块 ±1 世界单位的四边形（画幅 4 ⇒ 占中间 32×32），UV 覆盖整张纹理，
         // `v = 1` 在 +y（图像上沿）。
         let quad = |texture: Option<TextureSource>| {
@@ -2933,7 +3031,10 @@ mod tests {
         let clear = [0.0, 0.0, 0.0, 1.0];
         let plain = render_2d_or_panic(&[PathRecord::Points(points(None))], clear);
         let left = pixel(&plain, 64, 22, 32);
-        assert!(left[0] > 180 && left[1] > 180, "无逐点色时用 fill（白）：{left:?}");
+        assert!(
+            left[0] > 180 && left[1] > 180,
+            "无逐点色时用 fill（白）：{left:?}"
+        );
 
         let colored = render_2d_or_panic(
             &[PathRecord::Points(points(Some(vec![
@@ -3071,7 +3172,12 @@ mod tests {
                 Err(error) => panic!("矢量 3D 后端起不来：{error}"),
             }
         };
-        let luma_sum = |frame: &[u8]| frame.chunks_exact(4).map(|p| p[0] as i64 + p[1] as i64 + p[2] as i64).sum::<i64>();
+        let luma_sum = |frame: &[u8]| {
+            frame
+                .chunks_exact(4)
+                .map(|p| p[0] as i64 + p[1] as i64 + p[2] as i64)
+                .sum::<i64>()
+        };
 
         let plain = frame(None, true);
         let occluded = frame(Some((1.0, 0.3)), true);
@@ -3295,11 +3401,7 @@ mod tests {
             path
         };
         let two = render_2d_or_panic(
-            &[square(vec![
-                [1.0, 0.0, 0.0, 1.0],
-                [0.0, 0.0, 1.0, 1.0],
-            ])
-            .into()],
+            &[square(vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]]).into()],
             clear,
         );
         let (left, right) = (pixel(&two, 64, 26, 32), pixel(&two, 64, 38, 32));
@@ -3364,7 +3466,10 @@ mod tests {
         let frame = render_2d_or_panic(&[PathRecord::Mesh(mesh)], [0.0, 0.0, 0.0, 1.0]);
         let (left, right) = (pixel(&frame, 64, 26, 32), pixel(&frame, 64, 38, 32));
         assert!(left[0] > 160 && left[2] < 80, "左半应是顶点色红：{left:?}");
-        assert!(right[2] > 160 && right[0] < 80, "右半应是顶点色蓝：{right:?}");
+        assert!(
+            right[2] > 160 && right[0] < 80,
+            "右半应是顶点色蓝：{right:?}"
+        );
     }
 
     /// **PH Step 3 判据**：上传的程序化 `.hdr` **真的参与着色**。
@@ -3412,7 +3517,8 @@ mod tests {
             texture: None,
         };
         let frame = |environment: u32| {
-            let view = View3 { raytrace: false,
+            let view = View3 {
+                raytrace: false,
                 frame: (4.0, 4.0),
                 center: [0.0, 0.0, 0.0],
                 axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -3622,9 +3728,15 @@ mod tests {
         };
         let clear = [0.0, 0.0, 0.0, 1.0];
         let at = |from: &Path2D, to: &Path2D, mix: f32| {
-            let records =
-                crate::scene::morph_records(from, to, mix, &style, Transform2D::identity(), (64, 64))
-                    .expect("形变映射");
+            let records = crate::scene::morph_records(
+                from,
+                to,
+                mix,
+                &style,
+                Transform2D::identity(),
+                (64, 64),
+            )
+            .expect("形变映射");
             render_2d_or_panic(&records, clear)
         };
 
@@ -3635,7 +3747,10 @@ mod tests {
         assert_eq!(zero, start, "t = 0 必须逐位等于起点形状（key2 = 0）");
 
         let changed = |a: &[u8], b: &[u8]| {
-            a.chunks_exact(4).zip(b.chunks_exact(4)).filter(|(x, y)| x != y).count()
+            a.chunks_exact(4)
+                .zip(b.chunks_exact(4))
+                .filter(|(x, y)| x != y)
+                .count()
         };
         assert!(changed(&zero, &half) > 100, "t = 0 与 t = 0.5 必须不同");
         assert!(changed(&half, &one) > 100, "t = 0.5 与 t = 1 必须不同");
@@ -3846,7 +3961,8 @@ mod tests {
         let declaration = vec![red.clone(), green.clone(), blue.clone()];
         // 表达式聚簇：红/蓝同组（expr 0，min z = −1），绿单独（expr 1，z = 0）。
         let clustered = vec![red, blue, green];
-        let view = View3 { raytrace: false,
+        let view = View3 {
+            raytrace: false,
             frame: (4.0, 4.0),
             center: [0.0, 0.0, 0.0],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],

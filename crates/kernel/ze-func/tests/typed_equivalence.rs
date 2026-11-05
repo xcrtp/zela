@@ -4,8 +4,8 @@
 //! 这里把前两者放在一起对拍，并逐算子覆盖（含 F64 / Vec2 / Vec3 / Bool 重载）。
 
 use ze_comb::{
-    ChannelRef, CompiledExpr, EvalError, Expr, Literal, Mono, OpRef, TypedProgram, Value,
-    eval_reference, SlotType,
+    ChannelRef, CompiledExpr, EvalError, Expr, Literal, Mono, OpRef, SlotType, TypedProgram, Value,
+    eval_reference,
 };
 
 fn math(name: &str) -> OpRef {
@@ -33,8 +33,8 @@ impl Mono for MathOnly {
 
 /// 表达式在三条路径上的值（typed / lowered / reference）。
 fn evaluate(expr: &Expr) -> (Value, Value, Value) {
-    let typed = TypedProgram::compile(expr, ze_func::monomorphizer())
-        .expect("本用例的表达式必须可单态化");
+    let typed =
+        TypedProgram::compile(expr, ze_func::monomorphizer()).expect("本用例的表达式必须可单态化");
     let lowered = CompiledExpr::compile(expr).expect("可编译");
     let mono = MathOnly;
     (
@@ -47,7 +47,10 @@ fn evaluate(expr: &Expr) -> (Value, Value, Value) {
 fn assert_same(expr: &Expr, label: &str) {
     let (typed, lowered, reference) = evaluate(expr);
     assert_eq!(typed, lowered, "`{label}`：typed 与 lowered 必须逐位相同");
-    assert_eq!(typed, reference, "`{label}`：typed 与 reference 必须逐位相同");
+    assert_eq!(
+        typed, reference,
+        "`{label}`：typed 与 reference 必须逐位相同"
+    );
 }
 
 fn call(name: &str, args: Vec<Expr>) -> Expr {
@@ -78,22 +81,43 @@ fn every_operator_matches_across_evaluators() {
         ("cos", call("cos", vec![pure(0.5)])),
         ("add/f64", call("add", vec![pure(1.5), pure(2.25)])),
         ("add/vec2", call("add", vec![v2(1.0, 2.0), v2(3.0, 4.0)])),
-        ("add/vec3", call("add", vec![v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0)])),
+        (
+            "add/vec3",
+            call("add", vec![v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0)]),
+        ),
         ("mul/f64", call("mul", vec![pure(1.5), pure(3.0)])),
         ("mul/vec2", call("mul", vec![v2(1.0, 2.0), pure(2.0)])),
         ("mul/vec2_left", call("mul", vec![pure(2.0), v2(1.0, 2.0)])),
-        ("scale/vec3", call("scale", vec![v3(1.0, 2.0, 3.0), pure(0.5)])),
-        ("scale/vec3_left", call("scale", vec![pure(0.5), v3(1.0, 2.0, 3.0)])),
+        (
+            "scale/vec3",
+            call("scale", vec![v3(1.0, 2.0, 3.0), pure(0.5)]),
+        ),
+        (
+            "scale/vec3_left",
+            call("scale", vec![pure(0.5), v3(1.0, 2.0, 3.0)]),
+        ),
         ("sum/empty", call("sum", vec![])),
-        ("sum/f64", call("sum", vec![pure(0.5), pure(0.25), pure(0.125)])),
+        (
+            "sum/f64",
+            call("sum", vec![pure(0.5), pure(0.25), pure(0.125)]),
+        ),
         ("sum/vec2", call("sum", vec![v2(1.0, 2.0), v2(3.0, 4.0)])),
-        ("mix/f64", call("mix", vec![pure(0.0), pure(10.0), pure(0.25)])),
-        ("mix/vec2", call("mix", vec![v2(0.0, -2.0), v2(4.0, 2.0), pure(0.5)])),
+        (
+            "mix/f64",
+            call("mix", vec![pure(0.0), pure(10.0), pure(0.25)]),
+        ),
+        (
+            "mix/vec2",
+            call("mix", vec![v2(0.0, -2.0), v2(4.0, 2.0), pure(0.5)]),
+        ),
         (
             "mix/vec3",
             call("mix", vec![v3(0.0, 0.0, 0.0), v3(2.0, 4.0, 6.0), pure(0.5)]),
         ),
-        ("clamp", call("clamp", vec![pure(2.0), pure(0.0), pure(1.0)])),
+        (
+            "clamp",
+            call("clamp", vec![pure(2.0), pure(0.0), pure(1.0)]),
+        ),
         ("vec2", call("vec2", vec![pure(1.0), pure(2.0)])),
         ("vec3", call("vec3", vec![pure(1.0), pure(2.0), pure(3.0)])),
         ("x/vec2", call("x", vec![v2(1.0, 2.0)])),
@@ -103,7 +127,11 @@ fn every_operator_matches_across_evaluators() {
             "rotate3",
             call(
                 "rotate3",
-                vec![v3(0.0, 0.0, 5.0), v3(0.0, 1.0, 0.0), pure(std::f64::consts::FRAC_PI_2)],
+                vec![
+                    v3(0.0, 0.0, 5.0),
+                    v3(0.0, 1.0, 0.0),
+                    pure(std::f64::consts::FRAC_PI_2),
+                ],
             ),
         ),
         ("splat", call("splat", vec![pure(2.0)])),
@@ -111,13 +139,19 @@ fn every_operator_matches_across_evaluators() {
             "vec3_from_vec2",
             call("vec3_from_vec2", vec![v2(1.0, 2.0), pure(3.0)]),
         ),
-        ("vec2_from_vec3", call("vec2_from_vec3", vec![v3(4.0, 5.0, 6.0)])),
+        (
+            "vec2_from_vec3",
+            call("vec2_from_vec3", vec![v3(4.0, 5.0, 6.0)]),
+        ),
         ("length/vec2", call("length", vec![v2(3.0, 4.0)])),
         ("length/vec3", call("length", vec![v3(3.0, 4.0, 0.0)])),
         ("normalize/vec2", call("normalize", vec![v2(0.0, 3.0)])),
         ("normalize/vec3", call("normalize", vec![v3(0.0, 0.0, 0.0)])),
         ("round_f32", call("round_f32", vec![pure(0.1 + 0.2)])),
-        ("distance/vec2", call("distance", vec![v2(0.0, 0.0), v2(3.0, 4.0)])),
+        (
+            "distance/vec2",
+            call("distance", vec![v2(0.0, 0.0), v2(3.0, 4.0)]),
+        ),
         (
             "distance/vec3",
             call("distance", vec![v3(0.0, 0.0, 0.0), v3(3.0, 4.0, 0.0)]),
@@ -156,13 +190,28 @@ fn every_operator_matches_across_evaluators() {
         ("step/below", call("step", vec![pure(1.0), pure(0.5)])),
         ("step/equal", call("step", vec![pure(1.0), pure(1.0)])),
         ("dot/vec2", call("dot", vec![v2(1.0, 2.0), v2(3.0, 4.0)])),
-        ("dot/vec3", call("dot", vec![v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0)])),
-        ("cross", call("cross", vec![v3(1.0, 0.0, 0.0), v3(0.0, 1.0, 0.0)])),
-        ("reflect/vec2", call("reflect", vec![v2(1.0, -1.0), v2(0.0, 1.0)])),
-        ("reflect/vec3", call("reflect", vec![v3(1.0, -1.0, 0.0), v3(0.0, 1.0, 0.0)])),
+        (
+            "dot/vec3",
+            call("dot", vec![v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0)]),
+        ),
+        (
+            "cross",
+            call("cross", vec![v3(1.0, 0.0, 0.0), v3(0.0, 1.0, 0.0)]),
+        ),
+        (
+            "reflect/vec2",
+            call("reflect", vec![v2(1.0, -1.0), v2(0.0, 1.0)]),
+        ),
+        (
+            "reflect/vec3",
+            call("reflect", vec![v3(1.0, -1.0, 0.0), v3(0.0, 1.0, 0.0)]),
+        ),
         (
             "faceforward/vec2",
-            call("faceforward", vec![v2(1.0, 0.0), v2(0.0, 1.0), v2(0.0, 1.0)]),
+            call(
+                "faceforward",
+                vec![v2(1.0, 0.0), v2(0.0, 1.0), v2(0.0, 1.0)],
+            ),
         ),
         (
             "faceforward/vec3",
@@ -183,7 +232,10 @@ fn every_operator_matches_across_evaluators() {
         ("or", call("or", vec![pure(true), pure(false)])),
         ("not", call("not", vec![pure(true)])),
         // ─── BT-1：四维出口（Vec4）三路同源 ────────────────────────────────
-        ("vec4", call("vec4", vec![pure(0.25), pure(0.5), pure(0.75), pure(1.0)])),
+        (
+            "vec4",
+            call("vec4", vec![pure(0.25), pure(0.5), pure(0.75), pure(1.0)]),
+        ),
         ("w/vec4", call("w", vec![v4(0.1, 0.2, 0.3, 0.4)])),
         ("vec4/literal", v4(0.5, 0.25, 0.125, 1.0)),
     ];
@@ -257,10 +309,11 @@ fn root_type_is_static() {
     // **BT-1**：四维也走快路径（此前 `root_type` 只能是 Vec3 及以下）。
     let program = TypedProgram::compile(&v4(0.0, 0.0, 0.0, 1.0), ze_func::monomorphizer()).unwrap();
     assert_eq!(program.root_type(), SlotType::Vec4);
-    let program =
-        TypedProgram::compile(&call("vec4", vec![pure(0.0), pure(0.0), pure(0.0), pure(1.0)]),
-            ze_func::monomorphizer())
-        .unwrap();
+    let program = TypedProgram::compile(
+        &call("vec4", vec![pure(0.0), pure(0.0), pure(0.0), pure(1.0)]),
+        ze_func::monomorphizer(),
+    )
+    .unwrap();
     assert_eq!(program.root_type(), SlotType::Vec4);
 }
 

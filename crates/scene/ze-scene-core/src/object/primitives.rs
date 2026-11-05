@@ -412,7 +412,9 @@ mod tests {
             "无旋转 ⇒ 仍用 Rect 变体"
         );
         match r.to_shape2d(&Transform2D::rotate(std::f32::consts::FRAC_PI_4)) {
-            Shape2D::Polygon { points } => assert_eq!(points.len(), 4, "旋转 ⇒ 4 角点多边形"),
+            Shape2D::Polygon { points } => {
+                assert_eq!(points.len(), 4, "旋转 ⇒ 4 角点多边形")
+            }
             other => panic!("expected Polygon, got {other:?}"),
         }
     }

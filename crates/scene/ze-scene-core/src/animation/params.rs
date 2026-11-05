@@ -291,7 +291,16 @@ pub fn build_registry(bindings: &BindingTable) -> ParameterRegistry {
         let scope = binding.scope;
         let scope_path = bindings.scope_path(scope);
         if let BindingDriver::Curve(curve) = &binding.driver {
-            collect_curve(index, target, binding.clock, scope, scope_path, name, curve, &mut raw);
+            collect_curve(
+                index,
+                target,
+                binding.clock,
+                scope,
+                scope_path,
+                name,
+                curve,
+                &mut raw,
+            );
         }
         for (plan_index, plan) in binding.state_plans.iter().enumerate() {
             collect_state(
@@ -413,7 +422,9 @@ fn collect_state(
         vec![(StateField::Stiff, 0.0, 0.5), (StateField::Damp, 0.0, 1.0)]
     } else {
         (0..plan.width())
-            .flat_map(|row| (0..plan.width()).map(move |col| (StateField::Cell(row, col), -2.0, 2.0)))
+            .flat_map(|row| {
+                (0..plan.width()).map(move |col| (StateField::Cell(row, col), -2.0, 2.0))
+            })
             .collect()
     };
     for (field, min, max) in fields {
@@ -528,10 +539,7 @@ mod tests {
         let init = vec2(Expr::pure(1.0), Expr::pure(0.0));
         let step = vec2(
             add(prev(Some("x")), prev(Some("y"))),
-            add(
-                scale(0.97, prev(Some("y"))),
-                scale(-0.02, prev(Some("x"))),
-            ),
+            add(scale(0.97, prev(Some("y"))), scale(-0.02, prev(Some("x")))),
         );
         plan_from_expr(&init, &step, None).unwrap()
     }
@@ -607,7 +615,10 @@ mod tests {
         // damp = 1、stiff = 0.03 ⇒ det = 1.03 ⇒ 谱半径 > 1 ⇒ 显式拒绝，原值不动。
         apply(&mut table, "0:state:0000:7.1:3:0:stiff", 0.03).unwrap();
         let err = apply(&mut table, "0:state:0000:7.1:3:0:damp", 1.0).unwrap_err();
-        assert!(matches!(err, ParamError::Affine(AffineError::Unstable { .. })));
+        assert!(matches!(
+            err,
+            ParamError::Affine(AffineError::Unstable { .. })
+        ));
         assert!((table.bindings[0].state_plans[0].linear(1, 1).unwrap() - 0.5).abs() < 1e-6);
     }
 
@@ -691,7 +702,11 @@ mod tests {
         }
         let registry = build_registry(&table);
         let addresses: Vec<&str> = registry.addresses().collect();
-        assert!(addresses.iter().all(|address| address.starts_with('1') || address.starts_with('2')));
+        assert!(
+            addresses
+                .iter()
+                .all(|address| address.starts_with('1') || address.starts_with('2'))
+        );
         assert_eq!(addresses.len(), 6);
         let labels: Vec<String> = registry.iter().map(|e| e.property.label().into()).collect();
         assert!(labels.iter().any(|label| label.starts_with("panel_a/")));

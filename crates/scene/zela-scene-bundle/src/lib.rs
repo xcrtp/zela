@@ -215,10 +215,7 @@ pub struct Available {
 
 impl Available {
     pub fn new(capabilities: Vec<Capability>, pods: Vec<Pod>) -> Self {
-        Self {
-            capabilities,
-            pods,
-        }
+        Self { capabilities, pods }
     }
 
     /// **CD-a 协商查询**：本地是否有能**重建**该能力产物的同名实现。
@@ -236,10 +233,7 @@ impl Available {
     /// 种类 → 能力名的映射写在
     /// [`ContentOrigin::capability_name`](ze_scene_core::components::ContentOrigin::capability_name)，
     /// 不在这里再铺一份 match —— 将来拆成两个 capability 时只改那一处。
-    pub fn can_rebuild_source(
-        &self,
-        origin: &ze_scene_core::components::ContentOrigin,
-    ) -> bool {
+    pub fn can_rebuild_source(&self, origin: &ze_scene_core::components::ContentOrigin) -> bool {
         self.capabilities
             .iter()
             .any(|available| available.name == origin.capability_name())
@@ -258,7 +252,10 @@ pub enum BundleError {
     /// 段长越界 / 文件被截断 / 尾部多余字节。
     MalformedLayout { detail: String },
     /// payload / meta 不是合法 JSON。
-    Json { section: &'static str, message: String },
+    Json {
+        section: &'static str,
+        message: String,
+    },
     /// `SceneScript` 还原失败（组件未登记 / 类型不匹配等）。
     Script { message: String },
     /// 序列化不具确定性（round-trip 不是逐字节相同，通常是 NaN / Infinity）。
@@ -270,7 +267,9 @@ pub enum BundleError {
 impl std::fmt::Display for BundleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TooShort { len } => write!(f, "ZSB 太短（{len} B < {HEADER_LEN} B）"),
+            Self::TooShort { len } => {
+                write!(f, "ZSB 太短（{len} B < {HEADER_LEN} B）")
+            }
             Self::BadMagic { found } => {
                 write!(f, "ZSB 魔数不匹配（找到 {found:?}，期望 {MAGIC:?}）")
             }
@@ -278,10 +277,18 @@ impl std::fmt::Display for BundleError {
                 f,
                 "不支持的 ZSB 容器版本 {found}（本实现支持 {CONTAINER_VERSION}）"
             ),
-            Self::MalformedLayout { detail } => write!(f, "ZSB 布局非法：{detail}"),
-            Self::Json { section, message } => write!(f, "ZSB {section} 段 JSON 非法：{message}"),
-            Self::Script { message } => write!(f, "ZSB payload 还原失败：{message}"),
-            Self::NonCanonical { message } => write!(f, "ZSB payload 不具确定性：{message}"),
+            Self::MalformedLayout { detail } => {
+                write!(f, "ZSB 布局非法：{detail}")
+            }
+            Self::Json { section, message } => {
+                write!(f, "ZSB {section} 段 JSON 非法：{message}")
+            }
+            Self::Script { message } => {
+                write!(f, "ZSB payload 还原失败：{message}")
+            }
+            Self::NonCanonical { message } => {
+                write!(f, "ZSB payload 不具确定性：{message}")
+            }
             Self::HashMismatch { stored, actual } => {
                 write!(f, "ZSB payload hash 不一致（记录 {stored}，实际 {actual}）")
             }
@@ -327,11 +334,9 @@ impl Bundle {
     /// - 会做一次 round-trip 等价检查（防止 NaN / Infinity / 非确定序列化）；
     /// - `duration` 必须有限。
     pub fn encode(script: &SceneScript, input: MetaInput) -> Result<Self, BundleError> {
-        let text = script
-            .to_json()
-            .map_err(|e| BundleError::Script {
-                message: e.to_string(),
-            })?;
+        let text = script.to_json().map_err(|e| BundleError::Script {
+            message: e.to_string(),
+        })?;
 
         // 字节确定性 / 有限性：反序列化再序列化必须逐字节相同。
         // NaN / Infinity 在 serde_json 中会退化成 `null`，round-trip 会在
@@ -423,11 +428,10 @@ impl Bundle {
 
         let payload = bytes[HEADER_LEN..HEADER_LEN + payload_len].to_vec();
         let meta_bytes = &bytes[HEADER_LEN + payload_len..];
-        let meta: Meta =
-            serde_json::from_slice(meta_bytes).map_err(|e| BundleError::Json {
-                section: "Meta",
-                message: e.to_string(),
-            })?;
+        let meta: Meta = serde_json::from_slice(meta_bytes).map_err(|e| BundleError::Json {
+            section: "Meta",
+            message: e.to_string(),
+        })?;
 
         let actual = sha256::hex(&sha256::sha256(&payload));
         if meta.payload_sha256 != actual {
@@ -464,7 +468,9 @@ impl Bundle {
     /// **CD-b**：payload 里记录的内容源（`rebuild` 的输入；`restore` 不需要）。
     ///
     /// 没有内容源的产物（纯几何 / 老 ZSB）返回空表 —— 不失败。
-    pub fn text_sources(&self) -> Result<Vec<ze_scene_core::components::ContentOrigin>, BundleError> {
+    pub fn text_sources(
+        &self,
+    ) -> Result<Vec<ze_scene_core::components::ContentOrigin>, BundleError> {
         Ok(self
             .script()?
             .content_origins()
@@ -575,8 +581,8 @@ impl Bundle {
 mod tests {
     use super::*;
     use ze_scene_core::Circle;
-    use zela_scene_ecs::scene_script::SceneEncoder;
     use zela_scene_ecs::scene::Scene;
+    use zela_scene_ecs::scene_script::SceneEncoder;
 
     fn tiny_script() -> SceneScript {
         use ze_comb::{ChannelRef, Expr, OpRef};
@@ -588,10 +594,7 @@ mod tests {
             [
                 Expr::call(
                     OpRef::new("zela.math", "scale"),
-                    [
-                        Expr::pure(0.5),
-                        Expr::channel(ChannelRef::builtin("time")),
-                    ],
+                    [Expr::pure(0.5), Expr::channel(ChannelRef::builtin("time"))],
                 ),
                 Expr::pure(0.0),
                 Expr::pure(1.0),
@@ -601,7 +604,10 @@ mod tests {
             OpRef::new("zela.math", "add"),
             [
                 Expr::pure(1.0),
-                Expr::call(OpRef::new("zela.math", "scale"), [Expr::pure(2.0), progress]),
+                Expr::call(
+                    OpRef::new("zela.math", "scale"),
+                    [Expr::pure(2.0), progress],
+                ),
             ],
         );
         // 窗口 `[0, 2)`：静止时刻 = 2.0（与旧 `play(dur = 2.0)` 的段语义一致）。
@@ -610,17 +616,11 @@ mod tests {
             [
                 Expr::call(
                     OpRef::new("zela.math", "ge"),
-                    [
-                        Expr::channel(ChannelRef::builtin("time")),
-                        Expr::pure(0.0),
-                    ],
+                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(0.0)],
                 ),
                 Expr::call(
                     OpRef::new("zela.math", "lt"),
-                    [
-                        Expr::channel(ChannelRef::builtin("time")),
-                        Expr::pure(2.0),
-                    ],
+                    [Expr::channel(ChannelRef::builtin("time")), Expr::pure(2.0)],
                 ),
             ],
         );
@@ -664,7 +664,10 @@ mod tests {
         let bytes = bundle.to_bytes();
         let read = Bundle::from_bytes(&bytes).expect("decode");
         assert_eq!(read.payload_hash(), bundle.payload_hash());
-        assert_eq!(read.script().expect("script").to_json().unwrap(), script.to_json().unwrap());
+        assert_eq!(
+            read.script().expect("script").to_json().unwrap(),
+            script.to_json().unwrap()
+        );
         assert_eq!(read.meta().object_count, script.len());
     }
 
@@ -778,16 +781,16 @@ mod tests {
 
         // Runtime 缺失 ⇒ 仍失败（既有行为）。
         let nothing = Available::new(Vec::new(), Vec::new());
-        let error = bundle.check_restorable(&nothing).expect_err("Runtime 必须存在");
+        let error = bundle
+            .check_restorable(&nothing)
+            .expect_err("Runtime 必须存在");
         assert!(error.missing.iter().any(|m| m.contains("scene")));
     }
 
     #[test]
     fn can_rebuild_is_a_name_query() {
-        let available = Available::new(
-            vec![Capability::new("zela.content", Some("9"))],
-            Vec::new(),
-        );
+        let available =
+            Available::new(vec![Capability::new("zela.content", Some("9"))], Vec::new());
         assert!(available.can_rebuild(&Capability::new("zela.content", Some("1"))));
         assert!(!available.can_rebuild(&Capability::new("fonts", Some("1"))));
     }
@@ -928,7 +931,10 @@ mod tests {
         // 改 payload 一个字节（payload 在 Header 之后、Meta 之前）。
         bytes[HEADER_LEN] ^= 0x01;
         let error = Bundle::from_bytes(&bytes).expect_err("hash 必须不一致");
-        assert!(matches!(error, BundleError::HashMismatch { .. }), "error={error}");
+        assert!(
+            matches!(error, BundleError::HashMismatch { .. }),
+            "error={error}"
+        );
         let _ = last;
     }
 

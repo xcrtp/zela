@@ -180,10 +180,10 @@ impl System for ParamPanelSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::ClockId;
     use crate::animation::{Binding, BindingDriver, CameraEye, CircleRadius, SeekKind};
     use crate::contract::ObjectId;
+    use std::sync::Arc;
     use zela_schedule::resource::Resources;
     use zela_schedule::scheduler::{Phase, Scheduler};
 
@@ -407,6 +407,8 @@ mod tests {
         let curve = table.bindings[0].driver.as_curve().unwrap();
         assert!(matches!(curve, Curve::Sin { amp, .. } if (*amp - 0.7).abs() < 1e-6));
         let registry = sched.resources().get::<ParameterRegistry>().unwrap();
-        assert!(matches!(registry.value(&address), Some(PropertyValue::Scalar(v)) if (v - 0.7).abs() < 1e-6));
+        assert!(
+            matches!(registry.value(&address), Some(PropertyValue::Scalar(v)) if (v - 0.7).abs() < 1e-6)
+        );
     }
 }

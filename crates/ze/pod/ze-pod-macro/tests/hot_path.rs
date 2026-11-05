@@ -10,7 +10,7 @@ use std::any::Any;
 use std::hint::black_box;
 use std::time::Instant;
 
-use ze_pod_core::{QualifiedName, RegistryPod, Pod};
+use ze_pod_core::{Pod, QualifiedName, RegistryPod};
 use ze_pod_macro::capability;
 
 #[capability(namespace = "bench")]

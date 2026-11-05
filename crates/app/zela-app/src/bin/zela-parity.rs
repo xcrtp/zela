@@ -42,9 +42,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use zela_app::frame_loop::{
-    FrameLoopOptions, LoopBackend, frames_for, run_frames,
-};
+use zela_app::frame_loop::{FrameLoopOptions, LoopBackend, frames_for, run_frames};
 use zela_app::{ScriptLanguage, build_script_runtime, language_from_path};
 use zela_render_backends::{HeadlessTarget, RenderContext, RoutingDecision, StandardBackends};
 
@@ -185,7 +183,9 @@ fn metrics(w: u32, h: u32, frame: u32, wgpu: &[u8], vector: &[u8]) -> FrameMetri
         }
     }
 
-    let mean = |(count, sum): (usize, f64)| if count == 0 { 0.0 } else { sum / count as f64 };
+    let mean = |(count, sum): (usize, f64)| {
+        if count == 0 { 0.0 } else { sum / count as f64 }
+    };
     if covered_px > 0 {
         for value in &mut bias {
             *value /= covered_px as f64;
@@ -352,7 +352,10 @@ fn locate_script(dir: &Path, name: &str) -> Result<(PathBuf, ScriptLanguage), St
         if matches!(extension, "lua" | "py" | "js") {
             let path = dir.join(name);
             if path.is_file() {
-                return Ok((path.clone(), language_from_path(&path).map_err(|e| e.to_string())?));
+                return Ok((
+                    path.clone(),
+                    language_from_path(&path).map_err(|e| e.to_string())?,
+                ));
             }
             return Err(format!("[{name}] 指定的脚本不存在：{}", path.display()));
         }
@@ -360,10 +363,16 @@ fn locate_script(dir: &Path, name: &str) -> Result<(PathBuf, ScriptLanguage), St
     for ext in ["lua", "py", "js"] {
         let path = dir.join(format!("{name}.{ext}"));
         if path.is_file() {
-            return Ok((path.clone(), language_from_path(&path).map_err(|e| e.to_string())?));
+            return Ok((
+                path.clone(),
+                language_from_path(&path).map_err(|e| e.to_string())?,
+            ));
         }
     }
-    Err(format!("[{name}] 在 {} 下找不到 .lua / .py / .js", dir.display()))
+    Err(format!(
+        "[{name}] 在 {} 下找不到 .lua / .py / .js",
+        dir.display()
+    ))
 }
 
 fn main() {
@@ -446,10 +455,7 @@ fn run() -> Result<(), String> {
                 continue;
             };
             let m = metrics(work.width, work.height, *frame, wgpu_px, vector_px);
-            if worst
-                .as_ref()
-                .is_none_or(|current| m.mae > current.mae)
-            {
+            if worst.as_ref().is_none_or(|current| m.mae > current.mae) {
                 worst = Some(m.clone());
                 worst_pair = Some((*frame, wgpu_px.clone(), vector_px.clone()));
             }
@@ -607,7 +613,10 @@ fn decisions_json(decisions: &[RoutingDecision]) -> String {
                 .rejected
                 .iter()
                 .map(|(kind, why)| {
-                    format!("{{\"backend\":\"{kind:?}\",\"reason\":\"{}\"}}", escape(why))
+                    format!(
+                        "{{\"backend\":\"{kind:?}\",\"reason\":\"{}\"}}",
+                        escape(why)
+                    )
                 })
                 .collect();
             format!(
@@ -756,9 +765,13 @@ mod defaults_snapshot {
 
     #[test]
     fn defaults_are_fps_30_sample_30_match_and_target_dir() {
-        let parsed =
-            Args::parse_from(&args(&["--scripts", "scripts", "--work", "fourier=640x480"]))
-                .expect("可解析");
+        let parsed = Args::parse_from(&args(&[
+            "--scripts",
+            "scripts",
+            "--work",
+            "fourier=640x480",
+        ]))
+        .expect("可解析");
         assert_eq!(parsed.fps, 30.0, "默认 30 fps");
         assert_eq!(parsed.sample, 30, "默认每 30 帧采样一次");
         assert_eq!(parsed.post, PostMode::Match, "默认同口径后处理");
@@ -771,7 +784,12 @@ mod defaults_snapshot {
     fn sample_zero_is_rejected() {
         assert!(
             Args::parse_from(&args(&[
-                "--scripts", "s", "--sample", "0", "--work", "a=1x1",
+                "--scripts",
+                "s",
+                "--sample",
+                "0",
+                "--work",
+                "a=1x1",
             ]))
             .is_err(),
             "--sample 0 必须显式失败（否则永远不采样 ⇒ 静默全绿）"

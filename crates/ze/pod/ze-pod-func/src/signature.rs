@@ -128,7 +128,16 @@ mod tests {
 
         // 这些算子的向量版本必须由 kind lift，而不是逐条登记。
         for base in [
-            "sin", "cos", "add", "mul", "scale", "sum", "mix", "clamp", "length", "normalize",
+            "sin",
+            "cos",
+            "add",
+            "mul",
+            "scale",
+            "sum",
+            "mix",
+            "clamp",
+            "length",
+            "normalize",
         ] {
             for suffix in ["_vec2", "_vec3"] {
                 let lifted = format!("{base}{suffix}");

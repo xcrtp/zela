@@ -73,18 +73,16 @@ mod handle;
 mod inject;
 mod lifecycle;
 mod ordering;
+mod pod;
 mod qualified;
 mod registry;
 mod topic;
 mod type_name;
 mod typespec;
 mod value;
-mod pod;
 
 pub use broker::{AssemblyPlan, AssemblyReport, Broker, BrokerError, NodeSpec, PodNode};
-pub use capability::{
-    Capability, CapabilityMeta, FnDoc, FnSig, Resolved, capability_fingerprint,
-};
+pub use capability::{Capability, CapabilityMeta, FnDoc, FnSig, Resolved, capability_fingerprint};
 pub use command::{
     BROADCAST_NAMESPACE, Broadcast, COMMAND_NAMESPACE, CommandQueue, EVENT_SINK_NAMESPACE,
     EventSink, Receipt,
@@ -110,13 +108,13 @@ pub use typespec::{
 };
 // Layout 已收进 `TypeSpec::Struct`（计划 §3.1）；仍在此 re-export，
 // 因为 derive 生成的 schema 需要直接构造它（`layout: Some(...)`）。
-pub use ze_type::layout::{
-    ENDIAN, Endian, FieldLayout, FieldTy, Layout, LayoutError, Record, Scalar, Transcode,
-    VEC2_FIELDS, VEC3_FIELDS, PATH_TYPE,
-};
-pub use ze_type::{VEC2_SPEC, VEC3_SPEC};
+pub use pod::{ChannelDecl, FunctionId, MethodDecl, Pod, SyncPod, negotiate_dyn};
 pub use value::{
-    PodBytes, ScalarValue, PodType, PodValue, PodValueError, describe, expect_enum, expect_struct,
+    PodBytes, PodType, PodValue, PodValueError, ScalarValue, describe, expect_enum, expect_struct,
     field,
 };
-pub use pod::{ChannelDecl, FunctionId, MethodDecl, Pod, SyncPod, negotiate_dyn};
+pub use ze_type::layout::{
+    ENDIAN, Endian, FieldLayout, FieldTy, Layout, LayoutError, PATH_TYPE, Record, Scalar,
+    Transcode, VEC2_FIELDS, VEC3_FIELDS,
+};
+pub use ze_type::{VEC2_SPEC, VEC3_SPEC};

@@ -293,8 +293,12 @@ mod tests {
         let bytes = PodBytes::new(vec![0xDE, 0xAD, 0xBE, 0xEF]);
         let value = bytes.to_pod_value();
         match &value {
-            PodValue::Bytes(v) => assert_eq!(v.as_slice(), &[0xDE, 0xAD, 0xBE, 0xEF]),
-            other => panic!("PodBytes 必须走 Bytes 变体，实际 {}", describe(other)),
+            PodValue::Bytes(v) => {
+                assert_eq!(v.as_slice(), &[0xDE, 0xAD, 0xBE, 0xEF])
+            }
+            other => {
+                panic!("PodBytes 必须走 Bytes 变体，实际 {}", describe(other))
+            }
         }
         assert_eq!(PodBytes::from_pod_value(&value).unwrap(), bytes);
     }
@@ -316,9 +320,15 @@ mod tests {
         match &value {
             PodValue::Array(items) => {
                 assert_eq!(items.len(), 3);
-                assert!(items.iter().all(|v| matches!(v, PodValue::Scalar(ScalarValue::U8(_)))));
+                assert!(
+                    items
+                        .iter()
+                        .all(|v| matches!(v, PodValue::Scalar(ScalarValue::U8(_))))
+                );
             }
-            other => panic!("Vec<u8> 必须走 Array(U8)，实际 {}", describe(other)),
+            other => {
+                panic!("Vec<u8> 必须走 Array(U8)，实际 {}", describe(other))
+            }
         }
         // 反向：Array 不能被当成 PodBytes 解出（显式错误）。
         assert!(PodBytes::from_pod_value(&value).is_err());

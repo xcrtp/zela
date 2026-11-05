@@ -79,8 +79,12 @@ pub struct RenderOptions {
 impl RenderOptions {
     /// 参数集合 → 渲染请求（交叉校验与原 `zela-render` 完全一致）。
     pub fn from_args(args: &CommandArgs) -> Result<Self, String> {
-        let script = args.path("script").filter(|path| !path.as_os_str().is_empty());
-        let bundle = args.path("bundle").filter(|path| !path.as_os_str().is_empty());
+        let script = args
+            .path("script")
+            .filter(|path| !path.as_os_str().is_empty());
+        let bundle = args
+            .path("bundle")
+            .filter(|path| !path.as_os_str().is_empty());
         let input_stream = args
             .path("input-stream")
             .filter(|path| !path.as_os_str().is_empty());
@@ -120,9 +124,7 @@ impl RenderOptions {
             hash: args.flag("hash") || hash_out.is_some(),
             hash_out,
             fps: args.number("fps").unwrap_or(30.0),
-            out: args
-                .path("out")
-                .unwrap_or_else(|| PathBuf::from("out.mp4")),
+            out: args.path("out").unwrap_or_else(|| PathBuf::from("out.mp4")),
             size: args.size("size").unwrap_or((640, 480)),
             backend: args
                 .text("backend")
@@ -174,10 +176,7 @@ pub fn run(
                 None => host.diagnostic(Level::Info, &format!("[backend] {:?} 可用", entry.kind)),
             }
         }
-        if registry
-            .select_on(BackendKind::Vector, adapter)
-            .is_ok()
-        {
+        if registry.select_on(BackendKind::Vector, adapter).is_ok() {
             zela_render_vector::init_gpu(ctx.device.clone(), ctx.queue.clone(), adapter)?;
         }
     }
@@ -195,11 +194,10 @@ pub fn run(
             );
         }
         // 参数指纹取**内容**哈希（换路径不失效；改内容必须拒绝续渲）。
-        let tag = zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(
-            source.as_bytes(),
-        ));
-        let runtime = build_script_runtime(ctx.clone(), source, language)
-            .map_err(|e| e.to_string())?;
+        let tag =
+            zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(source.as_bytes()));
+        let runtime =
+            build_script_runtime(ctx.clone(), source, language).map_err(|e| e.to_string())?;
         (runtime, None, tag)
     } else if let Some(bundle_path) = &options.bundle {
         let bytes = std::fs::read(bundle_path)
@@ -216,10 +214,7 @@ pub fn run(
                     .script()
                     .ok()
                     .and_then(|script| script.still_time())
-                    .map_or_else(
-                        || "不可推导".to_string(),
-                        |value| format!("≈ {value:.3}s")
-                    )
+                    .map_or_else(|| "不可推导".to_string(), |value| format!("≈ {value:.3}s"))
             ),
         );
         let mut tag = bundle.payload_hash_hex();
@@ -277,7 +272,9 @@ pub fn run(
                     if loaded.fingerprint != fingerprint {
                         return Err(format!(
                             "渲染参数已变化，拒绝续渲（参数指纹 {} ≠ manifest {}）\n  修法：换 `--frames` 目录，或删掉 {}",
-                            fingerprint, loaded.fingerprint, path.display()
+                            fingerprint,
+                            loaded.fingerprint,
+                            path.display()
                         ));
                     }
                     let done = loaded.hashes.len() as u32;
@@ -288,7 +285,10 @@ pub fn run(
                         ));
                     }
                     if done == frames {
-                        host.diagnostic(Level::Info, "序列帧已完整（manifest 覆盖全部帧），跳过渲染");
+                        host.diagnostic(
+                            Level::Info,
+                            "序列帧已完整（manifest 覆盖全部帧），跳过渲染",
+                        );
                         return Ok(Response::Render(RenderSummary {
                             frames,
                             size: options.size,
@@ -315,7 +315,9 @@ pub fn run(
                         resume_from = done;
                         host.diagnostic(
                             Level::Info,
-                            &format!("断点续渲：从第 {resume_from} 帧继续（回渲 1 帧校验 Seek 等价）"),
+                            &format!(
+                                "断点续渲：从第 {resume_from} 帧继续（回渲 1 帧校验 Seek 等价）"
+                            ),
                         );
                     }
                     manifest = Some(loaded);
@@ -378,10 +380,9 @@ pub fn run(
             let frame_hash = options.frames_dir.as_ref().map(|_| {
                 zela_scene_bundle::sha256::hex(&zela_scene_bundle::sha256::sha256(frame.rgba))
             });
-            if let (Some(expected), Some(actual)) = (
-                expected_boundary.as_deref(),
-                frame_hash.as_deref(),
-            ) {
+            if let (Some(expected), Some(actual)) =
+                (expected_boundary.as_deref(), frame_hash.as_deref())
+            {
                 if index + 1 == resume_from && expected != actual {
                     resume_mismatch = Some(format!(
                         "断点续渲不一致：第 {index} 帧哈希 {actual} ≠ 首次渲染 {expected}\n  ⇒ `Seek` 不等价于顺序播放，这是真 bug（不得绕过）"
@@ -520,8 +521,8 @@ mod tests {
     /// **阶段 0 回归网**：`render` 的默认值必须与旧 `zela-render` 的快照逐条相同。
     #[test]
     fn defaults_match_the_legacy_parser_snapshot() {
-        let options = RenderOptions::from_args(&parse(&["demo.lua"]).expect("可解析"))
-            .expect("可构造");
+        let options =
+            RenderOptions::from_args(&parse(&["demo.lua"]).expect("可解析")).expect("可构造");
         assert_eq!(options.script, Some(PathBuf::from("demo.lua")));
         assert_eq!(options.bundle, None);
         assert_eq!(options.frames_dir, None);
@@ -547,18 +548,19 @@ mod tests {
             "脚本与 --bundle 只能给一个"
         );
         assert!(
-            RenderOptions::from_args(&parse(&["a.lua", "--input-stream", "in.json"]).expect("可解析"))
-                .is_err(),
+            RenderOptions::from_args(
+                &parse(&["a.lua", "--input-stream", "in.json"]).expect("可解析")
+            )
+            .is_err(),
             "输入流只能与 --bundle 搭配"
         );
     }
 
     #[test]
     fn hash_out_implies_hash() {
-        let options = RenderOptions::from_args(
-            &parse(&["a.lua", "--hash-out", "h.txt"]).expect("可解析"),
-        )
-        .expect("可构造");
+        let options =
+            RenderOptions::from_args(&parse(&["a.lua", "--hash-out", "h.txt"]).expect("可解析"))
+                .expect("可构造");
         assert!(options.hash, "--hash-out 隐含开启哈希");
         assert_eq!(options.hash_out, Some(PathBuf::from("h.txt")));
     }

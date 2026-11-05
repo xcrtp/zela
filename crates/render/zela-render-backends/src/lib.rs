@@ -56,6 +56,13 @@ pub mod gpu_timing;
 pub mod resource_cache;
 
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub use gpu_timing::{GpuSpan, GpuTimingState, GpuTimingSupport};
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub use registry::{
+    AdapterFacts, BackendAvailability, BackendFeatures, BackendKind, BackendRegistry,
+    BackendRegistryError,
+};
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use render_backend::{
     IMPLEMENTED_NAMESPACES, RenderBackend, RenderBackend3D, implemented_capabilities,
     negotiate_capabilities,
@@ -63,17 +70,10 @@ pub use render_backend::{
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use render_layer::RenderLayer;
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
-pub use registry::{
-    AdapterFacts, BackendAvailability, BackendFeatures, BackendKind, BackendRegistry,
-    BackendRegistryError,
-};
-#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
-pub use routing::{FrameContent, LoopBackend, RoutingDecision};
-#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
-pub use gpu_timing::{GpuSpan, GpuTimingState, GpuTimingSupport};
-#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use render_target::RenderTarget;
 pub use resource_cache::{DeferredDestroyer, GpuResourceCache, ResourceCache, ResourceKey};
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub use routing::{FrameContent, LoopBackend, RoutingDecision};
 
 // S2：eframe/egui 宿主适配，默认关闭（feature = "eframe"）——
 // 浏览器产物不得带 egui 链；native 宿主（zela-gui）显式开启。
@@ -97,7 +97,11 @@ pub mod frame;
 
 // B3-2：渲染契约探针（**仅测试**）——真的实现 `zela.render2d` 四条签名并双路径对拍。
 // 不进生产构建：`StandardBackends` / `SceneCompositorCallback` / `assemble_runtime` 均不受影响。
-#[cfg(all(test, feature = "blocking", any(feature = "wgpu", feature = "egui-wgpu")))]
+#[cfg(all(
+    test,
+    feature = "blocking",
+    any(feature = "wgpu", feature = "egui-wgpu")
+))]
 mod render_pod_probe;
 
 // 旧 svg_recorder / text 空壳已删除（见上注）。
@@ -125,9 +129,9 @@ pub use wgpu_3d::{Frame3DData, Layer3DFrame, PreparedDraw3D, WgpuBackend3D};
 #[cfg(feature = "eframe")]
 pub use eframe_backend::{EframeWgpuBackend, install_standard_backends};
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
-pub use scene_callback::{SceneCompositorCallback, SceneCompositorFrame, SceneLayer};
-#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use frame::build_scene_callback;
+#[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
+pub use scene_callback::{SceneCompositorCallback, SceneCompositorFrame, SceneLayer};
 // W1：不依赖 egui 的装配 + 渲染入口。
 #[cfg(any(feature = "wgpu", feature = "egui-wgpu"))]
 pub use standard_backends::{

@@ -148,10 +148,7 @@ fn expand(args: &MetaArgs, input: ItemStruct) -> syn::Result<TokenStream2> {
     // 取自 `C` 的 `IntoPodTypeName::NAME`（`#[derive(PodType)]` 同时生成它与 `SPEC`，
     // 两者同名）。常量参数无消费方，仍拒绝。
     if generics.const_params().next().is_some() {
-        return Err(syn::Error::new(
-            name.span(),
-            "capability 暂不支持常量参数",
-        ));
+        return Err(syn::Error::new(name.span(), "capability 暂不支持常量参数"));
     }
     let type_param_idents: Vec<Ident> = generics
         .type_params()

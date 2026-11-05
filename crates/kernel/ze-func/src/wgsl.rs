@@ -73,14 +73,21 @@ impl WgslBackend for MathWgsl {
             "mix" => format!("mix({}, {}, {})", args[0], args[1], args[2]),
             "clamp" => format!("clamp({}, {}, {})", args[0], args[1], args[2]),
             "vec2" => format!("vec2<f32>({}, {})", args[0], args[1]),
-            "vec3" => format!("vec3<f32>({}, {}, {})", args[0], args[1], args[2]),
+            "vec3" => {
+                format!("vec3<f32>({}, {}, {})", args[0], args[1], args[2])
+            }
             // **BT-1**：四维构造器与第四分量。
-            "vec4" => format!("vec4<f32>({}, {}, {}, {})", args[0], args[1], args[2], args[3]),
+            "vec4" => format!(
+                "vec4<f32>({}, {}, {}, {})",
+                args[0], args[1], args[2], args[3]
+            ),
             "w" => format!("({}).w", args[0]),
             "x" => format!("({}).x", args[0]),
             "y" => format!("({}).y", args[0]),
             "z" => format!("({}).z", args[0]),
-            "rotate3" => format!("zela_rotate3({}, {}, {})", args[0], args[1], args[2]),
+            "rotate3" => {
+                format!("zela_rotate3({}, {}, {})", args[0], args[1], args[2])
+            }
             "splat" => format!("vec3<f32>({})", args[0]),
             "vec3_from_vec2" => format!("vec3<f32>({}, {})", args[0], args[1]),
             "vec2_from_vec3" => format!("({}).xy", args[0]),
@@ -122,10 +129,14 @@ impl WgslBackend for MathWgsl {
             "dot" => format!("dot({}, {})", args[0], args[1]),
             "cross" => format!("cross({}, {})", args[0], args[1]),
             "reflect" => format!("reflect({}, {})", args[0], args[1]),
-            "faceforward" => format!("faceForward({}, {}, {})", args[0], args[1], args[2]),
+            "faceforward" => {
+                format!("faceForward({}, {}, {})", args[0], args[1], args[2])
+            }
             // `distance`：`length(a - b)`（WGSL 没有内建 distance；与 CPU 公式同序）。
             "distance" => format!("length({} - {})", args[0], args[1]),
-            "smoothstep" => format!("smoothstep({}, {}, {})", args[0], args[1], args[2]),
+            "smoothstep" => {
+                format!("smoothstep({}, {}, {})", args[0], args[1], args[2])
+            }
             "fract" => format!("fract({})", args[0]),
             "lt" => format!("({} < {})", args[0], args[1]),
             "gt" => format!("({} > {})", args[0], args[1]),
@@ -293,9 +304,10 @@ mod tests {
         assert_eq!(name, "c_time");
 
         let (ty, name) = backend()
-            .channel(&ChannelRef::new("zela.scene", "Circle.radius").with_type(
-                ze_comb::ChannelType::Number,
-            ))
+            .channel(
+                &ChannelRef::new("zela.scene", "Circle.radius")
+                    .with_type(ze_comb::ChannelType::Number),
+            )
             .expect("组件通道有类型时可进 shader");
         assert_eq!(ty, SlotType::F64);
         assert_eq!(name, "c_zela_scene__Circle_radius");
@@ -318,7 +330,11 @@ mod tests {
         let first = ze_comb::emit_wgsl(&expr, backend()).expect("可生成");
         let second = ze_comb::emit_wgsl(&expr, backend()).expect("可生成");
         assert_eq!(first.source, second.source);
-        assert!(first.source.contains("fn eval(p: Params, index: u32) -> f32"));
+        assert!(
+            first
+                .source
+                .contains("fn eval(p: Params, index: u32) -> f32")
+        );
         assert!(first.source.contains("p.c_time"));
         assert!(first.source.contains("sin("));
     }

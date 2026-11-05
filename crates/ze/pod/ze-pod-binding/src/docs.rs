@@ -98,7 +98,10 @@ fn scalar_name(kind: ScalarKind) -> &'static str {
 fn spec_ref(spec: &'static TypeSpec) -> String {
     match spec {
         TypeSpec::Scalar(kind) => {
-            format!("{{\"kind\":\"scalar\",\"name\":\"{}\"}}", scalar_name(*kind))
+            format!(
+                "{{\"kind\":\"scalar\",\"name\":\"{}\"}}",
+                scalar_name(*kind)
+            )
         }
         TypeSpec::Struct { name, .. } => {
             format!("{{\"kind\":\"struct\",\"name\":\"{}\"}}", escape(name))
@@ -228,11 +231,7 @@ pub fn capabilities_json(capabilities: &[CapabilityDocs]) -> String {
                 );
             }
             out.push_str("],\n");
-            let _ = writeln!(
-                out,
-                "          \"returns\": {}",
-                spec_ref(item.io.ret)
-            );
+            let _ = writeln!(out, "          \"returns\": {}", spec_ref(item.io.ret));
             out.push_str("        }");
         }
         out.push_str("\n      ],\n      \"channels\": [");
@@ -347,5 +346,3 @@ pub fn has_ops(capabilities: &[CapabilityDocs]) -> bool {
         .iter()
         .any(|capability| !capability.ops.is_empty())
 }
-
-

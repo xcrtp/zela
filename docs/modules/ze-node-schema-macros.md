@@ -11,13 +11,13 @@
 - 路径：`crates/ze/graph/ze-node-schema-macros`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-node-schema`
-- 源文件：1 个 · 700 行
+- 源文件：1 个 · 714 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 700 | Proc-macro support for `zela-node-ui`. |
+| `src/lib.rs` | 714 | Proc-macro support for `zela-node-ui`. |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

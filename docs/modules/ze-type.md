@@ -11,19 +11,19 @@
 - 路径：`crates/kernel/ze-type`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-comb`、`ze-func`、`ze-node-core`、`ze-pod-core`、`ze-pod-func`、`ze-reflect`
-- 源文件：7 个 · 2065 行
+- 源文件：7 个 · 2090 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/conflict.rs` | 250 | **冲突诊断**：五类冲突收敛为一个类型。 |
-| `src/gen.rs` | 258 | 泛型实例化：**按需单态化 + 上界**。 |
-| `src/layout.rs` | 540 | **Layout**：定长类型的字节描述（size / align / 字段偏移）。 |
+| `src/conflict.rs` | 245 | **冲突诊断**：五类冲突收敛为一个类型。 |
+| `src/gen.rs` | 255 | 泛型实例化：**按需单态化 + 上界**。 |
+| `src/layout.rs` | 567 | **Layout**：定长类型的字节描述（size / align / 字段偏移）。 |
 | `src/lib.rs` | 42 | ze-type：**纯代数类型层**。 |
 | `src/tag.rs` | 163 | Type tags and socket-level type compatibility（阶段 4：收敛到 `ze-type`）。 |
-| `src/ty.rs` | 429 | 类型描述（IDL schema）：语言无关、零依赖、编译期常量。 |
-| `src/unify.rs` | 383 | 合一 / 子类型 / 布局计算 —— **纯代数**，无缓存、无注册表。 |
+| `src/ty.rs` | 433 | 类型描述（IDL schema）：语言无关、零依赖、编译期常量。 |
+| `src/unify.rs` | 385 | 合一 / 子类型 / 布局计算 —— **纯代数**，无缓存、无注册表。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -58,7 +58,7 @@ graph LR
 | `src/layout.rs` | `pub struct Record` |
 | `src/layout.rs` | `pub enum Transcode` |
 | `src/layout.rs` | `pub fn encode_record(record: &Record, layout: Option<Layout>) -> Result<Vec<u8>, LayoutError>` |
-| `src/layout.rs` | `pub fn decode_record(ty: &str, bytes: &[u8], layout: Option<Layout>) -> Result<Record, LayoutError>` |
+| `src/layout.rs` | `pub fn decode_record(` |
 | `src/layout.rs` | `pub fn encode_path(points: &[[f32; 2]], closed: bool) -> Vec<u8>` |
 | `src/layout.rs` | `pub fn decode_path(bytes: &[u8]) -> Result<(Vec<[f32; 2]>, bool), LayoutError>` |
 | `src/tag.rs` | `pub trait TypeTag: fmt::Debug + Send + Sync + 'static` |

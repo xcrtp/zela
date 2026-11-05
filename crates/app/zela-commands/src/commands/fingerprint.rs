@@ -30,7 +30,12 @@ pub const SPEC: CommandSpec = CommandSpec {
         ArgSpec::positional("first", ArgType::Text, "第二个位置参数"),
         ArgSpec::positional("second", ArgType::Text, "第三个位置参数"),
         ArgSpec::positional("third", ArgType::Text, "第四个位置参数"),
-        ArgSpec::option("max-mad", ArgType::Number, "1.0", "单帧单通道平均绝对差阈值"),
+        ArgSpec::option(
+            "max-mad",
+            ArgType::Number,
+            "1.0",
+            "单帧单通道平均绝对差阈值",
+        ),
         ArgSpec::option(
             "max-divergent-ratio",
             ArgType::Number,
@@ -43,9 +48,22 @@ pub const SPEC: CommandSpec = CommandSpec {
 /// 三种用法（与原 example 同形）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Invocation {
-    Single { bundle: String, frame: u32, fps: f64 },
-    Manifest { bundle: String, out: String, fps: f64 },
-    Compare { reference: String, candidate: String, max_mad: f64, max_ratio: f64 },
+    Single {
+        bundle: String,
+        frame: u32,
+        fps: f64,
+    },
+    Manifest {
+        bundle: String,
+        out: String,
+        fps: f64,
+    },
+    Compare {
+        reference: String,
+        candidate: String,
+        max_mad: f64,
+        max_ratio: f64,
+    },
 }
 
 /// 参数集合 → 用法（默认值：fps = 30、容差 = 1.0、分歧比例 = 0.01）。
@@ -185,9 +203,8 @@ fn manifest(
     }
 
     let text = lines.join("\n") + "\n";
-    let mut file = BufWriter::new(
-        File::create(out).map_err(|e| format!("创建 {} 失败：{e}", out.display()))?,
-    );
+    let mut file =
+        BufWriter::new(File::create(out).map_err(|e| format!("创建 {} 失败：{e}", out.display()))?);
     file.write_all(text.as_bytes())
         .map_err(|e| format!("写 {} 失败：{e}", out.display()))?;
     let hash = fnv(text.trim_end());
@@ -199,7 +216,10 @@ fn manifest(
         "fingerprint",
         vec![
             ("frames".to_string(), Fact::Count(u64::from(frames))),
-            ("structure_hash".to_string(), Fact::Text(format!("{hash:016x}"))),
+            (
+                "structure_hash".to_string(),
+                Fact::Text(format!("{hash:016x}")),
+            ),
             ("out".to_string(), Fact::Text(out.display().to_string())),
         ],
     ))
@@ -434,14 +454,11 @@ mod tests {
             _ => panic!("应解析为单帧"),
         }
 
-        let invocation =
-            invocation_from_args(&parse(&["compare", "ref", "cand"]).expect("可解析"))
-                .expect("可构造");
+        let invocation = invocation_from_args(&parse(&["compare", "ref", "cand"]).expect("可解析"))
+            .expect("可构造");
         match invocation {
             Invocation::Compare {
-                max_mad,
-                max_ratio,
-                ..
+                max_mad, max_ratio, ..
             } => {
                 assert_eq!(max_mad, 1.0);
                 assert_eq!(max_ratio, 0.01);

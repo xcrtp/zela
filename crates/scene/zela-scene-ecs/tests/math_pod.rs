@@ -7,12 +7,12 @@
 
 use std::sync::Arc;
 
+use ze_notion::{FunctionX2Y, Sampler1D};
+use ze_pod_core::RegistryPod;
+use ze_scene_core::FunctionGraph;
 use zela_scene_ecs::contract::Components;
 use zela_scene_ecs::math_pod::{SharedPod, builtin_f32, function_from_pod, math_pod};
 use zela_scene_ecs::{deserialize_components, serialize_components};
-use ze_notion::{FunctionX2Y, Sampler1D};
-use ze_scene_core::FunctionGraph;
-use ze_pod_core::RegistryPod;
 
 const NAMES: [&str; 7] = [
     "zela.math.sin",
@@ -31,10 +31,7 @@ const INPUTS: [f32; 6] = [-2.0, -0.5, 0.0, 0.3, 1.0, 2.5];
 fn all_builtins_are_registered_in_the_pod() {
     assert_eq!(math_pod().functions().len(), 7, "恰好 7 个内置函数");
     for name in NAMES {
-        assert!(
-            builtin_f32(name).is_some(),
-            "{name} 必须能从 Pod 反查到"
-        );
+        assert!(builtin_f32(name).is_some(), "{name} 必须能从 Pod 反查到");
     }
     assert!(
         builtin_f32("zela.math.nope").is_none(),

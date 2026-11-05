@@ -13,15 +13,15 @@
 
 use std::sync::Arc;
 
-use zela_scene_ecs::animation::{
-    Binding, BindingDriver, BindingTable, CircleRadius, ResetBehavior,
-};
-use zela_scene_ecs::{ClockForest, ClockNode, Scene, SeekKind};
 use ze_notion::{Color32, Rect2D, Vec2};
 use ze_render_ir::FillSolid;
 use ze_scene_core::scene_script::SceneEncoder;
 use ze_scene_core::{Camera2DHandle, Circle, Framing2D, View, ViewMapping};
 use ze_time::{ClockProgram, Curve};
+use zela_scene_ecs::animation::{
+    Binding, BindingDriver, BindingTable, CircleRadius, ResetBehavior,
+};
+use zela_scene_ecs::{ClockForest, ClockNode, Scene, SeekKind};
 
 use zela_scene_ecs::contract::ObjectId;
 

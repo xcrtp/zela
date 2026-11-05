@@ -23,8 +23,8 @@ pub mod handle;
 pub mod sym;
 
 pub use cache::MonoCache;
-pub use codec::{Codec, PathCodec, RecordCodec, TypeRegistry, PATH_TYPE};
-pub use handle::{duplicate_name, HandleCore, HandleError, Resolvable, SlotTable};
+pub use codec::{Codec, PATH_TYPE, PathCodec, RecordCodec, TypeRegistry};
+pub use handle::{HandleCore, HandleError, Resolvable, SlotTable, duplicate_name};
 pub use sym::{SymbolId, SymbolSpace, SymbolTable};
 
 // 诊断只有一个名字：类型层定义，运行时层重导出（一个概念一处定义）。

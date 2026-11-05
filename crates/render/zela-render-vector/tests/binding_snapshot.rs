@@ -32,8 +32,8 @@ fn set_bind_group_arguments_are_pinned() {
         ("pass.set_bind_group(0, group, &self.slot);", 5), // RasterNode / Slabs / OcclusionDepth / Shadow / Atlas
         ("pass.set_bind_group(3, group, &[]);", 1),        // RasterNode: lighting
         ("pass.set_bind_group(1, group, &[]);", 1),        // RasterNode: images
-        ("pass.set_bind_group(2, group, &[]);", 2),        // RasterNode: list + 合成精灵（后者是 escape）
-        ("pass.set_bind_group(2, self.group, &[]);", 2),   // SlabsNode + RayTraceNode（后者是 escape：组 2 是光追自己的组）
+        ("pass.set_bind_group(2, group, &[]);", 2), // RasterNode: list + 合成精灵（后者是 escape）
+        ("pass.set_bind_group(2, self.group, &[]);", 2), // SlabsNode + RayTraceNode（后者是 escape：组 2 是光追自己的组）
         ("pass.set_bind_group(3, self.lighting, &[]);", 2), // AtlasNode + RayTraceNode（后者是 escape）
         // **BV-3 / BV-4**：光追的组 0（scene）与合成读的像（组 1）—— 都是 escape（见用例末尾）
         ("pass.set_bind_group(0, self.scene, &self.slot);", 1),
@@ -105,7 +105,11 @@ fn frame_level_binds_are_ledgered_next_line() {
             .parse()
             .expect("组号必须是字面量");
         // escape：实参随 per-pass / per-draw 变化，或是一次性构造
-        let previous = index.checked_sub(1).and_then(|i| lines.get(i)).copied().unwrap_or("");
+        let previous = index
+            .checked_sub(1)
+            .and_then(|i| lines.get(i))
+            .copied()
+            .unwrap_or("");
         let escape = previous.contains("s.group") // 合成精灵的 slabs 组
             || line.contains("self.group")       // slabs 自己的组 / 光追自己的组（组 2）
             || line.contains("self.image")       // 光追合成的像（组 1；声明词汇里还没登记）
@@ -134,6 +138,12 @@ fn frame_level_binds_are_ledgered_next_line() {
         );
         ledgered += 1;
     }
-    assert_eq!(ledgered, 11, "节点内的帧级固定绑定应全部接入记账（含光追的 scene / lighting）");
-    assert_eq!(escapes, 9, "escape 点应保持 9 处（2 codegen + 1 合成精灵 + 1 slabs + 2 白图 + 1 per-draw + 光追自己的组 + 光追的像）");
+    assert_eq!(
+        ledgered, 11,
+        "节点内的帧级固定绑定应全部接入记账（含光追的 scene / lighting）"
+    );
+    assert_eq!(
+        escapes, 9,
+        "escape 点应保持 9 处（2 codegen + 1 合成精灵 + 1 slabs + 2 白图 + 1 per-draw + 光追自己的组 + 光追的像）"
+    );
 }

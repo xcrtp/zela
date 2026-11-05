@@ -412,9 +412,14 @@ mod tests {
 
     #[test]
     fn both_frontends_produce_the_same_values() {
-        let hand = SPEC.parse(&raw(&["--script", "a.lua", "--size", "1x2"])).expect("手写解析");
+        let hand = SPEC
+            .parse(&raw(&["--script", "a.lua", "--size", "1x2"]))
+            .expect("手写解析");
         let host = SPEC
-            .from_pairs(&[("script", Some("a.lua".to_string())), ("size", Some("1x2".to_string()))])
+            .from_pairs(&[
+                ("script", Some("a.lua".to_string())),
+                ("size", Some("1x2".to_string())),
+            ])
             .expect("宿主解析");
         assert_eq!(hand, host, "两条前端必须落到同一份 CommandArgs");
     }
@@ -438,7 +443,9 @@ mod tests {
 
     #[test]
     fn help_returns_usage() {
-        let usage = SPEC.parse(&raw(&["--help"])).expect_err("--help 走用法分支");
+        let usage = SPEC
+            .parse(&raw(&["--help"]))
+            .expect_err("--help 走用法分支");
         assert!(usage.contains("用法：zela demo"));
         assert!(usage.contains("--size"));
     }

@@ -11,13 +11,13 @@
 - 路径：`crates/kernel/ze-alg`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-scene-core`
-- 源文件：1 个 · 669 行
+- 源文件：1 个 · 664 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/lib.rs` | 669 | `ze-alg` — 抽象代数 trait 与**纯数值算法**的正当去处。 |
+| `src/lib.rs` | 664 | `ze-alg` — 抽象代数 trait 与**纯数值算法**的正当去处。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -43,7 +43,7 @@
 | `src/lib.rs` | `pub fn affine_powered_matrix(a: &[Vec<f64>], b: &[f64], n: u64) -> Vec<Vec<f64>>` |
 | `src/lib.rs` | `pub fn affine_apply_powered(powered: &[Vec<f64>], init: &[f64]) -> Vec<f64>` |
 | `src/lib.rs` | `pub fn affine_apply(a: &[Vec<f64>], b: &[f64], init: &[f64], n: u64) -> Vec<f64>` |
-| `src/lib.rs` | `pub fn affine_apply_many(` |
+| `src/lib.rs` | `pub fn affine_apply_many(a: &[Vec<f64>], b: &[f64], inits: &[Vec<f64>], n: u64) -> Vec<Vec<f64>>` |
 | `src/lib.rs` | `pub fn affine_replay(a: &[Vec<f64>], b: &[f64], init: &[f64], n: u64) -> Vec<f64>` |
 | `src/lib.rs` | `pub fn affine_replay_within(` |
 <!-- AUTO:END -->

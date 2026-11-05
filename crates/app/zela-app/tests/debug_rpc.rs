@@ -9,11 +9,11 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 
+use ze_scene_core::domain::{Injected, PointerState, WindowInput};
+use zela_app::SceneChoice;
 use zela_app::debug::TraceReport;
 use zela_app::headless;
 use zela_app::rpc::{self, Command, Request, Response};
-use zela_app::SceneChoice;
-use ze_scene_core::domain::{Injected, PointerState, WindowInput};
 
 /// 构造"点滑块 80%"的窗口输入（帧号 0）。
 fn click_input(scene: &headless::HeadlessScene) -> WindowInput {
@@ -119,14 +119,17 @@ fn rpc_and_offline_produce_the_same_trace_report() {
     rpc::serve_once(&listener, &rpc_scene).expect("服务一个连接");
     let responses = responses.join().expect("客户端线程");
 
-    assert!(responses.iter().all(|response| response.ok), "{responses:?}");
+    assert!(
+        responses.iter().all(|response| response.ok),
+        "{responses:?}"
+    );
     assert_eq!(
         frame_of(&responses[0]),
         frame_of(&responses[2]),
         "inject 不得推进帧"
     );
-    let via_rpc: TraceReport =
-        serde_json::from_value(responses[3].result.clone().expect("有结果")).expect("回执可反序列化");
+    let via_rpc: TraceReport = serde_json::from_value(responses[3].result.clone().expect("有结果"))
+        .expect("回执可反序列化");
     assert_eq!(
         serde_json::to_value(&via_rpc).expect("可序列化"),
         serde_json::to_value(&offline).expect("可序列化"),
@@ -153,7 +156,11 @@ fn screenshot_is_explicitly_unsupported_on_headless() {
     let responses = responses.join().expect("客户端线程");
     assert!(!responses[0].ok, "headless 不能截图：{:?}", responses[0]);
     assert!(
-        responses[0].error.as_deref().unwrap_or("").contains("不支持截图"),
+        responses[0]
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("不支持截图"),
         "错误必须说清边界：{:?}",
         responses[0].error
     );
@@ -182,8 +189,8 @@ fn probe_over_rpc_matches_the_offline_trace() {
     let responses = responses.join().expect("客户端线程");
     assert!(responses[0].ok, "{:?}", responses[0]);
 
-    let probe: TraceReport =
-        serde_json::from_value(responses[0].result.clone().expect("有结果")).expect("回执可反序列化");
+    let probe: TraceReport = serde_json::from_value(responses[0].result.clone().expect("有结果"))
+        .expect("回执可反序列化");
     assert_eq!(probe, offline, "probe 与 trace 是同一个机制");
 }
 
@@ -219,8 +226,8 @@ fn window_stream_trace_matches_offline_and_rpc() {
     rpc::serve_once(&listener, &rpc_scene).expect("服务一个连接");
     let responses = responses.join().expect("客户端线程");
     assert!(responses[0].ok, "{:?}", responses[0]);
-    let via_rpc: TraceReport =
-        serde_json::from_value(responses[0].result.clone().expect("有结果")).expect("回执可反序列化");
+    let via_rpc: TraceReport = serde_json::from_value(responses[0].result.clone().expect("有结果"))
+        .expect("回执可反序列化");
 
     // 真人窗口流：同一帧的窗口输入 + tag，回放端重算。
     let live_scene = headless::build(SceneChoice::Hud).expect("headless 装配");

@@ -128,7 +128,11 @@ pub struct GpuSpan {
 }
 
 impl GpuSpan {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, adapter: &wgpu::Adapter) -> Result<Self, String> {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        adapter: &wgpu::Adapter,
+    ) -> Result<Self, String> {
         let support = probe(adapter);
         if support.state != GpuTimingState::Measured {
             return Err(support.reason);
@@ -176,9 +180,11 @@ impl GpuSpan {
     /// 提交"结束"标记 + resolve + 回读，返回本帧 GPU span（ms）。
     pub fn finish(&self) -> Result<f64, String> {
         self.marker(1)?;
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gpu-timing-resolve"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gpu-timing-resolve"),
+            });
         encoder.resolve_query_set(&self.query_set, 0..2, &self.resolve, 0);
         encoder.copy_buffer_to_buffer(&self.resolve, 0, &self.staging, 0, 16);
         self.queue.submit(Some(encoder.finish()));
@@ -214,9 +220,11 @@ impl GpuSpan {
     }
 
     fn marker(&self, index: u32) -> Result<(), String> {
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gpu-timing-mark"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("gpu-timing-mark"),
+            });
         {
             // 空的 compute pass：只为携带 timestamp_writes，不做任何工作。
             let _pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

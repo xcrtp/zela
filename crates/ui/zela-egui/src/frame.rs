@@ -237,7 +237,9 @@ impl Drop for SceneFrame {
                     path.display(),
                     stream.frames.len()
                 ),
-                Err(error) => eprintln!("[record] 写入 {} 失败：{error}", path.display()),
+                Err(error) => {
+                    eprintln!("[record] 写入 {} 失败：{error}", path.display())
+                }
             },
             Err(error) => eprintln!("[record] 输入流序列化失败：{error}"),
         }

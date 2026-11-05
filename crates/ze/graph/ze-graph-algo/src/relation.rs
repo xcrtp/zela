@@ -243,8 +243,10 @@ where
                             .iter()
                             .position(|&item| item == dep)
                             .expect("在栈上的节点必在路径里");
-                        let mut cycle: Vec<S::Id> =
-                            path[position..].iter().map(|&i| nodes[i as usize]).collect();
+                        let mut cycle: Vec<S::Id> = path[position..]
+                            .iter()
+                            .map(|&i| nodes[i as usize])
+                            .collect();
                         cycle.push(nodes[dep as usize]);
                         return Err(RelationError::Cycle { path: cycle });
                     }
@@ -583,6 +585,11 @@ where
 ///
 /// 不取运行期计数器、不由宿主递增 —— 插入顺序 / 跨机器重放都不漂移。
 /// 关系没变 ⇒ 同一帧复用编译结果（`60 帧只编译 1 次`）。
+///
+/// **Id 的 `Debug` 契约（CL-R 判据 12）**：本函数用 `format!("{id:?}")` 取稳定键，
+/// 因此 `RelationSource::Id` 的 `Debug` 实现必须是**确定的、内容寻址的**：
+/// 不得打印地址 / 分配序 / 哈希表遍历序。改 Id 的内容寻址实现前，先补
+/// `revision_pins_id_debug_contract` 的黄金值，否则这里会「错了不报错」。
 pub fn revision<S>(src: &S) -> u64
 where
     S: RelationSource + ?Sized,
@@ -766,7 +773,10 @@ mod tests {
         dag.deps.insert(2, vec![1]);
         let mut dag_reversed = dag.clone();
         dag_reversed.nodes.reverse();
-        assert_eq!(compile_dag(&dag).unwrap(), compile_dag(&dag_reversed).unwrap());
+        assert_eq!(
+            compile_dag(&dag).unwrap(),
+            compile_dag(&dag_reversed).unwrap()
+        );
         assert_eq!(revision(&dag), revision(&dag_reversed));
     }
 
@@ -819,10 +829,7 @@ mod tests {
         let source = MapSource::tree(&[(1, Some(9))], &[1]);
         assert_eq!(
             compile_tree(&source).unwrap_err(),
-            RelationError::UnknownParent {
-                id: 1,
-                parent: 9
-            }
+            RelationError::UnknownParent { id: 1, parent: 9 }
         );
 
         let mut dag = MapSource {
@@ -869,6 +876,27 @@ mod tests {
         assert!(index.successors(3).next().is_none());
         assert_eq!(index.out_degree(0), 2);
         assert_eq!(index.in_degree(3), 2);
+    }
+
+    /// **判据 12（CL-R 补硬）**：`revision` 以 `Debug` 为键 ⇒ Id 的 Debug 表示必须稳定。
+    ///
+    /// 黄金值把「当前 Debug 文本 + 哈希算法」一起钉死：任何一侧漂移都会红。
+    /// 换 Id 的内容寻址实现时，**先确认 Debug 新文本是有意的**，再更新这里。
+    #[test]
+    fn revision_pins_id_debug_contract() {
+        // 生产 Id 的 Debug 文本（`u32` / `LayoutId(u32)` 同形，均为内容寻址）。
+        assert_eq!(format!("{:?}", 3u32), "3");
+        let tree = sample_tree();
+        assert_eq!(
+            format!("{:?}", tree.nodes),
+            "[0, 1, 2, 3, 4]",
+            "枚举序不参与哈希（stable_nodes 排序后取用）"
+        );
+        assert_eq!(
+            revision(&tree),
+            12_742_452_294_148_738_958,
+            "黄金 revision 变了 ⇒ Id 的 Debug 文本或哈希算法被改动"
+        );
     }
 
     #[test]

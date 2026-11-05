@@ -11,41 +11,41 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-graph-algo`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：30 个 · 11676 行
+- 源文件：30 个 · 12452 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/animation/camera_drive.rs` | 542 | — |
+| `src/animation/camera_drive.rs` | 547 | — |
 | `src/animation/event_log.rs` | 41 | **BZ-c**：事件 predicate 的稀疏推进日志（`SeekKind::EventReplay` / L2）。 |
 | `src/animation/mod.rs` | 36 | — |
 | `src/animation/morph.rs` | 118 | — |
 | `src/animation/path_follow.rs` | 131 | — |
-| `src/animation/system.rs` | 974 | — |
-| `src/animation/target_tests.rs` | 397 | — |
-| `src/camera_input.rs` | 695 | — |
+| `src/animation/system.rs` | 963 | — |
+| `src/animation/target_tests.rs` | 420 | — |
+| `src/camera_input.rs` | 692 | — |
 | `src/composer.rs` | 10 | **CK-f**：合成器在 ECS 侧只剩转发。 |
-| `src/contract.rs` | 811 | — |
+| `src/contract.rs` | 808 | — |
 | `src/deferred.rs` | 434 | — |
 | `src/director_state.rs` | 51 | — |
-| `src/driver.rs` | 420 | Driver pod：**命令驱动**的场景推进器（P4）。 |
+| `src/driver.rs` | 423 | Driver pod：**命令驱动**的场景推进器（P4）。 |
 | `src/errors.rs` | 53 | — |
-| `src/expr_binding_tests.rs` | 674 | S3 验收（ECS 侧）：表达式绑定从声明到**真实组件写入**的整条链路。 |
-| `src/expr_mono.rs` | 672 | 表达式求值的**宿主单子 `M`**（S3）。 |
-| `src/fingerprint.rs` | 377 | — |
+| `src/expr_binding_tests.rs` | 706 | S3 验收（ECS 侧）：表达式绑定从声明到**真实组件写入**的整条链路。 |
+| `src/expr_mono.rs` | 677 | 表达式求值的**宿主单子 `M`**（S3）。 |
+| `src/fingerprint.rs` | 396 | — |
 | `src/geometry.rs` | 258 | — |
-| `src/hud.rs` | 842 | **CG-f**：自研 UI 的第一块可见面板 —— 三组控件全部是**场景图元**。 |
-| `src/input.rs` | 412 | — |
-| `src/interact.rs` | 660 | 参数面板进场景（CE-e）：**真消费者**。 |
-| `src/lib.rs` | 118 | — |
+| `src/hud.rs` | 1274 | **CG-f / CL-R**：自研 UI 的第一块可见面板 —— 一行一个**声明实体**，绘制出命令列表。 |
+| `src/input.rs` | 414 | — |
+| `src/interact.rs` | 669 | 参数面板进场景（CE-e）：**真消费者**。 |
+| `src/lib.rs` | 112 | — |
 | `src/lifetime.rs` | 403 | — |
 | `src/register.rs` | 81 | — |
-| `src/relation.rs` | 148 | **CK-c**：场景 `Parent` 树 → 关系契约的只读适配。 |
+| `src/relation.rs` | 141 | **CK-c**：场景 `Parent` 树 → 关系契约的只读适配。 |
 | `src/scene.rs` | 234 | — |
-| `src/scene_script_tests.rs` | 975 | — |
-| `src/transform_hierarchy.rs` | 709 | — |
-| `src/ui_layout.rs` | 340 | **CL-c**：控件声明树 → Euler 切片 → 两遍扫描 → `Frame`。 |
+| `src/scene_script_tests.rs` | 971 | — |
+| `src/transform_hierarchy.rs` | 704 | — |
+| `src/ui_layout.rs` | 625 | **CL-c / CL-R**：控件声明树 → Euler 切片 → 布局策略 → `Frame`。 |
 | `src/utils.rs` | 60 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -69,14 +69,13 @@ graph LR
     f15["src/expr_mono.rs"]
     f16["src/fingerprint.rs"]
     f17["src/geometry.rs"]
-    f18["src/hud.rs"]
-    f19["src/input.rs"]
-    f20["src/interact.rs"]
-    f21["src/lifetime.rs"]
-    f22["src/register.rs"]
+    f18["src/input.rs"]
+    f19["src/interact.rs"]
+    f20["src/lifetime.rs"]
+    f21["src/register.rs"]
     f14["src/scene.rs"]
-    f24["src/scene_script_tests.rs"]
-    f23["src/transform_hierarchy.rs"]
+    f23["src/scene_script_tests.rs"]
+    f22["src/transform_hierarchy.rs"]
     f0 --> f1
     f2 --> f1
     f2 --> f3
@@ -96,22 +95,21 @@ graph LR
     f15 --> f6
     f16 --> f9
     f17 --> f14
+    f18 --> f1
     f18 --> f6
+    f18 --> f12
     f19 --> f1
-    f19 --> f6
-    f19 --> f12
-    f20 --> f1
-    f20 --> f14
-    f21 --> f6
-    f22 --> f8
-    f22 --> f12
-    f22 --> f21
-    f22 --> f23
+    f19 --> f14
+    f20 --> f6
+    f21 --> f8
+    f21 --> f12
+    f21 --> f20
+    f21 --> f22
     f14 --> f6
     f14 --> f10
-    f24 --> f1
-    f24 --> f14
-    f23 --> f6
+    f23 --> f1
+    f23 --> f14
+    f22 --> f6
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -154,6 +152,8 @@ graph LR
 | `src/hud.rs` | `pub enum ValueIntent` |
 | `src/hud.rs` | `pub enum ActionIntent` |
 | `src/hud.rs` | `pub fn build(` |
+| `src/hud.rs` | `pub fn runtime_with_factories() -> WidgetRuntime` |
+| `src/hud.rs` | `pub struct SparklineWidget` |
 | `src/hud.rs` | `pub struct HudState(pub Option<Hud>)` |
 | `src/hud.rs` | `pub struct HudSystem` |
 | `src/input.rs` | `pub struct TimeControlSystem` |
@@ -179,8 +179,9 @@ graph LR
 | `src/scene.rs` | `pub struct Scene` |
 | `src/transform_hierarchy.rs` | `pub struct TransformHierarchyError` |
 | `src/transform_hierarchy.rs` | `pub struct TransformHierarchySystem` |
+| `src/ui_layout.rs` | `pub enum UiLayoutError` |
 | `src/ui_layout.rs` | `pub struct LayoutResult` |
-| `src/ui_layout.rs` | `pub fn layout_revision(decls: &[WidgetDecl], layout: &LayoutTokens) -> Result<u64, String>` |
+| `src/ui_layout.rs` | `pub fn layout_revision(decls: &[WidgetDecl], layout: &LayoutTokens) -> Result<u64, UiLayoutError>` |
 | `src/ui_layout.rs` | `pub fn layout_widgets(` |
 <!-- AUTO:END -->
 

@@ -75,7 +75,9 @@ pub const VS_LINE: &str = "vs_line";
 pub fn vs_requirements(entry: &str) -> Option<ShaderRequirements> {
     use ze_vertex::Semantic;
     let semantics = match entry {
-        VS_MAIN => vec![Semantic::Position, Semantic::Uv, Semantic::ShadingNormal],
+        VS_MAIN => {
+            vec![Semantic::Position, Semantic::Uv, Semantic::ShadingNormal]
+        }
         VS_LINE => vec![Semantic::Position],
         _ => return None,
     };
@@ -135,9 +137,7 @@ pub struct PassDesc {
 // ─── B2-0c：能力查询（D22） ────────────────────────────────────────────────
 
 /// 颜色目标格式（后端中立的有限集合；由 target 决定）。
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ColorFormat {
     /// sRGB 8bit（默认窗口/离屏目标）。
     Rgba8UnormSrgb,
@@ -225,10 +225,7 @@ pub enum CapabilityError {
     #[error("采样数 {requested} 非法（必须为 2 的幂且 ≥ 1）")]
     InvalidSampleCount { requested: u32 },
     #[error("后端目标最多支持 MSAA {max_supported}x，请求了 {requested}x（不静默降级）")]
-    UnsupportedSampleCount {
-        requested: u32,
-        max_supported: u32,
-    },
+    UnsupportedSampleCount { requested: u32, max_supported: u32 },
     #[error("目标颜色格式不受 IR 能力声明支持（仅 Rgba8UnormSrgb / Rgba8Unorm；不静默）")]
     UnsupportedColorFormat,
 }

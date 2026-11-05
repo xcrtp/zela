@@ -88,10 +88,7 @@ impl CustomSpec {
         }
     }
 
-    pub const fn with_path(
-        mut self,
-        f: fn(&CustomShapeData, &Transform2D) -> Path2D,
-    ) -> Self {
+    pub const fn with_path(mut self, f: fn(&CustomShapeData, &Transform2D) -> Path2D) -> Self {
         self.to_path = Some(f);
         self
     }

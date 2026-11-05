@@ -157,7 +157,13 @@ pub trait PassNode {
     ///
     /// **BS-1**：多了 [`ExecuteContext`] —— 夹在中间的 recorder 也要就地 `note_bind`，
     /// 否则它绑的组进不了"声明 vs 实际"的比对（BP-05）。
-    fn after(&mut self, _index: usize, _prepare: &mut PrepareContext<'_>, _execute: &mut ExecuteContext<'_>) {}
+    fn after(
+        &mut self,
+        _index: usize,
+        _prepare: &mut PrepareContext<'_>,
+        _execute: &mut ExecuteContext<'_>,
+    ) {
+    }
 
     /// **BS-2（逃生舱）**：节点自己起 pass（**数量由数据决定**时用）。
     ///
@@ -265,14 +271,16 @@ pub fn record_render(
         // 它是"这一组的 encoder 工作"，与 pass 有无是两件事。
         if let Some(parts) = node.parts_at(index) {
             let RenderParts { colors, depth } = parts;
-            let pass = prepare.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(label),
-                color_attachments: &colors,
-                depth_stencil_attachment: depth,
-                occlusion_query_set: None,
-                timestamp_writes: None,
-                multiview_mask: None,
-            });
+            let pass = prepare
+                .encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some(label),
+                    color_attachments: &colors,
+                    depth_stencil_attachment: depth,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                    multiview_mask: None,
+                });
             node.execute_at(index, execute, &mut AnyPass::Render(pass));
             // pass 在这里结束（附件借的是节点自己的纹理视图）。
         }
@@ -325,12 +333,36 @@ mod tests {
             let mut schedule = PassSchedule::new(PLAN, 0);
             let log = RefCell::new(Vec::new());
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-            let mut execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-            record_compute(&mut Nop { name: "a", log: &log }, &mut prepare, &mut execute, "a")
-                .expect("第一个");
-            record_compute(&mut Nop { name: "b", log: &log }, &mut prepare, &mut execute, "b")
-                .expect("第二个");
+            let mut prepare = PrepareContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                encoder: &mut encoder,
+            };
+            let mut execute = ExecuteContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                schedule: &mut schedule,
+            };
+            record_compute(
+                &mut Nop {
+                    name: "a",
+                    log: &log,
+                },
+                &mut prepare,
+                &mut execute,
+                "a",
+            )
+            .expect("第一个");
+            record_compute(
+                &mut Nop {
+                    name: "b",
+                    log: &log,
+                },
+                &mut prepare,
+                &mut execute,
+                "b",
+            )
+            .expect("第二个");
             assert_eq!(*log.borrow(), vec!["a", "b"]);
             assert_eq!(schedule.recorded(), &["a", "b"]);
             schedule.finish().expect("两个都记录了");
@@ -346,11 +378,30 @@ mod tests {
             let mut schedule = PassSchedule::new(PLAN, 0);
             let log = RefCell::new(Vec::new());
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-            let mut execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-            let error = record_compute(&mut Nop { name: "b", log: &log }, &mut prepare, &mut execute, "b")
-                .unwrap_err();
-            assert!(matches!(error, ScheduleError::OutOfOrder { .. }), "{error:?}");
+            let mut prepare = PrepareContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                encoder: &mut encoder,
+            };
+            let mut execute = ExecuteContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                schedule: &mut schedule,
+            };
+            let error = record_compute(
+                &mut Nop {
+                    name: "b",
+                    log: &log,
+                },
+                &mut prepare,
+                &mut execute,
+                "b",
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, ScheduleError::OutOfOrder { .. }),
+                "{error:?}"
+            );
             assert!(log.borrow().is_empty(), "顺序不符时不得执行");
         })
         .expect("GPU");
@@ -364,13 +415,40 @@ mod tests {
             let mut schedule = PassSchedule::new(PLAN, 0);
             let log = RefCell::new(Vec::new());
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-            let mut execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-            record_compute(&mut Nop { name: "a", log: &log }, &mut prepare, &mut execute, "a")
-                .expect("计划内的唯一 pass");
-            let error = record_compute(&mut Nop { name: "nope", log: &log }, &mut prepare, &mut execute, "nope")
-                .unwrap_err();
-            assert!(matches!(error, ScheduleError::Undeclared { .. }), "{error:?}");
+            let mut prepare = PrepareContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                encoder: &mut encoder,
+            };
+            let mut execute = ExecuteContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                schedule: &mut schedule,
+            };
+            record_compute(
+                &mut Nop {
+                    name: "a",
+                    log: &log,
+                },
+                &mut prepare,
+                &mut execute,
+                "a",
+            )
+            .expect("计划内的唯一 pass");
+            let error = record_compute(
+                &mut Nop {
+                    name: "nope",
+                    log: &log,
+                },
+                &mut prepare,
+                &mut execute,
+                "nope",
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, ScheduleError::Undeclared { .. }),
+                "{error:?}"
+            );
             assert_eq!(*log.borrow(), vec!["a"], "表外节点不得执行");
         })
         .expect("GPU");
@@ -412,7 +490,10 @@ mod tests {
                     view: self.target,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth: None,
             })
@@ -426,7 +507,11 @@ mod tests {
         device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("节点用例目标"),
-                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
@@ -446,12 +531,38 @@ mod tests {
             let log = RefCell::new(Vec::new());
             let view = target(&gpu.device);
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-            let mut execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-            record_render(&mut RenderNop { name: "a", log: &log, target: &view }, &mut prepare, &mut execute, "a")
-                .expect("第一个");
-            record_render(&mut RenderNop { name: "b", log: &log, target: &view }, &mut prepare, &mut execute, "b")
-                .expect("第二个");
+            let mut prepare = PrepareContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                encoder: &mut encoder,
+            };
+            let mut execute = ExecuteContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                schedule: &mut schedule,
+            };
+            record_render(
+                &mut RenderNop {
+                    name: "a",
+                    log: &log,
+                    target: &view,
+                },
+                &mut prepare,
+                &mut execute,
+                "a",
+            )
+            .expect("第一个");
+            record_render(
+                &mut RenderNop {
+                    name: "b",
+                    log: &log,
+                    target: &view,
+                },
+                &mut prepare,
+                &mut execute,
+                "b",
+            )
+            .expect("第二个");
             assert_eq!(*log.borrow(), vec!["a", "b"]);
             assert_eq!(schedule.recorded(), &["a", "b"]);
             schedule.finish().expect("两个都记录了");
@@ -468,11 +579,31 @@ mod tests {
             let log = RefCell::new(Vec::new());
             let view = target(&gpu.device);
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-            let mut execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-            let error = record_render(&mut RenderNop { name: "b", log: &log, target: &view }, &mut prepare, &mut execute, "b")
-                .unwrap_err();
-            assert!(matches!(error, ScheduleError::OutOfOrder { .. }), "{error:?}");
+            let mut prepare = PrepareContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                encoder: &mut encoder,
+            };
+            let mut execute = ExecuteContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                schedule: &mut schedule,
+            };
+            let error = record_render(
+                &mut RenderNop {
+                    name: "b",
+                    log: &log,
+                    target: &view,
+                },
+                &mut prepare,
+                &mut execute,
+                "b",
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, ScheduleError::OutOfOrder { .. }),
+                "{error:?}"
+            );
             assert!(log.borrow().is_empty(), "顺序不符时不得执行");
         })
         .expect("GPU");
@@ -487,13 +618,42 @@ mod tests {
             let log = RefCell::new(Vec::new());
             let view = target(&gpu.device);
             let mut encoder = gpu.device.create_command_encoder(&Default::default());
-            let mut prepare = PrepareContext { device: &gpu.device, queue: &gpu.queue, encoder: &mut encoder };
-            let mut execute = ExecuteContext { device: &gpu.device, queue: &gpu.queue, schedule: &mut schedule };
-            record_render(&mut RenderNop { name: "a", log: &log, target: &view }, &mut prepare, &mut execute, "a")
-                .expect("计划内的唯一 pass");
-            let error = record_render(&mut RenderNop { name: "nope", log: &log, target: &view }, &mut prepare, &mut execute, "nope")
-                .unwrap_err();
-            assert!(matches!(error, ScheduleError::Undeclared { .. }), "{error:?}");
+            let mut prepare = PrepareContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                encoder: &mut encoder,
+            };
+            let mut execute = ExecuteContext {
+                device: &gpu.device,
+                queue: &gpu.queue,
+                schedule: &mut schedule,
+            };
+            record_render(
+                &mut RenderNop {
+                    name: "a",
+                    log: &log,
+                    target: &view,
+                },
+                &mut prepare,
+                &mut execute,
+                "a",
+            )
+            .expect("计划内的唯一 pass");
+            let error = record_render(
+                &mut RenderNop {
+                    name: "nope",
+                    log: &log,
+                    target: &view,
+                },
+                &mut prepare,
+                &mut execute,
+                "nope",
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, ScheduleError::Undeclared { .. }),
+                "{error:?}"
+            );
             assert_eq!(*log.borrow(), vec!["a"], "表外节点不得执行");
         })
         .expect("GPU");

@@ -73,7 +73,11 @@ pub fn stroke_outlines(
             let closed = is_closed(&sub);
             // 闭合时 `flatten_subpaths` 已在组尾重复了起点；去掉重复尾点，
             // 由 `Close` 命令表达闭合（保留轮廓方向 ⇒ nonzero 填孔成立）。
-            let points = if closed { &sub[..sub.len() - 1] } else { &sub[..] };
+            let points = if closed {
+                &sub[..sub.len() - 1]
+            } else {
+                &sub[..]
+            };
             if points.is_empty() {
                 continue;
             }
@@ -89,11 +93,7 @@ pub fn stroke_outlines(
         if path.commands.is_empty() {
             continue;
         }
-        built.push(StrokeOutline {
-            path,
-            color,
-            width,
-        });
+        built.push(StrokeOutline { path, color, width });
     }
 
     if sort_reading_order {

@@ -69,7 +69,10 @@ impl CacheKey {
         config.fill.to_array().hash(&mut h);
         config.scale_factor.to_bits().hash(&mut h);
         let config_hash = h.finish();
-        Self { source_hash: source.hash, config_hash }
+        Self {
+            source_hash: source.hash,
+            config_hash,
+        }
     }
 }
 

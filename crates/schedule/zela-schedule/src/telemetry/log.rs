@@ -61,9 +61,7 @@ pub fn init_tracing_headless() {
 
     let result = match std::env::var("ZELA_LOG_FILE") {
         Ok(path) => match std::fs::File::create(&path) {
-            Ok(file) => builder
-                .with_writer(std::sync::Mutex::new(file))
-                .try_init(),
+            Ok(file) => builder.with_writer(std::sync::Mutex::new(file)).try_init(),
             Err(error) => {
                 eprintln!("[telemetry] 无法打开 ZELA_LOG_FILE={path}（{error}）；改写到 stderr");
                 builder.try_init()

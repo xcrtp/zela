@@ -15,12 +15,12 @@ use std::sync::Arc;
 use ze_notion::Rect2D;
 use ze_scene_core::Camera2DHandle;
 use zela_render_backends::RenderContext;
+use zela_scene_ecs::ClockForest;
 pub use zela_scene_ecs::Result;
 use zela_scene_ecs::animation::BindingTable;
 use zela_scene_ecs::contract::GroupVisibility;
-use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::errors::Error;
-use zela_scene_ecs::ClockForest;
+use zela_scene_ecs::scene::Scene;
 
 // 装配尾已下沉到 `zela-playback`；以下导入只服务于本 crate 的回归测试与
 // `register_systems`（test-only）。
@@ -193,10 +193,7 @@ pub fn compile_script(source: &str, language: ScriptLanguage) -> Result<Compiled
 /// 编译线程的栈大小（见 [`compile_script`] 的说明）。
 const COMPILE_STACK_BYTES: usize = 64 * 1024 * 1024;
 
-fn compile_script_on_this_thread(
-    source: &str,
-    language: ScriptLanguage,
-) -> Result<CompiledScript> {
+fn compile_script_on_this_thread(source: &str, language: ScriptLanguage) -> Result<CompiledScript> {
     let engine = Arc::new(formula::build_engine());
     let assembly = assembly::assemble(engine)
         .map_err(|e| Error::InitializationError(format!("脚本 Pod 装配失败：{e}")))?;
@@ -350,13 +347,12 @@ pub fn build_bundle_runtime(
         // **CI-c**：按源种类选后端 / 走对应语义。
         // - 文本源：与 `content.text` 同一条（字面量包装 + 不按阅读序排序）；
         // - 公式源：与 `content.formula` 同一条（原始 Typst 源码 + 阅读序排序）。
-        let (source, sort_reading_order) =
-            match origin.kind {
-                ze_scene_core::components::ContentOriginKind::Text => {
-                    (ze_content::text_literal_source(&origin.text), false)
-                }
-                ze_scene_core::components::ContentOriginKind::Formula => (origin.text.clone(), true),
-            };
+        let (source, sort_reading_order) = match origin.kind {
+            ze_scene_core::components::ContentOriginKind::Text => {
+                (ze_content::text_literal_source(&origin.text), false)
+            }
+            ze_scene_core::components::ContentOriginKind::Formula => (origin.text.clone(), true),
+        };
         let outlines = ze_scene_core::content::compile(
             engine,
             &source,
@@ -368,21 +364,22 @@ pub fn build_bundle_runtime(
             .get(origin.path_index)
             .map(|outline| outline.path.clone())
     };
-    let bake_label = |text: &str, anchor: ze_notion::Vec2, font_size: f32| -> Vec<ze_notion::Path2D> {
-        let Some(engine) = engine.as_ref() else {
-            return Vec::new();
+    let bake_label =
+        |text: &str, anchor: ze_notion::Vec2, font_size: f32| -> Vec<ze_notion::Path2D> {
+            let Some(engine) = engine.as_ref() else {
+                return Vec::new();
+            };
+            ze_scene_core::content::compile(
+                engine,
+                &ze_content::text_literal_source(text),
+                font_size,
+                anchor,
+                false,
+            )
+            .into_iter()
+            .map(|outline| outline.path)
+            .collect()
         };
-        ze_scene_core::content::compile(
-            engine,
-            &ze_content::text_literal_source(text),
-            font_size,
-            anchor,
-            false,
-        )
-        .into_iter()
-        .map(|outline| outline.path)
-        .collect()
-    };
     let runtime = zela_playback::build_bundle_runtime_with(
         render_ctx,
         bundle,
@@ -412,11 +409,9 @@ fn find_camera2d(scene: &Scene) -> Result<Option<Camera2DHandle>> {
 
 /// **native 宿主**注入真实时钟；核心默认是安全零时钟（wasm 不注入也安全）。
 fn install_native_clock(runtime: &Runtime) {
-    runtime
-        .driver
-        .with_scheduler_mut(|scheduler| {
-            scheduler.set_clock(zela_schedule::telemetry::InstantClock::new());
-        });
+    runtime.driver.with_scheduler_mut(|scheduler| {
+        scheduler.set_clock(zela_schedule::telemetry::InstantClock::new());
+    });
 }
 
 /// **唯一的 System 注册入口**（回归测试共用）。
@@ -471,8 +466,7 @@ fn build_scene_assembly(
     // 3D 场景（线框立方体 + 参数曲面 + 内容纹理公式）由场景层声明（A6）。
     // headless 脚本是**独立作品**：不叠加 app 的 demo3d（否则 3D 物体会盖住脚本画面，
     // 且脚本无法关闭该图层）。
-    let demo3d = with_demo3d
-        .then(|| zela_authored::demo3d::build(&mut scene, engine.as_ref()));
+    let demo3d = with_demo3d.then(|| zela_authored::demo3d::build(&mut scene, engine.as_ref()));
 
     // ── 2D 场景：脚本 / 能力 demo（启动参数切换，见 `SceneChoice`）──────────
     // 两条来源产出**同形的三样东西**：时钟树 + 绑定表 + 主 2D 相机句柄；
@@ -552,12 +546,10 @@ fn build_scene_source(
         let record_hint = script.still_time();
         // **BZ-b**：输入流录制要绑定到这份脚本对应的 ZSB（payload hash 只覆盖
         // payload，因此这里编码出的 hash 与 `zela-compile` 产物一致）。
-        let pairing = zela_scene_bundle::Bundle::encode(
-            &script,
-            zela_scene_bundle::MetaInput::default(),
-        )
-        .ok()
-        .and_then(|bundle| zela_scene_bundle::Pairing::for_bundle(&bundle).ok());
+        let pairing =
+            zela_scene_bundle::Bundle::encode(&script, zela_scene_bundle::MetaInput::default())
+                .ok()
+                .and_then(|bundle| zela_scene_bundle::Pairing::for_bundle(&bundle).ok());
         let recipe = script
             .commit(scene)
             .map_err(|e| Error::InitializationError(format!("脚本 commit 失败：{e}")))?;
@@ -852,16 +844,22 @@ instance("panel_b", 1.0, 0.01)
         let json = script.to_json().expect("可序列化");
         assert!(json.contains("\"path\":\"panel_a\""), "{json}");
         assert!(json.contains("\"path\":\"panel_b\""), "{json}");
-        assert!(!json.contains("ordinal"), "产物不得出现运行期作用域 id：{json}");
+        assert!(
+            !json.contains("ordinal"),
+            "产物不得出现运行期作用域 id：{json}"
+        );
 
         let mut scene = Scene::new();
         let recipe = script.commit(&mut scene).expect("commit");
-        let a = recipe.bindings.scope_path(zela_scene_ecs::animation::ScopeId(1));
-        let b = recipe.bindings.scope_path(zela_scene_ecs::animation::ScopeId(2));
+        let a = recipe
+            .bindings
+            .scope_path(zela_scene_ecs::animation::ScopeId(1));
+        let b = recipe
+            .bindings
+            .scope_path(zela_scene_ecs::animation::ScopeId(2));
         assert_eq!((a, b), ("panel_a", "panel_b"));
         assert_ne!(
-            recipe.bindings.bindings[0].clock,
-            recipe.bindings.bindings[1].clock,
+            recipe.bindings.bindings[0].clock, recipe.bindings.bindings[1].clock,
             "两个实例必须是两条时间轴"
         );
 
@@ -921,7 +919,11 @@ instance("panel_b", 1.0, 0.01)
         let mut path_stroke = 0;
         let mut path_fill = 0;
         for cmd in queue.commands() {
-            match (&cmd.shape, cmd.style.fill.is_some(), cmd.style.stroke.is_some()) {
+            match (
+                &cmd.shape,
+                cmd.style.fill.is_some(),
+                cmd.style.stroke.is_some(),
+            ) {
                 (zela_render::Shape2D::Circle { .. }, true, false) => circle_fill += 1,
                 (zela_render::Shape2D::Circle { .. }, false, true) => circle_stroke += 1,
                 // Arrow 派生为 Group（杆 + 头两个 Polygon）。
@@ -1381,12 +1383,7 @@ instance("panel_b", 1.0, 0.01)
             parts.push(text);
         }
         if let Some(text) = scene.with::<ze_render_ir::Dash, _>(id, |d| {
-            format!(
-                "dash({}:{}:{})",
-                qf(d.period),
-                qf(d.duty),
-                qf(d.phase)
-            )
+            format!("dash({}:{}:{})", qf(d.period), qf(d.duty), qf(d.phase))
         }) {
             parts.push(text);
         }
@@ -1453,10 +1450,7 @@ instance("panel_b", 1.0, 0.01)
             from: [0.0, 0.0, 0.0],
             to: [10.0, 0.0, 0.0],
         };
-        let two = fingerprint_of(gradient(vec![
-            [1.0, 0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0, 1.0],
-        ]));
+        let two = fingerprint_of(gradient(vec![[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]]));
         let three = fingerprint_of(gradient(vec![
             [1.0, 0.0, 0.0, 1.0],
             [0.0, 1.0, 0.0, 1.0],
@@ -1543,13 +1537,10 @@ instance("panel_b", 1.0, 0.01)
     }
 
     /// Fourier 作品的逐组件指纹（在通用指纹上补 Circle / Name / Parent / Opacity）。
-    fn fourier_fingerprint(
-        scene: &Scene,
-        id: zela_scene_ecs::contract::ObjectId,
-    ) -> String {
+    fn fourier_fingerprint(scene: &Scene, id: zela_scene_ecs::contract::ObjectId) -> String {
         use ze_scene_core::Circle;
-        use zela_scene_ecs::contract::{Name, Parent, SceneRead};
         use zela_render::Opacity;
+        use zela_scene_ecs::contract::{Name, Parent, SceneRead};
 
         let mut parts = vec![object_fingerprint(scene, id)];
         if let Some(text) = scene.with::<Circle, _>(id, |c| {
@@ -1565,9 +1556,9 @@ instance("panel_b", 1.0, 0.01)
         if let Some(text) = scene.with::<Name, _>(id, |n| format!("name({})", n.0)) {
             parts.push(text);
         }
-        if let Some(text) = scene.with::<Parent, _>(id, |p| {
-            format!("parent({},{})", p.0.index, p.0.generation)
-        }) {
+        if let Some(text) =
+            scene.with::<Parent, _>(id, |p| format!("parent({},{})", p.0.index, p.0.generation))
+        {
             parts.push(text);
         }
         if let Some(text) = scene.with::<Opacity, _>(id, |o| format!("opacity({})", qf(o.0))) {
@@ -1598,10 +1589,7 @@ instance("panel_b", 1.0, 0.01)
     /// 网格比 **内容**（顶点 / 法线 / UV / 索引 / 拓扑）而不比 `id`：
     /// `id` 是进程内唯一且随 ZSB 往返被序列化保留，两则必等；内容比较
     /// 才是"还原后的几何必须与脚本产物一致"的强口径。
-    fn demo3d_fingerprint(
-        scene: &Scene,
-        id: zela_scene_ecs::contract::ObjectId,
-    ) -> String {
+    fn demo3d_fingerprint(scene: &Scene, id: zela_scene_ecs::contract::ObjectId) -> String {
         use ze_scene_core::{Camera3D, Transform};
         use zela_scene_ecs::contract::SceneRead;
         use zela_scene_ecs::scene::components::{Light, Material3D, MeshGeometry};
@@ -1661,12 +1649,7 @@ instance("panel_b", 1.0, 0.01)
                 .flatten()
                 .map(|v| format!("({},{})", qf(v.x), qf(v.y)))
                 .collect();
-            let idx: Vec<String> = m
-                .indices
-                .iter()
-                .flatten()
-                .map(|i| i.to_string())
-                .collect();
+            let idx: Vec<String> = m.indices.iter().flatten().map(|i| i.to_string()).collect();
             format!(
                 "mesh(top={:?},v=[{}],n=[{}],uv=[{}],i=[{}])",
                 m.topology,
@@ -1790,10 +1773,7 @@ instance("panel_b", 1.0, 0.01)
 
     /// 布局行比较：对象 / target 必须全等，**起点允许 1e-9 的浮点累加差**
     /// （硬编码参考按"逐段累加游标"算起点，脚本按 `3.5 + i × each` 算）。
-    fn assert_layout_matches(
-        a: &[(usize, f64, String)],
-        b: &[(usize, f64, String)],
-    ) {
+    fn assert_layout_matches(a: &[(usize, f64, String)], b: &[(usize, f64, String)]) {
         assert_eq!(a.len(), b.len(), "绑定数必须一致");
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(x.0, y.0, "对象下标必须一致");
@@ -1867,8 +1847,8 @@ instance("panel_b", 1.0, 0.01)
     fn bind_each_expands_at_assembly_and_reports_n() {
         use ze_prerender::placeholder_engine;
 
-        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
-            .expect("装配成功");
+        let assembly =
+            crate::assembly::assemble(std::sync::Arc::new(placeholder_engine())).expect("装配成功");
         let run = || {
             let script = assembly
                 .run_script(
@@ -1998,11 +1978,7 @@ instance("panel_b", 1.0, 0.01)
         let py = assembly
             .run_python_script(include_str!("../scripts/fourier.py"))
             .expect("Python 傅里叶脚本执行成功");
-        assert_eq!(
-            lua.still_time(),
-            py.still_time(),
-            "两侧静止时刻必须一致"
-        );
+        assert_eq!(lua.still_time(), py.still_time(), "两侧静止时刻必须一致");
         let duration = lua.still_time().expect("fourier 的段区间可分析");
 
         let mut scene_lua = Scene::new();
@@ -2056,7 +2032,8 @@ instance("panel_b", 1.0, 0.01)
         let scene_only = r#"
 scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
 "#;
-        let compiled = compile_script(scene_only, ScriptLanguage::Lua).expect("编译 scene-only 脚本");
+        let compiled =
+            compile_script(scene_only, ScriptLanguage::Lua).expect("编译 scene-only 脚本");
         let names: Vec<&str> = compiled
             .capabilities
             .iter()
@@ -2065,11 +2042,8 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         assert_eq!(names, vec!["zela.scene"], "只用到 scene，不得含 content");
 
         // fourier 用 content.text 生成标题 ⇒ scene + content。
-        let compiled = compile_script(
-            include_str!("../scripts/fourier.lua"),
-            ScriptLanguage::Lua,
-        )
-        .expect("编译 fourier");
+        let compiled = compile_script(include_str!("../scripts/fourier.lua"), ScriptLanguage::Lua)
+            .expect("编译 fourier");
         let names: Vec<&str> = compiled
             .capabilities
             .iter()
@@ -2098,12 +2072,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         let scene_only = r#"
 scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
 "#;
-        let compiled = compile_script(scene_only, ScriptLanguage::Lua).expect("编译 scene-only 脚本");
-        let names: Vec<&str> = compiled
-            .pods
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
+        let compiled =
+            compile_script(scene_only, ScriptLanguage::Lua).expect("编译 scene-only 脚本");
+        let names: Vec<&str> = compiled.pods.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
             names,
             vec![zela_scene_ecs::pod::SERVICE_NAME],
@@ -2111,16 +2082,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         );
 
         // fourier 用了 content.text ⇒ scene + content 两个 Pod。
-        let compiled = compile_script(
-            include_str!("../scripts/fourier.lua"),
-            ScriptLanguage::Lua,
-        )
-        .expect("编译 fourier");
-        let names: Vec<&str> = compiled
-            .pods
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
+        let compiled = compile_script(include_str!("../scripts/fourier.lua"), ScriptLanguage::Lua)
+            .expect("编译 fourier");
+        let names: Vec<&str> = compiled.pods.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
             names,
             vec![
@@ -2207,8 +2171,8 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
     /// 两侧用**同一个**引擎 ⇒ 本用例在两种构建下都成立。
     #[test]
     fn content_restore_and_rebuild_agree() {
-        use ze_scene_core::components::ContentOrigin;
         use ze_scene_core::Path as ObjectPath;
+        use ze_scene_core::components::ContentOrigin;
         use zela_scene_bundle::{Bundle, CapabilityRole, ContentMode, MetaInput};
         use zela_scene_ecs::contract::SceneRead;
 
@@ -2221,9 +2185,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         // 内容能力由 `compile_script` 以 `role = Source` 写入 Meta（CD-d）。
         let required = compiled.required_capabilities.clone();
         assert!(
-            required.iter().any(|c| {
-                c.name == "zela.content" && c.role == CapabilityRole::Source
-            }),
+            required
+                .iter()
+                .any(|c| { c.name == "zela.content" && c.role == CapabilityRole::Source }),
             "内容能力必须以 Source 角色进 Meta：{required:?}"
         );
 
@@ -2245,7 +2209,9 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
 
         // ── 诊断：本机有内容引擎 ⇒ rebuild；只有 scene ⇒ restore ──
         assert_eq!(
-            bundle.content_mode(&available_runtime_caps()).expect("诊断"),
+            bundle
+                .content_mode(&available_runtime_caps())
+                .expect("诊断"),
             ContentMode::Rebuild,
             "有内容能力且有源 ⇒ rebuild"
         );
@@ -2259,7 +2225,10 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
         // ── restore：payload 里的烘焙轮廓（按描边序号归档）──
         let sources = bundle.text_sources().expect("源");
         assert!(!sources.is_empty(), "文本必须带源");
-        assert!(sources.iter().all(|s| s.text == "Hi"), "sources = {sources:?}");
+        assert!(
+            sources.iter().all(|s| s.text == "Hi"),
+            "sources = {sources:?}"
+        );
 
         let mut scene = Scene::new();
         bundle
@@ -2393,8 +2362,8 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
     /// **S4 验收**：同一 target 的多段绑定「推近 → 停留 → 拉回」有段语义。
     #[test]
     fn fourier_camera_push_pull_uses_segment_semantics() {
-        use ze_scene_core::Framing2D;
         use ze_prerender::placeholder_engine;
+        use ze_scene_core::Framing2D;
         use zela_scene_ecs::animation::BindingApplySystem;
         use zela_schedule::resource::Resources;
         use zela_schedule::scheduler::{Phase, Scheduler};
@@ -2439,7 +2408,10 @@ scene.spawn({ Circle { x = 0.0, y = 0.0, r = 1.0 } })
             "推近前必须是全景"
         );
         let mid = scale_at(&mut sched, 5.2);
-        assert!(mid > 55.0 && mid < 90.0, "推近段内应介于 55..90，实际 {mid}");
+        assert!(
+            mid > 55.0 && mid < 90.0,
+            "推近段内应介于 55..90，实际 {mid}"
+        );
         assert!(
             (scale_at(&mut sched, 6.0) - 90.0).abs() < 1e-3,
             "停留期在 90"
@@ -2519,8 +2491,8 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
     #[test]
     fn python_lua_symmetry() {
         use std::sync::Arc;
-        use ze_scene_core::Circle as NativeCircle;
         use ze_prerender::placeholder_engine;
+        use ze_scene_core::Circle as NativeCircle;
         use zela_scene_ecs::contract::SceneRead;
         use zela_scene_ecs::scene::components::Reveal;
 
@@ -2573,7 +2545,6 @@ scene2.spawn([Circle(x=1.0, y=0.0, r=1.0)])
         assert!((circles[0].0.radius - 0.5).abs() < 1e-4);
     }
 
-
     /// **提案 #6 C 验收**：位置参数 + `Color.a` 默认值 + 通道常量（`Circle.channel.radius`）
     /// 在 Lua / JS 两侧产出的装配产物**逐字节相同**。
     ///
@@ -2604,11 +2575,7 @@ expr.bind({ object: dot, target: Circle.channel.radius, root: y, duration: 2.0 }
         let lua = assembly.run_script(lua_source).expect("Lua 脚本执行成功");
         let js = assembly.run_js_script(js_source).expect("JS 脚本执行成功");
 
-        assert_eq!(
-            lua.still_time(),
-            js.still_time(),
-            "两侧静止时刻必须一致"
-        );
+        assert_eq!(lua.still_time(), js.still_time(), "两侧静止时刻必须一致");
         assert_eq!(
             lua.to_json().expect("serialize lua"),
             js.to_json().expect("serialize js"),
@@ -2768,8 +2735,8 @@ expr.bind(Bind(object=dot, target=Circle.channel.radius, root=y, duration=2.0))
         use ze_prerender::placeholder_engine;
         use zela_scene_ecs::animation::BindingDriver;
 
-        let assembly = crate::assembly::assemble(std::sync::Arc::new(placeholder_engine()))
-            .expect("装配成功");
+        let assembly =
+            crate::assembly::assemble(std::sync::Arc::new(placeholder_engine())).expect("装配成功");
         let script = assembly
             .run_script(
                 r#"

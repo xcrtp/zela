@@ -15,8 +15,7 @@ pub struct CycleNodes<Id> {
 /// 返回顺序**只由拓扑与 id 决定**，与 `nodes()` / `successors()` 的返回顺序无关。
 pub fn topo_sort<T: Topology>(graph: &T) -> Result<Vec<T::Id>, CycleNodes<T::Id>> {
     let nodes: BTreeSet<T::Id> = graph.nodes().into_iter().collect();
-    let mut in_degree: BTreeMap<T::Id, usize> =
-        nodes.iter().map(|&node| (node, 0usize)).collect();
+    let mut in_degree: BTreeMap<T::Id, usize> = nodes.iter().map(|&node| (node, 0usize)).collect();
     let mut successors: BTreeMap<T::Id, BTreeSet<T::Id>> =
         nodes.iter().map(|&node| (node, BTreeSet::new())).collect();
 

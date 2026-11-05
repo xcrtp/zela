@@ -378,9 +378,17 @@ mod tests {
 
         let spec = FormulaSpec::new("o", 10.0, ze_notion::Vec2::ZERO);
         let paths = compile_to_stroke_paths(&ir, &spec);
-        assert_eq!(paths.len(), 1, "一个字形只该产出一条路径（counter 同路径才能挖孔）");
+        assert_eq!(
+            paths.len(),
+            1,
+            "一个字形只该产出一条路径（counter 同路径才能挖孔）"
+        );
         let path = &paths[0].0;
-        assert_eq!(path_points(path).len(), 8, "两个轮廓各 4 顶点（重复尾点已去掉）");
+        assert_eq!(
+            path_points(path).len(),
+            8,
+            "两个轮廓各 4 顶点（重复尾点已去掉）"
+        );
         let moves = path
             .commands
             .iter()

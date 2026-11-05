@@ -187,7 +187,15 @@ pub const RASTER_GROUPS: BindSymbols = BindSymbols::new(&[
     GroupSymbol {
         group: 0,
         name: "scene",
-        resources: &["instances", "rows", "sprites", "ctrl", "subs", "objects", "tiles"],
+        resources: &[
+            "instances",
+            "rows",
+            "sprites",
+            "ctrl",
+            "subs",
+            "objects",
+            "tiles",
+        ],
     },
     GroupSymbol {
         group: 1,
@@ -431,7 +439,15 @@ pub const RASTER_PLAN: PassPlan = &[
     PassDecl {
         name: "vector composite",
         kind: PassStage::Compute,
-        inputs: &["ctrl", "subs", "objects", "base", "atlas", "base_depth", "crossings"],
+        inputs: &[
+            "ctrl",
+            "subs",
+            "objects",
+            "base",
+            "atlas",
+            "base_depth",
+            "crossings",
+        ],
         outputs: &["view", "crossings"],
         entry: "flatten + composite",
         dispatch: Dispatch::Sequence(&[
@@ -514,7 +530,13 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     PassDecl {
         name: "append",
         kind: PassStage::Render,
-        inputs: &["instances", "list_heads", "list_nodes", "list_appended", "layers"],
+        inputs: &[
+            "instances",
+            "list_heads",
+            "list_nodes",
+            "list_appended",
+            "layers",
+        ],
         outputs: &["list_heads", "list_nodes"],
         entry: "vs_stroke",
         dispatch: Dispatch::Draw,
@@ -575,7 +597,15 @@ pub const RASTER_LAYERED_PLAN: PassPlan = &[
     PassDecl {
         name: "vector composite",
         kind: PassStage::Compute,
-        inputs: &["ctrl", "subs", "objects", "layers", "atlas", "base_depth", "crossings"],
+        inputs: &[
+            "ctrl",
+            "subs",
+            "objects",
+            "layers",
+            "atlas",
+            "base_depth",
+            "crossings",
+        ],
         outputs: &["view", "crossings"],
         entry: "flatten + composite",
         dispatch: Dispatch::Sequence(&[
@@ -717,9 +747,16 @@ pub fn is_read_write(pass: &str, resource: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanError {
     /// 同一计划里出现重名 pass。
-    Duplicate { name: &'static str, first: usize, again: usize },
+    Duplicate {
+        name: &'static str,
+        first: usize,
+        again: usize,
+    },
     /// 某个 pass 读的资源没有任何前序 pass 生产（首帧即读不到）。
-    Unproduced { pass: &'static str, input: &'static str },
+    Unproduced {
+        pass: &'static str,
+        input: &'static str,
+    },
     /// 资源依赖成环（附参与链，按声明下标）。
     Cycle { chain: Vec<usize> },
     /// 声明了 `Indirect`，但它的参数来源在前面没有任何生产者（会照着上一帧的垃圾值派发）。
@@ -748,7 +785,9 @@ impl std::fmt::Display for PlanError {
                 f,
                 "pass {pass:?} 读的资源 {input:?} 在前面没有任何生产者（声明序即执行序）"
             ),
-            Self::Cycle { chain } => write!(f, "pass 资源依赖成环（下标链）：{chain:?}"),
+            Self::Cycle { chain } => {
+                write!(f, "pass 资源依赖成环（下标链）：{chain:?}")
+            }
             Self::IndirectUnproduced { pass, source } => write!(
                 f,
                 "pass {pass:?} 用 indirect 参数 {source:?} 派发，但前面没有任何 pass 生产它\
@@ -951,9 +990,14 @@ impl std::fmt::Display for ScheduleError {
                 "记录顺序与声明不符：第 {index} 个 pass 应是 {expected:?}，实际记录了 {recorded:?}"
             ),
             Self::Disabled { name } => {
-                write!(f, "pass {name:?} 已被 enabled_when 关掉，却仍被记录（不静默执行）")
+                write!(
+                    f,
+                    "pass {name:?} 已被 enabled_when 关掉，却仍被记录（不静默执行）"
+                )
             }
-            Self::Undeclared { name } => write!(f, "pass {name:?} 不在本帧的计划里"),
+            Self::Undeclared { name } => {
+                write!(f, "pass {name:?} 不在本帧的计划里")
+            }
             Self::Missing { name } => {
                 write!(f, "计划里的 pass {name:?} 没有被记录（静默跳过）")
             }
@@ -969,10 +1013,9 @@ impl std::fmt::Display for ScheduleError {
                 f,
                 "pass {pass:?} 绑定的组 {group:?} 不在组名表里（名字对不上，无法校验）"
             ),
-            Self::BindOutsidePass { group } => write!(
-                f,
-                "组 {group:?} 的绑定记录在任何 pass 之外（记账位置错了）"
-            ),
+            Self::BindOutsidePass { group } => {
+                write!(f, "组 {group:?} 的绑定记录在任何 pass 之外（记账位置错了）")
+            }
         }
     }
 }
@@ -1026,7 +1069,12 @@ impl PassSchedule {
     ///
     /// 策略拒绝一张**静态**计划是声明写错了（环 / 重名该由 [`validate`] 抓住），
     /// 这里显式 panic 并点名策略与原因 —— 不给"顺序为空、什么都不跑"的静默路径。
-    pub fn with_policy(plan: PassPlan, skip: u32, groups: BindSymbols, policy: &dyn SchedulePolicy) -> Self {
+    pub fn with_policy(
+        plan: PassPlan,
+        skip: u32,
+        groups: BindSymbols,
+        policy: &dyn SchedulePolicy,
+    ) -> Self {
         let order = policy
             .order(plan, skip)
             .unwrap_or_else(|error| panic!("调度策略 {} 拒绝了静态计划：{error}", policy.id()));
@@ -1339,11 +1387,21 @@ impl PassProvider for BuiltinPasses {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderError {
     /// 两个提供者声明了同名计划。
-    DuplicatePlan { name: &'static str, first: &'static str, again: &'static str },
+    DuplicatePlan {
+        name: &'static str,
+        first: &'static str,
+        again: &'static str,
+    },
     /// 某张计划自身非法。
-    Invalid { plan: &'static str, error: PlanError },
+    Invalid {
+        plan: &'static str,
+        error: PlanError,
+    },
     /// 计划读的资源没有任何提供者生产。
-    MissingResource { plan: &'static str, input: &'static str },
+    MissingResource {
+        plan: &'static str,
+        input: &'static str,
+    },
 }
 
 impl std::fmt::Display for ProviderError {
@@ -1353,7 +1411,9 @@ impl std::fmt::Display for ProviderError {
                 f,
                 "计划重名 {name:?}：{first} 与 {again} 都提供它（不允许同名覆盖）"
             ),
-            Self::Invalid { plan, error } => write!(f, "计划 {plan:?} 非法：{error}"),
+            Self::Invalid { plan, error } => {
+                write!(f, "计划 {plan:?} 非法：{error}")
+            }
             Self::MissingResource { plan, input } => write!(
                 f,
                 "计划 {plan:?} 读的资源 {input:?} 没有任何提供者生产（全有或全无，不降级）"
@@ -1396,10 +1456,7 @@ pub fn negotiate(
         for decl in *plan {
             for input in decl.inputs {
                 if !produced.contains(input) {
-                    return Err(ProviderError::MissingResource {
-                        plan: name,
-                        input,
-                    });
+                    return Err(ProviderError::MissingResource { plan: name, input });
                 }
             }
         }
@@ -1513,7 +1570,11 @@ mod tests {
         let mut schedule = PassSchedule::new(VECTOR_PLAN, 0);
         let error = schedule.begin("composite").unwrap_err();
         match error {
-            ScheduleError::OutOfOrder { expected, recorded, index } => {
+            ScheduleError::OutOfOrder {
+                expected,
+                recorded,
+                index,
+            } => {
                 assert_eq!(expected, "atlas raster");
                 assert_eq!(recorded, "composite");
                 assert_eq!(index, 0);
@@ -1605,8 +1666,10 @@ mod tests {
     /// 关掉的 pass 若仍被记录 ⇒ `Disabled`（不静默执行）。
     #[test]
     fn recording_a_disabled_pass_is_reported() {
-        let mut schedule =
-            PassSchedule::new(RASTER_PLAN, crate::render::SKIP_AO | crate::render::SKIP_BLOOM);
+        let mut schedule = PassSchedule::new(
+            RASTER_PLAN,
+            crate::render::SKIP_AO | crate::render::SKIP_BLOOM,
+        );
         schedule.begin("shadow").unwrap();
         // occlusion depth / occlusion 被 SKIP_AO 关掉 ⇒ 下一步应是 base。
         let error = schedule.begin("occlusion depth").unwrap_err();
@@ -1690,7 +1753,9 @@ mod tests {
             },
         ];
         match validate(plan).unwrap_err() {
-            PlanError::Cycle { chain } => assert!(chain.len() >= 2, "环链应含参与 pass：{chain:?}"),
+            PlanError::Cycle { chain } => {
+                assert!(chain.len() >= 2, "环链应含参与 pass：{chain:?}")
+            }
             other => panic!("期望 Cycle，实际 {other:?}"),
         }
     }
@@ -1732,7 +1797,9 @@ mod tests {
     #[test]
     fn raw_pass_keeps_declaration_order() {
         let mut schedule = PassSchedule::new(VECTOR_PLAN, 0);
-        schedule.raw("atlas raster").expect("手写记录照常推进声明序");
+        schedule
+            .raw("atlas raster")
+            .expect("手写记录照常推进声明序");
         schedule.step("vector composite", true).unwrap();
         assert_eq!(schedule.recorded(), &["vector composite"]);
         assert_eq!(schedule.raw_recorded(), &["atlas raster"]);
@@ -1842,12 +1909,31 @@ mod tests {
     ///
     /// 这些名不要求任何 pass 生产：它们由帧前的上传 / canvas 附件提供。
     const FRAME: &[&'static str] = &[
-        "instances", "rows", "sprites", "ctrl", "subs", "objects", "tiles", "view_light",
-        "environment", "shader_programs", "shader_colors", "slab_bounds", "base_samples",
-        "base_sample_depths", "stroke_depths_in", "base", "base_light", "list_heads",
-        "list_nodes", "list_appended",
+        "instances",
+        "rows",
+        "sprites",
+        "ctrl",
+        "subs",
+        "objects",
+        "tiles",
+        "view_light",
+        "environment",
+        "shader_programs",
+        "shader_colors",
+        "slab_bounds",
+        "base_samples",
+        "base_sample_depths",
+        "stroke_depths_in",
+        "base",
+        "base_light",
+        "list_heads",
+        "list_nodes",
+        "list_appended",
         // **BV-2 / BV-3**：光追读的三组顶点数组与范围表（都由帧前上传提供）。
-        "vertices", "indices", "extras", "ranges",
+        "vertices",
+        "indices",
+        "extras",
+        "ranges",
     ];
 
     /// 内置提供者 + 帧前资源 ⇒ 协商成功。
@@ -2092,7 +2178,13 @@ mod tests {
     fn the_default_policy_is_declaration_order() {
         let policy = BuiltinOrder;
         assert_eq!(policy.id(), PASS_POLICY_ID);
-        for plan in [RASTER_PLAN, RASTER_LAYERED_PLAN, VECTOR_PLAN, ENVIRONMENT_PLAN, CODEGEN_PLAN] {
+        for plan in [
+            RASTER_PLAN,
+            RASTER_LAYERED_PLAN,
+            VECTOR_PLAN,
+            ENVIRONMENT_PLAN,
+            CODEGEN_PLAN,
+        ] {
             for skip in [0u32, 0b1, 0b10, 0b100, 0b111] {
                 let got = policy.order(plan, skip).expect("默认策略不会拒绝");
                 let want: Vec<usize> = (0..plan.len())
@@ -2109,7 +2201,9 @@ mod tests {
     /// 且默认策略给出的就是"声明下标升序"。策略状态不在 payload 里 —— 所以它必须**没有**状态。
     #[test]
     fn the_same_declarations_and_policy_always_give_the_same_order() {
-        const NAMES: [&str; 8] = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+        const NAMES: [&str; 8] = [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+        ];
         // 确定性 PRNG（SplitMix64）：用例本身不依赖随机源。
         let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
         let mut next = || {
@@ -2138,7 +2232,10 @@ mod tests {
             let plan: PassPlan = Box::leak(decls.into_boxed_slice());
             let a = policy.order(plan, 0).expect("默认策略不会拒绝");
             let b = policy.order(plan, 0).expect("默认策略不会拒绝");
-            assert_eq!(a, b, "第 {round} 组：同一 (decls, policy_id) 必须给出同一顺序");
+            assert_eq!(
+                a, b,
+                "第 {round} 组：同一 (decls, policy_id) 必须给出同一顺序"
+            );
             let want: Vec<usize> = (0..plan.len())
                 .filter(|&index| plan[index].enabled_when.is_enabled(0))
                 .collect();
@@ -2170,7 +2267,10 @@ mod tests {
                 index: 0
             }
         );
-        assert!(error.to_string().contains("trace"), "报错必须点名资源：{error}");
+        assert!(
+            error.to_string().contains("trace"),
+            "报错必须点名资源：{error}"
+        );
     }
 
     /// `READ_WRITE` 必须与五张真实计划里的重逐一模一样：

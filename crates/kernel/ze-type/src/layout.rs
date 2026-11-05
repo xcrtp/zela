@@ -93,7 +93,11 @@ pub struct Layout {
 
 impl Layout {
     pub const fn new(size: usize, align: usize, fields: &'static [FieldLayout]) -> Self {
-        Self { size, align, fields }
+        Self {
+            size,
+            align,
+            fields,
+        }
     }
 
     /// 自定义布局（第三方类型注册时用），在**运行时**校验。
@@ -181,7 +185,9 @@ impl Layout {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LayoutError {
     ZeroSize,
-    BadAlign { align: usize },
+    BadAlign {
+        align: usize,
+    },
     FieldOutOfBounds {
         field: &'static str,
         offset: usize,
@@ -193,9 +199,19 @@ pub enum LayoutError {
         at: usize,
     },
     UnknownType(String),
-    UnknownField { ty: String, field: String },
-    MissingField { ty: String, field: String },
-    BadLength { ty: String, len: usize, size: usize },
+    UnknownField {
+        ty: String,
+        field: String,
+    },
+    MissingField {
+        ty: String,
+        field: String,
+    },
+    BadLength {
+        ty: String,
+        len: usize,
+        size: usize,
+    },
     UnsupportedScalar(&'static str),
     CorruptFallback(String),
 }
@@ -204,7 +220,9 @@ impl fmt::Display for LayoutError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroSize => write!(f, "布局的 size 不能为 0"),
-            Self::BadAlign { align } => write!(f, "布局的 align 必须是 2 的幂，实际 {align}"),
+            Self::BadAlign { align } => {
+                write!(f, "布局的 align 必须是 2 的幂，实际 {align}")
+            }
             Self::FieldOutOfBounds {
                 field,
                 offset,
@@ -220,12 +238,18 @@ impl fmt::Display for LayoutError {
             Self::UnknownField { ty, field } => {
                 write!(f, "记录字段 `{field}` 不存在于类型 `{ty}` 的布局里")
             }
-            Self::MissingField { ty, field } => write!(f, "类型 `{ty}` 缺少字段 `{field}`"),
+            Self::MissingField { ty, field } => {
+                write!(f, "类型 `{ty}` 缺少字段 `{field}`")
+            }
             Self::BadLength { ty, len, size } => {
                 write!(f, "字节长度 {len} 与类型 `{ty}` 的 size {size} 不符")
             }
-            Self::UnsupportedScalar(name) => write!(f, "记录里出现不可编码的标量：{name}"),
-            Self::CorruptFallback(detail) => write!(f, "回退编码损坏：{detail}"),
+            Self::UnsupportedScalar(name) => {
+                write!(f, "记录里出现不可编码的标量：{name}")
+            }
+            Self::CorruptFallback(detail) => {
+                write!(f, "回退编码损坏：{detail}")
+            }
         }
     }
 }
@@ -281,10 +305,12 @@ pub fn encode_record(record: &Record, layout: Option<Layout>) -> Result<Vec<u8>,
             layout.validate()?;
             let mut out = vec![0u8; layout.size];
             for field in layout.fields {
-                let value = record.get(field.name).ok_or_else(|| LayoutError::MissingField {
-                    ty: record.ty.clone(),
-                    field: field.name.to_string(),
-                })?;
+                let value = record
+                    .get(field.name)
+                    .ok_or_else(|| LayoutError::MissingField {
+                        ty: record.ty.clone(),
+                        field: field.name.to_string(),
+                    })?;
                 write_scalar(&mut out, field.offset, field.ty, value)?;
             }
             Ok(out)
@@ -294,7 +320,11 @@ pub fn encode_record(record: &Record, layout: Option<Layout>) -> Result<Vec<u8>,
 }
 
 /// 按布局解码一条记录（`layout = None` ⇒ 回退格式）。
-pub fn decode_record(ty: &str, bytes: &[u8], layout: Option<Layout>) -> Result<Record, LayoutError> {
+pub fn decode_record(
+    ty: &str,
+    bytes: &[u8],
+    layout: Option<Layout>,
+) -> Result<Record, LayoutError> {
     match layout {
         Some(layout) => {
             layout.validate()?;
@@ -335,7 +365,7 @@ fn write_scalar(
                 (FieldTy::F64, _) => "F64",
                 (FieldTy::I64, _) => "I64",
                 (FieldTy::Bool, _) => "Bool",
-            }))
+            }));
         }
     };
     out[offset..offset + bytes.len()].copy_from_slice(&bytes);
@@ -352,9 +382,7 @@ fn read_scalar(bytes: &[u8], offset: usize, ty: FieldTy) -> Result<Scalar, Layou
         FieldTy::F64 => Scalar::F64(f64::from_bits(u64::from_le_bytes(
             slice.try_into().expect("8 字节"),
         ))),
-        FieldTy::I64 => Scalar::I64(i64::from_le_bytes(
-            slice.try_into().expect("8 字节"),
-        )),
+        FieldTy::I64 => Scalar::I64(i64::from_le_bytes(slice.try_into().expect("8 字节"))),
         FieldTy::Bool => Scalar::Bool(slice[0] != 0),
     })
 }
@@ -422,7 +450,7 @@ fn decode_fallback(ty: &str, bytes: &[u8]) -> Result<Record, LayoutError> {
             other => {
                 return Err(LayoutError::CorruptFallback(format!(
                     "未知标量标签 {other}"
-                )))
+                )));
             }
         };
         fields.push((name, value));
@@ -492,7 +520,10 @@ mod tests {
         ));
 
         let align = Layout::new(8, 3, &[]);
-        assert!(matches!(align.validate(), Err(LayoutError::BadAlign { .. })));
+        assert!(matches!(
+            align.validate(),
+            Err(LayoutError::BadAlign { .. })
+        ));
     }
 
     #[test]
@@ -528,12 +559,8 @@ mod tests {
 
     #[test]
     fn third_party_layouts_validate_at_runtime() {
-        let layout = Layout::custom(
-            16,
-            8,
-            [("re", 0, FieldTy::F64), ("im", 8, FieldTy::F64)],
-        )
-        .unwrap();
+        let layout =
+            Layout::custom(16, 8, [("re", 0, FieldTy::F64), ("im", 8, FieldTy::F64)]).unwrap();
         assert_eq!(layout.size, 16);
         assert_eq!(layout.offset_of("im"), Some(8));
     }

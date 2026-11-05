@@ -6,7 +6,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use ze_comb::OpRef;
 
 /// `op_def`：`DEFS.iter().find`（旧）vs 符号表（新）。

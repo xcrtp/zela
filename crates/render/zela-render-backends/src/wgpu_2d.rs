@@ -30,19 +30,19 @@
 use std::collections::HashMap;
 use std::mem;
 
-use ze_notion::Mat4;
 use wgpu::util::DeviceExt as _;
+use ze_notion::Mat4;
 
-use ze_notion::{Color32, MeasureSpace, Rect2D, Transform2D, Vec2};
 use crate::resource_cache::{ResourceCache, ResourceKey};
+use ze_notion::{Color32, MeasureSpace, Rect2D, Transform2D, Vec2};
+use ze_render_ir::LayerId;
+use ze_vertex::VertexBufferData;
+use zela_render::vertex_record;
 use zela_render::{
     AaModel, CacheStrategy, DrawQueue, GpuHandle, MorphItem, Painter2DTarget, REVEAL_STEP_PX,
     RevealItem, Shape2D, Style2D, TessKind, VertexInputDesc, VertexLayout, hash_bytes,
     tolerance_for_scale,
 };
-use zela_render::vertex_record;
-use ze_render_ir::LayerId;
-use ze_vertex::VertexBufferData;
 
 use crate::gpu_util::{UniformArena, bytes_of};
 use crate::vertex_layout::{to_wgpu, to_wgpu_buffers};
@@ -843,10 +843,11 @@ impl WgpuBackend2D {
             };
             // B3-0c：三角化 + 打包在渲染无关层（`vertex_record`）；后端只接字节。
             // B3-0d（不静默）：失败 ⇒ **显式 panic**，不再 `eprintln + continue`。
-            let buffers = vertex_record::tessellate_to_buffers(&draw.shape, local, &style, tolerance)
-                .unwrap_or_else(|error| {
-                    panic!("不静默：2D 顶点生产失败（三角化/打包）：{error}")
-                });
+            let buffers =
+                vertex_record::tessellate_to_buffers(&draw.shape, local, &style, tolerance)
+                    .unwrap_or_else(|error| {
+                        panic!("不静默：2D 顶点生产失败（三角化/打包）：{error}")
+                    });
             for buffer in buffers {
                 if buffer.data.is_empty() || buffer.data.indices.is_empty() {
                     continue;
@@ -862,9 +863,7 @@ impl WgpuBackend2D {
                     self.geom_cache.insert_handle(
                         key,
                         (),
-                        GpuHandle::new(CachedGeometry {
-                            data: buffer.data,
-                        }),
+                        GpuHandle::new(CachedGeometry { data: buffer.data }),
                     );
                 }
                 let color = match buffer.kind {
@@ -988,20 +987,16 @@ impl WgpuBackend2D {
             // B3-0c：形变端点生产（含"退化一侧合成"与拓扑校验）在渲染无关层。
             // 失败 / 拓扑不一致 ⇒ 显式错误（B3-0d：不再 eprintln + continue）。
             let Some(endpoints) = vertex_record::morph_endpoint_buffers(
-                &from_path,
-                &to_path,
-                local,
-                &style,
-                tolerance,
+                &from_path, &to_path, local, &style, tolerance,
             )
-            .unwrap_or_else(|error| panic!("不静默：形变顶点生产失败：{error}"))
-            else {
+            .unwrap_or_else(|error| panic!("不静默：形变顶点生产失败：{error}")) else {
                 // 两侧都没有几何（空路径已在上方挡掉）⇒ 无从合成。
                 continue;
             };
             let from_data = &endpoints.from.data;
             let to_data = &endpoints.to.data;
-            let mkey = ResourceKey::content::<Morph2DTag>(hash_morph(&endpoints.from, &endpoints.to));
+            let mkey =
+                ResourceKey::content::<Morph2DTag>(hash_morph(&endpoints.from, &endpoints.to));
             if !self.morph_cache.mark_used(&mkey) {
                 stats.morph_misses += 1;
                 let fvb = self
@@ -1090,14 +1085,14 @@ impl WgpuBackend2D {
                 tolerance,
                 REVEAL_STEP_PX,
             )
-            .unwrap_or_else(|error| panic!("不静默：书写动画顶点生产失败：{error}"))
-            else {
+            .unwrap_or_else(|error| panic!("不静默：书写动画顶点生产失败：{error}")) else {
                 continue;
             };
             if buffer.data.is_empty() || buffer.data.indices.is_empty() {
                 continue;
             }
-            let rkey = ResourceKey::content::<Reveal2DTag>(hash_tessellated(buffer.kind, &buffer.data));
+            let rkey =
+                ResourceKey::content::<Reveal2DTag>(hash_tessellated(buffer.kind, &buffer.data));
             if !self.reveal_cache.mark_used(&rkey) {
                 stats.reveal_misses += 1;
                 let vb = self
@@ -1830,10 +1825,10 @@ mod tests {
             start: Vec2::new(0.0, 0.0),
             end: Vec2::new(30.0, 10.0),
         };
-        let thin = tessellate(&shape, &Transform2D::identity(), &stroke_style(2.0), 0.05)
-            .expect("三角化");
-        let thick = tessellate(&shape, &Transform2D::identity(), &stroke_style(8.0), 0.05)
-            .expect("三角化");
+        let thin =
+            tessellate(&shape, &Transform2D::identity(), &stroke_style(2.0), 0.05).expect("三角化");
+        let thick =
+            tessellate(&shape, &Transform2D::identity(), &stroke_style(8.0), 0.05).expect("三角化");
         assert_eq!(thin.len(), 1);
         assert_eq!(thick.len(), 1);
         let (a, b) = (&thin[0], &thick[0]);

@@ -1,9 +1,19 @@
 //! 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。
 //!
-//! # 为什么不引约束求解器（kasuari）
+//! # 两遍扫描与求解器并列（CL-R 改写）
 //!
-//! 参数面板就是**垂直列表**，用不上约束。现在引 = 零消费者依赖 ——
-//! 本项目最忌的形态。等思维导图那批再评估。
+//! 本模块只放**默认策略**：盒子 / 流式排列，按声明序一次算完 —— 参数面板是垂直列表，
+//! 这已经够用。约束求解（`StrategyId("kasuari")`）不是这里的替代品，而是
+//! [`crate::solver`] 里同一张策略表上的第二个实现：
+//!
+//! ```text
+//! StrategyId("two-pass")  →  本模块（回溯测量 + 前推分配 / 盒流排列）
+//! StrategyId("kasuari")   →  solver::kasuari_backend（跨容器线性约束）
+//! ```
+//!
+//! 旧版模块头写「不引约束求解器，等思维导图那批再评估」—— 那是把求解器误当成
+//! 编辑器连约束的功能，也是「永远零消费者」的活样本。CL-R 起改为并列：
+//! 默认策略不读约束，遇到非空约束声明**显式报错**，不静默忽略。
 //!
 //! # 为什么只取 `LayoutStrategy` 的形状、不搬实现
 //!
@@ -308,7 +318,17 @@ impl LayoutCache {
         layout: &dyn Layout,
         constraints: Constraints,
     ) -> &[PlacedRect] {
-        let revision = declaration.revision();
+        self.solve_at(declaration.revision(), layout, constraints)
+    }
+
+    /// 用**外部给的 revision** 求解（控件链与旧链共用同一个哈希实现：
+    /// [`crate::solver::plan_revision`] 把策略 / 约束 / token 并进声明摘要）。
+    pub fn solve_at(
+        &mut self,
+        revision: u64,
+        layout: &dyn Layout,
+        constraints: Constraints,
+    ) -> &[PlacedRect] {
         if self.revision != Some(revision) {
             self.cached = layout.layout(constraints);
             self.revision = Some(revision);
@@ -477,6 +497,10 @@ mod tests {
         assert_eq!(a.revision(), b.revision(), "同一份声明只有一个 revision");
         let mut changed = a.clone();
         changed.insert(LayoutId(1), Size::new(10.0, 21.0));
-        assert_ne!(a.revision(), changed.revision(), "尺寸变化必须改变 revision");
+        assert_ne!(
+            a.revision(),
+            changed.revision(),
+            "尺寸变化必须改变 revision"
+        );
     }
 }

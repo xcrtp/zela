@@ -107,13 +107,8 @@ mod defaults_snapshot {
 
     #[test]
     fn jobs_are_split_on_first_equals_only() {
-        let parsed = Args::parse_from(&args(&[
-            "--out-dir",
-            "tmp",
-            "--job",
-            "atlas=a=b/atlas.lua",
-        ]))
-        .expect("可解析");
+        let parsed = Args::parse_from(&args(&["--out-dir", "tmp", "--job", "atlas=a=b/atlas.lua"]))
+            .expect("可解析");
         assert_eq!(parsed.out_dir, PathBuf::from("tmp"));
         assert_eq!(parsed.jobs.len(), 1);
         assert_eq!(parsed.jobs[0].id, "atlas");
@@ -122,11 +117,20 @@ mod defaults_snapshot {
 
     #[test]
     fn required_values_fail_explicitly() {
-        assert!(Args::parse_from(&args(&["--job", "a=b"])).is_err(), "缺 --out-dir");
-        assert!(Args::parse_from(&args(&["--out-dir", "t"])).is_err(), "缺 --job");
+        assert!(
+            Args::parse_from(&args(&["--job", "a=b"])).is_err(),
+            "缺 --out-dir"
+        );
+        assert!(
+            Args::parse_from(&args(&["--out-dir", "t"])).is_err(),
+            "缺 --job"
+        );
         assert!(parse_job("fourier").is_err(), "缺 =");
         assert!(parse_job("=x.lua").is_err(), "空 id");
         assert!(parse_job("a=").is_err(), "空脚本");
-        assert!(Args::parse_from(&args(&["--help"])).is_err(), "--help 走用法分支");
+        assert!(
+            Args::parse_from(&args(&["--help"])).is_err(),
+            "--help 走用法分支"
+        );
     }
 }

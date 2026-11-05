@@ -25,14 +25,14 @@
 // （`HashMap<LayerId, ..>`），本帧**同类图层不再有数量上限**——这是 S3-3
 // （2D/3D 互为纹理）的前提，也是同一类多个图层各自成像的基础。
 
-use ze_scene_core::LayerKind;
+use ze_notion::{Rect2D, Vec2 as GeoVec2};
 use ze_render_ir::LayerId;
+use ze_scene_core::LayerKind;
+use zela_render::draw_queue_3d::{LineDraw, MeshDraw};
 use zela_render::{
     DirectionalLightRecord, DrawQueue, DrawQueue3D, LightQueue, MorphItem, PointLightRecord,
     PostFilterChain, RevealItem, Viewport,
 };
-use zela_render::draw_queue_3d::{LineDraw, MeshDraw};
-use ze_notion::{Rect2D, Vec2 as GeoVec2};
 
 use crate::compositor::{CompositeFrame, CompositeOp, Compositor, PostBlit};
 use crate::standard_backends::{BackendStore, ScreenParams};
@@ -112,12 +112,20 @@ impl SceneCompositorCallback {
         reveals: Vec<RevealItem>,
         filters: PostFilterChain,
     ) -> Self {
-        let needs_2d = layers.iter().any(|l| matches!(l.kind, LayerKind::Viewport2D { .. }));
-        let needs_3d = layers.iter().any(|l| matches!(l.kind, LayerKind::Viewport3D { .. }));
+        let needs_2d = layers
+            .iter()
+            .any(|l| matches!(l.kind, LayerKind::Viewport2D { .. }));
+        let needs_3d = layers
+            .iter()
+            .any(|l| matches!(l.kind, LayerKind::Viewport3D { .. }));
         Self {
             viewport_points,
             filters,
-            draws_2d: if needs_2d { snapshot_queue(queue_2d) } else { Vec::new() },
+            draws_2d: if needs_2d {
+                snapshot_queue(queue_2d)
+            } else {
+                Vec::new()
+            },
             content,
             meshes_3d: if needs_3d {
                 queue_3d.meshes().cloned().collect()
@@ -201,7 +209,11 @@ impl SceneCompositorCallback {
                 "{}:{}{}{};",
                 draw.shape.kind_name(),
                 if draw.style.fill.is_some() { "f" } else { "-" },
-                if draw.style.stroke.is_some() { "s" } else { "-" },
+                if draw.style.stroke.is_some() {
+                    "s"
+                } else {
+                    "-"
+                },
                 space
             ));
         }
@@ -578,18 +590,18 @@ impl egui_wgpu::CallbackTrait for SceneCompositorCallback {
 #[cfg(all(test, feature = "egui-wgpu"))]
 mod tests {
     use super::*;
-    use ze_render_ir::LayerBlend;
     use crate::render_context::RenderContext;
     use crate::standard_backends::{StandardBackends, render_frame_headless};
     use crate::wgpu_3d::WgpuBackend3D;
+    use ze_notion::Color32;
+    use ze_notion::Rect2D;
+    use ze_render_ir::LayerBlend;
+    use ze_scene_core::{Camera2D, Camera3D, Projection};
     use zela_render::ZIndex;
     use zela_render::components::FillSolid;
     use zela_scene_ecs::scene::components::{
         Material3D, MeshGeometry, PrimitiveTopology, TextureHandle,
     };
-    use ze_notion::Rect2D;
-    use ze_scene_core::{Camera2D, Camera3D, Projection};
-    use ze_notion::Color32;
 
     /// 内容纹理尺寸（与 3D 视口同尺寸，便于逐像素对应）。
     const TEX: u32 = 32;
@@ -676,7 +688,11 @@ mod tests {
         let mut material = Material3D::color(Color32::WHITE);
         material.texture = Some(TextureHandle::new(CONTENT_ID));
         let mut queue_3d = DrawQueue3D::new();
-        queue_3d.draw_mesh(std::sync::Arc::new(quad), ze_notion::Mat4::IDENTITY, material);
+        queue_3d.draw_mesh(
+            std::sync::Arc::new(quad),
+            ze_notion::Mat4::IDENTITY,
+            material,
+        );
 
         // 正交相机：垂直半高 1.0、aspect 1.0 ⇒ 覆盖世界 x/y ∈ [-1,1]，
         // 与四边形的世界范围完全对齐（视口 32×32，aspect = 1.0）。
@@ -809,8 +825,8 @@ mod tests {
     ///    内容纹理错乱（这正是当年分离实例要解决的问题）。
     #[test]
     fn headless_path_matches_egui_path_bit_for_bit() {
-        use zela_render::{FilterSlot, StrokeSolid};
         use ze_scene_core::Line;
+        use zela_render::{FilterSlot, StrokeSolid};
 
         let Some((_gpu, ctx)) = crate::gpu_test::require_gpu() else {
             return;
@@ -864,7 +880,11 @@ mod tests {
         let mut material = Material3D::color(Color32::WHITE);
         material.texture = Some(TextureHandle::new(CONTENT_ID));
         let mut queue_3d = DrawQueue3D::new();
-        queue_3d.draw_mesh(std::sync::Arc::new(quad), ze_notion::Mat4::IDENTITY, material);
+        queue_3d.draw_mesh(
+            std::sync::Arc::new(quad),
+            ze_notion::Mat4::IDENTITY,
+            material,
+        );
 
         let camera = Camera3D::new(
             ze_notion::Vec3::new(0.0, 0.0, 5.0),

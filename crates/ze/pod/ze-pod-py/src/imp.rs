@@ -13,17 +13,17 @@ use std::any::Any;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString};
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCFunction, PyDict, PyList, PyModule, PyTuple};
-use ze_pod_core::{
-    Capability, ErasedFn, Field, FunctionId, QualifiedName, RegistryPod, ScalarKind, ScalarValue,
-    ServiceRequirement, SyncPod, TypeSpec, Pod, PodError, PodId,
-};
 use ze_pod_binding::{BindingPlan, ValueCodec, channel_type_variant, invoke, short_name};
+use ze_pod_core::{
+    Capability, ErasedFn, Field, FunctionId, Pod, PodError, PodId, QualifiedName, RegistryPod,
+    ScalarKind, ScalarValue, ServiceRequirement, SyncPod, TypeSpec,
+};
 
 use crate::{ENTRY_SERVICE, FINISH_PATH, FloatList, PythonApi, RESET_PATH, RUN_PATH};
 
@@ -258,14 +258,14 @@ fn make_ctor<'py>(
                 };
                 let value = match item {
                     Some(item) => codec.to_pod(&item, field.ty)?,
-                    None => ze_pod_binding::field_default(type_name, field.name).ok_or_else(
-                        || {
+                    None => {
+                        ze_pod_binding::field_default(type_name, field.name).ok_or_else(|| {
                             PyErr::new::<PyTypeError, _>(format!(
                                 "`{type_name}` 缺少字段 `{}`",
                                 field.name
                             ))
-                        },
-                    )?,
+                        })?
+                    }
                 };
                 values.push((field.name, value));
             }
@@ -345,7 +345,9 @@ fn bind_capability<C: Capability<'static>>(
         let parent = ensure_package(py, this, parent_path)?;
         parent.bind(py).setattr(name, &service_module)?;
     }
-    this.module.bind(py).setattr(service_name, &service_module)?;
+    this.module
+        .bind(py)
+        .setattr(service_name, &service_module)?;
     install_clock_alias(py, this, &service_module, plan.calls)?;
 
     register_types(py, this, &service_module, namespace, &plan, service)?;
@@ -416,8 +418,7 @@ fn register_types(
         match spec {
             TypeSpec::Struct { name, fields, .. } => {
                 let ctor = plan.component_ctor(name);
-                let function =
-                    make_ctor(py, fields, name, None, ctor, Arc::clone(&service))?;
+                let function = make_ctor(py, fields, name, None, ctor, Arc::clone(&service))?;
                 this.module.bind(py).setattr(short, &function)?;
                 service_module.setattr(short, &function)?;
                 if let Some(home_module) = &home_module {
@@ -433,7 +434,11 @@ fn register_types(
                             Py::new(
                                 py,
                                 PyPodValue {
-                                    value: ze_pod_core::PodValue::Enum(name, variant.name, Vec::new()),
+                                    value: ze_pod_core::PodValue::Enum(
+                                        name,
+                                        variant.name,
+                                        Vec::new(),
+                                    ),
                                 },
                             )?
                             .into_any(),
@@ -774,10 +779,7 @@ impl PyPod {
 
     /// 已注入的 Service 名（测试 / 排查）。
     pub fn injected(&self) -> Vec<String> {
-        self.injected
-            .lock()
-            .expect("Python 注入表锁中毒")
-            .clone()
+        self.injected.lock().expect("Python 注入表锁中毒").clone()
     }
 }
 
@@ -824,7 +826,11 @@ fn py_requirements(pod: &dyn Pod) -> Vec<ServiceRequirement> {
         .lock()
         .expect("Python 绑定表锁中毒")
         .values()
-        .flat_map(|entries| entries.iter().flat_map(|entry| entry.requirements.iter().cloned()))
+        .flat_map(|entries| {
+            entries
+                .iter()
+                .flat_map(|entry| entry.requirements.iter().cloned())
+        })
         .collect()
 }
 
@@ -926,20 +932,10 @@ fn py_run(pod: &dyn Pod, args: &[&dyn Any]) -> Result<Box<dyn Any>, PodError> {
 fn install_modules(py: Python<'_>, this: &PyPod) -> PyResult<()> {
     let sys = py.import("sys")?;
     let modules = sys.getattr("modules")?.cast_into::<PyDict>()?;
-    for (name, module) in this
-        .packages
-        .lock()
-        .expect("Python 包表锁中毒")
-        .iter()
-    {
+    for (name, module) in this.packages.lock().expect("Python 包表锁中毒").iter() {
         modules.set_item(name.as_str(), module.bind(py))?;
     }
-    for (name, module) in this
-        .modules
-        .lock()
-        .expect("Python 模块表锁中毒")
-        .iter()
-    {
+    for (name, module) in this.modules.lock().expect("Python 模块表锁中毒").iter() {
         modules.set_item(name.as_str(), module.bind(py))?;
     }
     Ok(())
@@ -1031,9 +1027,6 @@ mod run_guard_tests {
     #[test]
     fn reentrant_run_returns_an_explicit_error_in_release() {
         let _outer = RunGuard::acquire().expect("外层进入");
-        assert!(
-            RunGuard::acquire().is_err(),
-            "同线程重入必须返回明确错误"
-        );
+        assert!(RunGuard::acquire().is_err(), "同线程重入必须返回明确错误");
     }
 }

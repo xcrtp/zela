@@ -127,7 +127,10 @@ fn assert_within_tolerance(wgpu: &[u8], vector: &[u8]) -> (f64, f64) {
     let mae_at = |index: usize| -> f64 {
         let p = &wgpu[index * 4..index * 4 + 4];
         let q = &vector[index * 4..index * 4 + 4];
-        (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>() / 3.0
+        (0..3)
+            .map(|k| (p[k] as f64 - q[k] as f64).abs())
+            .sum::<f64>()
+            / 3.0
     };
     let total = (SIZE * SIZE) as usize;
     let mae: f64 = (0..total).map(mae_at).sum::<f64>() / total as f64;
@@ -145,16 +148,23 @@ fn assert_within_tolerance(wgpu: &[u8], vector: &[u8]) -> (f64, f64) {
                 continue;
             }
             // 4 邻域里只要有一个未被覆盖 ⇒ 边缘带；否则算内部区。
-            let is_edge = [(x.wrapping_sub(1), y), (x + 1, y), (x, y.wrapping_sub(1)), (x, y + 1)]
-                .into_iter()
-                .filter(|&(nx, ny)| nx < SIZE && ny < SIZE)
-                .any(|(nx, ny)| !covered(vector, index_of(nx, ny)));
+            let is_edge = [
+                (x.wrapping_sub(1), y),
+                (x + 1, y),
+                (x, y.wrapping_sub(1)),
+                (x, y + 1),
+            ]
+            .into_iter()
+            .filter(|&(nx, ny)| nx < SIZE && ny < SIZE)
+            .any(|(nx, ny)| !covered(vector, index_of(nx, ny)));
             let bucket = if is_edge { &mut edge } else { &mut interior };
             bucket.0 += 1;
             bucket.1 += mae_at(i);
         }
     }
-    let mean = |(count, sum): (usize, f64)| if count == 0 { 0.0 } else { sum / count as f64 };
+    let mean = |(count, sum): (usize, f64)| {
+        if count == 0 { 0.0 } else { sum / count as f64 }
+    };
     let (interior_mae, edge_mae) = (mean(interior), mean(edge));
     eprintln!(
         "双后端对拍：wgpu={a} 像素 / vector={b} 像素（相对差 {relative:.3}），\
@@ -193,7 +203,10 @@ fn vector_backend_matches_wgpu_on_an_axis_aligned_rect() {
         )],
     );
     let (relative, mae) = assert_within_tolerance(&wgpu, &vector);
-    assert!(relative < 1e-9 && mae < 1e-9, "轴对齐矩形应逐位一致：相对差 {relative:.6}，MAE {mae:.6}");
+    assert!(
+        relative < 1e-9 && mae < 1e-9,
+        "轴对齐矩形应逐位一致：相对差 {relative:.6}，MAE {mae:.6}"
+    );
 }
 
 /// 同一个 `DrawQueue` 分别走 wgpu 与"快照 → 矢量映射"，返回两帧 RGBA。
@@ -252,7 +265,12 @@ fn frame_mae(a: &[u8], b: &[u8]) -> f64 {
     let total = (SIZE * SIZE) as usize;
     a.chunks_exact(4)
         .zip(b.chunks_exact(4))
-        .map(|(p, q)| (0..3).map(|k| (p[k] as f64 - q[k] as f64).abs()).sum::<f64>() / 3.0)
+        .map(|(p, q)| {
+            (0..3)
+                .map(|k| (p[k] as f64 - q[k] as f64).abs())
+                .sum::<f64>()
+                / 3.0
+        })
         .sum::<f64>()
         / total as f64
 }
@@ -273,20 +291,10 @@ fn per_frame_tolerance_holds_across_an_animation() {
         // 几何本身旋转 + 平移（`DrawQueue` 不携带变换 ⇒ 直接把点烘进去），这样两侧
         // 看到的是同一批点、同一帧。
         let (sin, cos) = angle.sin_cos();
-        let corners: Vec<Vec2> = [
-            (-18.0, -10.0),
-            (18.0, -10.0),
-            (18.0, 10.0),
-            (-18.0, 10.0),
-        ]
-        .iter()
-        .map(|(x, y)| {
-            Vec2::new(
-                64.0 + offset + x * cos - y * sin,
-                64.0 + x * sin + y * cos,
-            )
-        })
-        .collect();
+        let corners: Vec<Vec2> = [(-18.0, -10.0), (18.0, -10.0), (18.0, 10.0), (-18.0, 10.0)]
+            .iter()
+            .map(|(x, y)| Vec2::new(64.0 + offset + x * cos - y * sin, 64.0 + x * sin + y * cos))
+            .collect();
         let mut queue = DrawQueue::new();
         queue.path_fill(
             ZIndex::new(0),
@@ -305,14 +313,15 @@ fn per_frame_tolerance_holds_across_an_animation() {
     }
 
     // ① 逐帧都不是逐位相同（防两侧退化成同一实现）。
-    assert!(maes.iter().any(|m| *m > 0.0), "逐帧 MAE 全为 0 ⇒ 可能退化为同一实现");
+    assert!(
+        maes.iter().any(|m| *m > 0.0),
+        "逐帧 MAE 全为 0 ⇒ 可能退化为同一实现"
+    );
     // ② 时域：动画在动，且帧间 MAE 不出现异常跳变（阈值 = 3×均值，先测数据再定）。
     let mean = temporal.iter().sum::<f64>() / temporal.len() as f64;
     assert!(mean > 0.0, "动画帧之间必须不同（否则测不出闪烁）");
     let worst = temporal.iter().cloned().fold(0.0f64, f64::max);
-    eprintln!(
-        "时域稳定性：逐帧 MAE {maes:?}；帧间 MAE 均值 {mean:.3}/255、最大 {worst:.3}/255"
-    );
+    eprintln!("时域稳定性：逐帧 MAE {maes:?}；帧间 MAE 均值 {mean:.3}/255、最大 {worst:.3}/255");
     assert!(
         worst <= mean * 3.0,
         "帧间 MAE 出现异常跳变：最大 {worst:.3}/255 > 3×均值 {:.3}/255",
@@ -391,16 +400,15 @@ fn vector_backend_matches_wgpu_on_a_diagonal_edge() {
         // 用**世界坐标（y 向上）** ⇒ 这里必须把 y 取负，否则比的是镜像形状
         // （P1-1 拆分出的"内部区 MAE"会立刻暴露这一点）。
         &[FilledPath::polygon(
-            &[
-                [0.0, 40.0, 0.0],
-                [40.0, -32.0, 0.0],
-                [-40.0, -32.0, 0.0],
-            ],
+            &[[0.0, 40.0, 0.0], [40.0, -32.0, 0.0], [-40.0, -32.0, 0.0]],
             [1.0, 0.0, 0.0, 1.0],
         )],
     );
     let (relative, mae) = assert_within_tolerance(&wgpu, &vector);
-    assert!(relative > 0.0 || mae > 0.0, "斜边应体现抗锯齿差异（而非逐位相同）");
+    assert!(
+        relative > 0.0 || mae > 0.0,
+        "斜边应体现抗锯齿差异（而非逐位相同）"
+    );
 }
 
 /// **PB Step 3（V2-11）**：miter limit 差异的**测量**，不是门禁。

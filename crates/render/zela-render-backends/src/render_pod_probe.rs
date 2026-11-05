@@ -32,14 +32,12 @@ use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 use ze_notion::{Color32, MeasureSpace, Rect2D, Transform2D, Vec2};
-use ze_pod_core::{
-    FunctionId, Handle, HandleTable, Pod, PodBytes, PodError, PodId, QualifiedName,
-};
-use ze_render_ir::caps::{render2d, RenderCapabilitySet};
+use ze_pod_core::{FunctionId, Handle, HandleTable, Pod, PodBytes, PodError, PodId, QualifiedName};
+use ze_render_ir::caps::{RenderCapabilitySet, render2d};
 use ze_render_ir::{ColorFormat, LayerId, RenderTargetDesc, Shape2D, Style2D};
 
-use crate::wgpu_2d::{Frame2DGeometry, MSAA_SAMPLES, OFFSCREEN_FORMAT, WgpuBackend2D};
 use crate::RenderContext;
+use crate::wgpu_2d::{Frame2DGeometry, MSAA_SAMPLES, OFFSCREEN_FORMAT, WgpuBackend2D};
 
 // ─── 探针载荷（**本文件私有**，与 IR 的 serde 决策解耦）────────────────────
 
@@ -101,7 +99,9 @@ impl ProbeDraw {
         let style = Style2D {
             stroke_shape: Default::default(),
             fill: self.fill.map(|[r, g, b, a]| Color32::from_rgba(r, g, b, a)),
-            stroke: self.stroke.map(|[r, g, b, a]| Color32::from_rgba(r, g, b, a)),
+            stroke: self
+                .stroke
+                .map(|[r, g, b, a]| Color32::from_rgba(r, g, b, a)),
             stroke_width: self.stroke_width,
             space: MeasureSpace::Screen,
             paint: Default::default(),
@@ -492,7 +492,12 @@ mod tests {
         // 防空过：至少中心圆真的画出来了（红通道高、绿蓝低）。
         let at = |x: u32, y: u32| {
             let i = ((y * W + x) * 4) as usize;
-            [h1_bytes[i], h1_bytes[i + 1], h1_bytes[i + 2], h1_bytes[i + 3]]
+            [
+                h1_bytes[i],
+                h1_bytes[i + 1],
+                h1_bytes[i + 2],
+                h1_bytes[i + 3],
+            ]
         };
         let center = at(60, 60);
         assert!(
@@ -566,8 +571,8 @@ mod tests {
         };
         let pod = RenderProbePod::new(ctx);
 
-        let wrong_format = RenderTargetDesc::new(8, 8, ColorFormat::Bgra8Unorm)
-            .with_sample_count(MSAA_SAMPLES);
+        let wrong_format =
+            RenderTargetDesc::new(8, 8, ColorFormat::Bgra8Unorm).with_sample_count(MSAA_SAMPLES);
         let err = pod
             .call(FunctionId::new(1), &[&wrong_format])
             .expect_err("格式不匹配必须显式失败");

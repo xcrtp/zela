@@ -51,8 +51,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroU64;
 use std::sync::Mutex;
 
-use ze_notion::Mat4;
 use wgpu::util::DeviceExt as _;
+use ze_notion::Mat4;
 
 use crate::gpu_util::{UniformArena, bytes_of};
 use ze_notion::Color32;
@@ -63,10 +63,10 @@ use crate::render_backend::{GpuHandle, RenderBackend3D};
 use crate::render_layer::RenderLayer;
 use crate::render_target::RenderTarget;
 use crate::resource_cache::{ResourceCache, ResourceKey};
-use ze_render_ir::{LayerId, PostCaps, PrimitiveTopology, ShaderVariant, UvProjection};
 use ze_render_ir::{
     Capabilities, CapabilityError, ColorFormat, CullMode, DepthFormat, LayerBlend, ZOrder,
 };
+use ze_render_ir::{LayerId, PostCaps, PrimitiveTopology, ShaderVariant, UvProjection};
 use ze_vertex::AttribType;
 
 /// 默认着色器（cube.wgsl）：uniform = mat4 mvp + mat4 model + vec4 color。
@@ -682,7 +682,11 @@ impl WgpuBackend3D {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        queue.write_buffer(&light_buffer, 0, &default_light_bytes(ze_notion::Vec3::ZERO));
+        queue.write_buffer(
+            &light_buffer,
+            0,
+            &default_light_bytes(ze_notion::Vec3::ZERO),
+        );
 
         Self {
             device,
@@ -1099,7 +1103,10 @@ impl WgpuBackend3D {
                     md.material.uv_projection,
                 )
                 .unwrap_or_else(|error| {
-                    panic!("不静默：3D 顶点生产失败（几何 id={}）：{error}", geometry.id())
+                    panic!(
+                        "不静默：3D 顶点生产失败（几何 id={}）：{error}",
+                        geometry.id()
+                    )
                 });
                 let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("zela-3d-mesh-vertices"),
@@ -1204,9 +1211,7 @@ impl WgpuBackend3D {
             } else {
                 // B3-0b：line 顶点也走生产端（B7：内联是第二个来源）。
                 let data = zela_render::vertex_record::line_vertex_buffer(line.start, line.end)
-                    .unwrap_or_else(|error| {
-                        panic!("不静默：3D 线段顶点生产失败：{error}")
-                    });
+                    .unwrap_or_else(|error| panic!("不静默：3D 线段顶点生产失败：{error}"));
                 let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("zela-3d-line-vertices"),
                     contents: &data.vertices,
@@ -1308,7 +1313,8 @@ impl WgpuBackend3D {
                     None => {
                         let view = self.resolve_texture_view(s.texture_id);
                         let nv = self.resolve_normal_view(s.normal_texture_id);
-                        let bg = self.create_material_bind_group(device, &arena_buf_owned, &view, &nv);
+                        let bg =
+                            self.create_material_bind_group(device, &arena_buf_owned, &view, &nv);
                         bg_guard.entries.insert(bg_key, bg.clone());
                         bg
                     }
@@ -1457,10 +1463,7 @@ impl WgpuBackend3D {
     ///
     /// 需要 `adapter`：wgpu 30 的 `get_texture_format_features` 是 `Adapter` 方法
     /// （`Device` 上没有）。调用方必须持有 adapter（B2-5 接线时补进装配层）。
-    pub fn capabilities(
-        &self,
-        adapter: &wgpu::Adapter,
-    ) -> Result<Capabilities, CapabilityError> {
+    pub fn capabilities(&self, adapter: &wgpu::Adapter) -> Result<Capabilities, CapabilityError> {
         let color_format = match self.format {
             wgpu::TextureFormat::Rgba8UnormSrgb => ColorFormat::Rgba8UnormSrgb,
             wgpu::TextureFormat::Rgba8Unorm => ColorFormat::Rgba8Unorm,
@@ -1643,7 +1646,12 @@ impl RenderBackend3D for WgpuBackend3D {
 
 /// 组装 uniform 字节：mat4 mvp（64，列主序）+ mat4 model（64）+ vec4 color（16）
 /// + vec4 params（16，`x = metallic, y = roughness`，B1-C PBR）。
-fn uniform_bytes(mvp: Mat4, model: Mat4, color: Color32, params: [f32; 4]) -> [u8; UNIFORM_SIZE as usize] {
+fn uniform_bytes(
+    mvp: Mat4,
+    model: Mat4,
+    color: Color32,
+    params: [f32; 4],
+) -> [u8; UNIFORM_SIZE as usize] {
     let mut data = [0u8; UNIFORM_SIZE as usize];
     let m = mvp.to_cols_array();
     data[..64].copy_from_slice(bytes_of(&m));
@@ -1715,7 +1723,11 @@ fn pack_light_bytes(
 /// `camera` 只被 PBR 视线向量消费（默认场景无 PBR 材质时不影响任何像素）。
 fn default_light_bytes(camera: ze_notion::Vec3) -> [u8; LIGHT_UNIFORM_SIZE as usize] {
     pack_light_bytes(
-        &[DirectionalLightRecord::new(ze_notion::Vec3::Z, Color32::WHITE, 1.0)],
+        &[DirectionalLightRecord::new(
+            ze_notion::Vec3::Z,
+            Color32::WHITE,
+            1.0,
+        )],
         &[],
         DEFAULT_AMBIENT,
         camera,
@@ -1821,11 +1833,12 @@ mod tests {
         use wgpu::TextureFormatFeatureFlags as F;
         assert_eq!(max_sample_count_from_flags(F::empty()), 1);
         assert_eq!(max_sample_count_from_flags(F::MULTISAMPLE_X2), 2);
-        assert_eq!(max_sample_count_from_flags(F::MULTISAMPLE_X2 | F::MULTISAMPLE_X4), 4);
         assert_eq!(
-            max_sample_count_from_flags(
-                F::MULTISAMPLE_X2 | F::MULTISAMPLE_X4 | F::MULTISAMPLE_X8
-            ),
+            max_sample_count_from_flags(F::MULTISAMPLE_X2 | F::MULTISAMPLE_X4),
+            4
+        );
+        assert_eq!(
+            max_sample_count_from_flags(F::MULTISAMPLE_X2 | F::MULTISAMPLE_X4 | F::MULTISAMPLE_X8),
             8
         );
         // 高位独在也要取到（不要求低位连续）
@@ -2592,7 +2605,11 @@ mod tests {
             &ctx,
             LayerId(32),
             size,
-            &[MeshDraw::new(std::sync::Arc::clone(&geometry), Mat4::IDENTITY, pbr)],
+            &[MeshDraw::new(
+                std::sync::Arc::clone(&geometry),
+                Mat4::IDENTITY,
+                pbr,
+            )],
         );
         assert_eq!(backend.pipeline_count(), 2);
 
@@ -2649,7 +2666,11 @@ mod tests {
             &ctx,
             LayerId(34),
             size,
-            &[MeshDraw::new(std::sync::Arc::clone(&geometry), Mat4::IDENTITY, base)],
+            &[MeshDraw::new(
+                std::sync::Arc::clone(&geometry),
+                Mat4::IDENTITY,
+                base,
+            )],
         );
         assert_eq!(backend.pipeline_count(), 1);
 
@@ -2717,7 +2738,8 @@ mod tests {
 
         // ① 单面：背面被剔除 ⇒ 中心 alpha = 0（清屏透明）
         let single = flat_plane(0.5, 0.5, 0.0, Color32::WHITE);
-        let px = render_planes_with_view_proj(&backend, &ctx, LayerId(37), size, mirrored, &[single]);
+        let px =
+            render_planes_with_view_proj(&backend, &ctx, LayerId(37), size, mirrored, &[single]);
         assert_eq!(
             pixel_at(&px, size, 16, 16)[3],
             0,
@@ -2828,7 +2850,13 @@ mod tests {
 
         // RED(z=0) 先画、BLUE(z=1) 后画 ⇒ 中心偏蓝。
         // 目标格式是 Bgra8（headless 默认）⇒ 字节 0 = B、字节 2 = R。
-        let a = render_planes(&backend, &ctx, LayerId(39), size, &[red_q.clone(), blue_q.clone()]);
+        let a = render_planes(
+            &backend,
+            &ctx,
+            LayerId(39),
+            size,
+            &[red_q.clone(), blue_q.clone()],
+        );
         let center = pixel_at(&a, size, 16, 16);
         assert!(
             center[0] > center[2],
@@ -2840,13 +2868,7 @@ mod tests {
         red_q2.z = ZOrder::new(1);
         let mut blue_q2 = blue_q.clone();
         blue_q2.z = ZOrder::new(0);
-        let b = render_planes(
-            &backend,
-            &ctx,
-            LayerId(40),
-            size,
-            &[blue_q2, red_q2],
-        );
+        let b = render_planes(&backend, &ctx, LayerId(40), size, &[blue_q2, red_q2]);
         let center = pixel_at(&b, size, 16, 16);
         assert!(
             center[2] > center[0],
@@ -3088,7 +3110,11 @@ mod tests {
         );
         // 真实曲面（法线随位置变化）才能体现方向光差异。
         let draws = vec![flat_plane(1.0, 1.0, 0.0, Color32::new(255, 255, 255, 255))];
-        let up_light = [DirectionalLightRecord::new(ze_notion::Vec3::Z, Color32::WHITE, 1.0)];
+        let up_light = [DirectionalLightRecord::new(
+            ze_notion::Vec3::Z,
+            Color32::WHITE,
+            1.0,
+        )];
         let side_light = [DirectionalLightRecord::new(
             ze_notion::Vec3::new(1.0, 0.0, 0.0),
             Color32::WHITE,
@@ -3121,10 +3147,7 @@ mod tests {
             px_default, px_up,
             "默认光照必须与显式单光 (0,0,1) 逐位一致（B1-A 像素锚点）"
         );
-        assert_ne!(
-            px_up, px_side,
-            "两个不同方向光下同一场景的像素必须不同"
-        );
+        assert_ne!(px_up, px_side, "两个不同方向光下同一场景的像素必须不同");
     }
 
     /// **B1-A 验收（真实设备）**：方向光数量超上限 ⇒ **显式报错**
@@ -3225,7 +3248,16 @@ mod tests {
             1.0,
             2.0,
         )];
-        let px = render_with_camera_lights(&backend, &ctx, LayerId(1), size, &camera, &draws, &[], &point);
+        let px = render_with_camera_lights(
+            &backend,
+            &ctx,
+            LayerId(1),
+            size,
+            &camera,
+            &draws,
+            &[],
+            &point,
+        );
         // 屏幕中心 = 平面中心（光源正下方，距离 1）。
         let center = pixel_at(&px, size, size / 2, size / 2);
         // 屏幕左上角 = 平面左上角附近（距离 > range ⇒ 衰减到 0）。
@@ -3245,12 +3277,7 @@ mod tests {
 
     /// 注册一张 1×1 法线贴图（`Rgba8Unorm`，**非 sRGB** —— 见 `new()` 注释：
     /// sRGB 采样会自动解码到线性域，会破坏法线值）。
-    fn register_normal_map(
-        backend: &WgpuBackend3D,
-        ctx: &RenderContext,
-        id: u64,
-        texel: [u8; 4],
-    ) {
+    fn register_normal_map(backend: &WgpuBackend3D, ctx: &RenderContext, id: u64, texel: [u8; 4]) {
         let texture = ctx.device().create_texture(&wgpu::TextureDescriptor {
             label: Some("test-3d-normal-map"),
             size: wgpu::Extent3d {
@@ -3329,13 +3356,25 @@ mod tests {
         // 1) Pbr ≠ Lambert（默认光照、同一相机）。
         let px_lambert =
             render_with_camera(&backend, &ctx, LayerId(31), size, &camera, &[draw(lambert)]);
-        let px_pbr =
-            render_with_camera(&backend, &ctx, LayerId(32), size, &camera, &[draw(pbr_dielectric)]);
+        let px_pbr = render_with_camera(
+            &backend,
+            &ctx,
+            LayerId(32),
+            size,
+            &camera,
+            &[draw(pbr_dielectric)],
+        );
         assert_ne!(px_lambert, px_pbr, "Pbr 与 Lambert 必须产生不同像素");
 
         // 2) metallic 0 ↔ 1（同为 Pbr）。
-        let px_metal =
-            render_with_camera(&backend, &ctx, LayerId(33), size, &camera, &[draw(pbr_metal)]);
+        let px_metal = render_with_camera(
+            &backend,
+            &ctx,
+            LayerId(33),
+            size,
+            &camera,
+            &[draw(pbr_metal)],
+        );
         assert_ne!(px_pbr, px_metal, "metallic 0 与 1 必须产生不同像素");
 
         // 3) 法线贴图：1×1 倾斜法线（(255,128,255) → nts ≈ (1, 0, 1)，法线朝 +X 斜 45°）。
@@ -3343,9 +3382,18 @@ mod tests {
         let mut pbr_bumped = Material3D::color(Color32::WHITE);
         pbr_bumped.variant = ShaderVariant::Pbr;
         pbr_bumped.normal_map = Some(TextureHandle::new(7));
-        let px_bump =
-            render_with_camera(&backend, &ctx, LayerId(34), size, &camera, &[draw(pbr_bumped)]);
-        assert_ne!(px_pbr, px_bump, "法线贴图必须改变 PBR 像素（屏幕空间 TBN 生效）");
+        let px_bump = render_with_camera(
+            &backend,
+            &ctx,
+            LayerId(34),
+            size,
+            &camera,
+            &[draw(pbr_bumped)],
+        );
+        assert_ne!(
+            px_pbr, px_bump,
+            "法线贴图必须改变 PBR 像素（屏幕空间 TBN 生效）"
+        );
 
         // 4) 视点相关：同一带法线贴图场景，换相机位置 ⇒ 像素改变。
         let camera2 = Camera3D::new(
@@ -3354,8 +3402,14 @@ mod tests {
             ze_notion::Vec3::Y,
             Projection::perspective(std::f32::consts::FRAC_PI_3, 1.0, 0.1, 100.0),
         );
-        let px_bump2 =
-            render_with_camera(&backend, &ctx, LayerId(35), size, &camera2, &[draw(pbr_bumped)]);
+        let px_bump2 = render_with_camera(
+            &backend,
+            &ctx,
+            LayerId(35),
+            size,
+            &camera2,
+            &[draw(pbr_bumped)],
+        );
         assert_ne!(
             px_bump, px_bump2,
             "相机位置必须改变 PBR 像素（视线向量进入 uniform）"
@@ -3484,4 +3538,3 @@ mod tests {
         assert_eq!(frames[0], p_base, "轨迹起点 = 初始位姿 ⇒ 画面应逐位一致");
     }
 }
-

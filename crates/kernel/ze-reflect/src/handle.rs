@@ -62,10 +62,9 @@ pub enum HandleError {
 impl fmt::Display for HandleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CrossOwner { expected, actual } => write!(
-                f,
-                "跨 owner 句柄：句柄属于 `{actual}`，当前是 `{expected}`"
-            ),
+            Self::CrossOwner { expected, actual } => {
+                write!(f, "跨 owner 句柄：句柄属于 `{actual}`，当前是 `{expected}`")
+            }
             Self::Stale {
                 slot,
                 expected,
@@ -146,10 +145,7 @@ impl<T> SlotTable<T> {
             .get(slot as usize)
             .filter(|entry| entry.generation == generation)
             .ok_or(HandleError::Released { slot })?;
-        entry
-            .value
-            .as_ref()
-            .ok_or(HandleError::Released { slot })
+        entry.value.as_ref().ok_or(HandleError::Released { slot })
     }
 
     /// 取可变引用；generation 不匹配 ⇒ [`HandleError::Stale`]。
@@ -159,10 +155,7 @@ impl<T> SlotTable<T> {
             .get_mut(slot as usize)
             .filter(|entry| entry.generation == generation)
             .ok_or(HandleError::Released { slot })?;
-        entry
-            .value
-            .as_mut()
-            .ok_or(HandleError::Released { slot })
+        entry.value.as_mut().ok_or(HandleError::Released { slot })
     }
 
     /// 显式释放；重复释放同样是显式错误。
@@ -183,7 +176,10 @@ impl<T> SlotTable<T> {
 
     /// 存活值数量。
     pub fn len(&self) -> usize {
-        self.slots.iter().filter(|slot| slot.value.is_some()).count()
+        self.slots
+            .iter()
+            .filter(|slot| slot.value.is_some())
+            .count()
     }
 
     pub fn is_empty(&self) -> bool {

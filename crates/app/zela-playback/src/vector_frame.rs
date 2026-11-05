@@ -12,8 +12,8 @@
 //! - 3D 网格记录在渲染时再取（`mesh_records` 对线框会显式报错，必须在路由**之后**）。
 
 use ze_notion::{Path2D, Vec2};
-use ze_scene_core::domain::LayerDescriptor;
 use ze_scene_core::LayerKind;
+use ze_scene_core::domain::LayerDescriptor;
 use zela_render::draw::DrawQueue;
 use zela_render_backends::routing::FrameContent;
 use zela_render_backends::{Recorded2D, snapshot_queue};
@@ -226,7 +226,11 @@ impl VectorFrame {
                     .map(|state| state.elapsed)
                     .unwrap_or(0.0);
                 let shader_params = draws.iter().any(|draw| {
-                    draw.style.paint.shader.as_ref().is_some_and(|shader| !shader.params.is_empty())
+                    draw.style
+                        .paint
+                        .shader
+                        .as_ref()
+                        .is_some_and(|shader| !shader.params.is_empty())
                 });
                 Ok(Self {
                     layers,
@@ -288,15 +292,10 @@ impl VectorFrame {
             .iter()
             .any(|layer| matches!(layer.kind, LayerKind::Viewport3D { .. }));
         // **BV-5**：本帧是否有 3D 视图要求光追（路由据此拒绝 wgpu）。
-        let raytrace = self.layers.iter().any(|layer| {
-            matches!(
-                layer.kind,
-                LayerKind::Viewport3D {
-                    raytrace: true,
-                    ..
-                }
-            )
-        });
+        let raytrace = self
+            .layers
+            .iter()
+            .any(|layer| matches!(layer.kind, LayerKind::Viewport3D { raytrace: true, .. }));
         let has_content_texture = !self.content.is_empty();
         // **PG Step 2（路线 B）**：`composite = false` 的层由矢量侧当相机视图先渲、
         // 网格按句柄采样（[`ContentSnapshot::handle`]）。唯一画不了的情形是材质引用的
@@ -384,18 +383,19 @@ impl VectorFrame {
                 };
                 // B14 / X4-02：网格与灯**都必须在渲染时取**（`take()` 太早，`LightQueue`
                 // 那时还不存在 ⇒ 以前一直静默用默认灯，画面系统性偏暗）。
-                let (mut records, lights) = runtime
-                    .driver
-                    .with_scheduler(|scheduler| -> Result<_, String> {
-                        let lights = crate::vector3d::lights(
-                            scheduler.resources().get::<zela_render::LightQueue>(),
-                        );
-                        let records = match scheduler.resources().get::<DrawQueue>() {
-                            Some(queue) => crate::vector3d::mesh_records(queue, lines)?,
-                            None => Vec::new(),
-                        };
-                        Ok((records, lights))
-                    })?;
+                let (mut records, lights) =
+                    runtime
+                        .driver
+                        .with_scheduler(|scheduler| -> Result<_, String> {
+                            let lights = crate::vector3d::lights(
+                                scheduler.resources().get::<zela_render::LightQueue>(),
+                            );
+                            let records = match scheduler.resources().get::<DrawQueue>() {
+                                Some(queue) => crate::vector3d::mesh_records(queue, lines)?,
+                                None => Vec::new(),
+                            };
+                            Ok((records, lights))
+                        })?;
                 // **PF Step 2（2D/3D 混排）**：同一帧里的 2D 记录不丢弃，而是作为
                 // **屏幕空间 overlay** 追加进 3D 帧（E-3 已实测：OVERLAY 记录固定压在
                 // 屏幕平面，z 不参与透视）。后端机制本来就有，这里只是接线。
@@ -412,7 +412,12 @@ impl VectorFrame {
                 // 内容层自己用矢量 2D 路径渲染（与 PC 路线 A 同一份 `content_records`），
                 // 因此坐标口径（1 世界单位 = 1 层像素）完全一致。
                 let mut cameras = Vec::new();
-                for (index, layer) in self.content.iter().enumerate().filter(|(_, l)| !l.composite) {
+                for (index, layer) in self
+                    .content
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| !l.composite)
+                {
                     cameras.push(zela_render_vector::CameraView::content_2d(
                         layer.handle,
                         layer.size[0],
@@ -506,26 +511,28 @@ impl VectorFrame {
             style.stroke_width *= scale;
             style.paint.background_width *= scale;
             records.extend(
-                zela_render_vector::morph_records(
-                    &from,
-                    &to,
-                    morph.t,
-                    &style,
-                    to_canvas,
-                    canvas,
-                )
-                .map_err(|error| format!("形变项 #{index}：{error}"))?,
+                zela_render_vector::morph_records(&from, &to, morph.t, &style, to_canvas, canvas)
+                    .map_err(|error| format!("形变项 #{index}：{error}"))?,
             );
         }
         // **阶段 2**：外部注入 —— 按参数表逐项向供给者取值（缺供给者 ⇒ 显式报错）。
         for record in &mut records {
-            let zela_render_vector::PathRecord::Fill(fill) = record else { continue };
-            let Some(paint) = fill.options.shader.as_ref() else { continue };
-            let Some(shader) = fill.shader.as_mut() else { continue };
+            let zela_render_vector::PathRecord::Fill(fill) = record else {
+                continue;
+            };
+            let Some(paint) = fill.options.shader.as_ref() else {
+                continue;
+            };
+            let Some(shader) = fill.shader.as_mut() else {
+                continue;
+            };
             let mut bytes = vec![0u8; paint.size as usize];
             for param in &paint.params {
                 let Some(value) = self.shader_value(&param.channel) else {
-                    return Err(format!("着色 codegen 缺少注入通道 {}（宿主未注册供给者）", param.channel));
+                    return Err(format!(
+                        "着色 codegen 缺少注入通道 {}（宿主未注册供给者）",
+                        param.channel
+                    ));
                 };
                 value.write(&mut bytes, param.offset as usize, param.kind);
             }
@@ -587,7 +594,9 @@ impl VectorFrame {
                 view,
                 cameras,
                 records,
-            } => zela_render_vector::render_3d_with(width, height, samples, &view, &cameras, &records)?,
+            } => zela_render_vector::render_3d_with(
+                width, height, samples, &view, &cameras, &records,
+            )?,
             Prepared::TwoD {
                 background,
                 records,
@@ -613,8 +622,10 @@ impl VectorFrame {
                 cameras,
                 records,
             } => {
-                zela_render_vector::render_3d_with_async(width, height, 4, &view, &cameras, &records)
-                    .await?
+                zela_render_vector::render_3d_with_async(
+                    width, height, 4, &view, &cameras, &records,
+                )
+                .await?
             }
             Prepared::TwoD {
                 background,
@@ -623,7 +634,8 @@ impl VectorFrame {
                 zela_render_vector::render_2d_async(width, height, 4, background, &records).await?
             }
         };
-        self.composite_content_async(width, height, &mut rgba).await?;
+        self.composite_content_async(width, height, &mut rgba)
+            .await?;
         Ok(rgba)
     }
 
@@ -658,7 +670,9 @@ impl VectorFrame {
         params: &zela_scene_bundle::RenderParams,
         background: [f32; 4],
     ) -> Result<(), String> {
-        self.render_to_texture_with(runtime, target, width, height, scale, samples, params, background)
+        self.render_to_texture_with(
+            runtime, target, width, height, scale, samples, params, background,
+        )
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -748,12 +762,7 @@ impl VectorFrame {
 
     /// 把 `composite = true` 的内容层按声明顺序叠到视口像素上（native）。
     #[cfg(not(target_arch = "wasm32"))]
-    fn composite_content(
-        &self,
-        width: u32,
-        height: u32,
-        rgba: &mut [u8],
-    ) -> Result<(), String> {
+    fn composite_content(&self, width: u32, height: u32, rgba: &mut [u8]) -> Result<(), String> {
         for (index, layer) in self.content.iter().enumerate().filter(|(_, l)| l.composite) {
             let pixels = content_raster::render(layer, index)?;
             composite_layer(rgba, width, height, pixels.as_slice(), layer)
@@ -789,7 +798,10 @@ impl VectorFrame {
 }
 
 /// 逐个字段比（`Recorded2D` 只派生了 `Clone`，没有 `PartialEq`）。
-fn same_draws(a: &[zela_render_backends::Recorded2D], b: &[zela_render_backends::Recorded2D]) -> bool {
+fn same_draws(
+    a: &[zela_render_backends::Recorded2D],
+    b: &[zela_render_backends::Recorded2D],
+) -> bool {
     a.len() == b.len()
         && a.iter().zip(b).all(|(left, right)| {
             left.shape == right.shape
@@ -822,14 +834,9 @@ mod content_raster {
 
     static CACHE: OnceLock<Mutex<HashMap<u64, Entry>>> = OnceLock::new();
 
-    pub(super) fn render(
-        layer: &ContentSnapshot,
-        index: usize,
-    ) -> Result<Arc<Vec<u8>>, String> {
+    pub(super) fn render(layer: &ContentSnapshot, index: usize) -> Result<Arc<Vec<u8>>, String> {
         let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-        let mut guard = cache
-            .lock()
-            .map_err(|_| "内容层缓存锁中毒".to_string())?;
+        let mut guard = cache.lock().map_err(|_| "内容层缓存锁中毒".to_string())?;
         if let Some(entry) = guard.get(&layer.handle) {
             if entry.size == layer.size && same_draws(&entry.draws, &layer.draws) {
                 return Ok(Arc::clone(&entry.rgba));
@@ -837,14 +844,9 @@ mod content_raster {
         }
 
         let records = content_records(layer)?;
-        let rgba = zela_render_vector::render_2d(
-            layer.size[0],
-            layer.size[1],
-            1,
-            [0.0; 4],
-            &records,
-        )
-        .map_err(|error| format!("内容层 #{index} 渲染失败：{error}"))?;
+        let rgba =
+            zela_render_vector::render_2d(layer.size[0], layer.size[1], 1, [0.0; 4], &records)
+                .map_err(|error| format!("内容层 #{index} 渲染失败：{error}"))?;
         let rgba = Arc::new(rgba);
 
         // 多作品切换 / 多尺寸时不无限留垃圾（每层 ~3 MB）。
@@ -909,7 +911,12 @@ fn composite_layer(
     // **采样表**：源索引与权重只依赖 x（或 y），逐像素再算 `floor` / 钳位是纯重复。
     // 1M 像素的小图叠加里这一项就是数十毫秒（GUI 每帧都走这条路）。
     // 一侧的 `(i0, i1, t)`；`None` = 该行列不在内容矩形内。
-    let axis = |count: u32, size: f32, offset: f32, extent: f32, limit: u32| -> Vec<Option<(usize, usize, f32)>> {
+    let axis = |count: u32,
+                size: f32,
+                offset: f32,
+                extent: f32,
+                limit: u32|
+     -> Vec<Option<(usize, usize, f32)>> {
         (0..count)
             .map(|i| {
                 let f = (i as f32 + 0.5 - offset) / extent;
@@ -1164,7 +1171,9 @@ fn clip_reveal(path: &Path2D, start: f32, end: f32) -> Option<ze_render_ir::Shap
     if out.len() < 2 {
         return None;
     }
-    Some(ze_render_ir::Shape2D::Path(Path2D::from_polyline(&out, false)))
+    Some(ze_render_ir::Shape2D::Path(Path2D::from_polyline(
+        &out, false,
+    )))
 }
 
 /// **PH Step 1**：形变两端按弧长等点重采样，**按 `(from, to, samples)` 缓存**。
@@ -1179,10 +1188,17 @@ fn sampled_endpoints(morph: &zela_render::draw::MorphItem) -> std::sync::Arc<(Pa
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
 
-    static CACHE: OnceLock<Mutex<HashMap<(u64, u64, u32), Arc<(Path2D, Path2D)>>>> = OnceLock::new();
-    let key = (path_digest(&morph.from), path_digest(&morph.to), morph.samples);
+    static CACHE: OnceLock<Mutex<HashMap<(u64, u64, u32), Arc<(Path2D, Path2D)>>>> =
+        OnceLock::new();
+    let key = (
+        path_digest(&morph.from),
+        path_digest(&morph.to),
+        morph.samples,
+    );
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(hit) = guard.get(&key) {
         return Arc::clone(hit);
     }
@@ -1263,7 +1279,10 @@ mod tests {
         let full = clip_reveal(&path, 0.0, 1.0).expect("整段可见");
         assert!((last_x(&full) - 10.0).abs() < 1e-3, "整段终点应为 10");
         let half = clip_reveal(&path, 0.0, 0.5).expect("半段可见");
-        assert!((last_x(&half) - 5.0).abs() < 1e-3, "半段终点应为 5，实测 {half:?}");
+        assert!(
+            (last_x(&half) - 5.0).abs() < 1e-3,
+            "半段终点应为 5，实测 {half:?}"
+        );
         // 区间倒置 / 空区间 ⇒ 不可见（不是"整段"）。
         assert!(clip_reveal(&path, 0.5, 0.5).is_none());
         assert!(clip_reveal(&path, 0.8, 0.2).is_none());
@@ -1282,7 +1301,10 @@ mod tests {
         );
         assert_eq!(reveal_window(&path, 0.0, 1.0), Some([0.0, 2.0]));
         let half = reveal_window(&path, 0.0, 0.5).expect("半段可见");
-        assert!((half[1] - 1.0).abs() < 1e-3, "半程应落在第 1 段末尾，实测 {half:?}");
+        assert!(
+            (half[1] - 1.0).abs() < 1e-3,
+            "半程应落在第 1 段末尾，实测 {half:?}"
+        );
         assert!(reveal_window(&path, 0.5, 0.5).is_none());
         assert!(reveal_window(&path, 0.8, 0.2).is_none());
     }
@@ -1343,7 +1365,12 @@ mod tests {
         let mut max_diff = 0u8;
         let mut changed = 0usize;
         for (x, y) in a.chunks_exact(4).zip(b.chunks_exact(4)) {
-            let diff = x.iter().zip(y).map(|(p, q)| p.abs_diff(*q)).max().unwrap_or(0);
+            let diff = x
+                .iter()
+                .zip(y)
+                .map(|(p, q)| p.abs_diff(*q))
+                .max()
+                .unwrap_or(0);
             max_diff = max_diff.max(diff);
             changed += usize::from(diff > 0);
         }

@@ -11,7 +11,7 @@
 - 路径：`crates/render/zela-render`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-notion`、`ze-render-ir`、`ze-resource`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-vertex`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-egui`、`zela-playback`、`zela-render-backends`
-- 源文件：17 个 · 7496 行
+- 源文件：17 个 · 7789 行
 
 ### 文件清单
 
@@ -19,19 +19,19 @@
 |---|---|---|
 | `src/components.rs` | 45 | — |
 | `src/content_ir.rs` | 236 | — |
-| `src/draw.rs` | 1870 | — |
+| `src/draw.rs` | 2148 | — |
 | `src/draw_queue_3d.rs` | 340 | — |
 | `src/filters.rs` | 243 | — |
-| `src/frame.rs` | 353 | — |
+| `src/frame.rs` | 352 | — |
 | `src/lib.rs` | 133 | — |
 | `src/light_queue.rs` | 104 | — |
 | `src/painter_2d.rs` | 30 | — |
 | `src/painter_3d.rs` | 72 | — |
-| `src/record_systems.rs` | 1133 | — |
-| `src/shape_to_mesh.rs` | 328 | — |
-| `src/surface_route.rs` | 342 | — |
-| `src/tessellate.rs` | 1654 | — |
-| `src/vertex_record.rs` | 539 | — |
+| `src/record_systems.rs` | 1155 | — |
+| `src/shape_to_mesh.rs` | 335 | — |
+| `src/surface_route.rs` | 336 | — |
+| `src/tessellate.rs` | 1655 | — |
+| `src/vertex_record.rs` | 531 | — |
 | `src/view_rect.rs` | 7 | — |
 | `src/viewport.rs` | 67 | — |
 
@@ -62,6 +62,7 @@ graph LR
 | `src/draw.rs` | `pub trait Painter2D` |
 | `src/draw.rs` | `pub enum DrawItem` |
 | `src/draw.rs` | `pub struct DrawQueue` |
+| `src/draw.rs` | `pub fn record_widget_commands(commands: &[DrawCommand], camera: &Camera2D, queue: &mut DrawQueue)` |
 | `src/draw.rs` | `pub struct ContentTextureQueue(pub std::collections::BTreeMap<ze_render_ir::LayerId, DrawQueue>)` |
 | `src/draw.rs` | `pub struct MorphItem` |
 | `src/draw.rs` | `pub struct MorphQueue(pub Vec<MorphItem>)` |
@@ -106,10 +107,10 @@ graph LR
 | `src/record_systems.rs` | `pub fn register_record_systems(scheduler: &mut zela_schedule::scheduler::Scheduler)` |
 | `src/shape_to_mesh.rs` | `pub enum ShapeMeshError` |
 | `src/shape_to_mesh.rs` | `pub struct DerivedMesh` |
-| `src/shape_to_mesh.rs` | `pub fn derive_mesh(` |
+| `src/shape_to_mesh.rs` | `pub fn derive_mesh(shape: &Shape2D, style: &Style2D) -> Result<Vec<DerivedMesh>, ShapeMeshError>` |
 | `src/surface_route.rs` | `pub enum SurfaceRoute` |
 | `src/surface_route.rs` | `pub enum SurfaceRecordError` |
-| `src/surface_route.rs` | `pub fn surface_route<S: SceneRead>(` |
+| `src/surface_route.rs` | `pub fn surface_route<S: SceneRead>(scene: &S, id: ObjectId) -> Result<SurfaceRoute, SurfaceError>` |
 | `src/tessellate.rs` | `pub struct Vertex2D` |
 | `src/tessellate.rs` | `pub enum TessKind` |
 | `src/tessellate.rs` | `pub struct Tessellation2D` |

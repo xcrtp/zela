@@ -369,7 +369,10 @@ mod tests {
         sched.add_system(Phase::Input, sys::<(), ()>(|_| {}));
         sched.run_frame(0.016);
         assert_eq!(sched.tick(), 1);
-        assert_eq!(sched.frame_report().total_duration, std::time::Duration::ZERO);
+        assert_eq!(
+            sched.frame_report().total_duration,
+            std::time::Duration::ZERO
+        );
     }
 
     /// **S3 验收**：时间源可注入 —— 推进多帧只读注入的时钟，

@@ -183,7 +183,9 @@ pub fn groups_for(shape: Dispatch, extent: Extent) -> [u32; 3] {
             let (x, y) = fold_x(side, side);
             [x, y, faces]
         }
-        Dispatch::Draw => panic!("Draw 是光栅化 pass 的形状，没有 dispatch 参数"),
+        Dispatch::Draw => {
+            panic!("Draw 是光栅化 pass 的形状，没有 dispatch 参数")
+        }
         Dispatch::Indirect { source } => {
             panic!("Indirect({source}) 的组数由 GPU 侧的 indirect buffer 决定，CPU 不计算")
         }
@@ -247,18 +249,24 @@ mod tests {
     fn gate(parsed: &[(String, (u32, u32, u32))]) -> Result<(), String> {
         for (name, dimensions) in parsed {
             match WORKGROUP.iter().find(|(known, _)| known == name) {
-                None => return Err(format!("shader 里的 entry {name:?} 没在 WORKGROUP 表里登记")),
+                None => {
+                    return Err(format!(
+                        "shader 里的 entry {name:?} 没在 WORKGROUP 表里登记"
+                    ));
+                }
                 Some((_, known)) if known != dimensions => {
                     return Err(format!(
                         "entry {name:?}：shader 的 @workgroup_size {dimensions:?} ≠ 表里的 {known:?}"
-                    ))
+                    ));
                 }
                 Some(_) => {}
             }
         }
         for (name, _) in WORKGROUP {
             if !parsed.iter().any(|(parsed, _)| parsed == name) {
-                return Err(format!("WORKGROUP 表登记的 {name:?} 在 shader 源码里找不到"));
+                return Err(format!(
+                    "WORKGROUP 表登记的 {name:?} 在 shader 源码里找不到"
+                ));
             }
         }
         Ok(())
@@ -281,7 +289,9 @@ mod tests {
         let bare: Vec<(String, (u32, u32, u32))> = parsed
             .iter()
             .map(|(name, size)| {
-                let short = name.split_once(':').map_or(name.as_str(), |(_, short)| short);
+                let short = name
+                    .split_once(':')
+                    .map_or(name.as_str(), |(_, short)| short);
                 (short.to_string(), *size)
             })
             .collect();
@@ -293,7 +303,11 @@ mod tests {
     fn gate_rejects_extra_shader_entry() {
         let mut parsed = parsed_entries();
         parsed.push(("brand_new".to_string(), (8, 8, 1)));
-        assert!(gate(&parsed).unwrap_err().contains("没在 WORKGROUP 表里登记"));
+        assert!(
+            gate(&parsed)
+                .unwrap_err()
+                .contains("没在 WORKGROUP 表里登记")
+        );
     }
 
     /// 门禁自证：表侧多出一个 entry ⇒ 红。
@@ -358,7 +372,10 @@ mod tests {
 
     #[test]
     fn groups_fixed_is_one_group() {
-        assert_eq!(groups_for(Dispatch::Fixed, Extent::px(1920, 1080)), [1, 1, 1]);
+        assert_eq!(
+            groups_for(Dispatch::Fixed, Extent::px(1920, 1080)),
+            [1, 1, 1]
+        );
     }
 
     #[test]

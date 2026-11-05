@@ -26,13 +26,13 @@ pub fn apply_input_frame(driver: &DriverPod, events: &[SceneEvent]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zela_schedule::resource::Resources;
-    use zela_schedule::scheduler::{Phase, Scheduler};
     use zela_scene_bundle::{InputStream, Pairing, Recorder};
     use zela_scene_ecs::director_state::{DirectorAdvanceSystem, DirectorState};
     use zela_scene_ecs::domain::ids;
     use zela_scene_ecs::input::TimeControlSystem;
     use zela_scene_ecs::{Director, DriverCommand, TimeState};
+    use zela_schedule::resource::Resources;
+    use zela_schedule::scheduler::{Phase, Scheduler};
 
     fn pairing() -> Pairing {
         Pairing {
@@ -100,12 +100,25 @@ mod tests {
     #[test]
     fn replaying_the_same_stream_twice_is_bit_identical() {
         let mut stream = InputStream::new(pairing());
-        stream.record(1, [SceneEvent::Button { id: ids::PLAY_PAUSE }]);
-        stream.record(3, [SceneEvent::Slider {
-            id: ids::SPEED,
-            value: 0.5,
-        }]);
-        stream.record(6, [SceneEvent::Button { id: ids::PLAY_PAUSE }]);
+        stream.record(
+            1,
+            [SceneEvent::Button {
+                id: ids::PLAY_PAUSE,
+            }],
+        );
+        stream.record(
+            3,
+            [SceneEvent::Slider {
+                id: ids::SPEED,
+                value: 0.5,
+            }],
+        );
+        stream.record(
+            6,
+            [SceneEvent::Button {
+                id: ids::PLAY_PAUSE,
+            }],
+        );
 
         let first = replay(&stream, 10, 1.0 / 30.0);
         let second = replay(&stream, 10, 1.0 / 30.0);
@@ -122,12 +135,25 @@ mod tests {
     #[test]
     fn recorded_stream_replays_the_same_trajectory() {
         let mut source = InputStream::new(pairing());
-        source.record(1, [SceneEvent::Button { id: ids::PLAY_PAUSE }]);
-        source.record(3, [SceneEvent::Slider {
-            id: ids::SPEED,
-            value: 0.5,
-        }]);
-        source.record(6, [SceneEvent::Button { id: ids::PLAY_PAUSE }]);
+        source.record(
+            1,
+            [SceneEvent::Button {
+                id: ids::PLAY_PAUSE,
+            }],
+        );
+        source.record(
+            3,
+            [SceneEvent::Slider {
+                id: ids::SPEED,
+                value: 0.5,
+            }],
+        );
+        source.record(
+            6,
+            [SceneEvent::Button {
+                id: ids::PLAY_PAUSE,
+            }],
+        );
 
         let (first, recorded) = replay_capturing(&source, 10, 1.0 / 30.0);
         assert_eq!(

@@ -28,7 +28,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::mesh::TextureHandle;
-use crate::pipeline::{Capabilities, ColorFormat, CapabilityError};
+use crate::pipeline::{Capabilities, CapabilityError, ColorFormat};
 use crate::target::RenderTargetDesc;
 
 /// 纹理采样过滤（B4 Step 1 移入 IR：`SurfaceTexture.filter` 与 `RenderParams.filter` 同型）。
@@ -166,7 +166,9 @@ pub enum RenderParamError {
     EmptySize { width: u32, height: u32 },
     #[error("tone.exposure 非法：{exposure}（必须为有限正数）")]
     InvalidExposure { exposure: f32 },
-    #[error("bloom 参数非法：threshold={threshold} intensity={intensity} radius={radius}（须有限且 ≥ 0）")]
+    #[error(
+        "bloom 参数非法：threshold={threshold} intensity={intensity} radius={radius}（须有限且 ≥ 0）"
+    )]
     InvalidBloom {
         threshold: f32,
         intensity: f32,
@@ -307,7 +309,10 @@ mod tests {
     fn invalid_params_are_explicit_errors() {
         let mut p = RenderParams::default();
         p.size = (0, 480);
-        assert!(matches!(p.validate(), Err(RenderParamError::EmptySize { .. })));
+        assert!(matches!(
+            p.validate(),
+            Err(RenderParamError::EmptySize { .. })
+        ));
 
         let mut p = RenderParams::default();
         p.tone = Some(ToneMapping {
@@ -337,7 +342,9 @@ mod tests {
         p.msaa = Msaa::X8;
         assert!(matches!(
             p.is_supported_by(&caps(4, PostCaps::none())),
-            Err(RenderParamError::Msaa(CapabilityError::UnsupportedSampleCount { .. }))
+            Err(RenderParamError::Msaa(
+                CapabilityError::UnsupportedSampleCount { .. }
+            ))
         ));
 
         let mut p = RenderParams::default();

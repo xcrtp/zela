@@ -20,8 +20,8 @@
 | `src/dirty.rs` | 56 | 脏传播：沿出边 BFS，**只返回下游**（源节点不算脏），输出升序。 |
 | `src/lib.rs` | 31 | ze-graph-core：**纯拓扑图算法**。 |
 | `src/reach.rs` | 43 | 可达性：单向 BFS（**输出升序**）。 |
-| `src/scc.rs` | 230 | 强连通分量（Kosaraju，**迭代实现** + 确定性输出）。 |
-| `src/sort.rs` | 109 | Kahn 拓扑排序（**确定性**：就绪集合取最小 id）。 |
+| `src/scc.rs` | 231 | 强连通分量（Kosaraju，**迭代实现** + 确定性输出）。 |
+| `src/sort.rs` | 108 | Kahn 拓扑排序（**确定性**：就绪集合取最小 id）。 |
 | `src/topology.rs` | 106 | 最小拓扑接口：**只认节点 id + 边**。 |
 | `src/visitor.rs` | 137 | **遍历器**：把「多 pass 架构」缺的那一半补上。 |
 

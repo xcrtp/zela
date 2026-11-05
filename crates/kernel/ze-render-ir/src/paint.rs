@@ -229,7 +229,10 @@ impl PathOptions {
             (PathOptions::FEATURE_BACKGROUND, "背景描边"),
             (PathOptions::FEATURE_WINDOW, "曲线窗口"),
             (PathOptions::FEATURE_CODEGEN, "着色 codegen"),
-            (PathOptions::FEATURE_SHADER_WRITTEN, "手写 WGSL（仅 vector）"),
+            (
+                PathOptions::FEATURE_SHADER_WRITTEN,
+                "手写 WGSL（仅 vector）",
+            ),
         ];
         let names: Vec<&str> = TABLE
             .iter()
@@ -382,7 +385,10 @@ mod tests {
             ..Default::default()
         };
         let text = serde_json::to_string(&paint).expect("序列化");
-        assert!(text.contains("\"hand_written\":true"), "标记必须进 payload：{text}");
+        assert!(
+            text.contains("\"hand_written\":true"),
+            "标记必须进 payload：{text}"
+        );
         let back: PathOptions = serde_json::from_str(&text).expect("反序列化");
         assert_eq!(back, paint);
         // 旧 payload（没有该字段）反序列化为 `false`，不静默变成"手写"。

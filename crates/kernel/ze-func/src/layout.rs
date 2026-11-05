@@ -22,11 +22,11 @@
 
 use ze_comb::ValueBytes;
 
-pub use ze_reflect::codec::{TypeRegistry, PATH_TYPE};
+pub use ze_reflect::codec::{PATH_TYPE, TypeRegistry};
 pub use ze_type::layout::{
-    decode_path, decode_record, encode_path as encode_path_bytes, encode_record, ENDIAN, Endian,
-    FieldLayout, FieldTy, Layout, LayoutError, Record, Scalar, Transcode, VEC2_FIELDS,
-    VEC3_FIELDS,
+    ENDIAN, Endian, FieldLayout, FieldTy, Layout, LayoutError, Record, Scalar, Transcode,
+    VEC2_FIELDS, VEC3_FIELDS, decode_path, decode_record, encode_path as encode_path_bytes,
+    encode_record,
 };
 
 /// `zela.Path` 的慢路径编码（返回命名类型 + 字节）。
@@ -60,7 +60,10 @@ mod tests {
         let registry = TypeRegistry::builtin();
         assert_eq!(registry.layout("zela.Vec2"), Some(VEC2_LAYOUT));
         assert_eq!(registry.layout("zela.Vec3").unwrap().size, 12);
-        assert!(registry.layout("zela.Path").is_none(), "变长类型没有 Layout");
+        assert!(
+            registry.layout("zela.Path").is_none(),
+            "变长类型没有 Layout"
+        );
     }
 
     #[test]
@@ -86,12 +89,8 @@ mod tests {
     #[test]
     fn third_party_types_use_the_same_registry() {
         let mut registry = TypeRegistry::builtin();
-        let layout = Layout::custom(
-            16,
-            8,
-            [("re", 0, FieldTy::F64), ("im", 8, FieldTy::F64)],
-        )
-        .unwrap();
+        let layout =
+            Layout::custom(16, 8, [("re", 0, FieldTy::F64), ("im", 8, FieldTy::F64)]).unwrap();
         registry.register("acme.Tensor", Some(layout)).unwrap();
         assert_eq!(registry.layout("acme.Tensor"), Some(layout));
 
