@@ -10,7 +10,7 @@
 - 层：`kernel`（`crates/kernel`）
 - 路径：`crates/kernel/ze-notion`
 - 生产依赖（上游，dev-deps 不计）：（无）
-- 被依赖（下游）：`ze-content`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-time`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-ecs`
+- 被依赖（下游）：`ze-content`、`ze-interact`、`ze-prerender`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-time`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-render-vector`、`zela-scene-ecs`
 - 源文件：15 个 · 3711 行
 
 ### 文件清单

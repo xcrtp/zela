@@ -143,6 +143,25 @@
 
 判据：`all_nodes` 换顺序，产物仍逐位不变；一次点击的归因链里找不到任何被传播的 tag。
 
+### ⑧ 一个控件 = 一份声明 + 一个 `dyn` 实现 + 一段命令列表（CL）
+
+三层各归其位：`WidgetDecl` 纯值进产物；编译索引（`TreeIndex` / revision）回放端重算；
+`WidgetRuntime { BTreeMap<Id, Box<dyn Widget2D>> }` 是运行期 Resource、零序列化。
+容器不持有子对象 —— 层级由 Euler 切片给出，两遍扫描只在一段 `Vec` 上跑。
+
+三条反面约束（`ze-interact::widget` 模块头与 GAPS `CL-10` 都写了）：
+
+1. **不把 `Box<dyn>` 注册成 ECS 组件**：会撞 `Component` 的 `Clone` blanket impl、
+   封闭白名单，以及「组件要进产物而 dyn 不可序列化」的死结。
+2. **不做 CSS 式全局样式表**：token 扁平、按 `role` 查表，不做层叠 / specificity /
+   继承链；约束与样式都局部、显式、按稳定序。
+3. **不给 ctx 开反查其他 Widget 的入口**：签名里没有 `&World` / `&mut`；一查就退回
+   树递归，CK 的 Euler 切片白做。
+
+theme 拆 `LayoutTokens` / `PaintTokens`：前者进 revision（字号 / 间距改 measure 结果），
+后者只改命令列表。整块 theme 进 revision 会导致「换颜色也重排」，只让 paint 进
+revision 会导致「换字号但 bounds 还是旧的」—— 两种都是「错了不报错」。
+
 ## 四、一个提交前怎么用这张表
 
 1. 五条判据逐条过：值 / 可重建 / 危险标记 / 派生量 / 未知时是否给默认值；

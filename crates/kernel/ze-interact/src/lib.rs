@@ -31,8 +31,10 @@
 //!
 //! **默认零依赖**（纯 `core` / `std`）：不依赖 `glam`、不依赖 `ze-notion`。
 //! `serde` feature 只为 [`frame::Frame`] 的导出（`--features serde`）。
+//! `widgets` feature（CL-b）打开表达层：`draw` 输出 `DrawCommand`，会间接引入
+//! `ze-notion` / `glam` —— 这是显式选择的代价，默认构建不受影响。
 //! 曲线求交（贝塞尔）只留 [`hit::CurveHitTester`] 接口 —— 现有实现在场景层
-//! 依赖 glam，直接搬进来会破坏本 crate 的零依赖约束。
+//! 依赖 glam，直接搬进来会破坏本 crate 的默认零依赖约束。
 
 #![forbid(unsafe_code)]
 
@@ -42,6 +44,10 @@ pub mod hit;
 pub mod layout;
 pub mod route;
 pub mod text;
+/// **CL-b**：表达层（`Widget2D` / `Container2D` / `WidgetRuntime` / ctx / theme）。
+/// 需要 `widgets` feature（`DrawCommand` 会间接引入 glam；默认构建不受影响）。
+#[cfg(feature = "widgets")]
+pub mod widget;
 
 pub use control::{
     ControlEvent, ControlKind, ControlOutcome, ControlSet, ControlSpec, constraints_for,

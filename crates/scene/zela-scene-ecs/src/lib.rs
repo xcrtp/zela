@@ -31,6 +31,8 @@ pub mod register;
 pub mod relation;
 pub mod scene;
 pub mod transform_hierarchy;
+/// **CL-c**：控件声明树的 Euler 编译 + 两遍扫描布局。
+pub mod ui_layout;
 pub mod utils;
 
 // B3-1c：语言无关的 Pod 边界已独立为 `ze-scene-api`；`zela_scene_ecs::pod` 路径保持不变。

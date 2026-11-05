@@ -4,15 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Interaction skeleton: hit testing, box/flow layout, hover/focus/capture routing, and structured frames. No glam, no HashMap, zero default dependencies."
+description = "Interaction skeleton: hit testing, box/flow layout, hover/focus/capture routing, and structured frames. No glam by default, no HashMap, zero default dependencies."
 
 [dependencies]
 # CG-c：`Frame` 可导出成 JSON（Agent 读一帧）。默认关闭 ⇒ 仍是零依赖。
 serde = { workspace = true, optional = true }
+# CL-b：表达层的绘制输出是 `DrawCommand`（可选 feature `widgets`；
+# 默认构建仍零依赖，启用方显式承担 glam 的间接依赖）。
+ze-render-ir = { path = "../ze-render-ir", optional = true }
+ze-notion = { path = "../ze-notion", optional = true }
 
 [features]
 default = []
 serde = ["dep:serde"]
+widgets = ["dep:ze-render-ir", "dep:ze-notion"]
 
 [dev-dependencies]
 serde_json.workspace = true

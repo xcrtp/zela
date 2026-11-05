@@ -11,7 +11,7 @@
 - 路径：`crates/scene/zela-scene-ecs`
 - 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-graph-algo`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：29 个 · 11334 行
+- 源文件：30 个 · 11676 行
 
 ### 文件清单
 
@@ -38,13 +38,14 @@
 | `src/hud.rs` | 842 | **CG-f**：自研 UI 的第一块可见面板 —— 三组控件全部是**场景图元**。 |
 | `src/input.rs` | 412 | — |
 | `src/interact.rs` | 660 | 参数面板进场景（CE-e）：**真消费者**。 |
-| `src/lib.rs` | 116 | — |
+| `src/lib.rs` | 118 | — |
 | `src/lifetime.rs` | 403 | — |
 | `src/register.rs` | 81 | — |
 | `src/relation.rs` | 148 | **CK-c**：场景 `Parent` 树 → 关系契约的只读适配。 |
 | `src/scene.rs` | 234 | — |
 | `src/scene_script_tests.rs` | 975 | — |
 | `src/transform_hierarchy.rs` | 709 | — |
+| `src/ui_layout.rs` | 340 | **CL-c**：控件声明树 → Euler 切片 → 两遍扫描 → `Frame`。 |
 | `src/utils.rs` | 60 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -178,6 +179,9 @@ graph LR
 | `src/scene.rs` | `pub struct Scene` |
 | `src/transform_hierarchy.rs` | `pub struct TransformHierarchyError` |
 | `src/transform_hierarchy.rs` | `pub struct TransformHierarchySystem` |
+| `src/ui_layout.rs` | `pub struct LayoutResult` |
+| `src/ui_layout.rs` | `pub fn layout_revision(decls: &[WidgetDecl], layout: &LayoutTokens) -> Result<u64, String>` |
+| `src/ui_layout.rs` | `pub fn layout_widgets(` |
 <!-- AUTO:END -->
 
 ## 职责
@@ -196,7 +200,8 @@ graph LR
 - **动画（系统类）**：`src/animation/system.rs` 的 `BindingApplySystem` 遍历绑定表，用时钟树采样曲线并把结果写进组件字段（System 本身不认识任何具体目标）；`src/animation/camera_drive.rs` 只做「谁驱动哪台相机」——通过把绑定移出 / 放回 `BindingTable` 显式让位，因此必须与 `CameraInputSystem` 同相位且排在其前；`src/animation/morph.rs` 是形变的 CPU 回退路径（App 走 GPU 插值，不注册它）。
 - **表达式**：`src/expr_mono.rs` 是表达式求值的宿主单子 `M`，把 `TimeState`（time / frame）、`SceneRead`（组件字段读端）与 `zela.math` 算子拼在一起；缺失通道显式返回错误，不给 0。
 - **对象增删与生命周期（系统类）**：`src/deferred.rs` 定义延迟命令队列，并提供帧末应用 System 与重播清理 System；`src/lifetime.rs` 在帧末按**集合差**产生 spawn / despawn 事件（opt-in，按 `ObjectId` 显式排序）。
-- **派生态刷新（系统类）**：`src/transform_hierarchy.rs` 每帧把父子 `local` 累乘成世界矩阵（`WorldTransforms`，不进持久化）；`src/geometry.rs` 的两个 System 只做接线，几何算法在对象层；`src/composer.rs` 消费上一帧末的生命周期事件维护合成派生态（首次看到合成器对象时做一次全量快照）。
+- **表达层布局（CL-c）**：`src/ui_layout.rs` 把控件声明树交给 `ze-graph-algo` 的 `compile_tree`，按 `tin` 逆序回溯测量、正序前推分配，产出 `Frame { geometry, parent, semantics, text }`；两遍都只在一段连续 `Vec` 上跑，容器不持有子对象。revision = 声明哈希 + `LayoutTokens`。**当前 `Hud::frame` 仍走扁平 `ControlSet`**，生产接线见 GAPS `CL-06`。
+- **派生态刷新（系统类）**：`src/transform_hierarchy.rs` 每帧把父子 `local` 累乘成世界矩阵（`WorldTransforms`，不进持久化）；`src/geometry.rs` 的两个 System 只做接线，几何算法在对象层；`src/composer.rs` 只转发 `Composer` 配置与纯函数 `layer_mounts`（CK-f 删除了增量维护的 `ComposerQueue`）。
 - **回归判据**：`src/fingerprint.rs` 只吃纯数值状态（组件字段 + 世界矩阵），按 `ObjectId` 与 `TARGETS` 声明序生成稳定摘要；派生几何只写占位标记、不读内容。
 - **对外边界**：`src/driver.rs` 是 Driver pod（命令：推进 / 批量推进 / seek / 复位；事件只走 topic 扇出），使 GUI 与导出共用同一条命令路径。
 - **注册与杂项**：`src/register.rs` 是场景 System 的**唯一注册点**（按相位分配）；`src/errors.rs` 是本层错误类型；`src/utils.rs` 导出 `auto_into!` 宏；`src/expr_binding_tests.rs`、`src/scene_script_tests.rs`、`src/animation/target_tests.rs` 是测试文件，不参与生产构建。

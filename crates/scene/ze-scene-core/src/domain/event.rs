@@ -393,11 +393,12 @@ mod tests {
         assert!(json.contains("structure_delta"), "类型标签进 JSON：{json}");
     }
 
-    /// 老 payload（只有旧变体）照常解码 —— 新增变体是追加，不是改格式。
+    /// 当前格式仍能解码这份历史 fixture —— 这是**正确性断言**，不是兼容分支
+    /// （元规则 B：只读当前版本；这里验证的是"旧数据形状没有被新变体破坏"）。
     #[test]
-    fn legacy_payload_still_decodes() {
+    fn historical_fixture_still_decodes() {
         let json = r#"{"type":"button","id":3}"#;
-        let event: SceneEvent = serde_json::from_str(json).expect("老 payload 可解码");
+        let event: SceneEvent = serde_json::from_str(json).expect("历史 fixture 可解码");
         assert!(matches!(event, SceneEvent::Button { id } if id == ids::PLAY_PAUSE));
     }
 }

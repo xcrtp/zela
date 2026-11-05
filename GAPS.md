@@ -5,7 +5,7 @@
 >
 > 更新：2026-10-19（融合前盘点与收尾）；2026-10-20（S1：G-101 关闭 + R-21 记账）；
 > **2026-11-04（CJ：全仓叙述体检）**。
-> **最近一次全仓叙述体检：CJ（2026-11-04）** —— 淘汰词表、双向对照、GAPS 证据列与代码核对。
+> **最近一次全仓叙述体检：CL（2026-11-05）** —— 淘汰词表、双向对照、GAPS 证据列与代码核对。
 > `FOURIER_GAPS.md` 保留为 **fourier 作品快照**；`WASM_PORT_SURVEY.md` 保留为
 > **当时的探测证据**，两者正文都注明总账在本文件。
 >
@@ -44,12 +44,14 @@
 
 > **为什么是 P0**：只要融合要求 2D 与 3D 对象进入**同一父子层级**（或 3D 对象跟随
 > 父对象变换），当前 3D 录制不消费 `WorldTransforms` 就直接失效。若融合只做
-> 「同屏按层叠加」，则现有层合成已够用 —— 这一点需要融合形态确认，但
+> 「同屏按层叠加」，则现有层合成已够用 —— 融合形态已由 A 定案，但
 > **3D 层级本身是确定性缺口**，不依赖融合也存在。
 
-**待定（不作为 P0）**：跨 2D/3D 的统一相机 / 深度合成模型。当前 2D 与 3D
-各自持有相机、按 `SceneView::layers` 顺序合成（无跨层深度）。是否需要统一，
-取决于融合是「同屏叠加」还是「同一深度空间互遮挡」—— 后者才构成前置。
+**已裁决（A：同屏叠加，不作为 P0）**：跨 2D/3D 的统一相机 / 深度合成模型。
+CL-a 按 CK-16 的选择写成：默认 A = 同屏叠加（沿用 X1-06 overlay 屏幕平面、
+PC-01 图层级叠加、PA-01「L3 执行旋钮绝不进产物」）。B = 同一深度空间互遮挡
+的触发条件：需要按像素决定 2D 与 3D 谁遮挡谁（而不是按图层叠放）时单独成批；
+本批不铺实现。
 
 ---
 
@@ -320,7 +322,7 @@
 | S1-04 | Direct 单材质：`fill` + `stroke` 同时存在时只派生填充 | 渲染管线 | **已关闭（B3 Step 4a-A）** | `derive_mesh → Vec<DerivedMesh>`：fill / stroke 各一份，各自材质颜色；不再丢描边 |
 | S2-01 | Direct 路径的触发条件不能靠内容类型推断 | 渲染管线 | **已关闭（B3 Step 2）** | 只由 `SurfaceRenderer::Renderer3D` 决定（`surface_route.rs`）；无 Surface ⇒ 默认 2D |
 | S2-02 | Direct 失败无处表达（`System::run` 无返回值） | 渲染管线 | **已关闭（B3 Step 2）** | `DrawQueue::surface_errors()` 收集显式错误；不影响其它对象录制 |
-| S2-03 | Direct / Texture + `SurfaceMapping::Screen` 的 3D 语义未定义 | 渲染管线 | **仍成立（显式拒绝）** | Direct：`ScreenMappingUnsupported`；Texture：`ScreenTextureUnsupported`（`content_texture_specs` 只接受 `World`）。触发条件：先定义 HUD 近平面 / 代理平面世界位置语义（见 B3 Step 4d，明确"不做"） |
+| S2-03 | Direct / Texture + `SurfaceMapping::Screen` 的 3D 语义未定义 | 渲染管线 | **已关闭（CK-16 / CL-a：深度 A = 同屏叠加）** | 深度契约选 A 后，HUD 走 overlay 屏幕平面，不再需要「Screen 映射到某个世界平面」的定义；Direct / Texture + `Screen` 仍**显式拒绝**（`ScreenMappingUnsupported` / `ScreenTextureUnsupported`），这是能力边界而不是未定义语义。 |
 | S3-01 | 无 Surface 组件 / 归属判定 | 场景核心 | **已关闭（B3 Step 3）** | `Surface`（无 position）+ `SurfaceRenderer`；沿 `Parent` 链解析、visited 环检测；缺 renderer 显式错误 |
 | S3-02 | 默认 renderer 策略 | 场景核心 | **未拍（按计划延后）** | 计划要求用 Step 1 实测覆盖度反推；当前 7/9 图元可 Direct，但 Step 4/5 未做，暂不设默认 |
 | S4-01 | Texture 路径多实例（2D 离屏 → 纹理 → 代理平面） | 渲染后端 | **已关闭（B3 Step 4c-1..4c-5）** | 容器 / id 链 / `fit_margin` / demo3d 迁移 / 双 Surface 互不串扰验证全部落地 |
@@ -342,7 +344,7 @@
 | S6-03 | Rust 版 `authored/demo3d.rs` 不进任何对拍 / 测试（验证盲区） | 作品 / 测试 | **仍成立（记账）** | `build_script_runtime` 用 `with_demo3d = false`，`--script` / `--bundle` 都不构建它；`tests/` 只覆盖能力 demo 与分镜 ⇒ 该模块的改动无人验（4c-4 的"零差异"对它是平凡真）。触发条件：给它加对拍入口，或显式降级为"仅 GUI 示例" |
 | S6-04 | 脚本可表达的图元是 9 组录制表的**真子集** | 脚本 API | **仍成立（已知）** | `ze-scene-api` 只有 `Circle` / `Polyline` / `Arrow` / `PathShape`（无 Rect / Line / Ellipse / Polygon）；作品 A 因此只能覆盖 Circle / Arrow / Path × {Fill, Stroke}，Rect / Line 组合**无法用脚本表达** |
 
-**J 段小计（B3，已执行部分）**：已关闭 20（S0-01/02/03、S1-01、S1-04、S2-01/02、S3-01、S4-01/02/03/04/05/06/07/09/10/11/12/13、S6-01）· 仍成立/显式拒绝 7（S1-02/03、S2-03、S4-08、S6-02/03/04）· 不成立未采纳 1（S0-04）· 未拍 1（S3-02）· 已否决 1（S5-01）。
+**J 段小计（B3，已执行部分）**：已关闭 21（S0-01/02/03、S1-01、S1-04、S2-01/02/03、S3-01、S4-01/02/03/04/05/06/07/09/10/11/12/13、S6-01）· 仍成立/显式拒绝 6（S1-02/03、S4-08、S6-02/03/04）· 不成立未采纳 1（S0-04）· 未拍 1（S3-02）· 已否决 1（S5-01）。
 
 ---
 
@@ -1989,7 +1991,7 @@
 
 | 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
 |---|---|---|---|---|
-| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`。**CB 已给纯算法正当去处**：`ze-alg`（kernel 级、零 glam）承接矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径 / 仿射递推，`animation/` 由 5356 降到 5192 行（CB 后），CC 再增至 5737（仍 < 6k）。**处方修正**（CB §11.1）：原「给 `ze-comb` 窄数学接口」不成立 —— `ze-notion` 只是 glam 再导出，没有复数 / 谱半径 / 任意 k×k / f64。触发条件不变：`animation/` > 6k，或出现第二个同类落点需求。 |
+| BZ-01 | `ze-scene-core` 成为事实上唯一的跨层落点 | 架构 | **记账** | `ze-comb` 不解释数值（C1）⇒ 同时看得见"表达式树 + 数学库"的层只有 `ze-scene-core`。**CB 已给纯算法正当去处**：`ze-alg`（kernel 级、零 glam）承接矩阵幂 / 特征多项式 / Durand–Kerner / 谱半径 / 仿射递推，`animation/` 由 5356 降到 5192 行（CB 后），CC 再增至 **5738 总行 / 5321 非空行**（仍 < 6k；门禁口径按总行）。**处方修正**（CB §11.1）：原「给 `ze-comb` 窄数学接口」不成立 —— `ze-notion` 只是 glam 再导出，没有复数 / 谱半径 / 任意 k×k / f64。触发条件不变：`animation/` > 6k，或出现第二个同类落点需求。 |
 | BZ-02 | 仿射 `State` 的稳定性无门禁（错参数静默拿到 inf/NaN） | 内核 / 场景 | **已关闭** | `AffineMap::spectral_radius`（1/2 阶解析式；3/4 阶 Faddeev–LeVerrier + Durand–Kerner，固定初值 ⇒ 确定性）；`plan_from_expr` 在 `\|λ\|max ≥ 1`（或非有限）时显式 `AffineError::Unstable`，错误含谱半径与稳定条件提示（1 阶 `\|a\| < 1`、2 阶 `damp + stiff < 1`，边缘稳定同样拒绝）。现有 `spring_state`（0.97 / 0.02 ⇒ `sqrt(0.99)`）不受影响；用例 `unstable_affine_state_is_rejected` / `marginal_affine_state_is_rejected` / `stable_spring_is_accepted` / `unstable_state_is_rejected_at_assembly`。 |
 | BZ-03 | `Recorder::capture` 生产零调用（AI-08：输入流能放不能录） | 回放 / GUI | **已关闭** | GUI：`SceneFrame::with_input_recording`（`ZELA_RECORD_INPUT=<path>`）在推进前捕获本帧 `InputEvents`，`Drop` 时 `finish()` 落盘；headless：`zela-render --record-input` 每帧捕获、收尾写盘。`disabled()` 仍是零 no-op（关闭时连资源读取都跳过）。往返判据 `recorded_stream_replays_the_same_trajectory`：录到的流与输入流逐字节相同，且回放得到同一条轨迹。 |
 | BZ-04 | 依赖边未提取、事件 predicate 不存在 | 内核 / 场景 | **已关闭** | `StatePlan::dependencies`（`BTreeSet` 升序，`namespace::name` 键）+ `SceneRecipe::state_dependencies`（side table，不进 payload）。事件 predicate：`event` 通道 = 本帧 `InputEvents` 非空（HostState ⇒ 只可能进 CPU 求值）；计划标记 `event_gated`，`SeekKind::EventReplay`（**L2**：只重放事件帧，帧间 identity），运行期由 `StateEventLog` 记升序匹配帧、`value_at_event` 用 `partition_point` 计数。无事件依赖的 State 档位不变（`OLogN` / `OPerInterval`）。自引用仍显式失败（`PredicateRefsState`）。用例 `event_predicate_uses_sparse_matched_frames` / `event_gated_state_advances_only_on_event_frames` / `event_gated_state_records_dependency_and_seek_kind`。 |
@@ -2046,10 +2048,10 @@
 | CC-02 | 一段脚本无法调用 N 次并得到 N 组独立实例 | 场景 / 脚本 | **已关闭** | 同一 Lua 函数在 `scene.with_scope(path, shift, fn)` 内调用 N 次 ⇒ N 组对象、N 条时钟根、N 组参数地址（地址最前面是作用域序号）。参数是 **Lua 实参**（装配期常量）⇒ 表达式构造时已有值；调用次序只影响声明序号，不影响数值。用例 `scoped_instances_get_independent_clocks_and_parameters`：两个实例的 `stiff` 分别为 0.02 / 0.01，`ClockId` 不同，产物只含 `path`（断言不含 `ordinal`）。 |
 | CC-03 | 写冲突无中间层（issue #9 §7） | 场景 / UI | **部分关闭** | 新增字段级仲裁 `animation::resolve`：`Target::write_fields`（单字段 = 地址；复合目标列举全部可能字段）+ `Binding.priority`（声明在绑定侧）+ `WriteResolution`（被抑制写入：对象 / 字段 / 来源 / 胜者）。规则：高优先级胜；**同优先级不抑制**（按声明顺序写入，保留既有覆盖语义）；复合目标全或无。`BindingApplySystem` 在写前仲裁并把结果写回 Resource。用例 `higher_priority_wins_the_field` / `equal_priority_never_suppresses` / `different_fields_do_not_conflict` / `composite_target_is_all_or_nothing` / `field_level_resolution_records_suppressed_write`。**残留**：用户输入（`CameraInputSystem` 直接写组件）尚未接入仲裁，`CameraDriveSystem` 仍以"移出绑定"处理相机接管；事件流确定性沿用 BZ-03 / BZ-04。 |
 | CC-04 | Composer 合成图仍内联，无命名空间（issue #3） | 场景 / 渲染 | **记账** | 作用域路径已可作为图节点的命名空间（`BindingTable::scope_path` / 参数地址前缀），但 Composer 的独立存储与图寻址**未接线**。触发条件：issue #3 进入实现；届时用作用域路径作节点键，不新建运行期 id。 |
-| CC-05 | 统一深度 / 2D-3D 互遮挡（issue #9 §6） | 渲染 | **记账** | 本批**明确不做**（计划 §8）：避免被误认为顺带解决。触发条件：单独批次论证深度模型。 |
+| CC-05 | 统一深度 / 2D-3D 互遮挡（issue #9 §6） | 渲染 | **已关闭（CK-16 / CL-a：A = 同屏叠加）** | 深度单列为几何偏序；默认 A 沿用 overlay 屏幕平面 / 图层级叠加。B（同一深度空间互遮挡）触发条件：需要按像素决定 2D 与 3D 谁遮挡谁时单独成批。本批不铺实现。 |
 | CC-06 | `scene.scope_begin` / `scope_end` 暂无 manifest 作品使用 | 作品 / 门禁 | **记账** | 能力已由 `scoped_instances_get_independent_clocks_and_parameters` 用例覆盖（脚本 → 绑定表 → 注册表），但 `demo/manifest.txt` 里还没有长期使用它的作品 ⇒ `capability_exemptions.txt` 临时豁免。触发条件：出现"同一作品多实例"时补一个 demo（需同时录像素基线）。 |
 
-**CC 段小计**：已关闭 2（CC-01 / CC-02）· 部分关闭 1（CC-03）· 记账 3（CC-04 / CC-05 / CC-06）· 未执行 0 · 已记录 0。
+**CC 段小计**：已关闭 3（CC-01 / CC-02 / CC-05）· 部分关闭 1（CC-03）· 记账 2（CC-04 / CC-06）· 未执行 0 · 已记录 0。
 
 ---
 
@@ -2089,9 +2091,9 @@
 | CE-05 | 参数面板只在 egui 覆盖层，无法实例化两个且不进场景 | 场景 / UI | **已关闭** | `zela-scene-ecs::interact`：`build_panel` 用场景图元生成面板（`Rect` 轨道 + `Circle` 滑块 + typst 烘焙的 `Path` 标签），`build_panels_for_views` 按 View 的作用域吸收该作用域的标量参数；`ParamPanelSystem` 消费 `ViewportHover` / `ViewportClick` / 新增的 `ViewportRelease`，经命中 → 路由 → `params::apply` 回写（与 CA 注册表同一条入口；与 egui 控件 id 分支共用同一个 System，避免两个 System 抢写同一对资源）。装配期在 `zela-playback` 与 `zela-app` 为每个 View 生成面板并注入资源；作品 `zela_authored::panels` + `SceneChoice::Panels` + GUI 入口是生产消费者。用例 `interact_system_writes_only_the_captured_panel`（按 A 的 75% 只改 A，B 保持 0.5）/ `dragging_one_panel_does_not_touch_the_other` / `panels_are_scoped_and_do_not_share_addresses`。 |
 | CE-06 | 场景内面板不在 GPU 像素基线里 | 作品 / 门禁 | **已关闭**（CG 段定案） | 触发条件由 CG-f 改写的门面满足：面板不再是宿主覆盖层 —— 控件是 `Rect` / `Circle` / `Path` 场景图元，与普通 2D 图元走**同一条录制 / 合成路径**（`HudSystem` 只改滑块圆心），因此像素覆盖由既有 2D 图元基线兜底，不再存在"宿主层没有基线"的独立面。交互面由 `tests/hud_agent_e2e.rs` 覆盖（注入 tagged JSON → 读一帧 `Frame` 的值）。**HUD 仍未单独进 `demo/manifest.txt`**（若将来要它自己的帧序列基线，按新作品登记并录基线）。 |
 | CE-07 | CD-05：`ContentMode::Rebuild` 只有用例消费，回放端仍走 restore | 回放 / 产物 | **已关闭** | `SceneScript::rebuild_content` 用源重算并替换 `Path` / `Reveal` 几何（闭包返回 `None` ⇒ 保留烘焙数据）；`zela-playback::build_bundle_runtime_with` 按 `Bundle::content_mode` 决定是否调用，`rebuild_script_content` 把判定与替换分开（可 headless 测）；`Runtime.content_mode` 如实报告。`zela-app` 用现有 typst 作重建后端，且只在 payload 带源 / 场景有 View 时初始化引擎。用例 `rebuild_replaces_geometry_and_reports_the_mode` / `failed_rebuild_falls_back_to_restore` / `without_content_capability_the_hook_is_not_called`。口径按计划定死：**重建后不重录像素基线**。 |
-| CE-08 | 统一深度 / 2D–3D 互遮挡（issue #9 §6） | 渲染 | **记账** | 本批只做「谁在前面就先命中谁」（z-order），**不解决** 2D–3D 互遮挡 —— 与 CC-05 同一件事，继续推迟。触发条件：单独批次论证深度模型。 |
+| CE-08 | 统一深度 / 2D–3D 互遮挡（issue #9 §6） | 渲染 | **已关闭（CK-16 / CL-a：A = 同屏叠加）** | 与 CC-05 同一件事；深度单列为几何偏序，默认 A（overlay 屏幕平面 / 图层级叠加）。命中仍只做「谁在前面就先命中谁」。B 的触发条件见 CC-05。 |
 
-**CE 段小计**：已关闭 7（CE-01 / CE-02 / CE-03 / CE-04 / CE-05 / CE-06 / CE-07）· 部分关闭 0 · 记账 1（CE-08）· 未执行 0 · 已记录 0。
+**CE 段小计**：已关闭 8（CE-01 / CE-02 / CE-03 / CE-04 / CE-05 / CE-06 / CE-07 / CE-08）· 部分关闭 0 · 记账 0 · 未执行 0 · 已记录 0。
 
 ---
 
@@ -2238,11 +2240,36 @@
 
 ---
 
+## CL. UI 实体归一与表达层定型（2026-11-05）
+
+> 计划《188 CL 批次执行计划：UI 实体归一与表达层定型》。CK 定了「关系怎么编译」，
+> CL 定「控件怎么表达」：一份纯值声明 + 一个 `dyn` 实现 + 一段命令列表。
+> 本批**不新增机制**，把 CK-17 / CK-19 / CK-11 三条占位形状升级成已定稿的表达层。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CL-01 | CK-16 声称关账但被引用条目的状态列没动 | GAPS | **已关闭** | `S2-03` / `CC-05` / `CE-08` 改为已关闭（A = 同屏叠加，B 触发条件写清）；P0 段「待定」改为已裁决；J / CC / CE 三段的合计同步重算（21/6、3/1/2、8/0/0）。 |
+| CL-02 | `CK-06` / `CJ-04` 的 plans 存档同步仍未做 | 流程 | **记账** | plans 仓（计划头写 `97d99af`）仍不在本机工作区；185 §9 `CI-09`、187 §9 路线图、`CJ-04` 的「已同步」声称无法在本机核对/改写。触发条件：拿到 plans 仓时逐条销账。 |
+| CL-03 | `surface_matrix.lua` / `.js` 的 payload 与结构指纹分叉 | 作品 / 基线 | **记账** | `1191d61` 只改了 lua（给 AB 加显式描边保留 `Path × Stroke` 组合），`.js` 未同步；CK 重录时如实记录了不同值。这**不是**平台差异，是两件作品语义已不同。触发条件：把 `.js` 侧补上同一组描边，或明确「双语不要求同 payload」并改对拍口径。 |
+| CL-04 | `legacy_payload_still_decodes` 用兼容框架措辞 | 测试 / 文档 | **已关闭** | 改为 `historical_fixture_still_decodes`，注释写明「这是当前格式的正确性断言，不是兼容分支（元规则 B）」。 |
+| CL-05 | 表达层只有一组可编译、无生产的占位形状 | UI / 交互 | **已关闭** | `ze-interact::widget`（`widgets` feature）：`Widget2D` / `Container2D` 两个平级 trait、`WidgetRuntime`（`BTreeMap<WidgetId, Box<dyn>>` + 工厂表）、`MeasureCtx` / `DrawCtx` 二分、`Theme` 拆 `LayoutTokens` / `PaintTokens`、`StrategyId` 形状、`command_digest` 纯值摘要。判据：`rebuild_is_insertion_order_independent` / `paint_tokens_change_commands_but_not_layout_revision` / `command_bounds_stay_inside_the_clip` / `unknown_spec_is_an_explicit_error`。 |
+| CL-06 | Container 树没有真输入，`Frame.parent` / `Frame.text` 恒空 | 布局 / 场景 | **部分关闭** | `zela-scene-ecs::ui_layout`：声明树 → `compile_tree` → 逆序测量 / 正序分配 → `Frame { geometry, parent, semantics, text }`；判据 `layout_is_insertion_order_independent` / `production_layout_fills_parent_and_text` / `layout_tokens_are_part_of_the_revision`。**未兑现**：`Hud::frame` 仍走扁平 `ControlSet`，生产路径尚未切到该布局驱动。 |
+| CL-07 | `HitChain` / typed intent / `StructureDelta` 只有形状 | 交互 / 输入 | **部分关闭** | `Widget2D::on_intent` + `Verdict`、`HitPart`、`Container2D::bubble` 已定义（控件自处理，不再 `parse(name)`）；HUD 侧沿用 CK 的 typed intent。**未兑现**：`HitChain::visit` 未进生产命中路径，`StructureDelta` 没有挂载 / 卸载消费者。 |
+| CL-08 | 渲染器仍消费 `Rect` / `Path` / `Circle` | 渲染 / UI | **记账** | 本批交付的是表达层与布局引擎；矢量录制尚未消费 `Vec<DrawCommand>`，「20 行 HUD = 20 实体」未成立。触发条件：`SceneRecordSystem` 接 `WidgetRuntime` 的命令列表并切像素基线。 |
+| CL-09 | 自定义控件没有具名规格表 | UI / 扩展 | **已关闭** | `WidgetRuntime::register(WidgetSpecId, WidgetFactory)` 就是规格表：第三方只注册表项，不改 `Shape2D` / 后端；未注册 `SpecId` 在 `rebuild` 显式报错（`unknown_spec_is_an_explicit_error`）。**未兑现**：`R-20` 的「spec 名写进 topo」随渲染接线一起做。 |
+| CL-10 | 三条反面约束没有落点 | UI / 全仓 | **已关闭** | `widget` 模块头写死「不把 `Box<dyn>` 注册成 ECS 组件 / 不做全局样式表 / ctx 不给 `&World`」；`docs/principles.md` 补同一段。 |
+| CL-11 | 四份路线图仍写 `CL = kasuari` | 流程 | **记账** | 184 / 185 / 186 / 187 在 plans 仓，本机不可改（与 CL-02 同一触发条件）；现行指针按计划改为 `CL = UI 实体归一`、`CM = kasuari`，待 plans 仓可用时落盘。 |
+| CL-12 | 基线是否需要重录 | 产物 | **已关闭** | 本批未改任何既有产物的序列化形态（`WidgetDecl` 未注册成组件、HUD 未切换渲染路径）；`cargo verify --full` 的 demo / smoke / hashes 全绿，无需重录。 |
+
+**CL 段小计**：已关闭 6（CL-01 / CL-04 / CL-05 / CL-09 / CL-10 / CL-12）· 部分关闭 2（CL-06 / CL-07）· 记账 4（CL-02 / CL-03 / CL-08 / CL-11）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG / CH / CI / CJ / CK 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CK**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CK 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG / CH / CI / CJ / CK / CL 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CL**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CL 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|
@@ -2252,7 +2279,7 @@
 | 降为工效项 | 1（W-05） |
 | 仍成立 | 28（A 11 + C 16 + 排期 1） |
 | 范围外 | 3（B 2 + C 1） |
-| 待定 | 1（统一相机 / 深度合成模型） |
+| 待定 | 0（原 1 条「统一相机 / 深度合成模型」：CL-a 按 A = 同屏叠加裁决） |
 
 共 **44 条**：A 段 14（作品）+ B 段 9（WASM 探测）+ C 段 21（README/ARCHITECTURE）；G-101 是 F-02 的升格形态，不重复计数。
 D 段（B1 批次记账）6 条：已关闭 4 · 新增能力 2 —— 不计入缺口类别（见上表下方 D 段小计）。
