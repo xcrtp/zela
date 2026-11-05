@@ -180,6 +180,9 @@ mod tests {
 
     /// **同一采样**：`Reveal::current_pos` 与包围盒都按 `flatten(MORPH_TOLERANCE)`
     /// 取点 ⇒ 笔尖必须落在包围盒内（含边界）。采样分叉 ⇒ 本用例 RED。
+    ///
+    /// 注意：`Rect2D::contains` 是**命中口径**（半开 `[min, max)`）；包围盒是几何
+    /// 范围，极值点属于它 —— 这里按几何口径逐分量比较，不借用命中判定。
     #[test]
     fn bounds_contain_the_reveal_tip() {
         let path = line_path();
@@ -188,8 +191,12 @@ mod tests {
             let mut reveal = Reveal::new(path.clone());
             reveal.end = end;
             let tip = reveal.current_pos();
+            let inside = tip.x >= bounds.min.x
+                && tip.x <= bounds.max.x
+                && tip.y >= bounds.min.y
+                && tip.y <= bounds.max.y;
             assert!(
-                bounds.contains(tip),
+                inside,
                 "end = {end} 的笔尖 {tip:?} 必须落在 {bounds:?} 内"
             );
         }

@@ -124,29 +124,92 @@ impl System for TransformHierarchySystem {
 
         let mut out: BTreeMap<ObjectId, Transform3D> = BTreeMap::new();
         let mut style_out: BTreeMap<ObjectId, InheritedStyle> = BTreeMap::new();
-        let mut visiting: Vec<ObjectId> = Vec::new();
         let mut chain: Option<Vec<ObjectId>> = None;
-        for id in ids {
-            let _ = world_of(
-                id,
-                &locals,
-                &parents,
-                &inherits,
-                &mut out,
-                &mut visiting,
-                &mut chain,
-            );
-            let _ = inherit_style_of(
-                id,
-                &local_opacity,
-                &local_fill,
-                &local_stroke,
-                &inherits,
-                &parents,
-                &mut style_out,
-                &mut visiting,
-                &mut chain,
-            );
+
+        // **CK-c**：父子关系编译成 Euler 区间后按 `tin` 前序遍历 —— 父一定在子之前，
+        // 不需要递归、不需要 `visiting` 栈。环由 `compile_tree` 拒绝并给完整路径。
+        match crate::relation::compile_parent_tree(&parents, ids.iter().copied()) {
+            Ok(tree) => {
+                for tin in 0..tree.len() as u32 {
+                    let Some(id) = tree.node_at(tin) else {
+                        continue;
+                    };
+                    let local = locals
+                        .get(&id)
+                        .copied()
+                        .unwrap_or_else(Transform3D::identity);
+                    let world = match tree.parent(id) {
+                        Some(parent) => {
+                            let parent_world = out
+                                .get(&parent)
+                                .copied()
+                                .unwrap_or_else(Transform3D::identity);
+                            let w = inherits.get(&id).copied().unwrap_or_default();
+                            // 三个变换权重全 1 ⇒ 整份使用父世界矩阵 ⇒ 与旧行为逐位相同；
+                            // 全 0 ⇒ 不继承变换 ⇒ world = local。
+                            if w.full_transform() {
+                                local.compose(parent_world)
+                            } else if w.position == 0.0
+                                && w.rotation == 0.0
+                                && w.scale == 0.0
+                            {
+                                local
+                            } else {
+                                local.compose(mix_transform(&parent_world, &w))
+                            }
+                        }
+                        None => local,
+                    };
+                    out.insert(id, world);
+
+                    let own_style = local_style(&id, &local_opacity, &local_fill, &local_stroke);
+                    let style = match tree.parent(id) {
+                        None => own_style,
+                        Some(parent) => {
+                            let parent_style = style_out.get(&parent).copied().unwrap_or_else(|| {
+                                local_style(&parent, &local_opacity, &local_fill, &local_stroke)
+                            });
+                            let w = inherits.get(&id).copied().unwrap_or_default();
+                            InheritedStyle {
+                                // world_opacity = local × mix(1, parent_world, w)
+                                opacity: own_style.opacity
+                                    * (1.0 + (parent_style.opacity - 1.0) * w.opacity),
+                                fill: inherit_color(own_style.fill, parent_style.fill, w.fill),
+                                stroke: inherit_color(
+                                    own_style.stroke,
+                                    parent_style.stroke,
+                                    w.stroke,
+                                ),
+                            }
+                        }
+                    };
+                    style_out.insert(id, style);
+                }
+            }
+            Err(error) => {
+                // 环 ⇒ 明确错误 + 完整路径；其余（理论上不会发生的多父 / 未知父）
+                // 同样显式记录，不静默挑一个父。此时排不出前序，全部退回本地值。
+                chain = match error {
+                    ze_graph_algo::relation::RelationError::Cycle { path } => Some(path),
+                    other => {
+                        eprintln!("[zela] 父子关系编译失败：{other}");
+                        None
+                    }
+                };
+                for id in ids {
+                    out.insert(
+                        id,
+                        locals
+                            .get(&id)
+                            .copied()
+                            .unwrap_or_else(Transform3D::identity),
+                    );
+                    style_out.insert(
+                        id,
+                        local_style(&id, &local_opacity, &local_fill, &local_stroke),
+                    );
+                }
+            }
         }
 
         // 只有**与本地不同**的填充 / 描边才登记覆盖；不透明度按最终值登记
@@ -186,54 +249,18 @@ struct InheritedStyle {
     stroke: Option<Color32>,
 }
 
-fn world_of(
-    id: ObjectId,
-    locals: &BTreeMap<ObjectId, Transform3D>,
-    parents: &BTreeMap<ObjectId, ObjectId>,
-    inherits: &BTreeMap<ObjectId, ParentInherit>,
-    out: &mut BTreeMap<ObjectId, Transform3D>,
-    visiting: &mut Vec<ObjectId>,
-    error: &mut Option<Vec<ObjectId>>,
-) -> Transform3D {
-    if let Some(world) = out.get(&id) {
-        return *world;
+/// 本对象的样式（继承前的本地值）。
+fn local_style(
+    id: &ObjectId,
+    local_opacity: &BTreeMap<ObjectId, f32>,
+    local_fill: &BTreeMap<ObjectId, Color32>,
+    local_stroke: &BTreeMap<ObjectId, Color32>,
+) -> InheritedStyle {
+    InheritedStyle {
+        opacity: local_opacity.get(id).copied().unwrap_or(1.0),
+        fill: local_fill.get(id).copied(),
+        stroke: local_stroke.get(id).copied(),
     }
-    if let Some(start) = visiting.iter().position(|visited| *visited == id) {
-        if error.is_none() {
-            // 完整环路径：从首次出现的节点到当前节点（首尾相同）。
-            let mut chain: Vec<ObjectId> = visiting[start..].to_vec();
-            chain.push(id);
-            *error = Some(chain);
-        }
-        return Transform3D::identity();
-    }
-    visiting.push(id);
-
-    let local = locals
-        .get(&id)
-        .copied()
-        .unwrap_or_else(Transform3D::identity);
-    let world = match parents.get(&id) {
-        // 先 local 后 parent ⇒ parent ∘ local。
-        Some(parent) => {
-            let parent_world = world_of(*parent, locals, parents, inherits, out, visiting, error);
-            let w = inherits.get(&id).copied().unwrap_or_default();
-            // 三个变换权重全 1 ⇒ 整份使用父世界矩阵 ⇒ 与旧行为逐位相同；
-            // 全 0 ⇒ 不继承变换 ⇒ world = local。
-            if w.full_transform() {
-                local.compose(parent_world)
-            } else if w.position == 0.0 && w.rotation == 0.0 && w.scale == 0.0 {
-                local
-            } else {
-                local.compose(mix_transform(&parent_world, &w))
-            }
-        }
-        None => local,
-    };
-
-    visiting.pop();
-    out.insert(id, world);
-    world
 }
 
 /// 把父世界矩阵按三个权重混合到 identity：位置 `0→父平移`、旋转
@@ -263,64 +290,6 @@ fn mix_transform(parent: &Transform3D, w: &ParentInherit) -> Transform3D {
         rotation,
         translation,
     ))
-}
-
-fn inherit_style_of(
-    id: ObjectId,
-    local_opacity: &BTreeMap<ObjectId, f32>,
-    local_fill: &BTreeMap<ObjectId, Color32>,
-    local_stroke: &BTreeMap<ObjectId, Color32>,
-    inherits: &BTreeMap<ObjectId, ParentInherit>,
-    parents: &BTreeMap<ObjectId, ObjectId>,
-    out: &mut BTreeMap<ObjectId, InheritedStyle>,
-    visiting: &mut Vec<ObjectId>,
-    error: &mut Option<Vec<ObjectId>>,
-) -> InheritedStyle {
-    if let Some(style) = out.get(&id) {
-        return *style;
-    }
-    let local = InheritedStyle {
-        opacity: local_opacity.get(&id).copied().unwrap_or(1.0),
-        fill: local_fill.get(&id).copied(),
-        stroke: local_stroke.get(&id).copied(),
-    };
-    if let Some(start) = visiting.iter().position(|visited| *visited == id) {
-        if error.is_none() {
-            let mut chain: Vec<ObjectId> = visiting[start..].to_vec();
-            chain.push(id);
-            *error = Some(chain);
-        }
-        return local;
-    }
-    visiting.push(id);
-
-    let style = match parents.get(&id) {
-        None => local,
-        Some(parent) => {
-            let parent_style = inherit_style_of(
-                *parent,
-                local_opacity,
-                local_fill,
-                local_stroke,
-                inherits,
-                parents,
-                out,
-                visiting,
-                error,
-            );
-            let w = inherits.get(&id).copied().unwrap_or_default();
-            InheritedStyle {
-                // world_opacity = local × mix(1, parent_world, w)
-                opacity: local.opacity * (1.0 + (parent_style.opacity - 1.0) * w.opacity),
-                fill: inherit_color(local.fill, parent_style.fill, w.fill),
-                stroke: inherit_color(local.stroke, parent_style.stroke, w.stroke),
-            }
-        }
-    };
-
-    visiting.pop();
-    out.insert(id, style);
-    style
 }
 
 /// 颜色继承：子有颜色 ⇒ 按 `w` 向父色靠拢（父缺席时向透明色靠拢）；

@@ -96,6 +96,54 @@ impl TextRun {
             payload,
         });
     }
+
+    /// **CK-e**：选区只是命中链上的一段区间 —— 几何是字符盒的并集，不新建实体。
+    ///
+    /// `start` / `end` 用字符标量下标（半开区间，自动交换颠倒的端点）。
+    pub fn range_rect(&self, start: usize, end: usize) -> Option<Rect> {
+        let (start, end) = (start.min(end), start.max(end));
+        let mut bounds: Option<Rect> = None;
+        for char_box in &self.chars {
+            if char_box.index < start || char_box.index >= end {
+                continue;
+            }
+            bounds = Some(match bounds {
+                None => char_box.rect,
+                Some(current) => Rect::new(
+                    Point::new(
+                        current.min.x.min(char_box.rect.min.x),
+                        current.min.y.min(char_box.rect.min.y),
+                    ),
+                    Point::new(
+                        current.max.x.max(char_box.rect.max.x),
+                        current.max.y.max(char_box.rect.max.y),
+                    ),
+                ),
+            });
+        }
+        bounds
+    }
+
+    /// **CK-e**：光标几何（零宽插入点）。
+    ///
+    /// `index` 落在某个字符盒上 ⇒ 取该盒左缘；`index == 字符数` ⇒ 取最后一个盒右缘；
+    /// 越界 ⇒ `None`（显式，不夹到边界）。
+    pub fn cursor_rect(&self, index: usize) -> Option<Rect> {
+        if let Some(char_box) = self.char_box(index) {
+            return Some(Rect::new(
+                char_box.rect.min,
+                Point::new(char_box.rect.min.x, char_box.rect.max.y),
+            ));
+        }
+        let last = self.chars.last()?;
+        if index == last.index + 1 {
+            return Some(Rect::new(
+                Point::new(last.rect.max.x, last.rect.min.y),
+                last.rect.max,
+            ));
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -133,6 +181,29 @@ mod tests {
         let run = TextRun::new(10.0);
         assert!(run.is_empty());
         assert_eq!(run.char_at(Point::new(0.0, 0.0)), None);
+        assert_eq!(run.cursor_rect(0), None);
+        assert_eq!(run.range_rect(0, 1), None);
+    }
+
+    /// **CK-e**：选区是字符盒的并集；光标是零宽插入点（含末尾）。
+    #[test]
+    fn selection_and_cursor_are_derived_from_char_boxes() {
+        let run = run();
+        let selection = run.range_rect(0, 2).expect("有选区");
+        assert_eq!(selection.min, Point::new(0.0, 0.0));
+        assert_eq!(selection.max, Point::new(20.0, 12.0));
+
+        // 颠倒端点自动交换。
+        assert_eq!(run.range_rect(2, 0), Some(selection));
+
+        let caret = run.cursor_rect(1).expect("有光标");
+        assert_eq!(caret.min, Point::new(10.0, 0.0));
+        assert_eq!(caret.max.x, caret.min.x, "光标零宽");
+
+        // 末尾光标落在最后一个盒右缘。
+        let end = run.cursor_rect(2).expect("末尾光标");
+        assert_eq!(end.min.x, 20.0);
+        assert_eq!(run.cursor_rect(9), None, "越界显式返回 None");
     }
 
     /// **CI-d 口子②**：默认空集不进序列化 ⇒ 默认路径字节不变。

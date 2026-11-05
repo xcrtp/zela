@@ -155,12 +155,13 @@ pub fn collect_events(input: &WindowInput, ctx: &SceneInputContext) -> Vec<Scene
         (None, None) => return Vec::new(),
     };
 
-    // 与 egui 的指针浮点坐标对齐：边界算"在视口内"（闭区间，保持既有行为）。
+    // 三套边界口径统一为半开 `[min, max)`（与 `Rect2D::contains` / `View::contains` /
+    // `ze-interact` 命中同一条）：视口右 / 下边不属于视口，相邻视口不会同时命中。
     let in_viewport = |p: Vec2| {
         p.x >= input.viewport.min.x
-            && p.x <= input.viewport.max.x
+            && p.x < input.viewport.max.x
             && p.y >= input.viewport.min.y
-            && p.y <= input.viewport.max.y
+            && p.y < input.viewport.max.y
     };
 
     let pointer = input.pointer;

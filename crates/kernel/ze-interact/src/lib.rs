@@ -47,7 +47,10 @@ pub use control::{
     ControlEvent, ControlKind, ControlOutcome, ControlSet, ControlSpec, constraints_for,
 };
 pub use frame::{Frame, SemanticNode};
-pub use hit::{CurveHitTester, HitId, HitIndex, HitRegion, HitTarget, LinearHitIndex, Point, Rect};
+pub use hit::{
+    CurveHitTester, HitChain, HitFlow, HitId, HitIndex, HitRegion, HitTarget, LinearHitIndex, Point,
+    Rect,
+};
 pub use layout::{
     apply_layout, BoxLayout, ConstraintSet, Constraints, FlowLayout, Layout, LayoutCache, LayoutId,
     LayoutItem, PlacedRect, Size, layout_for_constraints,

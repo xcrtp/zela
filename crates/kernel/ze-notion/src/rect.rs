@@ -42,9 +42,12 @@ impl Rect2D {
         self.max - self.min
     }
 
-    /// 点是否在矩形内（含边界）。
+    /// 点是否在矩形内（半开区间 `[min, max)`）。
+    ///
+    /// 与 `ze-interact` 的命中口径同一条：相邻矩形贴边时，边界点只属于后一个。
+    /// 闭区间会让一条分隔线被两侧同时命中（"点谁都能改"）。
     pub fn contains(&self, p: Vec2) -> bool {
-        p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
+        p.x >= self.min.x && p.x < self.max.x && p.y >= self.min.y && p.y < self.max.y
     }
 
     /// 与另一矩形的交集；不相交时返回 `None`。
@@ -98,9 +101,19 @@ mod tests {
     fn test_contains() {
         let rect = r(0.0, 0.0, 10.0, 10.0);
         assert!(rect.contains(Vec2::new(5.0, 5.0)));
-        assert!(rect.contains(Vec2::new(0.0, 0.0)));
+        assert!(rect.contains(Vec2::new(0.0, 0.0)), "min 端点属于本矩形");
+        assert!(!rect.contains(Vec2::new(10.0, 10.0)), "max 端点属于下一个");
         assert!(!rect.contains(Vec2::new(-0.1, 5.0)));
         assert!(!rect.contains(Vec2::new(10.1, 5.0)));
+    }
+
+    #[test]
+    fn adjacent_rects_do_not_double_hit_at_the_shared_edge() {
+        let left = r(0.0, 0.0, 10.0, 10.0);
+        let right = r(10.0, 0.0, 20.0, 10.0);
+        let edge = Vec2::new(10.0, 5.0);
+        assert!(!left.contains(edge));
+        assert!(right.contains(edge), "共享边只属于后一个矩形");
     }
 
     #[test]

@@ -3,7 +3,8 @@
 // 设计要点：
 // - **确定字体**：设置 `ZELA_TYPST_FONT_DIR` 时只加载该目录的字体
 //   （构建脚本下载并校验），payload 里的 glyph 轮廓因此跨平台一致；
-//   未设置时退回系统字体（native 测试 / GUI 的既有行为不变）。
+//   未设置时退回系统字体（诊断层如实报告缺失；GUI 也走 `ensure_font_dir`，
+//   与 compile / check / render 同一条装配路径）。
 // - math 主场景必须有至少一个带数学表的字体（Latin Modern Math / Cambria Math / STIX Two Math）。
 //   优先系统发现；找不到时给用户明确提示。
 // - 所有加载函数（main/source/file/font）做内部缓存（Typst 官方设计意图，comemo 记忆化前置）。

@@ -17,7 +17,6 @@ use zela_schedule::scheduler::{Phase, Scheduler};
 
 use crate::animation::{Binding, BindingApplySystem, CameraDriveSystem, PathFollowApplySystem};
 use crate::camera_input::CameraInputSystem;
-use crate::composer::ComposerSystem;
 use crate::deferred::{DeferredApplySystem, ReplaySystem};
 use crate::director_state::DirectorAdvanceSystem;
 use crate::geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
@@ -53,11 +52,8 @@ pub fn register_systems(
     // P6/B4：重播清理 —— 运行时创建的对象在重播时销毁（`Prepare`，在录制之前；
     // 该相位当前无其它 Resource 写者）。
     scheduler.add_system(Phase::Prepare, ReplaySystem);
-    // S3：合成器在 `Prepare` 消费**上一帧末**的生命周期批次，并在本帧 `RenderCommit`
-    // 之前更新派生态。同一相位内不得读写同一资源（静态检查），而 FrameEnd 已是最后一
-    // 个相位 ⇒ 这是"事件 → 派生队列"唯一无冲突的接线点；对渲染而言没有额外延迟
-    // （延迟创建的对象的生效帧本来就是下一帧）。
-    scheduler.add_system(Phase::Prepare, ComposerSystem);
+    // **CK-f**：`ComposerSystem` 已删除 —— 合成顺序由 `composer::layer_mounts`
+    // 每次从声明重算（纯函数），不再维护增量派生态。
 
     // P6/B3：延迟命令应用 —— 帧末统一应用（避免录制遍历中删对象）。
     scheduler.add_system(Phase::FrameEnd, DeferredApplySystem);
@@ -68,11 +64,14 @@ pub fn register_systems(
     scheduler.add_system(Phase::LogicUpdate, TimeControlSystem);
     // S0 + **CE-e**：参数回写（场景内面板与历史 `WidgetId` 分支共用一条 `params::apply` 路径）。
     scheduler.add_system(Phase::LogicUpdate, ParamPanelSystem);
-    // **CG-f**：自研面板的控件状态机（视口事件 → ControlSet → 资源回写）。
+    // **CG-f / CK-e**：自研面板的控件状态机（视口事件 → ControlSet → 资源回写）。
     //
-    // 放在 `FrameEnd`：它与 `ParamPanelSystem` 写同一对资源（BindingTable /
-    // ParameterRegistry），同相位会触发静态冲突检查；帧末写回的延迟只有一帧，
-    // 交互上不可察觉（本帧渲染已提交）。
+    // **#17 方案 B（已写死）**：`HudSystem` 保留在 `FrameEnd`。方案 A（前移到
+    // `Input` / `LogicUpdate` 与 `ParamPanelSystem` 合并单一写者）被调度器的静态
+    // 冲突检查否决：它与 `TimeControlSystem`（`DirectorState`）和 `ParamPanelSystem`
+    // （`BindingTable`）在同一相位争写同一批资源。承认跨帧，并把相位与延迟帧数
+    // 写进 `TraceReport` 的 `Diagnostics`（`writeback_phase` / `writeback_delay_frames`），
+    // **不假装同帧**。记账见 GAPS `CK-` 段。
     scheduler.add_system(Phase::FrameEnd, crate::hud::HudSystem);
     // S5：父子变换累乘（BindingApply 写入 local 之后、录制之前）。
     scheduler.add_system(Phase::Prepare, TransformHierarchySystem);

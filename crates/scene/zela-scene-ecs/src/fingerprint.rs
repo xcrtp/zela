@@ -54,6 +54,7 @@ use crate::scene::components::{
     PhaseAnim, Reveal,
 };
 use ze_scene_core::View;
+use ze_scene_core::widget::Widget2D;
 
 /// FNV-1a（与 `ze_pod_core::capability_fingerprint` 同一算法：跨 Rust 版本稳定）。
 #[derive(Debug, Clone, Copy)]

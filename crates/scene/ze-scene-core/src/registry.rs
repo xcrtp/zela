@@ -31,6 +31,7 @@ use crate::object::{
 };
 use crate::surface::{Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef};
 use crate::view::View;
+use crate::widget::Widget2D;
 
 /// **组件登记表（唯一来源）**。
 ///
@@ -56,6 +57,8 @@ macro_rules! known_component_table {
                    ContentOrigin,
                    // CE-d：UI 面的空间声明（bounds + mapping；作用域复用 CC）。
                    View,
+                   // **CK-g**：一等控件实体（声明；绘制是 `Widget2D::draw` 的纯函数）。
+                   Widget2D,
                    // B3 Step 3：2D/3D 融合边界（Surface 是数据组件，不含 position）。
                    Surface, SurfaceRenderer, SurfaceTexture, SurfaceTextureRef,
                    // B1-D：3D 装配组件（脚本层入口）。`Arc<MeshGeometry>` 是

@@ -9,9 +9,9 @@
 
 - 层：`scene`（`crates/scene`）
 - 路径：`crates/scene/zela-scene-ecs`
-- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
+- 生产依赖（上游，dev-deps 不计）：`ze-comb`、`ze-content`、`ze-func`、`ze-graph-algo`、`ze-interact`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-pod-func`、`ze-pod-macro`、`ze-prerender`、`ze-property`、`ze-render-ir`、`ze-scene-api`、`ze-scene-contract`、`ze-scene-core`、`ze-scene-hecs`、`ze-time`、`zela-schedule`
 - 被依赖（下游）：`zela-app`、`zela-authored`、`zela-commands`、`zela-egui`、`zela-gui`、`zela-playback`、`zela-scene-bundle`
-- 源文件：28 个 · 11334 行
+- 源文件：29 个 · 11334 行
 
 ### 文件清单
 
@@ -25,25 +25,26 @@
 | `src/animation/system.rs` | 974 | — |
 | `src/animation/target_tests.rs` | 397 | — |
 | `src/camera_input.rs` | 695 | — |
-| `src/composer.rs` | 306 | — |
-| `src/contract.rs` | 810 | — |
+| `src/composer.rs` | 10 | **CK-f**：合成器在 ECS 侧只剩转发。 |
+| `src/contract.rs` | 811 | — |
 | `src/deferred.rs` | 434 | — |
 | `src/director_state.rs` | 51 | — |
 | `src/driver.rs` | 420 | Driver pod：**命令驱动**的场景推进器（P4）。 |
 | `src/errors.rs` | 53 | — |
 | `src/expr_binding_tests.rs` | 674 | S3 验收（ECS 侧）：表达式绑定从声明到**真实组件写入**的整条链路。 |
 | `src/expr_mono.rs` | 672 | 表达式求值的**宿主单子 `M`**（S3）。 |
-| `src/fingerprint.rs` | 376 | — |
+| `src/fingerprint.rs` | 377 | — |
 | `src/geometry.rs` | 258 | — |
-| `src/hud.rs` | 667 | **CG-f**：自研 UI 的第一块可见面板 —— 三组控件全部是**场景图元**。 |
+| `src/hud.rs` | 842 | **CG-f**：自研 UI 的第一块可见面板 —— 三组控件全部是**场景图元**。 |
 | `src/input.rs` | 412 | — |
 | `src/interact.rs` | 660 | 参数面板进场景（CE-e）：**真消费者**。 |
-| `src/lib.rs` | 113 | — |
+| `src/lib.rs` | 116 | — |
 | `src/lifetime.rs` | 403 | — |
-| `src/register.rs` | 82 | — |
+| `src/register.rs` | 81 | — |
+| `src/relation.rs` | 148 | **CK-c**：场景 `Parent` 树 → 关系契约的只读适配。 |
 | `src/scene.rs` | 234 | — |
 | `src/scene_script_tests.rs` | 975 | — |
-| `src/transform_hierarchy.rs` | 740 | — |
+| `src/transform_hierarchy.rs` | 709 | — |
 | `src/utils.rs` | 60 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
@@ -85,7 +86,6 @@ graph LR
     f7 --> f1
     f7 --> f6
     f8 --> f6
-    f9 --> f6
     f6 --> f9
     f10 --> f1
     f10 --> f6
@@ -103,7 +103,6 @@ graph LR
     f20 --> f14
     f21 --> f6
     f22 --> f8
-    f22 --> f9
     f22 --> f12
     f22 --> f21
     f22 --> f23
@@ -124,7 +123,6 @@ graph LR
 | `src/animation/path_follow.rs` | `pub struct PathFollowApplySystem` |
 | `src/animation/system.rs` | `pub struct BindingApplySystem` |
 | `src/camera_input.rs` | `pub struct CameraInputSystem` |
-| `src/composer.rs` | `pub struct ComposerSystem` |
 | `src/contract.rs` | `pub fn find_by_name(scene: &impl SceneRead, name: &str) -> Option<ObjectId>` |
 | `src/contract.rs` | `pub struct WorldScene<'a>` |
 | `src/deferred.rs` | `pub enum DeferredCmd` |
@@ -152,6 +150,8 @@ graph LR
 | `src/hud.rs` | `pub struct Hud` |
 | `src/hud.rs` | `pub struct HudOutcome` |
 | `src/hud.rs` | `pub enum HudOutcomeKind` |
+| `src/hud.rs` | `pub enum ValueIntent` |
+| `src/hud.rs` | `pub enum ActionIntent` |
 | `src/hud.rs` | `pub fn build(` |
 | `src/hud.rs` | `pub struct HudState(pub Option<Hud>)` |
 | `src/hud.rs` | `pub struct HudSystem` |
@@ -172,6 +172,9 @@ graph LR
 | `src/lifetime.rs` | `pub struct LifetimeTracker` |
 | `src/lifetime.rs` | `pub struct LifetimeFlushSystem` |
 | `src/register.rs` | `pub fn register_systems(` |
+| `src/relation.rs` | `pub struct ParentTree<'a>` |
+| `src/relation.rs` | `pub fn compile_parent_tree(` |
+| `src/relation.rs` | `pub fn parent_revision(` |
 | `src/scene.rs` | `pub struct Scene` |
 | `src/transform_hierarchy.rs` | `pub struct TransformHierarchyError` |
 | `src/transform_hierarchy.rs` | `pub struct TransformHierarchySystem` |
@@ -188,7 +191,7 @@ graph LR
 ### 内部文件怎么分工
 
 - **容器与契约适配**：`src/scene.rs` 是装配期的场景容器（world / resources / deferred）；`src/contract.rs` 是 hecs 与契约层的唯一接触面，负责 `ObjectId` ↔ `Entity` 互转，并用一张 `known_component_table!` 登记表实现类型擦除的动态创建（未登记类型返回 `None`，不会无提示地丢组件）。
-- **交互与场景内参数面板**：`src/interact.rs` 在装配期把参数注册表的标量项摆成场景对象（轨道 `Rect` + 滑块 `Circle` + 调用方烘焙的标签 `Path`），并建好 `LinearHitIndex`；运行期由 `ParamPanelSystem` 消费视口事件，按 hover / focus / capture 路由（路由键 = CC 作用域 + 命中目标），再走 `params::apply` 回写。它与 egui 控件 id 的滑块分支共用同一个 System 与同一对资源，不出现两条抢写的旁路。
+- **交互与场景内参数面板**：`src/interact.rs` 在装配期把参数注册表的标量项摆成场景对象（轨道 `Rect` + 滑块 `Circle` + 调用方烘焙的标签 `Path`），并建好 `LinearHitIndex`；运行期由 `ParamPanelSystem` 消费视口事件，按 hover / focus / capture 路由（路由键 = CC 作用域 + 命中目标），再走 `params::apply` 回写。它与宿主控件 id 的滑块分支共用同一个 System 与同一对资源，不出现两条抢写的旁路。
 - **时间与输入（系统类）**：`src/director_state.rs` 的 `DirectorAdvanceSystem` 是**唯一推进时间**的地方，每帧 `advance(dt)` 后把 `Director` 的全局时间与帧号同步进 `TimeState`；`src/input.rs` 消费 UI 发来的纯数据事件（播放/暂停、seek、参数面板）；`src/camera_input.rs` 把相机语义命令写进**场景里的相机对象**组件。
 - **动画（系统类）**：`src/animation/system.rs` 的 `BindingApplySystem` 遍历绑定表，用时钟树采样曲线并把结果写进组件字段（System 本身不认识任何具体目标）；`src/animation/camera_drive.rs` 只做「谁驱动哪台相机」——通过把绑定移出 / 放回 `BindingTable` 显式让位，因此必须与 `CameraInputSystem` 同相位且排在其前；`src/animation/morph.rs` 是形变的 CPU 回退路径（App 走 GPU 插值，不注册它）。
 - **表达式**：`src/expr_mono.rs` 是表达式求值的宿主单子 `M`，把 `TimeState`（time / frame）、`SceneRead`（组件字段读端）与 `zela.math` 算子拼在一起；缺失通道显式返回错误，不给 0。

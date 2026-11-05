@@ -56,7 +56,7 @@ impl View {
         Self::new(bounds, ViewMapping::World)
     }
 
-    /// 本地坐标是否落在这面内（含边界；命中测试的精确口径由 `ze-interact` 负责）。
+    /// 本地坐标是否落在这面内（半开区间 `[min, max)`，与命中口径同一条）。
     pub fn contains(&self, point: ze_notion::Vec2) -> bool {
         self.bounds.contains(point)
     }
@@ -83,10 +83,11 @@ mod tests {
     }
 
     #[test]
-    fn contains_uses_bounds_inclusive() {
+    fn contains_uses_the_same_half_open_bounds_as_hit_testing() {
         let view = View::screen(bounds());
-        assert!(view.contains(Vec2::new(10.0, 20.0)), "左上角属于本面");
-        assert!(view.contains(Vec2::new(110.0, 80.0)), "Rect2D 含边界");
+        assert!(view.contains(Vec2::new(10.0, 20.0)), "min 端点属于本面");
+        assert!(!view.contains(Vec2::new(110.0, 80.0)), "max 端点属于下一个面");
+        assert!(view.contains(Vec2::new(109.999, 79.999)));
         assert!(!view.contains(Vec2::new(9.0, 50.0)));
     }
 

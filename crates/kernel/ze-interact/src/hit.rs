@@ -143,6 +143,55 @@ pub trait HitIndex {
     fn query(&self, point: Point) -> Vec<HitId>;
 }
 
+/// **CK-e**：命中链上「消费还是继续」的显式规则。
+///
+/// `query` 返回的 `Vec` 天然是命中链（前 → 后 / 内 → 外）。冒泡到容器就是
+/// 对链上后续项 `Continue`；子控件处理掉事件就是 `Consume`。默认不是"谁都收到"，
+/// 也不是"只给第一个" —— 规则必须由消费方写出来。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitFlow {
+    /// 已处理，停止冒泡。
+    Consume,
+    /// 未处理，继续给链上后一个（通常是容器 / 祖先）。
+    Continue,
+}
+
+/// 命中链：按命中顺序排列的目标。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HitChain {
+    hits: Vec<HitId>,
+}
+
+impl HitChain {
+    pub fn new(hits: Vec<HitId>) -> Self {
+        Self { hits }
+    }
+
+    pub fn from_index(index: &dyn HitIndex, point: Point) -> Self {
+        Self::new(index.query(point))
+    }
+
+    pub fn as_slice(&self) -> &[HitId] {
+        &self.hits
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.hits.is_empty()
+    }
+
+    /// 沿链冒泡，返回**消费**该事件的目标；全部 `Continue` ⇒ `None`。
+    ///
+    /// 这是「消费 / 继续」的唯一实现：调用方不再各自写"谁先谁后"。
+    pub fn visit(&self, mut visit: impl FnMut(HitId) -> HitFlow) -> Option<HitId> {
+        for &hit in &self.hits {
+            if visit(hit) == HitFlow::Consume {
+                return Some(hit);
+            }
+        }
+        None
+    }
+}
+
 /// 线性索引：CE 的唯一实现（目标少，O(n) 足够；换实现不改调用方）。
 #[derive(Debug, Clone, Default)]
 pub struct LinearHitIndex {
@@ -237,5 +286,28 @@ mod tests {
         let p = Point::from_f32(1.5, -2.25);
         assert_eq!(p, Point::new(1.5, -2.25));
         assert_eq!(p.to_f32(), (1.5, -2.25));
+    }
+
+    /// **CK-e**：链上显式「消费 / 继续」—— 子控件消费就停，否则冒泡到容器。
+    #[test]
+    fn hit_chain_bubbles_until_a_target_consumes() {
+        let chain = HitChain::new(vec![HitId(2), HitId(1), HitId(0)]);
+        // 2 不处理（例如装饰层），1 处理 ⇒ 停在 1，0 收不到。
+        let mut seen = Vec::new();
+        let consumer = chain.visit(|hit| {
+            seen.push(hit);
+            if hit == HitId(1) {
+                HitFlow::Consume
+            } else {
+                HitFlow::Continue
+            }
+        });
+        assert_eq!(consumer, Some(HitId(1)));
+        assert_eq!(seen, vec![HitId(2), HitId(1)], "消费后不再冒泡");
+
+        // 全部继续 ⇒ 没有消费者（调用方可据此判定"未处理"）。
+        let none = chain.visit(|_| HitFlow::Continue);
+        assert_eq!(none, None);
+        assert!(HitChain::default().is_empty());
     }
 }

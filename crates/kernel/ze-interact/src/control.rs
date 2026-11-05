@@ -198,6 +198,8 @@ impl ControlSet {
 
         Frame {
             geometry: placed,
+            // 扁平的控件集合没有容器：全部是根（容器布局由调用方填）。
+            parent: vec![None; self.rects.len()],
             semantics,
             text: Vec::new(),
         }

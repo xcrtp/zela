@@ -17,7 +17,7 @@ pub mod view_rect;
 
 pub use camera::{CameraCommand, CameraMode};
 pub use config::{UiConfig, ViewportCamera};
-pub use event::{InputEvents, SceneEvent, WidgetId, ids};
+pub use event::{InputEvents, SceneEvent, StructureOp, WidgetId, ids};
 pub use inject::{FrameTag, InjectError, InjectSource, Injected, InjectedPayload, TagId};
 pub use input_window::{
     collect_events, Key, PointerState, SceneInputContext, WindowInput,

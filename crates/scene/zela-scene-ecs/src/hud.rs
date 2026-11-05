@@ -99,7 +99,7 @@ impl HudMetrics {
 }
 
 /// 一个控件的场景图元。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Row {
     id: LayoutId,
     kind: ControlKind,
@@ -107,6 +107,8 @@ struct Row {
     knob: Option<ObjectId>,
     /// 单位坐标下的控件矩形（装配期算一次）。
     rect: ze_interact::Rect,
+    /// **CK-g**：已烘焙的标签字形（一份数据两用：场景图元 + `DrawCommand`）。
+    glyphs: Vec<Path2D>,
 }
 
 /// 场景里的一块自研面板。
@@ -120,6 +122,10 @@ pub struct Hud {
     /// 为什么不给 `ze-interact::ControlOutcome` 加 serde：kernel 保持默认零依赖，
     /// debug 协议不该污染它（R8）。这里只做形状镜像，不含任何协议逻辑。
     last_outcomes: Vec<HudOutcome>,
+    /// **CK-e**：本帧的回写诊断（未知控件名等）。空 = 没有异常。
+    last_errors: Vec<String>,
+    /// **CK-g**：主题 id（只存 id；颜色由 `Theme2D` 解析，诊断里回执 id）。
+    theme: String,
 }
 
 /// HUD 一次交互的外部意图（镜像 `ControlOutcome`，**不派生 serde**）。
@@ -137,6 +143,69 @@ pub struct HudOutcome {
 pub enum HudOutcomeKind {
     ValueChanged(f64),
     Activated,
+}
+
+/// **CK-e**：数值回写的 typed intent（名字 → 枚举在**边界**一次完成）。
+///
+/// 此前是 `match name.as_str()` + 未知名字 `eprintln!`：名字拼错不会红、
+/// 诊断里也看不到。现在未知名字进 [`Hud::errors`]（回执可见），分发按枚举走。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueIntent {
+    /// 参数地址（`panel_a.base` 这类带 `:` 的注册表键）。
+    Parameter(String),
+    Speed,
+    Seek,
+    Show2d,
+    Show3d,
+    ViewportCamera,
+    Free2dCamera,
+    FlipLayerOrder,
+}
+
+impl ValueIntent {
+    /// 解析控件名；未知 ⇒ `None`（调用方记诊断，不静默吞）。
+    pub fn parse(name: &str) -> Option<Self> {
+        if name.contains(':') {
+            return Some(Self::Parameter(name.to_string()));
+        }
+        Some(match name {
+            "speed" => Self::Speed,
+            "seek" => Self::Seek,
+            "show_2d" => Self::Show2d,
+            "show_3d" => Self::Show3d,
+            "viewport_camera" => Self::ViewportCamera,
+            "free_2d_camera" => Self::Free2dCamera,
+            "flip_layer_order" => Self::FlipLayerOrder,
+            _ => return None,
+        })
+    }
+}
+
+/// **CK-e**：激活类回写的 typed intent。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionIntent {
+    PlayPause,
+    Replay,
+    ShowGrid,
+    ShowField,
+    FilterGain,
+    FilterDistortion,
+    FilterBlur,
+}
+
+impl ActionIntent {
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "play_pause" => Self::PlayPause,
+            "replay" => Self::Replay,
+            "show_grid" => Self::ShowGrid,
+            "show_field" => Self::ShowField,
+            "filter_gain" => Self::FilterGain,
+            "filter_distortion" => Self::FilterDistortion,
+            "filter_blur" => Self::FilterBlur,
+            _ => return None,
+        })
+    }
 }
 
 impl Hud {
@@ -238,6 +307,75 @@ impl Hud {
     /// 清空意图（每帧开头调用；状态机本身只返回 `Vec`）。
     pub fn clear_outcomes(&mut self) {
         self.last_outcomes.clear();
+        self.last_errors.clear();
+    }
+
+    /// **CK-e**：本帧回写诊断（未知控件名 / 参数写入被拒）。
+    pub fn errors(&self) -> &[String] {
+        &self.last_errors
+    }
+
+    /// 诊断回执用的单行说明（空 = `None`）。
+    pub fn error_note(&self) -> Option<String> {
+        if self.last_errors.is_empty() {
+            None
+        } else {
+            Some(self.last_errors.join("；"))
+        }
+    }
+
+    /// **CK-g**：本面板的主题 id（进 `Diagnostics.environment`）。
+    pub fn theme(&self) -> &str {
+        &self.theme
+    }
+
+    /// **CK-g**：控件声明 → 绘制命令（每条命令自带 `Style2D`）。
+    ///
+    /// 与场景图元**同一份**布局 / 字形数据：主题或 hover 只改命令里的颜色，
+    /// 实体数不变。`Shape2D` 一个变体都没动。
+    pub fn commands(&self) -> Vec<ze_render_ir::DrawCommand> {
+        let theme = ze_scene_core::widget::Theme2D::default_theme();
+        let routed = self.set.routed();
+        let mut out = Vec::new();
+        for row in &self.rows {
+            let world = self.metrics.to_world(row.rect);
+            let knob = row.knob.and_then(|_| self.knob_world_x(row.id)).map(|(_, x)| {
+                Vec2::new(x, world.center().y)
+            });
+            let role = match row.kind {
+                ControlKind::Slider { .. } => "slider",
+                ControlKind::Button => "button",
+                ControlKind::Label => "label",
+                ControlKind::RadioGroup { .. } => "radio",
+            };
+            let name = self
+                .set
+                .specs()
+                .iter()
+                .find(|spec| spec.id == row.id)
+                .map(|spec| spec.name.as_str())
+                .unwrap_or("");
+            let widget = ze_scene_core::widget::Widget2D::new(
+                row.id.0,
+                role,
+                name,
+                theme.id.clone(),
+            );
+            let ctx = ze_scene_core::widget::WidgetDrawContext {
+                track: world,
+                knob,
+                knob_radius: self.metrics.knob_radius,
+                hover: routed == Some(row.id),
+                z: HUD_TRACK_Z,
+                glyphs: row.glyphs.clone(),
+            };
+            out.extend(widget.draw(&ctx, &theme));
+        }
+        out
+    }
+
+    fn record_error(&mut self, message: String) {
+        self.last_errors.push(message);
     }
 
     /// 当前投递目标（capture > focus > hover）的**语义名**：诊断里「命中谁」。
@@ -314,14 +452,15 @@ pub fn build(
         let text_height = metrics.label_font_size * 1.3;
         let label_y = world.max.y + ((metrics.gap - text_height) * 0.5).max(0.0);
         // 标签：与轨道左端对齐（世界坐标），字号由 metrics 一处定义。
-        for glyph_path in bake_label(
+        let glyphs = bake_label(
             &spec_name(&set, placed.id),
             Vec2::new(world.min.x, label_y),
             metrics.label_font_size,
-        ) {
+        );
+        for glyph_path in &glyphs {
             scene
                 .spawn_dyn(vec![
-                    Box::new(Path(glyph_path)),
+                    Box::new(Path(glyph_path.clone())),
                     Box::new(StrokeSolid::new(1.0, Color32::new(210, 214, 226, 255))),
                     Box::new(ZOrder::new(HUD_LABEL_Z)),
                 ])
@@ -364,6 +503,7 @@ pub fn build(
             kind,
             knob,
             rect,
+            glyphs,
         });
     }
 
@@ -372,6 +512,8 @@ pub fn build(
         metrics,
         rows,
         last_outcomes: Vec::new(),
+        last_errors: Vec::new(),
+        theme: ze_scene_core::widget::Theme2D::default_theme().id,
     }
 }
 
@@ -472,46 +614,59 @@ impl System for HudSystem {
                 };
                 match kind {
                     HudOutcomeKind::ValueChanged(value) => {
-                        if name.contains(':') {
-                            // 参数地址（CA 的注册表口径）：与 CE-e 同一条回写路径。
-                            if let Err(error) =
-                                crate::animation::params::apply(&mut table, &name, value as f32)
-                            {
-                                eprintln!("[zela] HUD 参数 `{name}` 写入被拒绝：{error}");
-                            }
-                        } else {
-                            match name.as_str() {
-                                "speed" => director.director.set_speed(value),
-                                "seek" => director.director.seek(value),
-                                // **CI-b / CG-08**：图层与相机开关（单选组，值 = 选项下标）。
-                                "show_2d" => ui.show_2d = value < 0.5,
-                                "show_3d" => ui.show_3d = value < 0.5,
-                                "viewport_camera" => {
-                                    ui.viewport_camera = match value.round() as i32 {
-                                        1 => crate::domain::ViewportCamera::ThreeDOrbit,
-                                        2 => crate::domain::ViewportCamera::ThreeDFps,
-                                        _ => crate::domain::ViewportCamera::TwoD,
-                                    }
+                        let Some(intent) = ValueIntent::parse(&name) else {
+                            hud.record_error(format!("未知数值控件 `{name}`"));
+                            continue;
+                        };
+                        match intent {
+                            ValueIntent::Parameter(address) => {
+                                // 参数地址（CA 的注册表口径）：与 CE-e 同一条回写路径。
+                                if let Err(error) = crate::animation::params::apply(
+                                    &mut table,
+                                    &address,
+                                    value as f32,
+                                ) {
+                                    hud.record_error(format!(
+                                        "参数 `{address}` 写入被拒绝：{error}"
+                                    ));
                                 }
-                                "free_2d_camera" => ui.free_2d_camera = value >= 0.5,
-                                "flip_layer_order" => ui.flip_layer_order = value >= 0.5,
-                                other => eprintln!("[zela] HUD 未知数值控件 `{other}`"),
                             }
+                            ValueIntent::Speed => director.director.set_speed(value),
+                            ValueIntent::Seek => director.director.seek(value),
+                            // **CI-b / CG-08**：图层与相机开关（单选组，值 = 选项下标）。
+                            ValueIntent::Show2d => ui.show_2d = value < 0.5,
+                            ValueIntent::Show3d => ui.show_3d = value < 0.5,
+                            ValueIntent::ViewportCamera => {
+                                ui.viewport_camera = match value.round() as i32 {
+                                    1 => crate::domain::ViewportCamera::ThreeDOrbit,
+                                    2 => crate::domain::ViewportCamera::ThreeDFps,
+                                    _ => crate::domain::ViewportCamera::TwoD,
+                                }
+                            }
+                            ValueIntent::Free2dCamera => ui.free_2d_camera = value >= 0.5,
+                            ValueIntent::FlipLayerOrder => ui.flip_layer_order = value >= 0.5,
                         }
                     }
-                    HudOutcomeKind::Activated => match name.as_str() {
-                        "play_pause" => director.director.toggle(),
-                        "replay" => {
-                            director.director.seek(0.0);
-                            director.director.set_speed(1.0);
+                    HudOutcomeKind::Activated => {
+                        let Some(intent) = ActionIntent::parse(&name) else {
+                            hud.record_error(format!("未知按钮 `{name}`"));
+                            continue;
+                        };
+                        match intent {
+                            ActionIntent::PlayPause => director.director.toggle(),
+                            ActionIntent::Replay => {
+                                director.director.seek(0.0);
+                                director.director.set_speed(1.0);
+                            }
+                            ActionIntent::ShowGrid => ui.show_grid = !ui.show_grid,
+                            ActionIntent::ShowField => ui.show_field = !ui.show_field,
+                            ActionIntent::FilterGain => ui.filter_gain = !ui.filter_gain,
+                            ActionIntent::FilterDistortion => {
+                                ui.filter_distortion = !ui.filter_distortion
+                            }
+                            ActionIntent::FilterBlur => ui.filter_blur = !ui.filter_blur,
                         }
-                        "show_grid" => ui.show_grid = !ui.show_grid,
-                        "show_field" => ui.show_field = !ui.show_field,
-                        "filter_gain" => ui.filter_gain = !ui.filter_gain,
-                        "filter_distortion" => ui.filter_distortion = !ui.filter_distortion,
-                        "filter_blur" => ui.filter_blur = !ui.filter_blur,
-                        other => eprintln!("[zela] HUD 未知按钮 `{other}`"),
-                    },
+                    }
                 }
                 // 回执镜像：状态机的返回值原样落一份（零 System 传播 tag）。
                 hud.record(id, kind);
@@ -565,6 +720,26 @@ mod tests {
             .and_then(HudState::hud)
             .and_then(|hud| hud.value(id))
             .expect("有滑块值")
+    }
+
+    /// **CK-g**：一个控件声明 ⇒ 一份命令列表；主题 / hover 只改颜色，不改条数。
+    #[test]
+    fn widget_commands_carry_their_own_style_and_theme() {
+        let mut scene = Scene::new();
+        let specs = vec![
+            ControlSpec::slider(LayoutId(0), "speed", 0.0, 2.0, 1.0),
+            ControlSpec::button(LayoutId(1), "play_pause"),
+        ];
+        let hud = build(&mut scene, specs, HudMetrics::default_metrics(), |_, _, _| {
+            Vec::new()
+        });
+        let commands = hud.commands();
+        // 两个控件：轨道 + 滑块（按钮没有滑块；没有烘焙字形）。
+        assert_eq!(commands.len(), 3);
+        assert_eq!(commands[0].shape.kind_name(), "rect");
+        assert_eq!(commands[1].shape.kind_name(), "circle");
+        assert_eq!(commands[2].shape.kind_name(), "rect");
+        assert!(!hud.theme().is_empty(), "主题 id 必须可回执");
     }
 
     /// **回归**：标签画在行距里，不得压到任何一行的轨道（"上方文字压在下一个按钮上"）。

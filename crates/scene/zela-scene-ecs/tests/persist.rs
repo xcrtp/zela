@@ -20,6 +20,7 @@ use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::scene::components::{
     ContentTextureItem, MorphShape, PathFollow, PhaseAnim, Reveal,
 };
+use ze_scene_core::widget::Widget2D;
 use zela_scene_ecs::{SceneEncoder, SceneScript};
 
 /// 33 个登记组件的样例（与 `known_component_table!` 一一对应）。
@@ -88,6 +89,8 @@ fn samples() -> zela_scene_ecs::contract::Components {
         Box::new(Reveal::new(Path2D::new())),
         Box::new(PathFollow::new(Path2D::new())),
         Box::new(Parent(ObjectId::DANGLING)),
+        // CK-g：一等控件实体（声明）。
+        Box::new(Widget2D::new(1, "slider", "speed", "zela.default")),
     ]
 }
 
@@ -95,8 +98,8 @@ fn samples() -> zela_scene_ecs::contract::Components {
 #[test]
 fn every_registered_component_round_trips() {
     let original = samples();
-    let tagged = serialize_components(&original).expect("33 个组件都应可序列化");
-    assert_eq!(tagged.len(), 33);
+    let tagged = serialize_components(&original).expect("34 个组件都应可序列化");
+    assert_eq!(tagged.len(), 34);
 
     let mut names: Vec<&str> = tagged.iter().map(|t| t.type_name.as_str()).collect();
     names.sort_unstable();
@@ -134,12 +137,13 @@ fn every_registered_component_round_trips() {
         "Reveal",
         "PathFollow",
         "Parent",
+        "Widget2D",
     ];
     expected.sort_unstable();
-    assert_eq!(names, expected, "登记表 33 条必须逐条出现");
+    assert_eq!(names, expected, "登记表 34 条必须逐条出现");
 
     let decoded = deserialize_components(tagged.clone()).expect("全部可解码");
-    assert_eq!(decoded.len(), 33);
+    assert_eq!(decoded.len(), 34);
 
     // 再编码一次 ⇒ 与第一次逐项相等（往返一致；函数组件比较名字）。
     let again = serialize_components(&decoded).expect("解码后的组件仍可序列化");

@@ -11,7 +11,7 @@
 - 路径：`crates/scene/ze-scene-core`
 - 生产依赖（上游，dev-deps 不计）：`ze-alg`、`ze-comb`、`ze-content`、`ze-func`、`ze-macro`、`ze-notion`、`ze-pod-core`、`ze-prerender`、`ze-property`、`ze-reflect`、`ze-render-ir`、`ze-scene-contract`、`ze-scene-macros`、`ze-time`
 - 被依赖（下游）：`ze-scene-api`、`zela-app`、`zela-authored`、`zela-egui`、`zela-playback`、`zela-render`、`zela-render-backends`、`zela-scene-bundle`、`zela-scene-ecs`
-- 源文件：49 个 · 14123 行
+- 源文件：50 个 · 14423 行
 
 ### 文件清单
 
@@ -26,21 +26,21 @@
 | `src/animation/scope.rs` | 61 | 作用域（CC-a）：给绑定表与时钟一个**声明式**的归属维度。 |
 | `src/animation/target.rs` | 1380 | — |
 | `src/animation/timeline.rs` | 749 | — |
-| `src/bounds.rs` | 197 | — |
+| `src/bounds.rs` | 204 | — |
 | `src/camera_input.rs` | 168 | — |
 | `src/components/3d.rs` | 402 | — |
 | `src/components.rs` | 274 | — |
-| `src/composer.rs` | 146 | — |
+| `src/composer.rs` | 191 | — |
 | `src/content.rs` | 39 | — |
 | `src/domain/camera.rs` | 121 | — |
 | `src/domain/config.rs` | 76 | — |
-| `src/domain/event.rs` | 344 | — |
+| `src/domain/event.rs` | 403 | — |
 | `src/domain/inject.rs` | 223 | **CH-a**：`Injected` envelope —— 给每一次注入打标记。 |
-| `src/domain/input_window.rs` | 393 | **CH-a**：窗口输入 —— `collect_events` 的纯函数形态。 |
+| `src/domain/input_window.rs` | 394 | **CH-a**：窗口输入 —— `collect_events` 的纯函数形态。 |
 | `src/domain/mod.rs` | 30 | — |
 | `src/domain/view.rs` | 263 | — |
 | `src/domain/view_rect.rs` | 38 | — |
-| `src/lib.rs` | 78 | — |
+| `src/lib.rs` | 80 | — |
 | `src/math_pod.rs` | 107 | — |
 | `src/mesh_primitives/cube.rs` | 196 | — |
 | `src/mesh_primitives/parametric_surface.rs` | 193 | — |
@@ -56,14 +56,15 @@
 | `src/object/primitives.rs` | 475 | — |
 | `src/object/zorder.rs` | 15 | — |
 | `src/persist.rs` | 160 | — |
-| `src/registry.rs` | 225 | — |
+| `src/registry.rs` | 228 | — |
 | `src/scene_script.rs` | 1224 | — |
 | `src/scene_write.rs` | 77 | — |
 | `src/surface.rs` | 585 | — |
 | `src/time_state.rs` | 34 | — |
 | `src/transform.rs` | 221 | — |
 | `src/types.rs` | 14 | — |
-| `src/view.rs` | 128 | View（CE-d）：给 UI 面一个**空间**与**映射**的声明。 |
+| `src/view.rs` | 129 | View（CE-d）：给 UI 面一个**空间**与**映射**的声明。 |
+| `src/widget.rs` | 182 | **CK-g**：`Widget2D` —— 一等控件实体，绘制走 `Vec<DrawCommand>`。 |
 | `src/world_inherit.rs` | 84 | — |
 | `src/world_transforms.rs` | 73 | — |
 
@@ -104,12 +105,13 @@ graph LR
     f11["src/object/primitives.rs"]
     f31["src/persist.rs"]
     f32["src/registry.rs"]
-    f35["src/scene_script.rs"]
-    f36["src/surface.rs"]
+    f36["src/scene_script.rs"]
+    f37["src/surface.rs"]
     f15["src/types.rs"]
     f34["src/view.rs"]
-    f38["src/world_inherit.rs"]
-    f37["src/world_transforms.rs"]
+    f35["src/widget.rs"]
+    f39["src/world_inherit.rs"]
+    f38["src/world_transforms.rs"]
     f0 --> f1
     f2 --> f1
     f2 --> f3
@@ -159,16 +161,17 @@ graph LR
     f32 --> f33
     f32 --> f7
     f32 --> f34
-    f35 --> f0
-    f35 --> f2
-    f35 --> f4
-    f35 --> f5
-    f35 --> f12
-    f35 --> f36
-    f36 --> f13
-    f36 --> f22
-    f34 --> f35
-    f37 --> f38
+    f32 --> f35
+    f36 --> f0
+    f36 --> f2
+    f36 --> f4
+    f36 --> f5
+    f36 --> f12
+    f36 --> f37
+    f37 --> f13
+    f37 --> f22
+    f34 --> f36
+    f38 --> f39
 ```
 
 ### 对外 API（模块级 `pub` 项；impl 方法见源码）
@@ -243,8 +246,9 @@ graph LR
 | `src/components.rs` | `pub struct Reveal` |
 | `src/components.rs` | `pub struct PathFollow` |
 | `src/composer.rs` | `pub struct Composer` |
-| `src/composer.rs` | `pub struct ComposerQueue` |
-| `src/composer.rs` | `pub fn full_recompute(scene: &impl SceneRead) -> Vec<ObjectId>` |
+| `src/composer.rs` | `pub struct ComposerRef(pub ObjectId)` |
+| `src/composer.rs` | `pub struct LayerMount` |
+| `src/composer.rs` | `pub fn layer_mounts(scene: &impl SceneRead) -> Vec<LayerMount>` |
 | `src/content.rs` | `pub fn build_ir(engine: &InMemoryEngine, source: &str) -> Option<ContentIR>` |
 | `src/content.rs` | `pub fn compile(` |
 | `src/domain/camera.rs` | `pub enum CameraMode` |
@@ -253,6 +257,7 @@ graph LR
 | `src/domain/config.rs` | `pub struct UiConfig` |
 | `src/domain/event.rs` | `pub struct WidgetId(pub u32)` |
 | `src/domain/event.rs` | `pub enum SceneEvent` |
+| `src/domain/event.rs` | `pub enum StructureOp` |
 | `src/domain/event.rs` | `pub enum PointerButton` |
 | `src/domain/event.rs` | `pub enum PointerInput` |
 | `src/domain/event.rs` | `pub struct KeyModifiers` |
@@ -352,6 +357,9 @@ graph LR
 | `src/transform.rs` | `pub trait Transform2DInto` |
 | `src/view.rs` | `pub enum ViewMapping` |
 | `src/view.rs` | `pub struct View` |
+| `src/widget.rs` | `pub struct Widget2D` |
+| `src/widget.rs` | `pub struct WidgetDrawContext` |
+| `src/widget.rs` | `pub struct Theme2D` |
 | `src/world_inherit.rs` | `pub struct WorldInherit` |
 | `src/world_transforms.rs` | `pub struct WorldTransforms` |
 <!-- AUTO:END -->

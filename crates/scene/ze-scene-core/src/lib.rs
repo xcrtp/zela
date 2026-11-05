@@ -49,6 +49,8 @@ pub mod transform;
 pub mod types;
 /// UI 面的空间声明（CE-d）：`View` + `ViewMapping`（作用域复用 CC，不新建）。
 pub mod view;
+/// **CK-g**：一等控件实体（`Widget2D` + 纯函数 `draw` → `Vec<DrawCommand>`）。
+pub mod widget;
 /// 每帧派生的世界矩阵容器（生产在 ECS 层，消费在渲染层）。
 pub mod world_transforms;
 /// 每帧派生的样式继承结果（与 `WorldTransforms` 同批生产）。

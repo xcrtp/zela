@@ -11,7 +11,7 @@
 - 路径：`crates/kernel/ze-prerender`
 - 生产依赖（上游，dev-deps 不计）：`ze-content`、`ze-interact`、`ze-notion`
 - 被依赖（下游）：`ze-scene-api`、`ze-scene-core`、`zela-app`、`zela-authored`、`zela-scene-ecs`
-- 源文件：10 个 · 2211 行
+- 源文件：10 个 · 2212 行
 
 ### 文件清单
 
@@ -26,7 +26,7 @@
 | `src/text.rs` | 444 | 场景图元文字（CG-b）：直接由 ttf 轮廓生成 `ContentIR` + `TextRun`。 |
 | `src/typst/convert.rs` | 482 | — |
 | `src/typst/mod.rs` | 250 | — |
-| `src/typst/world.rs` | 259 | — |
+| `src/typst/world.rs` | 260 | — |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 

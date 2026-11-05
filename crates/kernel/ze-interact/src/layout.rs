@@ -247,6 +247,28 @@ impl ConstraintSet {
         let sum: f64 = self.items.values().map(|size| size.height).sum();
         sum + gap * (self.items.len().saturating_sub(1)) as f64 + padding * 2.0
     }
+
+    /// **声明哈希**：`revision = hash(声明，BTree 排序后)`。
+    ///
+    /// 不取运行期计数器、不由宿主递增：控件按 `LayoutId` 升序写入，插入顺序不参与，
+    /// 跨机器重放也不漂移。关系没变 ⇒ 同一帧复用编译结果（`60 帧只求解 1 次`）。
+    pub fn revision(&self) -> u64 {
+        const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+        let mut hash = OFFSET;
+        let mut eat = |bytes: [u8; 8]| {
+            for byte in bytes {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(PRIME);
+            }
+        };
+        for (id, size) in &self.items {
+            eat(u64::from(id.0).to_le_bytes());
+            eat(size.width.to_bits().to_le_bytes());
+            eat(size.height.to_bits().to_le_bytes());
+        }
+        hash
+    }
 }
 
 /// 约束集合 → （盒子布局, 约束）。**唯一入口**：顺序由集合决定，不靠调用方。
@@ -260,11 +282,13 @@ pub fn layout_for_constraints(
     (BoxLayout::new(set.to_items(), gap, padding), constraints)
 }
 
-/// 布局结果缓存：**只有 revision 变化才重新求解**。
+/// 布局结果缓存：**只有声明变化才重新求解**。
 ///
-/// 这条是 CG 计划的硬约束「布局不在每帧」。Frame 每帧是纯值重算，
+/// 这条是 CG 计划的约定「布局不在每帧」。Frame 每帧是纯值重算，
 /// 但重算 ≠ 重新求解：尤其将来接入迭代求解器，每帧跑一遍就是灾难。
-/// `revision` 由宿主在**结构变化**时递增（控件增删 / 文本变化 / 视口尺寸变化）。
+///
+/// `revision` 不再由宿主递增，而是 [`ConstraintSet::revision`]（声明按 id 排序后的
+/// 哈希）：插入顺序 / 跨机器重放都不漂移，动态增删也不会因为「宿主忘了加一」而漏算。
 #[derive(Debug, Clone, Default)]
 pub struct LayoutCache {
     revision: Option<u64>,
@@ -277,13 +301,14 @@ impl LayoutCache {
         Self::default()
     }
 
-    /// 取布局结果：`revision` 与上次相同 ⇒ 直接返回缓存。
+    /// 取布局结果：声明哈希与上次相同 ⇒ 直接返回缓存。
     pub fn solve(
         &mut self,
-        revision: u64,
+        declaration: &ConstraintSet,
         layout: &dyn Layout,
         constraints: Constraints,
     ) -> &[PlacedRect] {
+        let revision = declaration.revision();
         if self.revision != Some(revision) {
             self.cached = layout.layout(constraints);
             self.revision = Some(revision);
@@ -413,7 +438,7 @@ mod tests {
         assert_eq!(constraints.max.height, 60.0);
     }
 
-    /// **布局不在每帧**：revision 不变 ⇒ 只求解一次。
+    /// **布局不在每帧**：声明哈希不变 ⇒ 只求解一次。
     #[test]
     fn layout_cache_solves_only_when_structure_changes() {
         let set = {
@@ -425,14 +450,33 @@ mod tests {
         let (layout, constraints) = layout_for_constraints(&set, 0.0, 0.0, 200.0);
         let mut cache = LayoutCache::new();
 
-        let first = cache.solve(1, &layout, constraints).to_vec();
+        let first = cache.solve(&set, &layout, constraints).to_vec();
         for _ in 0..59 {
-            let again = cache.solve(1, &layout, constraints).to_vec();
+            let again = cache.solve(&set, &layout, constraints).to_vec();
             assert_eq!(first, again, "同一 revision 的帧必须逐位相同");
         }
         assert_eq!(cache.solves(), 1, "60 帧只有 1 次求解");
 
-        cache.solve(2, &layout, constraints);
+        let mut grown = set.clone();
+        grown.insert(LayoutId(2), Size::new(100.0, 20.0));
+        cache.solve(&grown, &layout, constraints);
         assert_eq!(cache.solves(), 2, "结构变化才重新求解");
+    }
+
+    /// revision 来自**声明排序后的哈希**：插入顺序不同 ⇒ 同一个 revision。
+    #[test]
+    fn revision_is_order_independent() {
+        let mut a = ConstraintSet::new();
+        a.insert(LayoutId(1), Size::new(10.0, 20.0));
+        a.insert(LayoutId(0), Size::new(30.0, 40.0));
+
+        let mut b = ConstraintSet::new();
+        b.insert(LayoutId(0), Size::new(30.0, 40.0));
+        b.insert(LayoutId(1), Size::new(10.0, 20.0));
+
+        assert_eq!(a.revision(), b.revision(), "同一份声明只有一个 revision");
+        let mut changed = a.clone();
+        changed.insert(LayoutId(1), Size::new(10.0, 21.0));
+        assert_ne!(a.revision(), changed.revision(), "尺寸变化必须改变 revision");
     }
 }

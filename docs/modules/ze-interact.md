@@ -11,19 +11,19 @@
 - 路径：`crates/kernel/ze-interact`
 - 生产依赖（上游，dev-deps 不计）：（无）
 - 被依赖（下游）：`ze-content`、`ze-prerender`、`zela-app`、`zela-authored`、`zela-node-editor`、`zela-scene-ecs`
-- 源文件：7 个 · 1784 行
+- 源文件：7 个 · 1981 行
 
 ### 文件清单
 
 | 文件 | 行数 | `//!` 首行 |
 |---|---|---|
-| `src/control.rs` | 502 | **CG-d**：控件层 —— 从「画控件」变成「描述控件」。 |
-| `src/frame.rs` | 188 | **CG-c**：结构化帧（`Frame`）—— UI 的一次**快照**。 |
-| `src/hit.rs` | 241 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
-| `src/layout.rs` | 438 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
-| `src/lib.rs` | 56 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
+| `src/control.rs` | 504 | **CG-d**：控件层 —— 从「画控件」变成「描述控件」。 |
+| `src/frame.rs` | 193 | **CG-c**：结构化帧（`Frame`）—— UI 的一次**快照**。 |
+| `src/hit.rs` | 313 | 命中测试（CE-a）：矩形优先 + 索引接口预留。 |
+| `src/layout.rs` | 482 | 布局（CE-b）：盒子 + 流式，**纯函数、无求解器**。 |
+| `src/lib.rs` | 59 | `ze-interact` — 交互骨架（命中 / 布局 / 路由 / 帧）。 |
 | `src/route.rs` | 205 | 路由（CE-c）：hover / focus / capture 三档。 |
-| `src/text.rs` | 154 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
+| `src/text.rs` | 225 | **CG-b/c**：文本的逐字符盒（字符下标 ↔ 矩形）。 |
 
 ### 模块内关系（`use crate::…` / `use super::…`）
 
@@ -56,6 +56,8 @@ graph LR
 | `src/hit.rs` | `pub enum HitRegion` |
 | `src/hit.rs` | `pub struct HitTarget` |
 | `src/hit.rs` | `pub trait HitIndex` |
+| `src/hit.rs` | `pub enum HitFlow` |
+| `src/hit.rs` | `pub struct HitChain` |
 | `src/hit.rs` | `pub struct LinearHitIndex` |
 | `src/hit.rs` | `pub trait CurveHitTester` |
 | `src/layout.rs` | `pub struct LayoutId(pub u32)` |
@@ -84,7 +86,9 @@ kernel 级的交互骨架：只回答三个问题 —— **点到了谁**（矩�
 
 ## 运行机制
 
-命中测试把场景坐标（内部 f64）与轴对齐矩形做半开区间比较，`LinearHitIndex` 按 z-order 降序返回（同 z 保持插入顺序，稳定排序）。布局是纯函数：`BoxLayout` 垂直堆叠、`FlowLayout` 水平换行，`apply_layout` 统一处理「自动布局不得覆盖用户手选位置」（`auto_layout_supported() == false` 时原样返回既有位置）。路由是一个无时间、无随机来源的状态机：指针移动更新 hover，按下建立 focus 与 capture，抬起只解除 capture；事件投递按 capture > focus > hover 取一个。路由键 = 作用域路径 + 命中目标，因此两个面板的同号控件可以区分。
+命中测试把场景坐标（内部 f64）与轴对齐矩形做半开区间比较，`LinearHitIndex` 按 z-order 降序返回（同 z 保持插入顺序，稳定排序）。CK 批把命中结果收成 `HitChain`：链上每个目标显式返回 `Consume` 或 `Continue`，冒泡到容器就是继续，规则只有一处实现。布局是纯函数：`BoxLayout` 垂直堆叠、`FlowLayout` 水平换行，`apply_layout` 统一处理「自动布局不得覆盖用户手选位置」（`auto_layout_supported() == false` 时原样返回既有位置）。`LayoutCache` 的 revision 取 `ConstraintSet::revision()`（声明按 id 排序后的哈希），不再由宿主递增。路由是一个无时间、无随机来源的状态机：指针移动更新 hover，按下建立 focus 与 capture，抬起只解除 capture；事件投递按 capture > focus > hover 取一个。路由键 = 作用域路径 + 命中目标，因此两个面板的同号控件可以区分。
+
+`Frame` 是三条平行结构（几何 / 语义 / 文本）加一条纯值父子索引 `parent`：它让「拖进 / 拖出容器」这类结构变化也能被差分。文本的 `char_at` 与命中同口径；选区与光标由 `range_rect` / `cursor_rect` 从字符盒派生，不新建实体。
 
 ## 边界与不做什么
 

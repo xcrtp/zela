@@ -177,6 +177,19 @@ pub enum SceneEventRecord {
         name: String,
         value: f64,
     },
+    /// **CK-d**：结构变化（稳定 id + 显式 op；不落成 Debug 字符串）。
+    StructureDelta {
+        ops: Vec<StructureOpRecord>,
+    },
+}
+
+/// `StructureOp` 的镜像。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum StructureOpRecord {
+    Mount { id: u32, parent: Option<u32> },
+    Unmount { id: u32 },
+    Reparent { id: u32, parent: Option<u32> },
 }
 
 /// 修饰键的镜像。
@@ -287,6 +300,28 @@ impl From<&ze_scene_core::domain::SceneEvent> for SceneEventRecord {
                     value: *value,
                 },
             },
+            E::StructureDelta { ops } => Self::StructureDelta {
+                ops: ops
+                    .iter()
+                    .map(|op| match op {
+                        ze_scene_core::domain::StructureOp::Mount { id, parent } => {
+                            StructureOpRecord::Mount {
+                                id: id.0,
+                                parent: parent.map(|parent| parent.0),
+                            }
+                        }
+                        ze_scene_core::domain::StructureOp::Unmount { id } => {
+                            StructureOpRecord::Unmount { id: id.0 }
+                        }
+                        ze_scene_core::domain::StructureOp::Reparent { id, parent } => {
+                            StructureOpRecord::Reparent {
+                                id: id.0,
+                                parent: parent.map(|parent| parent.0),
+                            }
+                        }
+                    })
+                    .collect(),
+            },
         }
     }
 }
@@ -337,6 +372,9 @@ pub struct FrameDiff {
     /// 文本变化（按 run 下标对齐）。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text_changed: Vec<TextChange>,
+    /// **CK-d**：父子索引变化（拖进 / 拖出容器、动态增删）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_changed: Vec<ParentChange>,
 }
 
 impl FrameDiff {
@@ -350,6 +388,7 @@ impl FrameDiff {
             && self.geometry_disappeared.is_empty()
             && self.geometry_changed.is_empty()
             && self.text_changed.is_empty()
+            && self.parent_changed.is_empty()
     }
 }
 
@@ -389,6 +428,15 @@ pub struct TextChange {
     pub after: String,
 }
 
+/// **CK-d**：父子索引变化（声明期下标，不是运行期句柄）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParentChange {
+    /// 控件声明期下标（与 `Frame::geometry` 同一口径）。
+    pub id: u32,
+    pub before: Option<u32>,
+    pub after: Option<u32>,
+}
+
 /// 派生态诊断：命中谁 / 路由去向 / 为什么落空 / **装配环境**。
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Diagnostics {
@@ -401,6 +449,16 @@ pub struct Diagnostics {
     /// **CH-e**：本帧的装配环境（窗口尺寸 / DPI / 视口 / 字体 face 清单）。
     #[serde(default)]
     pub environment: Environment,
+    /// **CK-e（#17 方案 B）**：控件回写所在相位。
+    ///
+    /// 静态冲突检查拒绝把 `HudSystem` 前移到 `Input` / `LogicUpdate`
+    /// （与 `TimeControlSystem` / `ParamPanelSystem` 争写同一批资源），
+    /// 因此承认跨帧：这里如实写相位与延迟帧数，**不假装同帧**。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writeback_phase: Option<String>,
+    /// 控件回写的跨帧延迟（帧）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writeback_delay_frames: Option<u32>,
     /// **CI-d 口子⑥**：内容重建后端 / face 版本（可扩展；不进
     /// `required_capabilities` —— 版本差异仍是"可解释的差异"）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -438,6 +496,9 @@ pub struct Environment {
     /// `required_capabilities`；版本差异是可解释的差异）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fonts: Option<crate::fonts::FontEnvironment>,
+    /// **CK-g**：主题 id（控件只存 id；颜色由宿主解析）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
 }
 
 /// **Frame 差分**：三条平行结构分别对齐；值 / 范围 / 布局 / 文本任一变化都进回执。
@@ -520,6 +581,27 @@ pub fn diff_frames(before: Option<&Frame>, after: Option<&Frame>) -> FrameDiff {
             after: String::new(),
         });
     }
+
+    // **CK-d**：父子索引（与几何同下标）。结构变化必须能差分出来，
+    // 否则动态 UI 的归因链只看到「Frame 变了」、看不到「树变了」。
+    let parent_len = after.parent.len().max(before.parent.len());
+    for index in 0..parent_len {
+        let before_parent = before.parent.get(index).copied().flatten();
+        let after_parent = after.parent.get(index).copied().flatten();
+        if before_parent != after_parent {
+            let id = after
+                .geometry
+                .get(index)
+                .or_else(|| before.geometry.get(index))
+                .map(|placed| placed.id.0)
+                .unwrap_or(index as u32);
+            diff.parent_changed.push(ParentChange {
+                id,
+                before: before_parent.map(|parent| parent.0),
+                after: after_parent.map(|parent| parent.0),
+            });
+        }
+    }
     diff
 }
 
@@ -598,7 +680,7 @@ pub fn outcomes_of(driver: &DriverPod) -> Vec<OutcomeRecord> {
 /// **CH-e**：环境参数与 `routed` 一并回执 —— 同一个 `(x, y)` 在不同 DPI / 窗口尺寸
 /// 上落到不同控件，不写明环境就无法判断"回执不同"是不是 bug。
 pub fn diagnostics_of(driver: &DriverPod) -> Diagnostics {
-    let environment = driver.with_scheduler(|scheduler| {
+    let mut environment = driver.with_scheduler(|scheduler| {
         let input = scheduler.resources().get::<WindowInput>();
         Environment {
             window_size: input.map(|input| [input.window_size.x, input.window_size.y]),
@@ -612,19 +694,29 @@ pub fn diagnostics_of(driver: &DriverPod) -> Diagnostics {
                 ]
             }),
             fonts: crate::fonts::environment(),
+            theme: None,
         }
     });
-    match hud_of(driver) {
+    let hud = hud_of(driver);
+    if let Some(hud) = &hud {
+        environment.theme = Some(hud.theme().to_string());
+    }
+    match hud {
         None => Diagnostics {
             routed: None,
             note: Some("本场景没有结构化帧（无自研面板），只有事件层回执".into()),
             environment,
+            writeback_phase: None,
+            writeback_delay_frames: None,
             content: None,
         },
         Some(hud) => Diagnostics {
             routed: hud.routed_name().map(str::to_string),
-            note: None,
+            note: hud.error_note(),
             environment,
+            // 方案 B：回写发生在 FrameEnd，下一帧才被渲染消费。
+            writeback_phase: Some("FrameEnd".to_string()),
+            writeback_delay_frames: Some(1),
             content: None,
         },
     }
@@ -972,6 +1064,36 @@ mod tests {
         assert!(diff.text_changed[0].after.contains("O@"));
         assert!(diff.text_changed[0].after.contains("K@"));
         assert!(!diff.is_empty(), "三条平行结构的任一变化都不得判成空差分");
+    }
+
+    /// **CK-d**：结构变化（父子索引）必须进回执，否则动态 UI 的归因链缺一半。
+    #[test]
+    fn diff_reports_parent_index_changes() {
+        use ze_interact::{LayoutId, PlacedRect};
+
+        let mut before = Frame::new();
+        before.geometry.push(PlacedRect {
+            id: LayoutId(0),
+            rect: Rect::from_min_size(Point::new(0.0, 0.0), 10.0, 10.0),
+        });
+        before.geometry.push(PlacedRect {
+            id: LayoutId(1),
+            rect: Rect::from_min_size(Point::new(0.0, 20.0), 10.0, 10.0),
+        });
+        before.parent = vec![None, Some(LayoutId(0))];
+
+        let mut after = before.clone();
+        after.parent = vec![None, None];
+        let diff = diff_frames(Some(&before), Some(&after));
+        assert_eq!(
+            diff.parent_changed,
+            vec![ParentChange {
+                id: 1,
+                before: Some(0),
+                after: None,
+            }]
+        );
+        assert!(!diff.is_empty());
     }
 
     /// **CJ-05（B2）**：四类输入形状与控件事件都有结构化镜像，且序列化稳定。

@@ -27,6 +27,8 @@ pub mod input;
 pub mod interact;
 pub mod lifetime;
 pub mod register;
+/// CK-c：`Parent` 树 → 关系契约（Euler 区间）的只读适配。
+pub mod relation;
 pub mod scene;
 pub mod transform_hierarchy;
 pub mod utils;
@@ -49,7 +51,7 @@ pub use animation::{
 pub use camera_input::{
     CameraInputSystem, apply_command_2d, apply_command_3d, apply_fps, apply_orbit, apply_pan_zoom,
 };
-pub use composer::{Composer, ComposerQueue, ComposerSystem, full_recompute};
+pub use composer::{Composer, ComposerRef, LayerMount, layer_mounts};
 pub use deferred::{
     DeferredApplySystem, DeferredCmd, DeferredCommands, DynamicObjects, ReplaySystem,
 };
@@ -63,7 +65,8 @@ pub use fingerprint::{
 };
 pub use geometry::{AxesRefreshSystem, FunctionGraphRefreshSystem};
 pub use hud::{
-    Hud, HudMetrics, HudOutcome, HudOutcomeKind, HudState, HudSystem, build as build_hud,
+    ActionIntent, Hud, HudMetrics, HudOutcome, HudOutcomeKind, HudState, HudSystem, ValueIntent,
+    build as build_hud,
 };
 pub use input::{ParamPanelSystem, TimeControlSystem};
 pub use interact::{

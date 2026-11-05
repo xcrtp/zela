@@ -52,8 +52,8 @@ use zela_scene_ecs::director_state::DirectorState;
 use zela_scene_ecs::domain::{ContentTextureSpecs, InputEvents, UiConfig};
 use zela_scene_ecs::scene::Scene;
 use zela_scene_ecs::{
-    ClockForest, ClockNode, ComposerQueue, Curve, DeferredCommands, DriverCommand, DriverPod,
-    DynamicObjects, LifetimeEvents, LifetimeTracker, SeekKind, TimeState,
+    ClockForest, ClockNode, Curve, DeferredCommands, DriverCommand, DriverPod, DynamicObjects,
+    LifetimeEvents, LifetimeTracker, SeekKind, TimeState,
 };
 use zela_scene_bundle::{
     Available, Bundle, BundleError, Capability, Pairing, Pod, RestoreError,
@@ -416,7 +416,6 @@ pub fn assemble_scheduler(assembly: SceneAssembly) -> AssembledScene {
     resources.insert(DynamicObjects::new());
     resources.insert(LifetimeTracker::new());
     resources.insert(LifetimeEvents::new());
-    resources.insert(ComposerQueue::new());
     // **CE-e**：场景内参数面板（有 View 才有；命中表 + 路由状态）。
     if let Some(interact) = interact {
         resources.insert(interact);

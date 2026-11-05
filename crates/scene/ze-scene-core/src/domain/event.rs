@@ -110,6 +110,39 @@ pub enum SceneEvent {
     Command {
         input: CommandInput,
     },
+
+    // ─── CK-d：结构变化是一等输入 ───
+    //
+    // **不进产物**：它属于输入流（与 `zela.window/1` 同源），不是作品 payload 字段。
+    // 回放端从「已有声明 + 事件流前缀」重算；`delta` 在**帧边界**生效，
+    // 不在事件分发中途（否则冒泡正沿命中链上溯时树变了，父子关系同帧二义）。
+    //
+    // 跨帧身份：拖拽 / focus / capture 指向的控件被删 ⇒ 显式取消 capture 并记诊断，
+    // 或冒泡到容器 —— 二选一由消费方写死，**不许静默**。
+    StructureDelta {
+        ops: Vec<StructureOp>,
+    },
+}
+
+/// **CK-d**：一条结构变化（声明期稳定 id，不是运行时句柄）。
+///
+/// id 用 [`WidgetId`]（控件声明键）：稳定、内容寻址、与插入顺序无关。
+/// 这正是「事件流换台机器重放不漂」的前提。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum StructureOp {
+    /// 挂载一个控件（`parent = None` 表示根）。
+    Mount {
+        id: WidgetId,
+        parent: Option<WidgetId>,
+    },
+    /// 卸载一个控件。
+    Unmount { id: WidgetId },
+    /// 改变归属（树语义：入度仍 ≤ 1）。
+    Reparent {
+        id: WidgetId,
+        parent: Option<WidgetId>,
+    },
 }
 
 /// 指针按钮（CG-d 形状）。
@@ -332,6 +365,32 @@ mod tests {
             let back: SceneEvent = serde_json::from_str(&json).expect("可反序列化");
             assert_eq!(event, back, "四类形状必须可往返：{json}");
         }
+    }
+
+    /// **CK-d**：结构变化是输入流的一部分（稳定 id + 显式 op），可逐位往返。
+    #[test]
+    fn structure_delta_is_an_explicit_input() {
+        let event = SceneEvent::StructureDelta {
+            ops: vec![
+                StructureOp::Mount {
+                    id: WidgetId(30),
+                    parent: None,
+                },
+                StructureOp::Mount {
+                    id: WidgetId(31),
+                    parent: Some(WidgetId(30)),
+                },
+                StructureOp::Reparent {
+                    id: WidgetId(31),
+                    parent: None,
+                },
+                StructureOp::Unmount { id: WidgetId(30) },
+            ],
+        };
+        let json = serde_json::to_string(&event).expect("可序列化");
+        let back: SceneEvent = serde_json::from_str(&json).expect("可反序列化");
+        assert_eq!(event, back, "结构 delta 必须逐位往返：{json}");
+        assert!(json.contains("structure_delta"), "类型标签进 JSON：{json}");
     }
 
     /// 老 payload（只有旧变体）照常解码 —— 新增变体是追加，不是改格式。

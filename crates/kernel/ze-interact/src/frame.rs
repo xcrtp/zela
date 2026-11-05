@@ -41,7 +41,7 @@
 //! 无障碍树与 Agent 定位；表外不兜底（扩成 grab bag 就失去了"锚点"的意义）。
 
 use crate::hit::Rect;
-use crate::layout::PlacedRect;
+use crate::layout::{LayoutId, PlacedRect};
 use crate::text::TextRun;
 
 /// UI 的一帧（快照）。
@@ -50,6 +50,11 @@ use crate::text::TextRun;
 pub struct Frame {
     /// 布局输出：控件 id（声明期下标）+ 落点矩形。
     pub geometry: Vec<PlacedRect>,
+    /// **CK-d**：父子索引（与 `geometry` 同下标；`None` = 根）。
+    ///
+    /// 纯值、不持句柄、仍是快照：它让结构变化（拖进 / 拖出容器）可被差分，
+    /// 而不是只表现为「Geometry 变了」。`Frame` 不进 payload，故 parent 也不进。
+    pub parent: Vec<Option<LayoutId>>,
     /// 语义层：与几何**平行**，不是它的属性。
     pub semantics: Vec<SemanticNode>,
     /// 文本层：字符索引 ↔ 矩形。

@@ -2200,17 +2200,48 @@
 | CJ-05 | §3.3 七条代码层可疑点 | 全仓 | **已关闭** | **B1 成立**：`FrameDiff` 扩展为三条平行结构（语义值 / 范围 / `focusable`、几何落点、文本），用例 `diff_covers_geometry_text_and_bounds`。**B2 成立**：`SceneEventRecord` 为 `Pointer` / `Key` / `Text` / `Command` 与控件事件补结构化变体，删除 `Debug` 字符串兜底，用例 `scene_event_records_keep_structure_and_serialize_stably`。**B3 成立**：`FrameTag` 清理并入 `EguiSceneHost::clear_input`，用例 `clear_input_also_clears_the_frame_tag`。**B4 成立**：RPC 编码兜底改走 `serde_json`，用例 `error_messages_with_quotes_and_newlines_stay_valid_json`。**B5 成立**：xtask 耗时汇总移入 `Timings` 的 `Drop`（失败早退也打印），用例 `timing_summary_is_sorted_and_complete`。**B6 成立**：`unpad_rows` 返回 `Result` 并校验长度 / 行宽，用例 `unpadding_rejects_short_buffers_and_narrow_rows`。**B7 成立**：新增走 `SceneFrame::begin` 的集成判据 `scene_frame_begin_consumes_input_exactly_once`（移除帧末清理即第二帧重复施加）。 |
 | CJ-06 | 可观测性链路两批未整体复核 | 调试 / 回放 | **已关闭** | 逐位判据复跑绿：`hud_agent_e2e`（`same_events_give_bitwise_identical_frames` / `trace_reports_derived_outcomes_diff_and_diagnostics` / `diagnostics_carry_the_environment_and_dpi_does_not_move_the_hit`）、`debug_rpc`（离线 / RPC / 窗口流三份 `TraceReport` 逐字节相同；`inject` 不推进帧；`probe ≡ trace`）、`formula_source_is_recorded_with_formula_kind`。截图：headless 显式报错（`screenshot_is_explicitly_unsupported_on_headless`），PNG 不进逐位基线。诊断层：`Diagnostics.environment` / `Diagnostics.content` 只进回执，不进 `required_capabilities`（`fonts.rs` 的 `Baked` 角色）。计时 / 落盘：`ZELA_FRAME_REPORT` / `ZELA_OBSERVE` / `[timing]` / `HealthOverlay` / `zela-schedule::telemetry` 入口存在；失败路径由 B5 补齐。触发条件复核：`CH-09`（Wgpu 截图）/ `CH-10`（External）/ `CF-07`（`all_nodes` 顺序）/ `CF-08`（状态四档）/ `CI-07`（全局 legacy）/ `CI-08`（Typst 重依赖）仍准确，本批未兑现。归因链护栏：外部事件注入的结构化回执由 B2 覆盖。**未重录任何逐位基线**（`FrameDiff` 新字段空集不序列化，既有判据逐字节保持）。 |
 | CJ-07 | `CI-09` verify 分级调度 | xtask | **记账** | 185 第一版快照未执行（§0.8 是第二版才合入）；仓库 GAPS 原无此条。分级调度是 `xtask` 行为改动，与叙述审查不同性质 ⇒ 独立成批，本批**不实现**。触发条件：verify 全量耗时成为实际负担时单独论证。 |
-| CJ-08 | 计划版本绑定 | 流程 / 文档 | **已关闭** | 计划头部固定「适用起点（代码 HEAD + plans HEAD）+ 本文版本」；`CONTRIBUTING.md` 批次收尾检查表新增第 6 条（交付说明第一行回显）；184 / 185 的路线图同步 `CJ = 全仓大扫除`、`CK = kasuari`。 |
+| CJ-08 | 计划版本绑定 | 流程 / 文档 | **已关闭** | 计划头部固定「适用起点（代码 HEAD + plans HEAD）+ 本文版本」；`CONTRIBUTING.md` 批次收尾检查表新增第 6 条（交付说明第一行回显）；184 / 185 的路线图同步 `CJ = 全仓大扫除`；`CK = kasuari` 的现行指针在 CK 批改为 **`CK = 关系契约与层级语义`、`CL = kasuari`**（184 / 185 / 186 同步；历史记录不删）。 |
 
 **CJ 段小计**：已关闭 7（CJ-01 / CJ-02 / CJ-03 / CJ-04 / CJ-05 / CJ-06 / CJ-08）· 部分关闭 0 · 记账 1（CJ-07）· 未执行 0 · 已记录 0。
 
 ---
 
+## CK. 关系契约与层级语义（2026-11-05）
+
+> 计划《187 CK 批次执行计划：关系契约与层级语义》。本批交付的不是一套关系系统，
+> 是「所有域用同一份纯函数回答同一份六问」。树 / DAG / 几何偏序三类语义分开；
+> 关系声明沿用各域已有组件（`Parent` / `Layers` / `Expr` 节点），不新增产物字段 / 类型 / 通道。
+
+| 编号 | 立约 / 缺口 | 影响层 | 类别 | 证据 |
+|---|---|---|---|---|
+| CK-01 | 六个域各写一遍「稳定序 + 双向邻接 + 环检测」 | 图算法 / 场景 | **已关闭** | `ze-graph-algo/src/relation.rs`：`RelationSource`（`nodes` / `parent(s)` / `deps` / `phase`）+ `check_tree` / `check_dag` / `compile_tree`（Euler 区间）/ `compile_dag`（双向 CSR + 拓扑序）。判据：`compile_tree_gives_euler_intervals` / `dag_csr_is_bidirectional_and_topological` / `cycle_is_rejected_with_full_path`（首尾相同完整路径）/ `multiple_parents_are_rejected`。 |
+| CK-02 | 编译结果不得依赖容器枚举顺序 | 图算法 | **已关闭** | `stable_nodes` 一律排序去重；判据 `compilation_is_independent_of_node_enumeration_order`（`nodes()` 逆序 ⇒ `TreeIndex` / `DagIndex` / `revision` 逐位不变）。 |
+| CK-03 | `LayoutCache::revision` 由宿主递增，漏加一就漏算 | 交互 / 布局 | **已关闭** | `ConstraintSet::revision()` = 声明按 `LayoutId` 升序后的 FNV-1a；`LayoutCache::solve` 直接吃声明，不再接宿主计数器。判据 `revision_is_order_independent` / `layout_cache_solves_only_when_structure_changes`（60 帧 1 次求解）。 |
+| CK-04 | 派生态类型可能被误登记进 payload | 产物 / 门禁 | **已关闭** | `xtask` 新门禁 `check_derived_state_not_persisted`：`WorldTransforms` / `DrawCommand` / `Frame` / `RouteState` / `TreeIndex` / `DagIndex` 不得出现在 `registry.rs` / `persist.rs` 的非注释行；`cargo verify --step structure` 跑它。 |
+| CK-05 | CJ 遗留措辞与淘汰词表未进机器门禁 | 文档 / 门禁 | **已关闭** | `input_window.rs` 的闭区间与「保持既有行为」改为半开；`ze-prerender/typst/world.rs` 的陈旧句改为「GUI 也走 `ensure_font_dir`」；CJ 淘汰词表（13 条，含 `跨端逐位一致` 一类旧叙述）进 `FORBIDDEN_TERMS`，历史引用按 `FORBIDDEN_TERM_ALLOW` 逐文件登记。 |
+| CK-06 | plans 存档 185 §9 的 `CI-09` 状态未同步 | 流程 | **记账** | plans 仓（HEAD `8c93609`）不在本机工作区，无法改存档；触发条件：下一次拿到 plans 仓时按本批结论改写（`CI-09` = 未执行 / 记账，CJ-07 已记）。 |
+| CK-07 | `Parent` 链的递归上溯可被 Euler 区间替代 | 场景 / 渲染 | **已关闭** | `zela-scene-ecs/src/relation.rs` 把 `BTreeMap<ObjectId, ObjectId>` 投影成 `RelationSource`；`TransformHierarchySystem` 按 `tin` 前序遍历（父先于子），删除递归 `world_of` / `inherit_style_of`。判据：既有 14 条父子用例全绿（含 `cycle_is_an_explicit_error` 的 `[a,b,a]` 完整路径）。 |
+| CK-08 | 三套边界口径（视口 / `Rect2D::contains` / `View::contains`）不一致 | 交互 / 场景 | **已关闭** | 三处统一半开 `[min, max)`；判据 `adjacent_rects_do_not_double_hit_at_the_shared_edge`（`ze-notion` / `ze-interact`）/ `contains_uses_the_same_half_open_bounds_as_hit_testing`。几何包围盒仍按闭区间逐分量比较（`bounds_contain_the_reveal_tip`），因为它是范围不是命中。 |
+| CK-09 | `View` 已是生产声明，但空间语义未与命中统一 | 场景 / UI | **已关闭** | `View::contains` 与命中同口径；`zela-authored::panels` 仍是生产消费者（`View::screen` + `ViewMapping::Screen`）。本批不另造 `Container` 类型：`Parent` 树 + `View` 组件已覆盖「归属 + 空间」两件事。 |
+| CK-10 | 结构变化只是 System 内部副作用，回放端看不出「树变了」 | 输入流 / 调试 | **已关闭** | `SceneEvent::StructureDelta { ops }`（`Mount` / `Unmount` / `Reparent`，稳定 `WidgetId`）进输入流（不进 payload）；`Frame.parent: Vec<Option<LayoutId>>` 纯值索引；`FrameDiff.parent_changed` 进 `TraceReport`。判据 `structure_delta_is_an_explicit_input`（逐位往返）。 |
+| CK-11 | 跨帧身份与 seek 口径未写进契约 | 交互 / 回放 | **部分关闭** | 契约写进 `domain/event.rs`（delta 在帧边界生效；capture / focus 指向已删控件必须显式取消并记诊断；seek 走「声明 + 事件流前缀」重算，不碰 AI-07 红线）。**未兑现**：动态挂载还只有形状、没有真实消费者 ⇒ 取消 capture 的分支无法端到端验证。触发条件：动态列表 / 可增删面板落地时补用例。 |
+| CK-12 | 命中结果是一个 `Vec`，但消费 / 继续没有显式规则 | 交互 | **已关闭** | `HitChain::visit` + `HitFlow::{Consume, Continue}`（唯一实现）；判据 `hit_chain_bubbles_until_a_target_consumes`。`TextRun::char_at` 已并入同一条命中链；选区 / 光标由 `range_rect` / `cursor_rect` 从字符盒派生（不新建实体）。 |
+| CK-13 | HUD 回写用字符串分发，未知名字只 `eprintln!` | UI / 诊断 | **已关闭** | `ValueIntent` / `ActionIntent`（typed intent，边界解析一次）；未知名字进 `Hud::errors()`，经 `Diagnostics.note` 回执。判据：`zela-scene-ecs` HUD 用例 + `hud_agent_e2e`。 |
+| CK-14 | `HudSystem` 回写延迟一帧却不说明相位 | 调度 / 诊断 | **已关闭（#17 方案 B，已写死）** | 方案 A（前移到 `Input` / `LogicUpdate` 与 `ParamPanelSystem` 合并单一写者）被静态冲突检查否决（与 `TimeControlSystem` 争 `DirectorState`、与 `ParamPanelSystem` 争 `BindingTable`）。保留 `FrameEnd`，`Diagnostics.writeback_phase = "FrameEnd"` / `writeback_delay_frames = 1`，**不假装同帧**（`register.rs` 注释 + `debug.rs` 回执）。 |
+| CK-15 | `ComposerQueue` 是「增量维护派生态」的活反面教材（零读者） | 合成 / 场景 | **已关闭** | 删除 `ComposerQueue` / `ComposerSystem` / `full_recompute`；改为纯函数 `composer::layer_mounts` → `Vec<LayerMount>`，合成顺序固定 `(LayerId, ObjectId)`（判据 `mounts_are_ordered_by_layer_then_declaration`）。`Composer` 配置仍是场景状态（进 payload）。`Attachment` 撞名：仓内没有该组件，无需处置。 |
+| CK-16 | 深度模型每次讨论都变成「怎么做」 | 渲染 / 语义 | **已关闭** | 单列为**几何偏序**：默认 **A = 同屏叠加**（沿用 X1-06 overlay 屏幕平面、PC-01 图层级叠加、PA-01 L3 不进产物）；B（同一深度空间互遮挡）的触发条件写进本条。按选择关账 `S2-03` / `CC-05` / `CE-08`；P0「统一相机 / 深度合成模型」按 A 记为已裁决。`PB-01`（路由粒度：整帧 vs 图层级）不是深度项，保持原记账不变。**不铺互遮挡实现**。 |
+| CK-17 | 控件是「轨道 + N 个字形 + 滑块」一堆实体 | UI / 渲染 | **部分关闭** | 新增声明组件 `Widget2D`（`control` / `role` / `label` / `theme`）+ 纯函数 `Widget2D::draw` → `Vec<DrawCommand>`（每条自带 `Style2D`；判据 `one_widget_draws_all_its_commands_with_per_command_style` / `hover_changes_only_colors`）；`Hud::commands()` 走同一份布局与字形；主题 id 进 `Diagnostics.environment.theme`。**未兑现**：渲染器仍消费既有场景图元（`Rect` / `Path` / `Circle`），「20 行 HUD = 20 实体」尚未成立。触发条件：矢量录制接 `Widget2D` 命令列表时一并切像素基线。 |
+| CK-18 | 三条反面约束没有代码 / 文档落点 | 图算法 / 全仓 | **已关闭** | `relation.rs` 模块头写死「不做增量索引 / 不建通用 `Relation` 运行期类型 / 不沿关系传播 tag」；`docs/principles.md` 结构性教训补同一段并指向本批。判据：归因链仍由 `debug.rs` 快照差分产生（零传播 tag 代码）。 |
+
+**CK 段小计**：已关闭 15（CK-01 / CK-02 / CK-03 / CK-04 / CK-05 / CK-07 / CK-08 / CK-09 / CK-10 / CK-12 / CK-13 / CK-14 / CK-15 / CK-16 / CK-18）· 部分关闭 2（CK-11 / CK-17）· 记账 1（CK-06）· 未执行 0 · 已记录 0。
+
+---
+
 ## 统计与维护约定
 
-> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG / CH / CI / CJ 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
-> （**D–CJ**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
-> 自动核对 K–CJ 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
+> **口径（B14 §7.2，B19 V-11 扩，PA / PB / PC / PD / PE / PF / PG / PH / PI / BU / BV / BX / BY / BZ / CA / CB / CC / CD / CE / CF / CG / CH / CI / CJ / CK 再扩）**：下表只统计 A / B / C 三段（最初 44 条）。D 段及之后
+> （**D–CK**，按批次追加）**不并入本表**，见各段自己的小计（由 `check_gaps_subtotals`
+> 自动核对 K–CK 段，含"部分关闭"与"已记录"；立约段只核对可识别的状态词）。
 
 | 类别 | 数量 |
 |---|---|

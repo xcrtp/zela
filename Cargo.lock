@@ -7254,6 +7254,7 @@ dependencies = [
  "ze-comb",
  "ze-content",
  "ze-func",
+ "ze-graph-algo",
  "ze-interact",
  "ze-macro",
  "ze-notion",

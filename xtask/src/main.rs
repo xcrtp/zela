@@ -2014,7 +2014,7 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
         "## BC.", "## BD.", "## BE.", "## BF.", "## BG.", "## BH.", "## BI.", "## BJ.",
         "## BK.", "## BL.", "## BM.", "## BN.", "## BO.", "## BP.", "## BQ.", "## BR.", "## BS.",
         "## BT.", "## BU.", "## BV.", "## BW.", "## BX.", "## BY.", "## BZ.", "## CA.", "## CB.",
-        "## CC.", "## CD.", "## CE.", "## CF.", "## CG.", "## CH.", "## CI.", "## CJ.",
+        "## CC.", "## CD.", "## CE.", "## CF.", "## CG.", "## CH.", "## CI.", "## CJ.", "## CK.",
     ] {
         let Some(body) = gaps_section(&text, prefix) else {
             continue;
@@ -2108,7 +2108,8 @@ fn check_gaps_subtotals(root: &Path) -> Result<(), String> {
                     || id.starts_with("CG-")
                     || id.starts_with("CH-")
                     || id.starts_with("CI-")
-                    || id.starts_with("CJ-"));
+                    || id.starts_with("CJ-")
+                    || id.starts_with("CK-"));
             if !is_item {
                 continue;
             }
@@ -2676,6 +2677,64 @@ fn step_coverage(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// **CK-b 门禁（派生态隔离）**：序列化 / payload 登记面里不得出现派生态类型。
+///
+/// 编译索引、世界变换、绘制命令、帧快照、路由态都是「能算出来的东西」
+/// （`docs/principles.md` 判据 4）。它们可以有自己的 serde（调试导出），
+/// 但**不得**进入组件登记表 / payload 持久化 —— 否则回放端会读到过期派生值，
+/// 而不是从「声明 + 事件流前缀」重算。
+fn check_derived_state_not_persisted(root: &Path) -> Result<(), String> {
+    const DERIVED: &[&str] = &[
+        "WorldTransforms",
+        "DrawCommand",
+        "Frame",
+        "RouteState",
+        "TreeIndex",
+        "DagIndex",
+    ];
+    const PAYLOAD_PATHS: &[&str] = &[
+        "crates/scene/ze-scene-core/src/registry.rs",
+        "crates/scene/ze-scene-core/src/persist.rs",
+    ];
+
+    let mut offenders = Vec::new();
+    for entry in PAYLOAD_PATHS {
+        let path = root.join(entry);
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+        for (index, line) in text.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for name in DERIVED {
+                // 类型名作为独立标识符出现（避免 `FrameTrace` 之类的误伤）。
+                let hit = line.match_indices(name).any(|(at, _)| {
+                    let before = line[..at].chars().next_back();
+                    let after = line[at + name.len()..].chars().next();
+                    !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                        && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                });
+                if hit {
+                    offenders.push(format!("{}:{}: {}", entry, index + 1, line.trim()));
+                }
+            }
+        }
+    }
+    if offenders.is_empty() {
+        println!("[xtask] OK: 派生态类型未进入 payload 登记 / 持久化面");
+        return Ok(());
+    }
+    offenders.sort();
+    offenders.dedup();
+    eprintln!(
+        "[xtask] 派生态类型出现在 payload 登记 / 持久化面（应从声明重算，不进产物）："
+    );
+    for offender in &offenders {
+        eprintln!("  {offender}");
+    }
+    Err("派生态隔离门禁未通过：{WorldTransforms, DrawCommand, Frame, RouteState, TreeIndex, DagIndex} 不得持久化".to_string())
+}
+
 fn step_structure(root: &Path) -> Result<(), String> {
     // 阶段 0.5 门禁：新 crate 必须登记 / 跨 crate 同名 pub 类型必须进白名单。
     // 这两条不依赖 jq，先跑。
@@ -2683,6 +2742,8 @@ fn step_structure(root: &Path) -> Result<(), String> {
     check_duplicate_public_names(root)?;
     // 阶段 4：表达式图 / 拓扑路径的确定性门禁（禁用 HashMap / HashSet）。
     check_no_hashmap_in_graph_paths(root)?;
+    // CK-b：派生态隔离（编译索引 / 世界变换 / 帧 / 路由态不进 payload）。
+    check_derived_state_not_persisted(root)?;
     // 阶段 6（仓库门面批次）：每个 example 必须在 README / docs 有记录（或显式隔离）。
     check_examples_recorded(root)?;
     // §0.1（仓库门面批次）：命令层不得依赖任何 UI / CLI 框架。

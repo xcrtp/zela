@@ -28,8 +28,8 @@
 # 条数按**字形**计（如 fourier 63 → 50 个对象），payload 随之变化 —— 属预期。
 #
 # id            title              script          payload-hash
-fourier 傅里叶级数展开 fourier.lua 8d83c6ee1961923e557775533dc4a87a24cdb0730531de5cb57c81f712ce8b8e
-storyboard 分镜演示 storyboard.lua 32999e44ab46063476dcf25721f2feeb0e70d84f3895e5ca4887ac66fb038e41
+fourier 傅里叶级数展开 fourier.lua 80d043d7912a8d35ab764125bcdc61d6437e9eee4e4a61a16c9d84bac0b915c1
+storyboard 分镜演示 storyboard.lua 349d490ad32e5ef4ad095f0d2b183c5715a7b3c750291e83e99756fbdf960fa6
 demo3d 3D 场景 demo3d.lua 81cb07d6d816e890c9c6229421581ff32c382e43cfdfca92c061e66cc2287246
 fusion 融合演示(双面+透明) fusion.lua 579e121f32dd6cf5d336a84dfaea52e7ad0fdbbd9de2fab989bfa7c3d056b360
 pbr_materials PBR材质画廊 pbr_materials.lua 1e4353670e96f6c48daf4bd3a28b6d8f23378736c8c27e27ff85563b8d6f55fd
@@ -38,10 +38,10 @@ pbr_scene PBR材质秀 pbr_scene.lua d5f0259a4bd37363420964e9f5a59944a51a9d42645
 pendulum 钟摆动画 pendulum.lua 5029ddb641409b0b3d28a8e445786a237075942e3332f49b29a2ee7901ee1b90
 orbit 公转行星 orbit.lua 0420b3ad120618b62e3a47e3b3a5c29bdef8433df4a96fcbe1f9ef28892b4a80
 spring 弹跳小球 spring.lua d09711a16b3d5d53ba20babf1e7245eeddfcfc8934a012cfe699e7090ecdc45b
-surface_matrix Surface能力矩阵 surface_matrix.lua 5359b9a068f4a3e1533b63987bc4cfec679bebe05aa0e4d7c1c891cd5b20132e
-surface_matrix_js Surface能力矩阵(JS) surface_matrix.js 5359b9a068f4a3e1533b63987bc4cfec679bebe05aa0e4d7c1c891cd5b20132e
+surface_matrix Surface能力矩阵 surface_matrix.lua 774bebf574fbeec2ef6327152b8c532828879ee92b7c56cec6d328dc0e27dd35
+surface_matrix_js Surface能力矩阵(JS) surface_matrix.js 5219ba729e8060f3de63f518daec776fb59c71d769fc114bb05e72e6f54d0ead
 atlas 2D纹理进3D atlas.lua c17d41395e71a333e4be95ff0ec5b65e805ba617520a6d538f872fdc466ffe11
-vector_paths 矢量后端作品 vector_paths.lua 0c2793c326848f9fda683873c9fc42af6a05384336020fc2768cad3e39649a21
+vector_paths 矢量后端作品 vector_paths.lua e4553ec3da6d1572253c66ead1665b96b4d8c5d22df3895c96273e63abcf17f3
 capability_gaps 能力缺口补齐 capability_gaps.lua 6d87bee1228d3694e738a4dc4e324089b8b3a870af956174d7c20bd2667de34b
 shaded_meshes 3D网格着色栈 shaded_meshes.lua f4223fa128e70f8c8ca3d865638e269175f42b12211797dfc9f2e75aa4705cc3
 # PE Step 2：能力展示作品（一件能力一件作品；**只进 [vector] 基线**）。
@@ -72,7 +72,7 @@ cap_plot 函数图像 cap_plot.lua 1044d19a20265dcc4ddc15282c53d3b54f6ab789e1b4e
 # 动画层阶段 2 验收作品：路径跟随（`PathFollow` 组件 + 方法 `Reveal.point_at` / `tangent_at`）。
 cap_path_follow 路径跟随 cap_path_follow.lua 73cc50d044856441be2c25f7961f6d4c284983135a8672c6133e3a762b669d61
 # 动画层阶段 3 验收作品：文字排版糖 `scene.text` + 组级淡出 / 缩放（只动容器一个字段）。
-cap_text_group 文字组 cap_text_group.lua 614b423c77974eae9740733f7dde3f6fd4e0d910e9c914f36e902da1e7c37c09
+cap_text_group 文字组 cap_text_group.lua e2bd650824229cca10767e85de94c0737d265252936e8b8913c3ae7887105c95
 # 动画层阶段 4 验收作品：时序糖 `scene.sequence`（顺序 / 并行 / 空档三种段形态）。
 cap_sequence 时序 cap_sequence.lua f515d59cc66ab03b325461a3f8bd8c1f83513ab91c519f4193e6bc41560697b5
 
